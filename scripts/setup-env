@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Forge bootstrap — recreate .env files after they are lost between sessions.
+#
+# Usage:
+#   scripts/setup-env                 # interactive prompts for secrets
+#   scripts/setup-env --from-env      # read secrets from current shell env
+#
+# Never commits .env. Never overwrites an existing .env without --force.
+set -euo pipefail
+
+FORCE=${FORCE:-0}
+MODE="interactive"
+for a in "$@"; do
+  case "$a" in
+    --from-env) MODE="from-env" ;;
+    --force)    FORCE=1 ;;
+    -h|--help)
+      grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  esac
+done
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BACKEND_ENV="$ROOT/backend/.env"
+FRONTEND_ENV="$ROOT/frontend/.env"
+
+need() {
+  local var="$1" prompt="$2" default="${3:-}"
+  local val=""
+  if [[ "$MODE" == "from-env" ]]; then
+    val="${!var:-$default}"
+  else
+    if [[ -n "$default" ]]; then
+      read -r -p "$prompt [$default]: " val
+      val="${val:-$default}"
+    else
+      read -r -p "$prompt: " val
+    fi
+  fi
+  if [[ -z "$val" ]]; then
+    echo "  ✗ $var is required — aborting." >&2
+    exit 2
+  fi
+  printf '%s=%s\n' "$var" "$val"
+}
+
+if [[ -f "$BACKEND_ENV" && "$FORCE" -ne 1 ]]; then
+  echo "  ✓ backend/.env already exists (use --force to overwrite)"
+else
+  echo "==> Writing $BACKEND_ENV"
+  {
+    need MONGO_URL             "MongoDB URL"                    "mongodb://localhost:27017"
+    need DB_NAME               "MongoDB database name"          "forge"
+    need JWT_SECRET            "JWT signing secret"             "$(openssl rand -hex 32 2>/dev/null || echo change-me)"
+    echo "JWT_ALG=HS256"
+    echo "JWT_TTL_HOURS=720"
+    echo "MEDIA_STORAGE_DRIVER=supabase"
+    need SUPABASE_URL              "Supabase project URL"       "https://vburaxruvbnbahegtbya.supabase.co"
+    need SUPABASE_SERVICE_ROLE_KEY "Supabase service role key"
+    need SUPABASE_ANON_KEY         "Supabase anon key"
+    echo "SUPABASE_PUBLIC_BUCKET=forge-products"
+    echo "SUPABASE_PRIVATE_BUCKET=forge-private"
+  } > "$BACKEND_ENV"
+  chmod 600 "$BACKEND_ENV"
+fi
+
+if [[ -f "$FRONTEND_ENV" && "$FORCE" -ne 1 ]]; then
+  echo "  ✓ frontend/.env already exists (use --force to overwrite)"
+else
+  echo "==> Writing $FRONTEND_ENV"
+  cat > "$FRONTEND_ENV" <<EOF
+EXPO_PUBLIC_BACKEND_URL=http://localhost:8001
+EOF
+fi
+
+echo "==> Done. Restart supervisor: sudo supervisorctl restart backend expo"

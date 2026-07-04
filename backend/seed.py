@@ -179,22 +179,22 @@ async def seed_if_empty():
 
     # ---- Products ----
     products: list[Product] = []
-    for i, (name, cat, brand, finish, mrp, price, image) in enumerate(PRODUCT_SEEDS, start=1):
+    for i, (name, cat, brand, finish, mrp, price) in enumerate(PRODUCT_SEEDS, start=1):
         p = Product(
             name=name,
             sku=f"{brand[:3].upper()}-{cat_by_name[cat].slug[:3].upper()}-{i:03d}",
             brand_id=brand_by_name[brand].id,
             category_id=cat_by_name[cat].id,
-            description=f"Premium {name} in {finish} finish by {brand}. Ships in 5–7 business days.",
+            description=f"{name} · {finish} finish · by {brand}. Ships in 5–7 business days.",
             finish=finish,
             material="Solid Brass" if cat == "Faucets" else "Ceramic",
             dimensions="—",
-            warranty="10 years" if brand in ("Kohler", "TOTO", "Duravit") else "5 years",
+            warranty="10 years" if brand in ("Axor", "Geberit") else "5 years",
             mrp=float(mrp),
             price=float(price),
             stock=25 + (i % 40),
-            images=[image],
-            tags=[cat.lower(), brand.lower(), finish.lower()],
+            images=[],
+            tags=[cat.lower(), brand.lower(), finish.lower(), "demo"],
         )
         products.append(p)
         await db.products.insert_one(p.dict())
