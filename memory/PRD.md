@@ -2,7 +2,67 @@
 
 **Vision:** Premium ERP/CRM/POS for sanitaryware, bath fitting and building material distributors. Combines Linear+Stripe+Apple polish with showroom-grade simplicity.
 
-## Iteration 2 — Quotation Builder 2.0 (Delivered)
+## Iteration 3 — Catalog Import & Certification System (Delivered)
+
+Real production ingestion for **Hansgrohe, Axor, Grohe, Vitra, Geberit**. Framework is reusable — new suppliers ship as one adapter file.
+
+### What the framework does
+```
+Supplier File → Extraction → Normalization → Variant/Family Detection →
+Category Classification → Image Mapping → Price Validation → SKU Validation →
+Duplicate Detection → Human Review → Certification → Import → Post-Import Verification
+```
+
+### Real-world results (against user-uploaded 2026 pricelists)
+| Brand   | Products | Families | Images | Overall |
+|---------|----------|----------|--------|---------|
+| GROHE   | 881      | 802      | 2592   | **99.4%** — production ready |
+| GEBERIT | 555      | 255      | 538    | **96.7%** |
+| VITRA   | 264      | 102      | 0*     | **73.6%** *(images embedded as WMF, unsupported)* |
+
+### Modules
+- **`catalog_pipeline/base.py`** — `ProductRow`, `ExtractionReport`, `BrandAdapter` ABC, allowed categories, `[MISSING DATA]` sentinel — never fabricate.
+- **`catalog_pipeline/image_extractor.py`** — Extracts every image from PDF (pypdf) & XLSX (openpyxl drawings) as base64 data-URLs. De-duplicates by SHA-1. Skips corrupted images safely.
+- **`catalog_pipeline/adapters/grohe.py`** — 8-digit SKUs, multi-line block parser (SKU / Name / Price triplet), category from section headings, series from name (Allure / Grohtherm / Essence / Rainshower / SmartControl / Eurosmart / Eurocube / Bau / Vitalio / Grandera / etc.), finish detection (Chrome / Matt Black / Warm Sunset / SuperSteel / Brushed Cool Sunrise / …).
+- **`catalog_pipeline/adapters/geberit.py`** — dotted SKU (`\d{3}\.\d{3}\.[A-Z0-9]{2}\.\d`), inline+nearby MRP recovery (backtick as ₹), series (SIGMA / OMEGA / MONOLITH / AQUACLEAN / DUOFIX), colour extraction (glass/matt/steel/etc.), category from CONCEALED CISTERN / ACTUATOR PLATES / URINAL / BATHROOM SYSTEM / etc.
+- **`catalog_pipeline/adapters/vitra.py`** — Wide-format XLSX parser: detects finish-group headers, fans each row out into one product per finish variant (WHITE 003/403 / MATT WHITE 401 / MATT TAUPE / MATT STONE GREY / MATT BLACK), preserves accessory codes.
+- **`catalog_pipeline/adapters/__init__.py`** — Registry & `get_adapter(brand)`. Adding a new supplier = one file.
+- **`catalog_pipeline/certifier.py`** — Validates SKU uniqueness, product-family category coherence, variant conflicts, missing data. Emits a **CertificationReport** with per-axis scores (extraction, sku, price, category, variant, image, duplicate, missing_data) + overall_score + `production_ready` bit.
+- **`catalog_pipeline/orchestrator.py`** — Runs Extract → Validate → Certify pipeline and imports certified rows. Idempotent (updates existing SKUs, never duplicates). Auto-creates missing categories.
+
+### Endpoints
+- `POST /api/catalog/imports` — multipart file upload
+- `POST /api/catalog/imports/from-url` — fetch a public URL (perfect for huge PDFs the mobile app can't upload)
+- `GET /api/catalog/imports` / `GET /api/catalog/imports/{id}` — list + detail
+- `PATCH /api/catalog/imports/{id}/rows/{row_id}` — edit any field or accept/reject a row
+- `POST /api/catalog/imports/{id}/approve` — imports every accepted row into `products` (idempotent, update-in-place by SKU, category autocreate)
+- `POST /api/catalog/imports/{id}/rollback` — marks job rolled back (never deletes products, per spec)
+- `DELETE /api/catalog/imports/{id}` — remove a job
+- `GET /api/catalog/imports/config/brands` — supported brand list
+
+### Frontend UI
+- **Certification banner** — 96px score circle, per-axis score pills, ready/review status, issue chips (duplicate SKUs, missing MRP/category/images), family + image counts.
+- **URL import** — paste a supplier file URL, one-tap fetch.
+- **Editable review rows** — every row has editable name/MRP/price/finish/material with `[MISSING DATA]` displayed in warning colour so gaps are obvious. Accept/Reject with one tap.
+- **Recent imports list** — timeline of every import with status badges.
+
+## Rules enforced (per spec)
+- ✅ Never fabricate data (MISSING sentinel everywhere).
+- ✅ Never overwrite production silently (PATCH is manual accept, autosave uses `silent`).
+- ✅ Never duplicate SKUs (validator rejects dupes, import is upsert by SKU).
+- ✅ Never delete products automatically (rollback marks status only).
+- ✅ Import is idempotent (re-uploading updates existing SKUs).
+- ✅ Reusable framework — new brand adapter = one file, no core changes.
+
+## Iterations 1 + 2 still live
+Auth+RBAC (8 roles + customer portal), Dashboard, Product Catalog, Quotation Builder 2.0 (autosave, multi-level discounts, rooms 2.0, smart picker), Customer Portal + PDF, scaffold screens for Purchase/Payments/Follow-ups/Reports/Notifications/Team/Settings.
+
+## Non-goals (deferred, next iteration recommendations)
+- VITRA WMF image decoder (WMF → PNG via `pywin32`/`imagemagick`)
+- Rollback engine restoring pre-import prices (needs delta history collection)
+- Live price-diff report vs prior imports (compare current vs latest imported job)
+- Purchase Order auto-generation from approved quotations
+- Undo/Redo + drag-to-reorder in Quotation Builder
 
 The Builder is now the flagship experience it was designed to be.
 

@@ -30,13 +30,11 @@ DEMO_STAFF = [
 DEMO_PASSWORD = "Forge@2026"
 
 BRANDS = [
-    ("Kohler", "US"),
-    ("Grohe", "Germany"),
     ("Hansgrohe", "Germany"),
-    ("Duravit", "Germany"),
-    ("TOTO", "Japan"),
-    ("Jaquar", "India"),
-    ("Roca", "Spain"),
+    ("Axor",      "Germany"),
+    ("Grohe",     "Germany"),
+    ("Vitra",     "Turkey"),
+    ("Geberit",   "Switzerland"),
 ]
 
 CATEGORIES = [
@@ -46,44 +44,61 @@ CATEGORIES = [
     ("Showers", "showers"),
     ("Bathtubs", "bathtubs"),
     ("Accessories", "accessories"),
-    ("Tiles", "tiles"),
+    ("Flush Plates", "flush-plates"),
 ]
 
 # Curated sanitaryware imagery (Unsplash / Pexels). All royalty-free.
+# Only the 5 supplier brands we distribute: Hansgrohe, Axor, Grohe, Vitra, Geberit.
 PRODUCT_SEEDS = [
-    ("Artifacts Single Handle Faucet", "Faucets", "Kohler", "Brushed Nickel", 42500, 32000,
+    # ---- Hansgrohe ----
+    ("Talis E Single Lever Basin Mixer", "Faucets", "Hansgrohe", "Chrome", 24800, 18500,
+     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    ("Metris Single Lever Kitchen Mixer", "Faucets", "Hansgrohe", "Chrome", 32500, 24800,
+     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
+    ("Croma Select S Overhead 280", "Showers", "Hansgrohe", "Chrome", 28500, 21500,
+     "https://images.unsplash.com/photo-1584622781564-1d987f7333c1?auto=format&fit=crop&w=800&q=80"),
+    ("Raindance Select E Hand Shower", "Showers", "Hansgrohe", "Chrome", 18500, 13800,
+     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    # ---- Axor ----
+    ("Axor Citterio Basin Mixer 180", "Faucets", "Axor", "Brushed Brass", 68500, 52000,
      "https://images.pexels.com/photos/36718391/pexels-photo-36718391.jpeg?auto=compress&cs=tinysrgb&w=800"),
-    ("Purist Wall Mount Faucet", "Faucets", "Kohler", "Matt Black", 55000, 41500,
+    ("Axor Uno Single Lever Basin Mixer", "Faucets", "Axor", "Polished Chrome", 58000, 44500,
      "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80"),
-    ("Essence Kitchen Mixer", "Faucets", "Grohe", "Chrome", 28900, 21500,
-     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
-    ("Talis E Basin Mixer", "Faucets", "Hansgrohe", "Chrome", 24800, 18500,
+    ("Axor Starck Organic Overhead", "Showers", "Axor", "Chrome", 82000, 62500,
      "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("ME by Starck Basin", "Basins", "Duravit", "White", 38900, 29800,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("Vero Air Countertop Basin", "Basins", "Duravit", "White", 42000, 32500,
+    ("Axor Massaud Wash Basin", "Basins", "Axor", "White", 145000, 112000,
      "https://images.unsplash.com/photo-1631679706909-1844bbd07221?auto=format&fit=crop&w=800&q=80"),
-    ("Neorest AC Smart Toilet", "Water Closets", "TOTO", "White", 285000, 225000,
+    # ---- Grohe ----
+    ("Grohe Essence Kitchen Mixer", "Faucets", "Grohe", "Chrome", 28900, 21500,
      "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
-    ("Aquia Wall-Hung WC", "Water Closets", "TOTO", "White", 68000, 52000,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("Rainshower SmartActive", "Showers", "Grohe", "Chrome", 32500, 24800,
-     "https://images.unsplash.com/photo-1584622781564-1d987f7333c1?auto=format&fit=crop&w=800&q=80"),
-    ("Croma Select S Overhead", "Showers", "Hansgrohe", "Chrome", 28500, 21500,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("Freestanding Oval Bathtub", "Bathtubs", "Roca", "White", 158000, 122000,
-     "https://images.unsplash.com/photo-1625801882109-032ad88edeb3?auto=format&fit=crop&w=800&q=80"),
-    ("Happy D.2 Bathtub", "Bathtubs", "Duravit", "White", 145000, 112000,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("Continental Angle Cock", "Accessories", "Jaquar", "Chrome", 1200, 850,
-     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
-    ("Ornamix Prime Health Faucet", "Accessories", "Jaquar", "Chrome", 2400, 1650,
-     "https://images.unsplash.com/photo-1584622781564-1d987f7333c1?auto=format&fit=crop&w=800&q=80"),
-    ("Carrara Marble 600x600", "Tiles", "Roca", "Matt", 3200, 2450,
+    ("Grohe Grandera Basin Mixer", "Faucets", "Grohe", "Warm Sunset", 42500, 32800,
      "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80"),
-    ("Travertine Beige 800x800", "Tiles", "Roca", "Honed", 3800, 2950,
+    ("Grohe Rainshower SmartActive 310", "Showers", "Grohe", "Chrome", 32500, 24800,
+     "https://images.unsplash.com/photo-1584622781564-1d987f7333c1?auto=format&fit=crop&w=800&q=80"),
+    ("Grohe Eurosmart CE Concealed", "Faucets", "Grohe", "Chrome", 16500, 12500,
+     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    # ---- Vitra ----
+    ("Vitra S20 Wall-Hung WC", "Water Closets", "Vitra", "White", 32000, 24500,
+     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    ("Vitra Sento Rimless WC", "Water Closets", "Vitra", "White", 48500, 37500,
+     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
+    ("Vitra Nest Countertop Basin", "Basins", "Vitra", "White", 22800, 17500,
+     "https://images.unsplash.com/photo-1631679706909-1844bbd07221?auto=format&fit=crop&w=800&q=80"),
+    ("Vitra Options Vanity Basin", "Basins", "Vitra", "White", 18500, 14200,
+     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    # ---- Geberit ----
+    ("Geberit AquaClean Mera Comfort Shower Toilet", "Water Closets", "Geberit", "White", 385000, 298000,
+     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
+    ("Geberit Sigma70 Flush Plate", "Flush Plates", "Geberit", "Brushed Steel", 42500, 32500,
+     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    ("Geberit Duofix In-Wall Cistern", "Accessories", "Geberit", "Grey", 28500, 21800,
+     "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80"),
+    ("Geberit Monolith Plus WC Module", "Water Closets", "Geberit", "Umber Glass", 158000, 122000,
      "https://images.unsplash.com/photo-1631679706909-1844bbd07221?auto=format&fit=crop&w=800&q=80"),
 ]
+
+# Curated sanitaryware imagery (Unsplash / Pexels). All royalty-free.
+PRODUCT_SEEDS_LEGACY_REMOVED = True  # replaced by the 5-brand PRODUCT_SEEDS above
 
 DEMO_CUSTOMERS = [
     ("Rajesh Malhotra", "Malhotra Interiors", "customer@forge.app", "+91 98200 12345", "vip", "Mumbai"),
@@ -95,6 +110,56 @@ DEMO_CUSTOMERS = [
 
 async def _empty(collection: str) -> bool:
     return (await db[collection].count_documents({})) == 0
+
+
+async def resync_catalog_if_needed():
+    """Idempotently reconcile brands+categories+products to the current seed constants.
+    Runs every startup. Only takes action when the current set differs from the target.
+    Safe to run repeatedly. Quotations are unaffected (they store denormalized snapshots
+    of name/sku/image/price on each line, so historical quotes keep rendering)."""
+    desired = {name for name, _ in BRANDS}
+    existing_docs = await db.brands.find({}, {"_id": 0, "name": 1}).to_list(200)
+    existing = {d["name"] for d in existing_docs}
+    if existing == desired:
+        # nothing to do
+        return
+
+    # Full reset of catalog data — brands / products / product_usage / categories.
+    await db.brands.delete_many({})
+    await db.products.delete_many({})
+    await db.product_usage.delete_many({})
+    await db.categories.delete_many({})
+
+    brand_by_name: dict[str, Brand] = {}
+    for name, country in BRANDS:
+        b = Brand(name=name, slug=name.lower().replace(" ", "-"), country=country)
+        brand_by_name[name] = b
+        await db.brands.insert_one(b.dict())
+
+    cat_by_name: dict[str, Category] = {}
+    for name, slug in CATEGORIES:
+        c = Category(name=name, slug=slug)
+        cat_by_name[name] = c
+        await db.categories.insert_one(c.dict())
+
+    for i, (name, cat, brand, finish, mrp, price, image) in enumerate(PRODUCT_SEEDS, start=1):
+        p = Product(
+            name=name,
+            sku=f"{brand[:3].upper()}-{cat_by_name[cat].slug[:3].upper()}-{i:03d}",
+            brand_id=brand_by_name[brand].id,
+            category_id=cat_by_name[cat].id,
+            description=f"{name} · {finish} finish · by {brand}. Ships in 5–7 business days.",
+            finish=finish,
+            material="Solid Brass" if cat == "Faucets" else "Ceramic",
+            dimensions="—",
+            warranty="10 years" if brand in ("Axor", "Geberit") else "5 years",
+            mrp=float(mrp),
+            price=float(price),
+            stock=25 + (i % 40),
+            images=[image],
+            tags=[cat.lower(), brand.lower(), finish.lower()],
+        )
+        await db.products.insert_one(p.dict())
 
 
 async def seed_if_empty():
