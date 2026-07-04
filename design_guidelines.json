@@ -1,0 +1,196 @@
+{
+  "app_name": "Forge",
+  "personality": "1 iOS-Native Clean with Brutalist/Utility enterprise data density",
+  "personality_one_liner": "A premium, tablet-first ERP designed with the effortless utility of Linear, the layout clarity of Stripe Dashboard, and the native elegance of Apple.",
+  "color": {
+    "surface": "#FAFAFA",
+    "onSurface": "#111111",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#111111",
+    "surfaceTertiary": "#F4F4F5",
+    "onSurfaceTertiary": "#3F3F46",
+    "surfaceInverse": "#18181B",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#27272A",
+    "brandPrimary": "#18181B",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#3F3F46",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#E4E4E7",
+    "onBrandTertiary": "#18181B",
+    "success": "#166534",
+    "onSuccess": "#FFFFFF",
+    "warning": "#854D0E",
+    "onWarning": "#FFFFFF",
+    "error": "#991B1B",
+    "onError": "#FFFFFF",
+    "info": "#3F3F46",
+    "onInfo": "#FFFFFF",
+    "border": "#E4E4E7",
+    "borderStrong": "#D4D4D8",
+    "divider": "#F4F4F5",
+    "dark": {
+      "surface": "#09090B",
+      "onSurface": "#FAFAFA",
+      "surfaceSecondary": "#18181B",
+      "onSurfaceSecondary": "#FAFAFA",
+      "surfaceTertiary": "#27272A",
+      "onSurfaceTertiary": "#D4D4D8",
+      "surfaceInverse": "#FAFAFA",
+      "onSurfaceInverse": "#09090B",
+      "brand": "#D4D4D8",
+      "brandPrimary": "#FAFAFA",
+      "onBrandPrimary": "#09090B",
+      "brandSecondary": "#A1A1AA",
+      "onBrandSecondary": "#09090B",
+      "brandTertiary": "#3F3F46",
+      "onBrandTertiary": "#FAFAFA",
+      "border": "#27272A",
+      "borderStrong": "#3F3F46",
+      "divider": "#27272A"
+    }
+  },
+  "typography": {
+    "displayFontFamily": "Geist",
+    "textFontFamily": "Geist",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous Apple-native padding on outer screen edges, tight utility-driven spacing inside data tables. Multi-column cards use flexWrap with space-between. Absolutely no half-width orphans. Use safe area at screen root.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 1,
+  "navigation": "custom_sidebar_tablet_bottom_tabs_mobile",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use on sticky tablet sidebar headers",
+      "Use on active Quotation panel headers",
+      "Use on 'Confirm Quotation' sticky CTA container",
+      "Use on Customer Portal order tracking floating cards"
+    ],
+    "dont's": [
+      "Do not use inside data grids or tables",
+      "Do not use on standard form inputs",
+      "Do not use on product catalog cards"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Auth",
+      "purpose": "Role-based entry point to the ERP.",
+      "states": {
+        "loading": "Centered spinner on blank surface.",
+        "empty": "N/A",
+        "error": "Standard alert toast top edge."
+      },
+      "layout": "Tablet: Split screen layout. Left 50% uses full-bleed luxury bathroom imagery (hero_auth) with vertical gradient scrim and elegant typography (Forge). Right 50% centered minimal login form. Mobile: Standard vertical layout with image as top 30% header."
+    },
+    {
+      "name": "Dashboard",
+      "purpose": "Role-based home overview focusing on actionable KPIs.",
+      "states": {
+        "loading": "Skeleton lines mimicking KPI cards.",
+        "empty": "Illustration of a clean desk with 'No recent activity'.",
+        "error": "Error state in widget container with 'Retry' CTA."
+      },
+      "layout": "Tablet: Custom sidebar spine (left 20%). Main area (80%) features top row of 3-4 KPI metric cards (Revenue, Pending Quotes). Below, 2-column layout: Left col 'Recent Activity' list, Right col 'Top Products' list. Use 0.5pt subtle borders."
+    },
+    {
+      "name": "Product Catalog",
+      "purpose": "Browse and filter the entire distributor inventory.",
+      "states": {
+        "loading": "Grid skeletons.",
+        "empty": "'No products match these filters' centered.",
+        "error": "Full screen error with retry button."
+      },
+      "layout": "Left sidebar (spine). Main area top header: sticky glass search bar. Left 25% of main area: persistent filter list (Brand, Category). Right 75%: Grid of product cards (image top, text bottom). Multi-column flex-wrap space-between."
+    },
+    {
+      "name": "Quotation Builder",
+      "purpose": "Keyboard-first, ultra-fast POS checkout and quote assembly.",
+      "states": {
+        "loading": "Spinner overlaid on disabled lists.",
+        "empty": "Right panel 'No items added yet'.",
+        "error": "Inline error near failing input."
+      },
+      "layout": "Tablet: Split view. Left 60%: Instant catalog search + visual grid of products. Right 40%: The Active Quotation 'Receipt'. Shows line items with inline numeric inputs for Qty/Discount (use Mono font). Sticky footer in right panel: Live totals + 'Confirm Quotation' primary CTA pinned to bottom."
+    },
+    {
+      "name": "Customer Portal Home",
+      "purpose": "Consumer-facing order tracking and document access.",
+      "states": {
+        "loading": "Stripe-style pulsing skeletons.",
+        "empty": "'No active orders.' with support CTA.",
+        "error": "Readable message + Retry button."
+      },
+      "layout": "Apple-native feel. Top hero banner with tinted brand image and gradient scrim. Below: Vertical list of 'Active Quotations' as large elevated cards (shadow 1). Floating glass container at bottom for 'Contact Support' actions."
+    }
+  ],
+  "images": {
+    "hero_auth": {
+      "url": "https://images.pexels.com/photos/7045908/pexels-photo-7045908.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Minimalistic modern luxury bathroom interior with white sink and mirrors"
+    },
+    "hero_customer_portal": {
+      "url": "https://images.pexels.com/photos/6957081/pexels-photo-6957081.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Contemporary luxury bathroom with round ceramic bathtub"
+    },
+    "product_brass_faucet": {
+      "url": "https://images.pexels.com/photos/36718391/pexels-photo-36718391.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Modern brass faucet over sleek black basin"
+    },
+    "product_freestanding_bathtub": {
+      "url": "https://images.unsplash.com/photo-1625801882109-032ad88edeb3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwyfHxmcmVlc3RhbmRpbmclMjBiYXRodHViJTIwbHV4dXJ5fGVufDB8fHx8MTc4MjY0OTcyN3ww&ixlib=rb-4.1.0&q=85",
+      "alt": "White ceramic freestanding luxury bathtub"
+    }
+  },
+  "haptics": {
+    "primary_button_press": "impactLight",
+    "tab_change": "selection",
+    "add_to_quotation": "impactMedium",
+    "increase_quantity": "selection",
+    "quotation_confirm": "notificationSuccess",
+    "error_state": "notificationError"
+  },
+  "instructions_to_main_agent": [
+    "Strictly adhere to the '1 iOS-Native Clean' guidelines. The UI must feel like Linear + Stripe Dashboard — highly dense but meticulously organized with generous outer padding.",
+    "BANNED: Any use of blue, indigo, purple, or navy. Use the provided monochromatic Carbon/Graphite theme.",
+    "Typography: Use Geist for all standard UI. You MUST use a monospace font (like Space Mono or JetBrains Mono) for all numeric data (SKUs, pricing, quantities, live totals in the Quotation Builder) to create an authentic ERP/POS feel.",
+    "Tablet-First Navigation: Implement a custom permanent left sidebar ('spine') for tablet dimensions, falling back to a bottom tab bar for mobile sizes.",
+    "Quotation Builder is the flagship screen: it MUST be a split-pane layout on tablet (Catalog on left, receipt/ticket on right). Ensure sticky 'Confirm Quotation' CTA at the bottom right. Use KeyboardAvoidingView perfectly here.",
+    "Every hero/background image MUST have a top-to-bottom vertical gradient scrim (transparent to surfaceInverse at >=70%) to ensure text readability.",
+    "Implement haptics precisely as mapped in the haptics block."
+  ]
+}
