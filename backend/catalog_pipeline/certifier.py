@@ -24,6 +24,7 @@ class CertificationReport:
     products_needing_review: int = 0
     families_detected: int = 0
     duplicates_sku: int = 0
+    cross_family_skus: int = 0
     duplicates_family: int = 0
     missing_images: int = 0
     missing_mrp: int = 0
@@ -45,21 +46,47 @@ def _rate(numerator: int, denominator: int) -> float:
 def validate(rows: list[ProductRow]) -> tuple[list[ProductRow], CertificationReport]:
     report = CertificationReport(total_products=len(rows))
 
-    # 1) SKU dedupe
+    # 1) SKU dedupe with cross-family whitelist.
+    #    A "true duplicate" is the same SKU appearing more than once *inside the
+    #    same family_key* (real data-entry error → reject).
+    #    A "cross-family listing" is the same SKU appearing across *different*
+    #    family_keys, which is legitimate for brands like Geberit and Vitra
+    #    where a single flush plate or trim SKU is bundled into several product
+    #    families. Those rows stay accepted; the importer's `find_one({sku})`
+    #    path naturally merges them onto the canonical product.
     sku_seen: dict[str, list[ProductRow]] = defaultdict(list)
     for r in rows:
         if r.sku and r.sku != MISSING:
             sku_seen[r.sku].append(r)
 
-    unique_skus = len(sku_seen)
-    dupes = 0
+    true_dupes = 0
+    cross_dupes = 0
     for sku, group in sku_seen.items():
-        if len(group) > 1:
-            dupes += len(group) - 1
-            for r in group[1:]:
-                r.issues.append(f"Duplicate SKU '{sku}' — will be skipped on import")
+        if len(group) <= 1:
+            continue
+        canonical = group[0]
+        canonical_family = canonical.family_key if canonical.family_key and canonical.family_key != MISSING else None
+        for r in group[1:]:
+            r_family = r.family_key if r.family_key and r.family_key != MISSING else None
+            same_family = (canonical_family is not None and r_family == canonical_family)
+            if same_family:
+                # True duplicate — same SKU under the same family: reject the copy.
+                true_dupes += 1
+                r.issues.append(f"Duplicate SKU '{sku}' within same family — will be skipped on import")
                 r.status = "rejected"
-    report.duplicates_sku = dupes
+            else:
+                # Legitimate cross-family listing — merge on import, keep for review.
+                cross_dupes += 1
+                r.issues.append(
+                    f"SKU '{sku}' also listed under another family — will merge onto the canonical product on import"
+                )
+                # Preserve current status (accepted / pending); do NOT reject.
+    report.duplicates_sku = true_dupes
+    report.cross_family_skus = cross_dupes
+    if cross_dupes:
+        report.warnings.append(
+            f"{cross_dupes} cross-family SKU listing(s) detected — treated as legitimate re-listings, not errors"
+        )
 
     # 2) Family detection: rows sharing family_key are variants
     families: dict[str, list[ProductRow]] = defaultdict(list)
@@ -100,8 +127,11 @@ def validate(rows: list[ProductRow]) -> tuple[list[ProductRow], CertificationRep
 
     # 6) Certification scores
     n = report.total_products or 1
+    total_with_sku = len([r for r in rows if r.sku and r.sku != MISSING])
     report.extraction_accuracy = _rate(n - report.missing_categories, n)
-    report.sku_accuracy = _rate(unique_skus, len([r for r in rows if r.sku and r.sku != MISSING]) or 1)
+    # sku_accuracy: count only *true* duplicates against total SKUs. Cross-family
+    # listings are legitimate and don't penalise the score.
+    report.sku_accuracy = _rate(total_with_sku - report.duplicates_sku, total_with_sku or 1)
     report.price_accuracy = _rate(n - report.missing_mrp, n)
     report.category_accuracy = _rate(n - report.missing_categories, n)
     report.variant_accuracy = _rate(n - len(report.variant_conflicts), n)
@@ -124,6 +154,10 @@ def validate(rows: list[ProductRow]) -> tuple[list[ProductRow], CertificationRep
         report.duplicate_score, report.missing_data_score,
     ]
     report.overall_score = round(sum(scores) / len(scores), 1)
-    report.production_ready = report.overall_score >= 95 and report.duplicates_sku <= max(3, int(0.02 * report.total_products))
+    # production_ready: only *true* SKU duplicates gate certification.
+    report.production_ready = (
+        report.overall_score >= 95
+        and report.duplicates_sku <= max(3, int(0.02 * report.total_products))
+    )
 
     return rows, report

@@ -101,3 +101,48 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Forge — premium ERP/CRM/POS for sanitaryware distributors. Latest task: finish two P1 backend polish items — (a) VITRA .wdp → JPEG conversion for 100% image coverage, and (b) refactor certifier to whitelist cross-family SKU duplicates so Geberit/Vitra auto-certify."
+
+backend:
+  - task: "WDP (JPEG XR) image decoding in catalog image extractor"
+    implemented: true
+    working: "NA"
+    file: "backend/catalog_pipeline/image_extractor.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Added _convert_wdp_to_png() using imagecodecs.jpegxr_decode + png_encode. When the xlsx media path ends in .wdp / .jxr / .hdp we now decode to PNG instead of skipping. Also fixed a latent bug where absolute Target paths ('/xl/worksheets/sheet1.xml') in workbook.xml.rels were being resolved as 'xl/xl/...'. Verified via a synthetic xlsx containing one PNG + one WDP anchor — extractor now returns both images as data URLs. imagecodecs==2026.3.6 pinned in requirements.txt."
+
+  - task: "Certifier — cross-family SKU whitelist"
+    implemented: true
+    working: "NA"
+    file: "backend/catalog_pipeline/certifier.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Refactored SKU dedupe. Same SKU inside the same family_key => 'true duplicate' (rejected, counted in duplicates_sku). Same SKU across different family_keys => 'cross-family listing' (kept, counted separately in the new cross_family_skus field, warning added). sku_accuracy now penalises only true duplicates. production_ready gate uses only duplicates_sku so Geberit/Vitra can now auto-certify at overall_score ≥ 95. Verified via synthetic ProductRow scenarios — cross-family scenario reports duplicates_sku=0, cross_family_skus=1, production_ready=true; true-dupe scenario correctly marks the second row rejected."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 3
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "WDP (JPEG XR) image decoding in catalog image extractor"
+    - "Certifier — cross-family SKU whitelist"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: "Two P1 backend fixes ready for regression. (1) image_extractor now decodes WDP frames via imagecodecs; also fixed absolute-target resolution. (2) certifier distinguishes true dupes from cross-family listings so Geberit/Vitra imports can hit production_ready. Please regression-test the /api/catalog/imports/from-url and /api/catalog/imports/approve flows for at least one supplier catalog to confirm nothing regressed. Also verify the CertificationReport now exposes a `cross_family_skus` field. Auth creds in /app/memory/test_credentials.md (owner@forge.app / Forge@2026). No frontend changes in this iteration."

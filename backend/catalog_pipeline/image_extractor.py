@@ -3,7 +3,9 @@
 For XLSX we parse the zip archive directly (not via openpyxl) because openpyxl
 silently drops images from sheets that contain any unsupported format (WMF, WDP).
 Every raster image (PNG/JPEG/JPG) is read as-is; EMF is converted to PNG via
-ImageMagick when available; WDP is skipped with a warning.
+ImageMagick when available; WDP (JPEG XR / HD Photo) is decoded natively via
+`imagecodecs` and re-encoded as PNG — this closes the ~2.7% VITRA image gap
+without any external system dependency.
 """
 from __future__ import annotations
 import base64
@@ -18,6 +20,20 @@ from typing import Iterator
 from xml.etree import ElementTree as ET
 
 logger = logging.getLogger("forge.catalog_pipeline.image")
+
+# --- Optional JPEG XR / HD Photo (.wdp / .jxr) decoder ----------------------
+# imagecodecs bundles libjxr statically so we don't need libjxr/JxrDecApp
+# installed on the OS. If the wheel isn't present the extractor still runs;
+# WDP frames are simply skipped as before.
+try:
+    from imagecodecs import jpegxr_decode as _jxr_decode  # type: ignore
+    from imagecodecs import png_encode as _png_encode  # type: ignore
+    _HAS_JXR = True
+except Exception as _e:  # pragma: no cover
+    _jxr_decode = None  # type: ignore
+    _png_encode = None  # type: ignore
+    _HAS_JXR = False
+    logger.info("imagecodecs unavailable — WDP frames will be skipped (%s)", _e)
 
 NS = {
     "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
@@ -52,6 +68,26 @@ def _convert_emf_to_png(emf_bytes: bytes) -> bytes | None:
                     return f.read()
     except Exception as e:  # pragma: no cover
         logger.debug("EMF conversion failed: %s", e)
+        return None
+
+
+def _convert_wdp_to_png(wdp_bytes: bytes) -> bytes | None:
+    """Decode a JPEG XR / HD Photo (.wdp / .jxr) image and re-encode as PNG.
+
+    Uses `imagecodecs` (bundles libjxr) so we don't need JxrDecApp or ImageMagick
+    with a JXR delegate installed on the OS. Returns None on any failure so the
+    caller can fall through to "skip" behaviour identical to before.
+    """
+    if not _HAS_JXR or _jxr_decode is None or _png_encode is None:
+        return None
+    try:
+        arr = _jxr_decode(wdp_bytes)
+        if arr is None:
+            return None
+        # png_encode handles uint8/uint16 grayscale, RGB and RGBA arrays.
+        return bytes(_png_encode(arr))
+    except Exception as e:  # pragma: no cover
+        logger.debug("WDP → PNG conversion failed: %s", e)
         return None
 
 
@@ -114,8 +150,13 @@ def extract_images_from_xlsx(xlsx_bytes: bytes) -> Iterator[tuple[str, int, str,
             rid = sh.get("{%s}id" % NS["r"])
             name = sh.get("name") or ""
             target = rid_to_target.get(rid) or ""
-            # target like "worksheets/sheet1.xml"
-            sheet_map[name] = "xl/" + target.lstrip("/")
+            # Two conventions in the wild:
+            #   • relative: "worksheets/sheet1.xml" → resolve against "xl/"
+            #   • absolute: "/xl/worksheets/sheet1.xml" → use directly
+            if target.startswith("/"):
+                sheet_map[name] = target.lstrip("/")
+            else:
+                sheet_map[name] = "xl/" + target
     except Exception as e:
         logger.warning("xlsx workbook parse failed: %s", e); return
 
@@ -195,8 +236,13 @@ def extract_images_from_xlsx(xlsx_bytes: bytes) -> Iterator[tuple[str, int, str,
                         if not conv:
                             continue
                         raw, mime = conv, "image/png"
+                    elif ext in ("wdp", "jxr", "hdp"):
+                        conv = _convert_wdp_to_png(raw)
+                        if not conv:
+                            continue
+                        raw, mime = conv, "image/png"
                     else:
-                        # WDP / other unsupported: skip
+                        # Other unsupported vector formats: skip
                         continue
 
                 h = _hash(raw)

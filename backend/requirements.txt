@@ -44,6 +44,7 @@ httplib2==0.32.0
 httpx==0.28.1
 huggingface_hub==1.21.0
 idna==3.18
+imagecodecs==2026.3.6
 importlib_metadata==9.0.0
 iniconfig==2.3.0
 isort==8.0.1
