@@ -26,6 +26,9 @@ import {
 } from "react-native";
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 
+// Web-only "grab" cursor hint on drag handles. Silently ignored on native.
+const grabCursor: any = Platform.OS === "web" ? { cursor: "grab" } : null;
+
 import { BottomSheet } from "@/src/components/BottomSheet";
 import { Badge, Button, EmptyState, StatusBadge } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
@@ -154,6 +157,11 @@ export default function QuotationBuilder() {
   const [swapItems, setSwapItems] = useState<Product[]>([]);
   const [swapLoading, setSwapLoading] = useState(false);
 
+  // Inline room rename — when set, that room header renders a TextInput instead
+  // of its label. Escape or blur cancels; Enter commits via `renameRoom`.
+  const [inlineRenameRoom, setInlineRenameRoom] = useState<string | null>(null);
+  const [inlineRenameValue, setInlineRenameValue] = useState("");
+
   // ---------- Load reference data ----------
   useEffect(() => {
     (async () => {
@@ -236,7 +244,10 @@ export default function QuotationBuilder() {
     return { subtotal: sub, discount: disc, tax, grand: Math.round((sub - disc + tax) * 100) / 100 };
   }, [s.lines, s.projectDiscount, s.categoryDiscounts]);
 
-  const catNameById: Record<string, string> = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  const catNameById: Record<string, string> = useMemo(
+    () => Object.fromEntries(categories.map((c) => [c.id, c.name])),
+    [categories],
+  );
   const usedCategoryIds = Array.from(new Set(s.lines.map((l) => l.category_id).filter(Boolean))) as string[];
   const pickerList: Product[] = pickerTab === "recent" ? recent : pickerTab === "frequent" ? frequent : products;
 
@@ -338,6 +349,10 @@ export default function QuotationBuilder() {
     });
   };
   const deleteRoom = (name: string) => {
+    if (s.rooms.length <= 1) {
+      toast.error("Keep at least one room");
+      return;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     history.apply((cur) => {
       if (cur.rooms.length <= 1) return cur;
@@ -364,9 +379,8 @@ export default function QuotationBuilder() {
       return { ...cur, categoryDiscounts: next };
     });
 
-  // Notes (unused for now — notes UI lives in the Finish & Review screen; hook
-  // is exposed here so future inline note editing can plug straight in).
-  // const setNotes = (n: string) => history.apply((cur) => ({ ...cur, notes: n }), { coalesceKey: "notes" });
+  // Notes — inline in footer, coalesced so a paragraph of typing = one undo entry.
+  const setNotes = (n: string) => history.apply((cur) => ({ ...cur, notes: n }), { coalesceKey: "notes" });
 
   // DnD — reorder rooms (horizontal)
   const onRoomDragEnd = ({ data }: { data: string[] }) =>
@@ -528,10 +542,10 @@ export default function QuotationBuilder() {
       <ScaleDecorator>
         <Pressable
           onLongPress={drag}
-          delayLongPress={180}
+          delayLongPress={160}
           onPress={() => setActiveRoom(item)}
           testID={`room-${item}`}
-          style={[styles.roomTab, active && styles.roomTabActive, isActive && { opacity: 0.7 }]}
+          style={[styles.roomTab, active && styles.roomTabActive, isActive && { opacity: 0.7 }, grabCursor]}
         >
           <Feather name="menu" size={11} color={active ? colors.onBrand : colors.onSurfaceMuted} style={{ opacity: 0.7, marginRight: 4 }} />
           <Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.onBrand : colors.onSurfaceSecondary }}>{item}</Text>
@@ -543,21 +557,53 @@ export default function QuotationBuilder() {
   const renderReceiptRow = ({ item, drag, isActive }: RenderItemParams<BuilderRow>) => {
     if (item.kind === "room-header") {
       const isActiveRoom = s.activeRoom === item.roomName;
+      const isRenaming = inlineRenameRoom === item.roomName;
+      const commitInlineRename = () => {
+        if (inlineRenameRoom) renameRoom(inlineRenameRoom, inlineRenameValue);
+        setInlineRenameRoom(null);
+      };
       return (
         <View style={[styles.roomHeader, isActiveRoom && { borderColor: colors.brand }, isActive && { opacity: 0.7 }]}>
-          <Pressable onPress={() => toggleCollapse(item.roomName)} testID={`room-toggle-${item.roomName}`}>
+          <Pressable
+            onLongPress={drag}
+            delayLongPress={160}
+            hitSlop={6}
+            style={[styles.dragHandle, grabCursor]}
+            testID={`room-drag-${item.roomName}`}
+          >
+            <Feather name="menu" size={13} color={colors.onSurfaceMuted} />
+          </Pressable>
+          <Pressable onPress={() => toggleCollapse(item.roomName)} testID={`room-toggle-${item.roomName}`} hitSlop={6}>
             <Feather name={item.collapsed ? "chevron-right" : "chevron-down"} size={16} color={colors.onSurface} />
           </Pressable>
-          <Pressable onPress={() => setActiveRoom(item.roomName)} style={{ flex: 1 }}>
-            <Text style={{ fontSize: 14, fontWeight: "700", color: colors.onSurface }}>{item.roomName}</Text>
-            <Text style={type.caption}>{item.itemCount} items · {money(item.subtotal)}</Text>
-          </Pressable>
+          {isRenaming ? (
+            <TextInput
+              testID={`room-inline-input-${item.roomName}`}
+              value={inlineRenameValue}
+              onChangeText={setInlineRenameValue}
+              autoFocus
+              onBlur={commitInlineRename}
+              onSubmitEditing={commitInlineRename}
+              onKeyPress={(e) => { if ((e.nativeEvent as any).key === "Escape") setInlineRenameRoom(null); }}
+              returnKeyType="done"
+              style={styles.inlineRoomInput}
+              selectTextOnFocus
+            />
+          ) : (
+            <Pressable onPress={() => setActiveRoom(item.roomName)} style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontWeight: "700", color: colors.onSurface }}>{item.roomName}</Text>
+              <Text style={type.caption}>{item.itemCount} items · {money(item.subtotal)}</Text>
+            </Pressable>
+          )}
           <Pressable
             testID={`room-rename-${item.roomName}`}
             hitSlop={8}
-            onPress={() => { setRoomSheet({ kind: "rename", name: item.roomName }); setRoomInput(item.roomName); }}
+            onPress={() => {
+              if (isRenaming) commitInlineRename();
+              else { setInlineRenameRoom(item.roomName); setInlineRenameValue(item.roomName); }
+            }}
           >
-            <Feather name="edit-2" size={14} color={colors.onSurfaceMuted} />
+            <Feather name={isRenaming ? "check" : "edit-2"} size={14} color={isRenaming ? colors.brand : colors.onSurfaceMuted} />
           </Pressable>
           <Pressable testID={`room-dup-${item.roomName}`} hitSlop={8} onPress={() => duplicateRoom(item.roomName)}>
             <Feather name="copy" size={14} color={colors.onSurfaceMuted} />
@@ -577,9 +623,9 @@ export default function QuotationBuilder() {
       <View style={[styles.lineRow, isActive && { opacity: 0.75, transform: [{ scale: 0.99 }] }]}>
         <Pressable
           onLongPress={drag}
-          delayLongPress={180}
+          delayLongPress={160}
           hitSlop={6}
-          style={styles.dragHandle}
+          style={[styles.dragHandle, grabCursor]}
           testID={`line-drag-${l.id}`}
         >
           <Feather name="menu" size={14} color={colors.onSurfaceMuted} />
@@ -773,6 +819,20 @@ export default function QuotationBuilder() {
 
       {/* Footer totals + CTA */}
       <View style={styles.footer}>
+        {/* Inline notes — one undo entry per burst of typing, printed on the PDF. */}
+        <View style={styles.notesWrap}>
+          <Feather name="edit-3" size={13} color={colors.onSurfaceMuted} />
+          <TextInput
+            testID="quote-notes-input"
+            value={s.notes}
+            onChangeText={setNotes}
+            placeholder="Add a note for the customer (printed on the PDF)…"
+            placeholderTextColor={colors.onSurfaceMuted}
+            style={styles.notesInput}
+            multiline
+          />
+        </View>
+
         <Pressable
           onPress={() => setDiscountSheet({ kind: "project" })}
           testID="open-discount-sheet"
@@ -858,6 +918,15 @@ export default function QuotationBuilder() {
           </Text>
         </View>
         <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+          {isDesktop ? (
+            <View style={styles.shortcutHint} testID="shortcut-hint">
+              <Text style={styles.shortcutKey}>⌘Z</Text>
+              <Text style={styles.shortcutSep}>·</Text>
+              <Text style={styles.shortcutKey}>⇧⌘Z</Text>
+              <Text style={styles.shortcutSep}>·</Text>
+              <Text style={styles.shortcutKey}>⌘K</Text>
+            </View>
+          ) : null}
           <Pressable
             testID="undo-btn"
             onPress={history.undo}
@@ -1238,4 +1307,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
     backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border,
   },
+  inlineRoomInput: {
+    flex: 1, fontSize: 14, fontWeight: "700", color: colors.onSurface,
+    paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.brand,
+  },
+  notesWrap: {
+    flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 10,
+    backgroundColor: colors.surfaceTertiary, borderRadius: radius.md,
+  },
+  notesInput: {
+    flex: 1, fontSize: 13, color: colors.onSurface, padding: 0, minHeight: 20, maxHeight: 84,
+  },
+  shortcutHint: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6,
+    backgroundColor: colors.surfaceTertiary, marginRight: 4,
+  },
+  shortcutKey: { fontSize: 10, fontWeight: "700", color: colors.onSurfaceSecondary, fontVariant: ["tabular-nums"] },
+  shortcutSep: { fontSize: 10, color: colors.onSurfaceMuted },
 });
