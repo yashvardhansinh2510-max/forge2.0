@@ -1,6 +1,7 @@
 """Orchestrator wiring Extraction → Validation → Certification → Import."""
 from __future__ import annotations
 import logging
+import re
 from datetime import datetime, timezone
 
 from db import db
@@ -146,8 +147,18 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
             continue
         cat = cat_by_name.get(str(r.get("category", "")).lower())
         if not cat:
-            skipped += 1
-            continue
+            # Auto-create category from the row's supplier-provided label so
+            # per-file categories (BM, Ceramic, Thermostat, kitchen, ...) work
+            # without pre-seeding an allow-list.
+            label = str(r.get("category", "")).strip()
+            if not label:
+                skipped += 1
+                continue
+            slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "misc"
+            c = Category(name=label, slug=slug)
+            await db.categories.insert_one(c.dict())
+            cat = c.dict()
+            cat_by_name[label.lower()] = cat
 
         mrp = float(r["mrp"])
         price_val = r.get("dealer_price") if r.get("dealer_price") not in (None, MISSING) else mrp

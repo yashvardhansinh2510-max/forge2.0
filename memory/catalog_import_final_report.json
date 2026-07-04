@@ -1,0 +1,58 @@
+{
+  "per_brand": [
+    {
+      "brand": "Vitra",
+      "products": 250,
+      "families": 101,
+      "variants": 250,
+      "categories": 6,
+      "subcategories": 19,
+      "series": 39,
+      "media": 243
+    },
+    {
+      "brand": "Grohe",
+      "products": 854,
+      "families": 779,
+      "variants": 56,
+      "categories": 6,
+      "subcategories": 0,
+      "series": 16,
+      "media": 864
+    },
+    {
+      "brand": "Geberit",
+      "products": 496,
+      "families": 234,
+      "variants": 1,
+      "categories": 5,
+      "subcategories": 0,
+      "series": 11,
+      "media": 504
+    },
+    {
+      "brand": "Hansgrohe",
+      "products": 1272,
+      "families": 1158,
+      "variants": 1147,
+      "categories": 14,
+      "subcategories": 1,
+      "series": 41,
+      "media": 1273
+    }
+  ],
+  "hansgrohe_collections": {
+    "AXOR": 446,
+    "Hansgrohe": 826
+  },
+  "totals": {
+    "products": 2872,
+    "families": 2272,
+    "variants": 1454,
+    "subcategories": 20,
+    "series": 107,
+    "categories": 26,
+    "media": 2884
+  },
+  "axor_brand_deactivated": true
+}
