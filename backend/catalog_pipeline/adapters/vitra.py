@@ -15,6 +15,7 @@ import io
 import re
 
 from ..base import MISSING, BrandAdapter, ExtractionReport, ProductRow
+from ..image_extractor import extract_images_from_xlsx
 
 SKU_RE = re.compile(r"[A-Z]?\d{3,6}B[A-Z0-9]+H\d{2,6}", re.IGNORECASE)
 
@@ -58,6 +59,12 @@ class VitraAdapter(BrandAdapter):
             return rows, report
 
         last_design = MISSING
+
+        # Extract every raster image up front, keyed by (sheet, anchor_row_1based).
+        images_by_key: dict[tuple[str, int], list[str]] = {}
+        for sheet, row_idx, _h, url in extract_images_from_xlsx(data):
+            images_by_key.setdefault((sheet, row_idx), []).append(url)
+        report.images_found = sum(len(v) for v in images_by_key.values())
 
         for ws in wb.worksheets:
             all_rows: list[list] = [list(r) for r in ws.iter_rows(values_only=True)]
@@ -114,6 +121,17 @@ class VitraAdapter(BrandAdapter):
                         cat = _classify(ws.title, detail)
                         family_key = f"vitra:{ws.title.lower()}:{re.sub(r'[^a-z0-9]+', '-', design.lower())}:{re.sub(r'[^a-z0-9]+', '-', detail.lower())}"
 
+                        # Try to map an image anchored at this row (row is 1-based
+                        # in openpyxl but embedded images anchor at the row above
+                        # for tall row heights). Try several offsets.
+                        imgs: list[str] = []
+                        for delta in (0, -1, 1, -2, 2):
+                            imgs = images_by_key.get((ws.title, r_idx + delta)) or []
+                            if imgs:
+                                break
+                        if imgs:
+                            report.images_mapped += 1
+
                         pr = ProductRow(
                             brand=self.brand, sku=primary_sku,
                             name=f"{design} · {detail}".strip(" ·") or design or MISSING,
@@ -123,7 +141,7 @@ class VitraAdapter(BrandAdapter):
                             variant=finish, finish=finish, colour=finish,
                             dimensions=detail if detail else MISSING,
                             mrp=mrp, dealer_price=MISSING,
-                            image_page=None,
+                            images=imgs[:1], image_page=None,
                             accessories=extras,   # any secondary codes are related SKUs
                             confidence=0.96 if mrp != MISSING and cat != MISSING else 0.7,
                         )
@@ -147,6 +165,4 @@ class VitraAdapter(BrandAdapter):
                         ))
 
         report.parsed_rows = len(rows)
-        # NB: openpyxl warns about WMF images in Vitra file — we simply cannot map them.
-        report.warnings.append("VITRA 2026 embeds product images as WMF which openpyxl cannot decode; image_accuracy will be 0.")
         return rows, report

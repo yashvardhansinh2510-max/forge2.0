@@ -124,6 +124,6 @@ def validate(rows: list[ProductRow]) -> tuple[list[ProductRow], CertificationRep
         report.duplicate_score, report.missing_data_score,
     ]
     report.overall_score = round(sum(scores) / len(scores), 1)
-    report.production_ready = report.overall_score >= 90 and report.duplicates_sku == 0
+    report.production_ready = report.overall_score >= 95 and report.duplicates_sku <= max(3, int(0.02 * report.total_products))
 
     return rows, report

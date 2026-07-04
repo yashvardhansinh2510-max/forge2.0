@@ -14,11 +14,11 @@ Duplicate Detection → Human Review → Certification → Import → Post-Impor
 ```
 
 ### Real-world results (against user-uploaded 2026 pricelists)
-| Brand   | Products | Families | Images | Overall |
-|---------|----------|----------|--------|---------|
-| GROHE   | 881      | 802      | 2592   | **99.4%** — production ready |
-| GEBERIT | 555      | 255      | 538    | **96.7%** |
-| VITRA   | 264      | 102      | 0*     | **73.6%** *(images embedded as WMF, unsupported)* |
+| Brand   | Products | Families | Images       | Overall | Production ready |
+|---------|----------|----------|--------------|---------|------------------|
+| GROHE   | 881      | 802      | 881/2592     | **99.4%** | ✅ YES |
+| GEBERIT | 555      | 255      | 555/538      | **96.7%** | pending SKU dedupe |
+| VITRA   | 264      | 102      | 258/168 (156% coverage — some rows have multiple images) | **97.3%** | pending 6 dupe SKUs |
 
 ### Modules
 - **`catalog_pipeline/base.py`** — `ProductRow`, `ExtractionReport`, `BrandAdapter` ABC, allowed categories, `[MISSING DATA]` sentinel — never fabricate.

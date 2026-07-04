@@ -1,25 +1,63 @@
-"""PDF + XLSX image extraction. Preserves originals as base64 data-URLs."""
+"""PDF + XLSX image extraction.
+
+For XLSX we parse the zip archive directly (not via openpyxl) because openpyxl
+silently drops images from sheets that contain any unsupported format (WMF, WDP).
+Every raster image (PNG/JPEG/JPG) is read as-is; EMF is converted to PNG via
+ImageMagick when available; WDP is skipped with a warning.
+"""
 from __future__ import annotations
 import base64
 import hashlib
 import logging
+import re
+import subprocess
+import tempfile
+import zipfile
 from io import BytesIO
 from typing import Iterator
+from xml.etree import ElementTree as ET
 
 logger = logging.getLogger("forge.catalog_pipeline.image")
 
-
-def _as_data_url(data: bytes, mime: str) -> str:
-    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+NS = {
+    "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+    "r":   "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "rel": "http://schemas.openxmlformats.org/package/2006/relationships",
+    "wb":  "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+}
+RASTER_EXT = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg"}
 
 
 def _hash(data: bytes) -> str:
     return hashlib.sha1(data).hexdigest()[:16]
 
 
+def _as_data_url(data: bytes, mime: str) -> str:
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _convert_emf_to_png(emf_bytes: bytes) -> bytes | None:
+    """Convert EMF to PNG using ImageMagick, if available."""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".emf", delete=False) as inp:
+            inp.write(emf_bytes); inp.flush()
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as out:
+                res = subprocess.run(
+                    ["convert", inp.name, out.name],
+                    capture_output=True, timeout=8,
+                )
+                if res.returncode != 0:
+                    return None
+                with open(out.name, "rb") as f:
+                    return f.read()
+    except Exception as e:  # pragma: no cover
+        logger.debug("EMF conversion failed: %s", e)
+        return None
+
+
+# ---------- PDF ----------
+
 def extract_images_from_pdf(pdf_bytes: bytes) -> Iterator[tuple[int, str, str]]:
-    """Yield (page_index_1based, sha1, data_url) for each image inside the PDF.
-    Uses pypdf's low-level image accessor. Silently skips corrupted images."""
     try:
         from pypdf import PdfReader  # type: ignore
     except Exception as e:  # pragma: no cover
@@ -30,13 +68,11 @@ def extract_images_from_pdf(pdf_bytes: bytes) -> Iterator[tuple[int, str, str]]:
     except Exception as e:
         logger.warning("Cannot open PDF: %s", e)
         return
-
     seen: set[str] = set()
     for i, page in enumerate(reader.pages, start=1):
         try:
             imgs = list(page.images)
-        except Exception as e:  # pragma: no cover
-            logger.debug("page %s image list failed: %s", i, e)
+        except Exception:
             continue
         for im in imgs:
             try:
@@ -47,55 +83,137 @@ def extract_images_from_pdf(pdf_bytes: bytes) -> Iterator[tuple[int, str, str]]:
                 if h in seen:
                     continue
                 seen.add(h)
-                mime = "image/jpeg"
-                if data[:8].startswith(b"\x89PNG\r\n\x1a\n"):
-                    mime = "image/png"
+                mime = "image/png" if data[:8].startswith(b"\x89PNG\r\n\x1a\n") else "image/jpeg"
                 yield i, h, _as_data_url(data, mime)
             except Exception:
                 continue
 
 
+# ---------- XLSX (zip-first) ----------
+
 def extract_images_from_xlsx(xlsx_bytes: bytes) -> Iterator[tuple[str, int, str, str]]:
-    """Yield (sheet_name, anchor_row_1based, sha1, data_url) for each embedded image
-    in every worksheet. Uses openpyxl's drawing anchors."""
+    """Yield (sheet_name, anchor_row_1based, sha1, data_url) for every embedded
+    raster image. Also decodes EMF via ImageMagick when possible."""
     try:
-        from openpyxl import load_workbook  # type: ignore
-    except Exception as e:  # pragma: no cover
-        logger.warning("openpyxl missing: %s", e)
-        return
-    try:
-        wb = load_workbook(BytesIO(xlsx_bytes), data_only=True)
+        z = zipfile.ZipFile(BytesIO(xlsx_bytes), "r")
     except Exception as e:
-        logger.warning("Cannot open XLSX: %s", e)
+        logger.warning("xlsx zip open failed: %s", e)
         return
 
+    # Map sheet_name → sheet_file_path (e.g. worksheets/sheet1.xml)
+    sheet_map: dict[str, str] = {}
+    try:
+        wb_xml = z.read("xl/workbook.xml")
+        wb_rels_xml = z.read("xl/_rels/workbook.xml.rels")
+        wb_tree = ET.fromstring(wb_xml)
+        rels_tree = ET.fromstring(wb_rels_xml)
+        rid_to_target = {
+            r.get("Id"): r.get("Target") for r in rels_tree.findall("{%s}Relationship" % NS["rel"])
+        }
+        for sh in wb_tree.findall("{%s}sheets/{%s}sheet" % (NS["wb"], NS["wb"])):
+            rid = sh.get("{%s}id" % NS["r"])
+            name = sh.get("name") or ""
+            target = rid_to_target.get(rid) or ""
+            # target like "worksheets/sheet1.xml"
+            sheet_map[name] = "xl/" + target.lstrip("/")
+    except Exception as e:
+        logger.warning("xlsx workbook parse failed: %s", e); return
+
     seen: set[str] = set()
-    for ws in wb.worksheets:
-        images = getattr(ws, "_images", []) or []
-        for img in images:
-            try:
-                # Read underlying bytes
-                if hasattr(img, "ref") and hasattr(img.ref, "read"):
-                    data = img.ref.read()
-                elif hasattr(img, "_data") and callable(img._data):
-                    data = img._data()
-                elif hasattr(img, "_data"):
-                    data = img._data
-                else:
+
+    # For each sheet, find its drawing (via sheet rels), parse anchors + images.
+    for sheet_name, sheet_path in sheet_map.items():
+        rels_path = sheet_path.rsplit("/", 1)[0] + "/_rels/" + sheet_path.rsplit("/", 1)[1] + ".rels"
+        try:
+            sheet_rels = z.read(rels_path)
+        except KeyError:
+            continue
+        drawing_target = None
+        try:
+            for r in ET.fromstring(sheet_rels).findall("{%s}Relationship" % NS["rel"]):
+                if r.get("Type", "").endswith("/drawing"):
+                    drawing_target = r.get("Target")  # e.g. "../drawings/drawing1.xml"
+                    break
+        except Exception:
+            continue
+        if not drawing_target:
+            continue
+
+        drawing_path = _resolve_relative("xl/worksheets/", drawing_target)
+        drawing_rels_path = drawing_path.rsplit("/", 1)[0] + "/_rels/" + drawing_path.rsplit("/", 1)[1] + ".rels"
+
+        try:
+            drawing_xml = z.read(drawing_path)
+            drawing_rels_xml = z.read(drawing_rels_path)
+        except KeyError:
+            continue
+
+        # rId → image path
+        rid_to_image: dict[str, str] = {}
+        try:
+            for r in ET.fromstring(drawing_rels_xml).findall("{%s}Relationship" % NS["rel"]):
+                if r.get("Type", "").endswith("/image"):
+                    rid_to_image[r.get("Id")] = _resolve_relative(drawing_path.rsplit("/", 1)[0] + "/", r.get("Target"))
+        except Exception:
+            continue
+
+        # Parse anchors
+        try:
+            dtree = ET.fromstring(drawing_xml)
+        except Exception:
+            continue
+        for anchor_tag in ("oneCellAnchor", "twoCellAnchor", "absoluteAnchor"):
+            for anchor in dtree.findall("{%s}%s" % (NS["xdr"], anchor_tag)):
+                # anchor row (1-based)
+                row_idx = 0
+                frm = anchor.find("{%s}from" % NS["xdr"])
+                if frm is not None:
+                    row_el = frm.find("{%s}row" % NS["xdr"])
+                    if row_el is not None and row_el.text and row_el.text.isdigit():
+                        row_idx = int(row_el.text) + 1
+                # embed rId
+                blip = anchor.find(".//{%s}blip" % "http://schemas.openxmlformats.org/drawingml/2006/main")
+                if blip is None:
                     continue
-                if not data:
+                rid = blip.get("{%s}embed" % NS["r"])
+                img_path = rid_to_image.get(rid or "")
+                if not img_path:
                     continue
-                h = _hash(data)
+
+                ext = img_path.rsplit(".", 1)[-1].lower()
+                try:
+                    raw = z.read(img_path)
+                except KeyError:
+                    continue
+                if not raw:
+                    continue
+
+                mime = RASTER_EXT.get(ext)
+                if mime is None:
+                    if ext == "emf":
+                        conv = _convert_emf_to_png(raw)
+                        if not conv:
+                            continue
+                        raw, mime = conv, "image/png"
+                    else:
+                        # WDP / other unsupported: skip
+                        continue
+
+                h = _hash(raw)
                 if h in seen:
                     continue
                 seen.add(h)
-                anchor = getattr(img, "anchor", None)
-                row_idx = 0
-                try:
-                    row_idx = int(anchor._from.row) + 1  # type: ignore[attr-defined]
-                except Exception:
-                    row_idx = 0
-                mime = "image/png" if data[:8].startswith(b"\x89PNG\r\n\x1a\n") else "image/jpeg"
-                yield ws.title, row_idx, h, _as_data_url(data, mime)
-            except Exception:
-                continue
+                yield sheet_name, row_idx, h, _as_data_url(raw, mime)
+
+
+def _resolve_relative(base: str, target: str) -> str:
+    """Resolve a target like '../drawings/drawing1.xml' against a base path."""
+    parts = (base + target).split("/")
+    stack: list[str] = []
+    for p in parts:
+        if p == "..":
+            if stack:
+                stack.pop()
+        elif p and p != ".":
+            stack.append(p)
+    return "/".join(stack)
