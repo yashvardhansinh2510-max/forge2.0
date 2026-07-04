@@ -1,0 +1,15 @@
+{
+  "started_at": "2026-07-04T20:21:20.270875+00:00",
+  "brand_filter": "all",
+  "dry_run": false,
+  "candidates": 0,
+  "migrated": 0,
+  "would_migrate": 0,
+  "duplicates": 0,
+  "skipped_already_migrated": 0,
+  "products_cleaned": 0,
+  "failed": [],
+  "bytes": 0,
+  "finished_at": "2026-07-04T20:21:20.270897+00:00",
+  "total_mb": 0.0
+}

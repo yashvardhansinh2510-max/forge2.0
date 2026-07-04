@@ -215,8 +215,9 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
             "warranty": _clean(r.get("warranty")),
             "mrp": mrp,
             "price": price_val,
-            "images": resolved_images,
-            "image_meta": image_meta,
+            # Legacy fields kept empty — media now lives in product_media.
+            "images": [],
+            "image_meta": [],
             "image_quality": image_quality,
             "specs": specs if isinstance(specs, dict) else {},
             "tags": r.get("tags") or [
@@ -235,6 +236,11 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
             existing = await db.products.find_one({"sku": sku}, {"_id": 0})
             if existing:
                 await db.products.update_one({"sku": sku}, {"$set": payload})
+                await _upload_supplier_images(
+                    resolved_images, image_meta, image_quality,
+                    product_id=existing["id"], family_key=family_key,
+                    brand_id=brand_doc["id"], brand_slug=brand_doc.get("slug") or supplier.lower(),
+                )
                 updated += 1
                 continue
             payload["sku"] = sku
@@ -244,9 +250,54 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
 
         p = Product(**payload)
         await db.products.insert_one(p.dict())
+        await _upload_supplier_images(
+            resolved_images, image_meta, image_quality,
+            product_id=p.id, family_key=family_key,
+            brand_id=brand_doc["id"], brand_slug=brand_doc.get("slug") or supplier.lower(),
+        )
         imported += 1
 
     return {"imported": imported, "updated": updated, "skipped": skipped}
+
+
+async def _upload_supplier_images(
+    images: list[str], metas: list[dict], quality: str, *,
+    product_id: str, family_key: str | None, brand_id: str, brand_slug: str,
+) -> None:
+    """Import base64 supplier images into Supabase via the MediaStorage layer.
+
+    Idempotent — the media_service dedupe layer skips uploads whose SHA-1
+    already exists for this product+source_type.
+    """
+    if not images:
+        return
+    import base64
+    from services.media_service import upload_and_register
+
+    for i, ref in enumerate(images):
+        if not ref:
+            continue
+        if ref.startswith("http"):
+            # Already stored — nothing to do
+            continue
+        if not ref.startswith("data:"):
+            continue
+        try:
+            head, b64 = ref.split(",", 1)
+            mime = head.split(";", 1)[0].removeprefix("data:") or "image/png"
+            data = base64.b64decode(b64)
+        except Exception:  # noqa: BLE001
+            continue
+        role = "hero" if i == 0 else "gallery"
+        try:
+            await upload_and_register(
+                data=data, mime=mime, brand_slug=brand_slug,
+                product_id=product_id, family_key=family_key, brand_id=brand_id,
+                source_type="supplier", role=role,
+                is_primary=(i == 0), sort_order=i * 10,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("supplier image upload failed for %s idx=%d: %s", product_id, i, e)
 
 
 async def rollback_job(job_id: str) -> int:

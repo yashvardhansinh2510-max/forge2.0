@@ -140,12 +140,25 @@ class Product(TimestampedModel):
     mrp: float
     price: float                            # trade price
     stock: int = 0
+    # DEPRECATED (kept for read-back compatibility) — new media lives in
+    # `product_media` collection referenced via ProductMedia.
     images: list[str] = []
     image_meta: list[dict] = []             # per-image {width,height,quality,source_format}
     image_quality: Optional[str] = None     # aggregate: excellent|good|acceptable|poor|missing
+    # NEW media architecture (Iteration 2A). These fields are populated from
+    # the `product_media` collection at query-time so business code stays
+    # decoupled from storage. Never write directly to these fields.
+    media_summary: Optional[dict] = None    # {"supplier": n, "manufacturer": n, "internal": n, "best_quality": "..."}
+    hero_image_url: Optional[str] = None    # canonical public URL of the primary image
+    gallery: list[dict] = []                # [{url, role, source_type, width, height, quality}]
     specs: dict = {}                        # freeform key/value spec extras
     tags: list[str] = []
     variants: list[ProductVariant] = []
+    # Curated relationships (populated in Phase 2C but modelled now)
+    related_ids: list[str] = []             # manual "you might also like"
+    compatible_ids: list[str] = []          # curated compatible parts
+    accessory_ids: list[str] = []           # curated accessories
+    downloads: list[dict] = []              # [{title, type, url, size_bytes}] — kept for Downloads tab
     active: bool = True
 
 
@@ -303,3 +316,49 @@ class CatalogImportJob(TimestampedModel):
     rows: list[dict] = []
     error: Optional[str] = None
     created_by: str
+
+
+
+# ---------- Product Media (Iteration 2A) ----------
+MediaSourceType = Literal["supplier", "manufacturer", "internal"]
+MediaRole = Literal["hero", "gallery", "line-drawing", "lifestyle", "swatch", "spec-sheet", "cad"]
+MediaQuality = Literal["excellent", "good", "acceptable", "poor", "missing"]
+
+
+class ProductMedia(TimestampedModel):
+    """Media asset attached to a product (variant) or a whole family.
+
+    Binaries live in Supabase Storage (via MediaStorage); this document holds
+    ONLY metadata + a stable reference (`bucket`, `storage_key`, `public_url`).
+    Business code MUST NOT deal with the storage layer directly.
+    """
+    product_id: Optional[str] = None        # attach to specific variant (SKU-level)
+    family_key: Optional[str] = None        # attach to the whole family (shared across variants)
+    brand_id: Optional[str] = None
+    source_type: MediaSourceType = "supplier"
+    role: MediaRole = "gallery"
+    bucket: str                              # "forge-products" | "forge-private"
+    storage_key: str                         # object key inside the bucket
+    public_url: Optional[str] = None         # for public bucket; None for private
+    width: Optional[int] = None
+    height: Optional[int] = None
+    quality: MediaQuality = "acceptable"
+    sha1: str                                # for dedupe + cache-busting
+    mime: str = "image/png"
+    size_bytes: int = 0
+    is_primary: bool = False                 # hero image for this product/family
+    sort_order: int = 100
+    uploaded_by: Optional[str] = None        # user id
+    notes: Optional[str] = None
+
+
+class ProductMediaCreate(BaseModel):
+    product_id: Optional[str] = None
+    family_key: Optional[str] = None
+    brand_id: Optional[str] = None
+    source_type: MediaSourceType = "manufacturer"
+    role: MediaRole = "gallery"
+    is_primary: bool = False
+    sort_order: int = 100
+    notes: Optional[str] = None
+    # file is uploaded via multipart, not JSON

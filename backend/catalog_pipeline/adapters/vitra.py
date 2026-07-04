@@ -25,6 +25,13 @@ import io
 import re
 
 from ..base import MISSING, BrandAdapter, ExtractionReport, ProductRow, dedupe_iter
+from ..framework import (
+    classify_category as fw_classify,
+    extract_subcategory as fw_subcategory,
+    resolve_finish as fw_resolve_finish,
+    make_family_key as fw_family_key,
+    get_manifest,
+)
 from ..image_extractor import ExtractedImage, extract_images_from_xlsx_ex
 
 SKU_RE = re.compile(r"[A-Z]?\d{3,6}B[A-Z0-9]+H\d{2,6}", re.IGNORECASE)

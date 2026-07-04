@@ -19,6 +19,9 @@ type Product = {
   finish_code?: string | null; colour?: string | null;
   image_quality?: string | null;
   image_meta?: { width: number; height: number; quality: string; source_format: string; sha1?: string }[];
+  hero_image_url?: string | null;
+  gallery?: { url: string; role?: string; source_type?: string; quality?: string }[];
+  media_summary?: { supplier: number; manufacturer: number; internal: number; best_quality: string; total: number };
   specs?: Record<string, any>;
 };
 
@@ -91,7 +94,11 @@ export default function ProductDetail() {
 
   if (!p) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
 
-  const currentImage = p.images[imageIdx] || null;
+  // Build gallery URLs (prefer new gallery array, fallback to legacy images)
+  const galleryUrls: string[] = (p.gallery && p.gallery.length > 0
+    ? p.gallery.map((g) => g.url).filter(Boolean)
+    : (p.hero_image_url ? [p.hero_image_url, ...(p.images || [])] : (p.images || [])));
+  const currentImage = galleryUrls[imageIdx] || null;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -122,12 +129,12 @@ export default function ProductDetail() {
                 </View>
               ) : null}
             </View>
-            {p.images.length > 1 ? (
+            {galleryUrls.length > 1 ? (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                {p.images.map((_img, i) => (
+                {galleryUrls.map((_img, i) => (
                   <Pressable key={i} onPress={() => setImageIdx(i)}
                     style={[styles.thumb, imageIdx === i && { borderColor: colors.brand, borderWidth: 2 }]}>
-                    <ProductImage source={[p.images[i]]} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel="" borderRadius={0} />
+                    <ProductImage source={[galleryUrls[i]]} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel="" borderRadius={0} />
                   </Pressable>
                 ))}
               </ScrollView>
@@ -236,7 +243,7 @@ export default function ProductDetail() {
                   style={{ width: 200 }}
                 >
                   <View style={{ aspectRatio: 1, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary }}>
-                    <ProductImage source={a.images} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel={a.sku} borderRadius={radius.md} />
+                    <ProductImage source={(a as any).hero_image_url ? [(a as any).hero_image_url, ...(a.images || [])] : a.images} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel={a.sku} borderRadius={radius.md} />
                   </View>
                   <Text numberOfLines={2} style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface, marginTop: 6 }}>{a.name}</Text>
                   <Text style={[type.mono, { fontSize: 13, fontWeight: "700", marginTop: 2 }]}>{money(a.price)}</Text>

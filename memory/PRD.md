@@ -2,7 +2,17 @@
 
 **Vision:** Premium ERP/CRM/POS for sanitaryware, bath fitting and building material distributors. Combines Linear+Stripe+Apple polish with showroom-grade simplicity.
 
-## Iteration 3 — Catalog Import & Certification System (Delivered)
+## Iteration 2 — Catalog Rebuild (in progress)
+
+Delivered in three approval-gated phases:
+
+- **2A · Foundation (DELIVERED, awaiting approval).** MediaStorage abstraction (SupabaseStorageDriver), `product_media` collection, migration of all 250 VITRA images to Supabase, ranked search + facets, family-first backend endpoint, MongoDB text/hierarchy indexes, reusable import framework helpers (`framework.py`), `SupplierManifest` pattern, orchestrator writes to Supabase, zero base64 blobs in product docs. Certification: `/app/memory/iteration_2a_certification.md`. Migration report: `/app/memory/media_migration_20260704_202102.json`.
+- **2B · Premium Catalog UI (queued).** Family-first URLs, Shopify-style family page, hierarchical browse, rich cards, visual variant picker, sticky filters, virtualization, animations, skeleton shimmer.
+- **2C · Cross-app polish (queued).** Quotation Builder browses by hierarchy, customer portal parity, product comparison, Complete-the-Set engine, admin media manager, catalog QA dashboard.
+
+Brand import order (only after 2A/2B/2C are all approved): VITRA (already imported, will re-certify) → GROHE → GEBERIT → HANSGROHE → AXOR. Approval pause after each brand.
+
+## Iteration 3 — Catalog Import & Certification System (Delivered in prior fork)
 
 Real production ingestion for **Hansgrohe, Axor, Grohe, Vitra, Geberit**. Framework is reusable — new suppliers ship as one adapter file.
 

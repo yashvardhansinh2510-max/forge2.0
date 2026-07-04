@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from auth import get_current_user, require_min_role
 from db import db, strip_ids
 from models import Brand, Category, Product, ProductCreate, UserPublic
+from services import media_service
 
 router = APIRouter(tags=["catalog"])
 
@@ -68,7 +69,11 @@ async def list_products(
         ]
     total = await db.products.count_documents(query)
     docs = await db.products.find(query, {"_id": 0}).skip(skip).limit(limit).to_list(limit)
-    return {"total": total, "items": strip_ids(docs)}
+    docs = strip_ids(docs)
+    # Hydrate every product with its media (single source of truth after 2A migration).
+    for d in docs:
+        await media_service.hydrate_product_media(d)
+    return {"total": total, "items": docs}
 
 
 # ---------- Hierarchy + family-grouped views ----------
@@ -231,8 +236,20 @@ async def list_families(
         {"$skip": skip}, {"$limit": limit},
     ]
     fams = await db.products.aggregate(pipeline).to_list(limit)
+    # Enrich each family with a hero image from product_media (falls back to
+    # legacy embedded sample_image if the family has no media rows yet).
     for f in fams:
         f.pop("_id", None)
+        hero = await db.product_media.find_one(
+            {"$or": [{"family_key": f.get("family_key")},
+                     {"product_id": (f.get("variants") or [{}])[0].get("id")}]},
+            {"_id": 0, "public_url": 1, "quality": 1, "source_type": 1},
+            sort=[("is_primary", -1), ("sort_order", 1)],
+        )
+        if hero and hero.get("public_url"):
+            f["sample_image"] = hero["public_url"]
+            f["sample_image_quality"] = hero.get("quality") or f.get("sample_image_quality")
+            f["sample_image_source"] = hero.get("source_type")
     # total distinct families for this query
     total_pipeline = [
         {"$match": match}, {"$group": {"_id": "$family_key"}}, {"$count": "n"},
@@ -241,6 +258,288 @@ async def list_families(
     async for r in db.products.aggregate(total_pipeline):
         total = r.get("n", 0)
     return {"total": total, "items": fams}
+
+
+# ---------- Ranked search (Iteration 2A) ----------
+@router.get("/catalog/search")
+async def catalog_search(
+    q: str = Query("", description="Free-text query"),
+    brand_id: Optional[str] = None,
+    category_id: Optional[str] = None,
+    subcategory: Optional[str] = None,
+    series: Optional[str] = None,
+    limit: int = 30,
+    group: bool = Query(True, description="Group variants by family_key (Shopify-style)"),
+    _: UserPublic = Depends(get_current_user),
+):
+    """Ranked catalog search.
+
+    Ranking priority (highest first):
+      1. Exact SKU / SKU prefix
+      2. Product name / family name (Mongo text score)
+      3. Series / subcategory / finish / colour matches
+      4. Fallback dimension / description matches
+
+    Results are grouped by `family_key` by default so callers don't see 6
+    duplicates of the same product with different finishes.
+    """
+    q = (q or "").strip()
+    filters: dict = {"active": True}
+    if brand_id:    filters["brand_id"] = brand_id
+    if category_id: filters["category_id"] = category_id
+    if subcategory: filters["subcategory"] = subcategory
+    if series:      filters["series"] = series
+
+    if not q:
+        # No query — return a lightweight top families list respecting filters.
+        docs = await db.products.find(filters, {"_id": 0}).limit(limit * 3).to_list(limit * 3)
+    else:
+        # Try Mongo text search first
+        text_query = {**filters, "$text": {"$search": q}}
+        try:
+            docs = await db.products.find(
+                text_query,
+                {"_id": 0, "score": {"$meta": "textScore"}},
+            ).sort([("score", {"$meta": "textScore"})]).limit(limit * 3).to_list(limit * 3)
+        except Exception:  # noqa: BLE001
+            docs = []
+        # Fallback / augment with regex on SKU + name (catches partial matches
+        # that Mongo's text index misses like "7040" → "70405L003-...").
+        if len(docs) < limit:
+            regex_query = {
+                **filters,
+                "$or": [
+                    {"sku": {"$regex": q, "$options": "i"}},
+                    {"name": {"$regex": q, "$options": "i"}},
+                    {"family_name": {"$regex": q, "$options": "i"}},
+                    {"series": {"$regex": q, "$options": "i"}},
+                    {"finish": {"$regex": q, "$options": "i"}},
+                    {"colour": {"$regex": q, "$options": "i"}},
+                    {"dimensions": {"$regex": q, "$options": "i"}},
+                ],
+            }
+            more = await db.products.find(regex_query, {"_id": 0}).limit(limit * 3).to_list(limit * 3)
+            seen = {d["id"] for d in docs}
+            for m in more:
+                if m["id"] not in seen:
+                    docs.append(m)
+
+    # ----- Scoring -----
+    q_lower = q.lower()
+
+    def score(p: dict) -> float:
+        s = float(p.get("score") or 0.0) * 2.0   # baseline from text score
+        sku = (p.get("sku") or "").lower()
+        name = (p.get("name") or "").lower()
+        family = (p.get("family_name") or "").lower()
+        series_l = (p.get("series") or "").lower()
+        subcat = (p.get("subcategory") or "").lower()
+        finish = (p.get("finish") or "").lower()
+        colour = (p.get("colour") or "").lower()
+        dims = (p.get("dimensions") or "").lower()
+        desc = (p.get("description") or "").lower()
+
+        if q_lower:
+            if sku == q_lower: s += 100
+            elif sku.startswith(q_lower): s += 60
+            elif q_lower in sku: s += 30
+            if q_lower in name: s += 12
+            if q_lower in family: s += 10
+            if q_lower in series_l: s += 6
+            if q_lower in subcat: s += 4
+            if q_lower in finish: s += 3
+            if q_lower in colour: s += 3
+            if q_lower in dims: s += 1
+            if q_lower in desc: s += 1
+        return s
+
+    for p in docs:
+        p["_score"] = score(p)
+    docs.sort(key=lambda p: p["_score"], reverse=True)
+
+    if not group:
+        for d in docs[:limit]:
+            await media_service.hydrate_product_media(d)
+        return {"query": q, "total": len(docs), "grouped": False, "items": docs[:limit]}
+
+    # ----- Group by family_key -----
+    groups: dict = {}
+    order: list[str] = []
+    for p in docs:
+        key = p.get("family_key") or f"solo:{p['id']}"
+        if key not in groups:
+            groups[key] = {
+                "family_key": p.get("family_key"),
+                "family_name": p.get("family_name") or p.get("name"),
+                "brand_id": p.get("brand_id"),
+                "category_id": p.get("category_id"),
+                "subcategory": p.get("subcategory"),
+                "series": p.get("series"),
+                "score": p["_score"],
+                "product_count": 0,
+                "min_price": p.get("price"),
+                "max_price": p.get("price"),
+                "variants": [],
+                "sample_product_id": p["id"],
+            }
+            order.append(key)
+        g = groups[key]
+        g["product_count"] += 1
+        g["min_price"] = min(g["min_price"], p.get("price") or g["min_price"])
+        g["max_price"] = max(g["max_price"], p.get("price") or g["max_price"])
+        g["variants"].append({
+            "id": p["id"], "sku": p["sku"], "colour": p.get("colour"),
+            "finish": p.get("finish"), "price": p.get("price"),
+        })
+
+    grouped = [groups[k] for k in order][:limit]
+
+    # Attach hero image per group (from product_media)
+    for g in grouped:
+        hero = None
+        if g.get("family_key"):
+            hero = await db.product_media.find_one(
+                {"family_key": g["family_key"]},
+                {"_id": 0, "public_url": 1, "quality": 1, "source_type": 1},
+                sort=[("is_primary", -1), ("sort_order", 1)],
+            )
+        if not hero:
+            hero = await db.product_media.find_one(
+                {"product_id": g["sample_product_id"]},
+                {"_id": 0, "public_url": 1, "quality": 1, "source_type": 1},
+                sort=[("is_primary", -1), ("sort_order", 1)],
+            )
+        if hero:
+            g["hero_image_url"] = hero.get("public_url")
+            g["image_quality"] = hero.get("quality")
+            g["image_source"] = hero.get("source_type")
+
+    return {"query": q, "total": len(order), "grouped": True, "items": grouped}
+
+
+@router.get("/catalog/facets")
+async def catalog_facets(
+    brand_id: Optional[str] = None,
+    category_id: Optional[str] = None,
+    subcategory: Optional[str] = None,
+    series: Optional[str] = None,
+    _: UserPublic = Depends(get_current_user),
+):
+    """Return the facet buckets (brands, categories, finishes, colours,
+    price range) for the current selection. Powers the multi-facet filter UI.
+    """
+    match: dict = {"active": True}
+    if brand_id:    match["brand_id"] = brand_id
+    if category_id: match["category_id"] = category_id
+    if subcategory: match["subcategory"] = subcategory
+    if series:      match["series"] = series
+
+    async def _bucket(field: str) -> list[dict]:
+        pipeline = [
+            {"$match": {**match, field: {"$nin": [None, ""]}}},
+            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1, "_id": 1}},
+            {"$limit": 100},
+        ]
+        rows = await db.products.aggregate(pipeline).to_list(100)
+        return [{"value": r["_id"], "count": r["count"]} for r in rows]
+
+    price_stats = await db.products.aggregate([
+        {"$match": match},
+        {"$group": {"_id": None, "min": {"$min": "$price"}, "max": {"$max": "$price"}}},
+    ]).to_list(1)
+    price = price_stats[0] if price_stats else {"min": 0, "max": 0}
+
+    return {
+        "brands":        await _bucket("brand_id"),
+        "categories":    await _bucket("category_id"),
+        "subcategories": await _bucket("subcategory"),
+        "series":        await _bucket("series"),
+        "finishes":      await _bucket("finish"),
+        "colours":       await _bucket("colour"),
+        "materials":     await _bucket("material"),
+        "price":         {"min": price.get("min", 0) or 0, "max": price.get("max", 0) or 0},
+    }
+
+
+# ---------- Family-first canonical page (Iteration 2A shell — used by 2B) ----------
+@router.get("/families/{family_key}")
+async def get_family(family_key: str, _: UserPublic = Depends(get_current_user)):
+    """Return everything the Shopify-style family page needs in a single
+    call: family metadata + variants + gallery + specs union. Missing data
+    is honestly reported (nulls / empty arrays), never fabricated.
+    """
+    prods = await db.products.find(
+        {"family_key": family_key, "active": True}, {"_id": 0},
+    ).sort([("colour", 1), ("finish", 1), ("sku", 1)]).to_list(200)
+    if not prods:
+        raise HTTPException(status_code=404, detail="Family not found")
+
+    brand = await db.brands.find_one({"id": prods[0].get("brand_id")}, {"_id": 0})
+    category = await db.categories.find_one({"id": prods[0].get("category_id")}, {"_id": 0})
+
+    # Aggregate gallery: family-level media first, then union of variant media.
+    family_media = await db.product_media.find(
+        {"family_key": family_key}, {"_id": 0},
+    ).sort([("is_primary", -1), ("sort_order", 1)]).to_list(200)
+    variant_ids = [p["id"] for p in prods]
+    variant_media = await db.product_media.find(
+        {"product_id": {"$in": variant_ids}}, {"_id": 0},
+    ).sort([("is_primary", -1), ("sort_order", 1)]).to_list(1000)
+
+    def _pack_media(m: dict) -> dict:
+        return {
+            "id": m["id"], "url": m.get("public_url"),
+            "role": m.get("role"), "source_type": m.get("source_type"),
+            "width": m.get("width"), "height": m.get("height"),
+            "quality": m.get("quality"), "is_primary": m.get("is_primary"),
+            "product_id": m.get("product_id"), "family_key": m.get("family_key"),
+        }
+
+    gallery = [_pack_media(m) for m in family_media if m.get("public_url")]
+    for m in variant_media:
+        if m.get("public_url"):
+            gallery.append(_pack_media(m))
+
+    # Union of specs across variants (variant-specific fields kept in per-variant list).
+    variants_out = []
+    all_specs: dict = {}
+    for p in prods:
+        variants_out.append({
+            "id": p["id"], "sku": p["sku"], "name": p.get("name"),
+            "colour": p.get("colour"), "finish": p.get("finish"),
+            "finish_code": p.get("finish_code"), "variant_label": p.get("variant_label"),
+            "price": p.get("price"), "mrp": p.get("mrp"), "stock": p.get("stock", 0),
+            "dimensions": p.get("dimensions"), "material": p.get("material"),
+            "warranty": p.get("warranty"), "specs": p.get("specs") or {},
+            "hero_image": next(
+                (m["public_url"] for m in variant_media
+                 if m.get("product_id") == p["id"] and m.get("public_url")), None,
+            ),
+        })
+        for k, v in (p.get("specs") or {}).items():
+            all_specs.setdefault(k, v)
+
+    return {
+        "family_key": family_key,
+        "family_name": prods[0].get("family_name") or prods[0].get("name"),
+        "brand": brand,
+        "category": category,
+        "subcategory": prods[0].get("subcategory"),
+        "series": prods[0].get("series"),
+        "description": prods[0].get("description"),
+        "min_price": min(p.get("price", 0) for p in prods),
+        "max_price": max(p.get("price", 0) for p in prods),
+        "variant_count": len(prods),
+        "variants": variants_out,
+        "gallery": gallery,
+        "specs_union": all_specs,
+        "hero_image_url": next((g["url"] for g in gallery if g.get("is_primary")), (gallery[0]["url"] if gallery else None)),
+        "downloads": [],   # Populated in Phase 2B via product_media role=spec-sheet
+        "compatible_ids": prods[0].get("compatible_ids") or [],
+        "accessory_ids":  prods[0].get("accessory_ids") or [],
+        "related_ids":    prods[0].get("related_ids") or [],
+    }
 
 
 @router.get("/products/recent")
@@ -258,7 +557,10 @@ async def recent_products(
     docs = await db.products.find({"id": {"$in": ids}, "active": True}, {"_id": 0}).to_list(limit)
     by_id = {d["id"]: d for d in docs}
     # preserve recent order
-    return [by_id[i] for i in ids if i in by_id]
+    ordered = [by_id[i] for i in ids if i in by_id]
+    for p in ordered:
+        await media_service.hydrate_product_media(p)
+    return ordered
 
 
 @router.get("/products/frequent")
@@ -275,7 +577,10 @@ async def frequent_products(
     ids = [u["product_id"] for u in usages]
     docs = await db.products.find({"id": {"$in": ids}, "active": True}, {"_id": 0}).to_list(limit)
     by_id = {d["id"]: d for d in docs}
-    return [by_id[i] for i in ids if i in by_id]
+    ordered = [by_id[i] for i in ids if i in by_id]
+    for p in ordered:
+        await media_service.hydrate_product_media(p)
+    return ordered
 
 
 @router.get("/products/{product_id}", response_model=Product)
@@ -283,6 +588,7 @@ async def get_product(product_id: str, _: UserPublic = Depends(get_current_user)
     doc = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Product not found")
+    await media_service.hydrate_product_media(doc)
     return Product(**doc)
 
 
@@ -342,6 +648,8 @@ async def product_alternates(
     scored.sort(key=lambda x: (x[0], x[1], x[2]))
 
     out = [p for _t, _u, _pr, p in scored[:limit]]
+    for p in out:
+        await media_service.hydrate_product_media(p)
     return {
         "source_product_id": product_id,
         "items": out,
