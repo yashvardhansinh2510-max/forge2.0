@@ -631,17 +631,16 @@ export default function QuotationBuilder() {
               {usedCategoryIds.length === 0 ? (
                 <Text style={type.caption}>Add products first — categories used will appear here.</Text>
               ) : usedCategoryIds.map((cid) => (
-                <View key={cid} style={styles.catRow}>
+                <Pressable
+                  key={cid}
+                  testID={`edit-cat-${cid}`}
+                  onPress={() => setDiscountSheet({ kind: "category", category_id: cid })}
+                  style={styles.catRow}
+                >
                   <Text style={{ flex: 1, fontSize: 13, fontWeight: "600" }}>{catNameById[cid] || "—"}</Text>
-                  <Text style={type.mono}>{categoryDiscounts[cid] != null ? `${categoryDiscounts[cid]}%` : "—"}</Text>
-                  <Pressable
-                    testID={`edit-cat-${cid}`}
-                    onPress={() => setDiscountSheet({ kind: "category", category_id: cid })}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6 }}
-                  >
-                    <Feather name="edit-2" size={14} color={colors.brand} />
-                  </Pressable>
-                </View>
+                  <Text style={type.mono}>{categoryDiscounts[cid] != null ? `${categoryDiscounts[cid]}%` : "Add discount"}</Text>
+                  <Feather name={categoryDiscounts[cid] != null ? "edit-2" : "plus"} size={14} color={colors.brand} />
+                </Pressable>
               ))}
             </View>
 
