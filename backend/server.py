@@ -1,59 +1,54 @@
-from fastapi import FastAPI, APIRouter
-from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
+"""Forge backend entrypoint. Wires routes and boots demo data on first run."""
 import logging
+import os
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List
-import uuid
-from datetime import datetime
 
+from dotenv import load_dotenv
+from fastapi import APIRouter, FastAPI
+from starlette.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+from db import db  # noqa: E402
+from routes.auth_routes import router as auth_router  # noqa: E402
+from routes.dashboard_routes import router as dashboard_router  # noqa: E402
+from routes.catalog_routes import router as catalog_router  # noqa: E402
+from routes.customer_routes import router as customer_router  # noqa: E402
+from routes.quotation_routes import router as quotation_router  # noqa: E402
+from routes.misc_routes import router as misc_router  # noqa: E402
+from seed import seed_if_empty  # noqa: E402
 
-# Create the main app without a prefix
-app = FastAPI()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
+logger = logging.getLogger("forge")
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+app = FastAPI(title="Forge API", version="0.1.0")
+api = APIRouter(prefix="/api")
 
 
-# Define Models
-class StatusCheck(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-
-class StatusCheckCreate(BaseModel):
-    client_name: str
-
-# Add your routes to the router instead of directly to app
-@api_router.get("/")
+@api.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"name": "Forge API", "version": "0.1.0", "status": "ok"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.dict()
-    status_obj = StatusCheck(**status_dict)
-    _ = await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
 
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find().to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
+@api.get("/health")
+async def health():
+    try:
+        await db.command("ping")
+        return {"status": "ok"}
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "detail": str(e)}
 
-# Include the router in the main app
-app.include_router(api_router)
+
+# Feature routers
+api.include_router(auth_router)
+api.include_router(dashboard_router)
+api.include_router(catalog_router)
+api.include_router(customer_router)
+api.include_router(quotation_router)
+api.include_router(misc_router)
+
+app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
@@ -63,13 +58,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+
+@app.on_event("startup")
+async def _startup():
+    await seed_if_empty()
+    logger.info("Forge API ready.")
+
 
 @app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+async def _shutdown():
+    logger.info("Forge API shutting down.")

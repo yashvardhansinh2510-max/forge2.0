@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 1 backend + frontend end-to-end verification for Forge. Backend: 29/29 pytest cases pass covering health, staff+customer auth (login, invalid, /me), dashboard stats, brands/categories, products (list, search, brand filter, single), customers, quotations (create with computed totals, list, get, PATCH status + revision, staff PDF), RBAC (worker 403 on POST /quotations and GET /team, sales can create), customer portal quotations scoped + portal PDF, scaffold endpoints (PO/payments/followups/notifications/reports/team). Frontend: login screen renders split hero on tablet viewport, portal-staff/portal-customer tabs correctly swap prefilled email, staff sign-in navigates to dashboard (KPIs, Recent activity, Top products all visible), sidebar Catalog shows 16 product cards, product detail opens with add-to-quote CTA, Quotations list shows 11 rows, New Quotation opens builder (customer chips, faucet search returns 5, tap-to-add adds line with qty input, qty edit updates totals live), Save creates quotation and navigates to /quotations/{id} with Download PDF button visible. Customer portal login shows hero + 5 quotation cards with Download PDF buttons. Fixed one real bug: customer home imported Linking from 'react' instead of 'react-native' causing PAGEERROR when tapping Download PDF or Contact support. Post-fix, no PAGEERROR is thrown when clicking Download PDF.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_forge_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Confirm the Linking import fix in /app/frontend/app/(customer)/home.tsx is acceptable. It moved Linking to be imported from 'react-native' so Download PDF and support mailto work on both web and native.",
+    "Optional: consider using expo-web-browser or an <a href download> for portal PDFs on web to guarantee a real download event instead of a data-URL navigation, which some browsers block for very large PDFs."
+  ],
+  "critical_code_review_comments": [
+    "quotation_routes._recalc computes tax_total from QuotationLineItem.tax property. The pydantic model does not serialize computed properties into the stored dict, so the per-line 'tax' is derived on-the-fly. Consider persisting tax per line for auditability.",
+    "dashboard_stats sorts recent activity by updated_at string; safe because ISO timestamps sort lexicographically but easy to break if the format ever changes.",
+    "seed.py is idempotent via seed_if_empty. Not verified whether seeding is a no-op when a subset of collections is populated \u2014 could cause partial re-seeding surprises."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_forge_backend.py",
+    "/app/frontend/app/(customer)/home.tsx"
+  ],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "100% of iteration-1 flows verified"},
+  "seed_data_creation": "No new seed data added. Tests reused the seeded owner/sales/worker/customer accounts and created transient quotations via POST /api/quotations (labelled with notes=TEST_quotation).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "BASE URL is https://forge-sanitaryware.preview.emergentagent.com. Frontend env key is EXPO_PUBLIC_BACKEND_URL (not EXPO_BACKEND_URL). Login form is pre-filled with owner@forge.app/Forge@2026, so a single click on [data-testid=login-submit-button] is enough. Tablet layout requires viewport width >= 900 for the sidebar. Expo router strips '(admin)'/'(customer)' groups from URL, so wait for '**/dashboard**' / '**/home**' not '**/admin/dashboard**'. Regenerated PDFs on customer portal are opened via Linking.openURL(dataURL) \u2014 do not expect a Playwright download event.",
+  "rca_of_issue": "Customer portal Download PDF and support mailto were failing with 'Cannot read properties of undefined (reading openURL)'. RCA: /app/frontend/app/(customer)/home.tsx line 5 imported Linking from 'react' instead of 'react-native'. React exports no Linking, so `Linking` was undefined at runtime. Fix: move Linking into the 'react-native' import statement. Verified by re-running the customer portal PDF click flow \u2014 no PAGEERROR."
+}
