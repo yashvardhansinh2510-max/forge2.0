@@ -65,7 +65,17 @@ export default function Catalog() {
   return (
     <AdminPage
       title="Catalog"
-      subtitle={`${products?.length ?? "—"} products · Kohler, Grohe, Duravit, Jaquar & more`}
+      subtitle={`${products?.length ?? "—"} products · Hansgrohe, Axor, Grohe, Vitra & Geberit`}
+      right={
+        <Pressable
+          testID="import-catalog-btn"
+          onPress={() => router.push("/(admin)/catalog/import" as any)}
+          style={{ flexDirection: "row", gap: 6, alignItems: "center", backgroundColor: colors.brand, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+        >
+          <Feather name="upload-cloud" size={14} color={colors.onBrand} />
+          <Text style={{ color: colors.onBrand, fontSize: 13, fontWeight: "600" }}>AI Import</Text>
+        </Pressable>
+      }
     >
       {/* Search + filters */}
       <View style={{ gap: spacing.md }}>
