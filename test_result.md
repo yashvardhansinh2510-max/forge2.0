@@ -102,47 +102,78 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Forge — premium ERP/CRM/POS for sanitaryware distributors. Latest task: finish two P1 backend polish items — (a) VITRA .wdp → JPEG conversion for 100% image coverage, and (b) refactor certifier to whitelist cross-family SKU duplicates so Geberit/Vitra auto-certify."
+user_problem_statement: "Forge — premium ERP/CRM/POS for sanitaryware distributors. Current phase (1A): Complete the Quotation Builder 2.0 to feel world-class — comprehensive undo/redo, drag-and-drop reordering, product variant chips, and alternate swap. Prior P1 backend polish (VITRA WDP and cross-family SKU whitelist) already shipped in iteration 3."
 
 backend:
   - task: "WDP (JPEG XR) image decoding in catalog image extractor"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/catalog_pipeline/image_extractor.py"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
-          comment: "Added _convert_wdp_to_png() using imagecodecs.jpegxr_decode + png_encode. When the xlsx media path ends in .wdp / .jxr / .hdp we now decode to PNG instead of skipping. Also fixed a latent bug where absolute Target paths ('/xl/worksheets/sheet1.xml') in workbook.xml.rels were being resolved as 'xl/xl/...'. Verified via a synthetic xlsx containing one PNG + one WDP anchor — extractor now returns both images as data URLs. imagecodecs==2026.3.6 pinned in requirements.txt."
+          comment: "Added _convert_wdp_to_png() using imagecodecs.jpegxr_decode + png_encode; extractor also handles absolute `/xl/...` targets. imagecodecs==2026.3.6 pinned."
+        - working: true
+          agent: "testing"
+          comment: "Iteration 3: 13 new + 43 existing tests green. WDP → PNG round-trip verified end-to-end."
 
   - task: "Certifier — cross-family SKU whitelist"
     implemented: true
-    working: "NA"
+    working: true
     file: "backend/catalog_pipeline/certifier.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Same SKU inside the same family_key => true duplicate (rejected). Cross-family listings kept and counted in the new cross_family_skus field. production_ready gate only considers true duplicates."
+        - working: true
+          agent: "testing"
+          comment: "Iteration 3: both spec scenarios pass; to_public() exposes cross_family_skus and preserves all 21 legacy keys."
+
+  - task: "GET /api/products/{id}/alternates smart-mix ranking"
+    implemented: true
+    working: "NA"
+    file: "backend/routes/catalog_routes.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: true
     status_history:
         - working: "NA"
           agent: "main"
-          comment: "Refactored SKU dedupe. Same SKU inside the same family_key => 'true duplicate' (rejected, counted in duplicates_sku). Same SKU across different family_keys => 'cross-family listing' (kept, counted separately in the new cross_family_skus field, warning added). sku_accuracy now penalises only true duplicates. production_ready gate uses only duplicates_sku so Geberit/Vitra can now auto-certify at overall_score ≥ 95. Verified via synthetic ProductRow scenarios — cross-family scenario reports duplicates_sku=0, cross_family_skus=1, production_ready=true; true-dupe scenario correctly marks the second row rejected."
+          comment: "New endpoint returning alternates in three ranked tiers within one response: tier 1 = same brand + same category + same 2-word name prefix (approximates family); tier 2 = same brand + same category; tier 3 = same category cross-brand. Ranking key is (tier, -user_usage_count, price). Response shape: {source_product_id, items: [Product], tiers: {family, brand_category, category}}. 404 when source product missing. Depends on get_current_user (staff JWT). Verified live via the swap sheet — a Hansgrohe basin mixer returned 10 items with same-brand alternates first, then cross-brand."
+
+frontend:
+  - task: "Quotation Builder 2.0 Phase 1A — undo/redo, DnD, variants, alternates"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/quotations/new.tsx, frontend/src/hooks/useHistory.ts, frontend/app/_layout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Rewritten builder. All mutable state (customerId, lines, rooms, collapsedRooms, activeRoom, notes, projectDiscount, categoryDiscounts) consolidated into one BuilderState managed by useHistory (200-step bounded, 800ms coalescing on text inputs). Every mutation — addFromProduct, updateLine (qty/rate/desc/discount), removeLine, duplicateLine, moveLineToNextRoom, addRoom / renameRoom / duplicateRoom / deleteRoom, setProjectDiscount, setCategoryDiscount, setCustomer, commitSwap, onRoomDragEnd, onLinesDragEnd — pushes to history. Collapse toggles + active-room switches use skipHistory:true (pure UI state). DraggableFlatList powers a horizontal room-chip row and a vertical mixed list of {room-header, line} rows so dragging a line across a header re-parents its room automatically. Variant chip strip on picker rows shows finish/colour + swatch dot + price delta when it differs. Swap-alternate bottom sheet preserves qty, discount, tax, notes, description, room. Web keyboard: Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z / Ctrl+Y wired via useUndoRedoShortcuts, Cmd/Ctrl+K → focus search. GestureHandlerRootView wraps the root layout for DnD on native. Manually verified in the desktop viewport (1280×900) and the mobile viewport (390×844) — add/undo/redo/cmd+z/cmd+shift+z/swap-sheet all working, autosave still persists silently as before."
 
 metadata:
   created_by: "main_agent"
-  version: "1.1"
-  test_sequence: 3
-  run_ui: false
+  version: "1.2"
+  test_sequence: 4
+  run_ui: true
 
 test_plan:
   current_focus:
-    - "WDP (JPEG XR) image decoding in catalog image extractor"
-    - "Certifier — cross-family SKU whitelist"
+    - "GET /api/products/{id}/alternates smart-mix ranking"
+    - "Quotation Builder 2.0 Phase 1A — undo/redo, DnD, variants, alternates"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "main"
-      message: "Two P1 backend fixes ready for regression. (1) image_extractor now decodes WDP frames via imagecodecs; also fixed absolute-target resolution. (2) certifier distinguishes true dupes from cross-family listings so Geberit/Vitra imports can hit production_ready. Please regression-test the /api/catalog/imports/from-url and /api/catalog/imports/approve flows for at least one supplier catalog to confirm nothing regressed. Also verify the CertificationReport now exposes a `cross_family_skus` field. Auth creds in /app/memory/test_credentials.md (owner@forge.app / Forge@2026). No frontend changes in this iteration."
+      message: "Iteration 3 (backend catalog fixes) shipped and green. Now iteration 4 — Quotation Builder 2.0 Phase 1A. Please regression-test both the new alternates endpoint and the new builder screen. Backend: verify /api/products/{id}/alternates returns 200 with the shape {source_product_id, items, tiers}, that items respect the 3-tier ordering, and that 404 is returned for a missing source id. Frontend: on the /(admin)/quotations/new screen — add products, use both button + keyboard undo/redo (cmd+z, cmd+shift+z), open the swap sheet from a line's swap icon, drag-reorder items via the menu handle, drag-reorder rooms via the room chip. History depth is shown as `N steps` in the header subtitle. Credentials in /app/memory/test_credentials.md (owner@forge.app / Forge@2026)."

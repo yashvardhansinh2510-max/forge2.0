@@ -96,6 +96,73 @@ async def get_product(product_id: str, _: UserPublic = Depends(get_current_user)
     return Product(**doc)
 
 
+@router.get("/products/{product_id}/alternates")
+async def product_alternates(
+    product_id: str,
+    limit: int = 12,
+    user: UserPublic = Depends(get_current_user),
+):
+    """Return alternate products a salesperson might swap in for `product_id`.
+
+    Smart-mix ranking (closest matches first):
+      Tier 1  same brand + same category + same name-prefix  (approximates family)
+      Tier 2  same brand + same category
+      Tier 3  same category (any brand)
+
+    Within every tier we rank by (this user's usage count DESC, price ASC) so
+    the salesperson sees products they actually reach for. The current product
+    itself is always excluded.
+    """
+    src = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # First two words of the name (case-insensitive) form our family bucket.
+    name_prefix = " ".join((src.get("name") or "").split()[:2]).strip().lower()
+
+    # Pull per-user usage counts so we can rank tiers by "products this user likes".
+    usages = await db.product_usage.find({"user_id": user.id}, {"_id": 0}).to_list(2000)
+    usage_by_id = {u["product_id"]: int(u.get("count", 0)) for u in usages}
+
+    # Pull a wide pool once, then classify in Python — keeps the query index-friendly
+    # and lets us score across tiers in a single pass without triple round-trips.
+    pool = await db.products.find(
+        {
+            "active": True,
+            "category_id": src.get("category_id"),
+            "id": {"$ne": product_id},
+        },
+        {"_id": 0},
+    ).limit(400).to_list(400)
+
+    def tier(p: dict) -> int:
+        p_name_prefix = " ".join((p.get("name") or "").split()[:2]).strip().lower()
+        same_brand = p.get("brand_id") == src.get("brand_id")
+        same_prefix = bool(name_prefix) and p_name_prefix == name_prefix
+        if same_brand and same_prefix:
+            return 1
+        if same_brand:
+            return 2
+        return 3
+
+    scored = []
+    for p in pool:
+        t = tier(p)
+        scored.append((t, -usage_by_id.get(p["id"], 0), float(p.get("price", 0)), p))
+    scored.sort(key=lambda x: (x[0], x[1], x[2]))
+
+    out = [p for _t, _u, _pr, p in scored[:limit]]
+    return {
+        "source_product_id": product_id,
+        "items": out,
+        "tiers": {
+            "family": sum(1 for t, *_ in scored if t == 1),
+            "brand_category": sum(1 for t, *_ in scored if t == 2),
+            "category": sum(1 for t, *_ in scored if t == 3),
+        },
+    }
+
+
 @router.post("/products", response_model=Product)
 async def create_product(
     body: ProductCreate,

@@ -3,6 +3,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
 import { LogBox, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
@@ -44,16 +45,18 @@ export default function RootLayout() {
   if (!loaded && !error) return null;
 
   return (
-    <SafeAreaProvider>
-      <View style={{ flex: 1, backgroundColor: colors.surface }}>
-        <StatusBar style="dark" />
-        <AuthProvider>
-          <AuthGate>
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }} />
-          </AuthGate>
-          <ToastHost />
-        </AuthProvider>
-      </View>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <View style={{ flex: 1, backgroundColor: colors.surface }}>
+          <StatusBar style="dark" />
+          <AuthProvider>
+            <AuthGate>
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }} />
+            </AuthGate>
+            <ToastHost />
+          </AuthProvider>
+        </View>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

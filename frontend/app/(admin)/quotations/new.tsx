@@ -1,10 +1,20 @@
-// Forge Quotation Builder 2.0
-// - Autosave (debounced PATCH, silent)
-// - Rooms 2.0: add, rename, duplicate, delete, collapse
-// - Multi-level discounts: Product > Category > Project
-// - Line actions: duplicate, remove, move to room, inline description
-// - Picker tabs: Search / Recent / Frequent
-// - Save-state indicator
+// Forge Quotation Builder 2.0 · Phase 1A
+// -----------------------------------------------------------------------------
+// Every mutation flows through a single `useHistory` snapshot so undo/redo
+// covers add/remove products, drag-reorder, room ops, price edits, qty edits,
+// discount changes, customer swap, variant selection, alternate swaps, notes,
+// room names — everything a salesperson can touch.
+//
+// Cross-platform DnD via `react-native-draggable-flatlist` for both the room
+// chip row (horizontal) and the flat line list (which mixes room headers and
+// lines so dragging a line across headers changes its room automatically).
+//
+// Variants appear as a compact swatch strip on picker rows; alternates load on
+// demand from `/api/products/{id}/alternates` (smart-mix ranked family →
+// brand+category → category).
+//
+// Keyboard on web: Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z / Cmd/Ctrl+K.
+// -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -14,16 +24,24 @@ import {
   ActivityIndicator, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet,
   Text, TextInput, useWindowDimensions, View,
 } from "react-native";
+import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 
 import { BottomSheet } from "@/src/components/BottomSheet";
 import { Badge, Button, EmptyState, StatusBadge } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { api } from "@/src/api/client";
+import { useHistory, useUndoRedoShortcuts } from "@/src/hooks/useHistory";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
+// ---------- Types ----------
+type ProductVariant = {
+  sku: string; finish?: string | null; size?: string | null; color?: string | null;
+  mrp: number; price: number; stock?: number;
+};
 type Product = {
   id: string; name: string; sku: string; price: number; mrp: number;
   finish?: string | null; images: string[]; category_id: string; brand_id: string;
+  variants?: ProductVariant[];
 };
 type Category = { id: string; name: string };
 type Customer = { id: string; name: string; company?: string | null; email: string };
@@ -31,14 +49,38 @@ type Line = {
   id: string; product_id: string; sku: string; name: string; image?: string | null;
   category_id?: string | null; room?: string;
   qty: number; unit_price: number;
-  discount_pct: number | null;    // null = inherit from category / project
+  discount_pct: number | null;
   tax_pct: number; description?: string | null; notes?: string | null;
+  finish?: string | null;
 };
-
 type SaveState = "idle" | "saving" | "saved" | "error";
+
+// One immutable snapshot of everything the user can undo.
+type BuilderState = {
+  customerId: string | null;
+  lines: Line[];
+  rooms: string[];
+  collapsedRooms: Record<string, boolean>;
+  activeRoom: string;
+  notes: string;
+  projectDiscount: number;
+  categoryDiscounts: Record<string, number>;
+};
 
 const DEFAULT_ROOMS = ["Master Bath", "Powder Room", "Guest Bath", "Kitchen", "Utility", "Living", "Study"];
 
+const INITIAL_STATE: BuilderState = {
+  customerId: null,
+  lines: [],
+  rooms: [DEFAULT_ROOMS[0]],
+  collapsedRooms: {},
+  activeRoom: DEFAULT_ROOMS[0],
+  notes: "",
+  projectDiscount: 0,
+  categoryDiscounts: {},
+};
+
+// ---------- Pure helpers ----------
 function effectivePct(l: Line, catDiscs: Record<string, number>, projPct: number): { pct: number; source: string } {
   if (l.discount_pct != null) return { pct: l.discount_pct, source: "product" };
   if (l.category_id && catDiscs[l.category_id] != null) return { pct: catDiscs[l.category_id], source: "category" };
@@ -46,42 +88,73 @@ function effectivePct(l: Line, catDiscs: Record<string, number>, projPct: number
   return { pct: 0, source: "none" };
 }
 
+// Approximate swatch colour from a finish label. Kept deliberately small — we
+// fall back to a neutral chrome tone when we don't recognise the finish.
+function finishSwatch(finish?: string | null): string {
+  const f = (finish || "").toLowerCase();
+  if (!f) return "#c5c8cc";
+  if (f.includes("matt black") || f.includes("matte black") || f.includes(" black")) return "#111214";
+  if (f.includes("chrome")) return "#c5c8cc";
+  if (f.includes("brushed") && f.includes("brass")) return "#a37f38";
+  if (f.includes("brass") || f.includes("gold")) return "#d4a94b";
+  if (f.includes("copper")) return "#b87333";
+  if (f.includes("bronze")) return "#8a5a2b";
+  if (f.includes("nickel")) return "#a5a5a8";
+  if (f.includes("stone") || f.includes("grey") || f.includes("gray")) return "#8a8a8f";
+  if (f.includes("taupe")) return "#7f6f5b";
+  if (f.includes("white")) return "#f6f6f7";
+  return "#c5c8cc";
+}
+
+// Priority label for a line's discount source
+function sourceBadge(source: string): { tone: "info" | "success" | "warning"; label: string } | null {
+  if (source === "category") return { tone: "info", label: "Cat" };
+  if (source === "project") return { tone: "success", label: "Proj" };
+  return null;
+}
+
+// ---------- Component ----------
 export default function QuotationBuilder() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const isTablet = width >= 900;
+  const isDesktop = width >= 1280;
 
+  // Reference data — not part of undoable state.
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [customerId, setCustomerId] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [recent, setRecent] = useState<Product[]>([]);
   const [frequent, setFrequent] = useState<Product[]>([]);
   const [pickerTab, setPickerTab] = useState<"search" | "recent" | "frequent">("search");
   const [q, setQ] = useState("");
-  const [lines, setLines] = useState<Line[]>([]);
-  const [rooms, setRooms] = useState<string[]>([DEFAULT_ROOMS[0]]);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [activeRoom, setActiveRoom] = useState<string>(DEFAULT_ROOMS[0]);
-  const [notes, setNotes] = useState("");
-  const [projectDiscount, setProjectDiscount] = useState(0);
-  const [categoryDiscounts, setCategoryDiscounts] = useState<Record<string, number>>({});
+  const searchRef = useRef<TextInput | null>(null);
 
-  // Autosave plumbing
+  // Undo/redo document state
+  const history = useHistory<BuilderState>(INITIAL_STATE, { max: 200, coalesceMs: 800 });
+  const s = history.state;
+  useUndoRedoShortcuts(history as any, true);
+
+  // Autosave metadata (not undoable)
   const [quotationId, setQuotationId] = useState<string | null>(null);
   const [quotationNumber, setQuotationNumber] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sheets
+  // Panel/mobile tab
   const [tab, setTab] = useState<"catalog" | "receipt">("receipt");
+
+  // Sheets
   const [discountSheet, setDiscountSheet] = useState<null | { kind: "project" } | { kind: "category"; category_id: string } | { kind: "line"; line_id: string }>(null);
   const [roomSheet, setRoomSheet] = useState<null | { kind: "add" } | { kind: "rename"; name: string }>(null);
   const [roomInput, setRoomInput] = useState("");
   const [descSheet, setDescSheet] = useState<null | { line_id: string }>(null);
+  const [swapSheet, setSwapSheet] = useState<null | { line_id: string; product_id: string }>(null);
+  const [swapItems, setSwapItems] = useState<Product[]>([]);
+  const [swapLoading, setSwapLoading] = useState(false);
 
-  // ---- Load static data ----
+  // ---------- Load reference data ----------
   useEffect(() => {
     (async () => {
       const [cs, cats, rec, freq] = await Promise.all([
@@ -94,11 +167,14 @@ export default function QuotationBuilder() {
       setCategories(cats);
       setRecent(rec);
       setFrequent(freq);
-      if (cs[0]) setCustomerId(cs[0].id);
+      if (cs[0] && !s.customerId) {
+        history.replace({ ...history.state, customerId: cs[0].id });
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- Product search ----
+  // ---------- Product search ----------
   useEffect(() => {
     if (pickerTab !== "search") return;
     const t = setTimeout(async () => {
@@ -108,16 +184,16 @@ export default function QuotationBuilder() {
     return () => clearTimeout(t);
   }, [q, pickerTab]);
 
-  // ---- Autosave orchestration ----
+  // ---------- Autosave ----------
   const persist = useCallback(async () => {
-    if (!customerId) return;
+    if (!s.customerId) return;
     const payload = {
-      customer_id: customerId,
-      items: lines,
-      rooms,
-      notes,
-      project_discount_pct: projectDiscount,
-      category_discounts: categoryDiscounts,
+      customer_id: s.customerId,
+      items: s.lines,
+      rooms: s.rooms,
+      notes: s.notes,
+      project_discount_pct: s.projectDiscount,
+      category_discounts: s.categoryDiscounts,
     };
     try {
       setSaveState("saving");
@@ -126,124 +202,451 @@ export default function QuotationBuilder() {
         setQuotationId(created.id);
         setQuotationNumber(created.number);
       } else {
-        const upd = { ...payload, silent: true, collapsed_rooms: Object.keys(collapsed).filter((k) => collapsed[k]) };
-        // customer_id is not in QuotationUpdate — drop it
-        delete (upd as any).customer_id;
+        const upd: any = { ...payload, silent: true, collapsed_rooms: Object.keys(s.collapsedRooms).filter((k) => s.collapsedRooms[k]) };
+        delete upd.customer_id;
         await api.patch(`/quotations/${quotationId}`, upd);
       }
-      setSaveState("saved"); setSavedAt(new Date());
+      setSaveState("saved");
+      setSavedAt(new Date());
     } catch (e: any) {
       setSaveState("error");
       toast.error(e?.detail || "Save failed");
     }
-  }, [customerId, lines, rooms, notes, projectDiscount, categoryDiscounts, quotationId, collapsed]);
+  }, [s, quotationId]);
 
   useEffect(() => {
-    if (!customerId) return;
-    // Debounced autosave — only after user has actually interacted
-    if (lines.length === 0 && !quotationId && projectDiscount === 0 && Object.keys(categoryDiscounts).length === 0) return;
+    if (!s.customerId) return;
+    if (s.lines.length === 0 && !quotationId && s.projectDiscount === 0 && Object.keys(s.categoryDiscounts).length === 0) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { persist(); }, 900);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [customerId, lines, rooms, notes, projectDiscount, categoryDiscounts, collapsed]);
+  }, [s, quotationId, persist]);
 
-  // ---- Totals ----
+  // ---------- Derived ----------
   const totals = useMemo(() => {
     let sub = 0, disc = 0, tax = 0;
-    for (const l of lines) {
+    for (const l of s.lines) {
       const gross = l.qty * l.unit_price;
-      const { pct } = effectivePct(l, categoryDiscounts, projectDiscount);
+      const { pct } = effectivePct(l, s.categoryDiscounts, s.projectDiscount);
       const d = gross * pct / 100;
       const net = gross - d;
       const t = net * (l.tax_pct || 0) / 100;
       sub += gross; disc += d; tax += t;
     }
     return { subtotal: sub, discount: disc, tax, grand: Math.round((sub - disc + tax) * 100) / 100 };
-  }, [lines, projectDiscount, categoryDiscounts]);
+  }, [s.lines, s.projectDiscount, s.categoryDiscounts]);
 
-  // ---- Line ops ----
-  const addProduct = (p: Product) => {
+  const catNameById: Record<string, string> = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  const usedCategoryIds = Array.from(new Set(s.lines.map((l) => l.category_id).filter(Boolean))) as string[];
+  const pickerList: Product[] = pickerTab === "recent" ? recent : pickerTab === "frequent" ? frequent : products;
+
+  // ---------- Mutation helpers (all go through history.apply) ----------
+  const setCustomer = (id: string) => {
+    if (id === s.customerId) return;
     Haptics.selectionAsync();
-    const idx = lines.findIndex((l) => l.product_id === p.id && l.room === activeRoom);
-    if (idx >= 0) {
-      const next = [...lines]; next[idx] = { ...next[idx], qty: next[idx].qty + 1 }; setLines(next);
-    } else {
-      setLines([
-        ...lines,
-        {
-          id: `${p.id}-${Date.now()}`,
-          product_id: p.id, sku: p.sku, name: p.name, image: p.images?.[0],
-          category_id: p.category_id, room: activeRoom, qty: 1, unit_price: p.price,
-          discount_pct: null, tax_pct: 18,
-        },
-      ]);
-    }
+    history.apply((cur) => ({ ...cur, customerId: id }));
   };
 
-  const updateLine = (id: string, patch: Partial<Line>) => setLines(lines.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const addFromProduct = (p: Product, variant?: ProductVariant) => {
+    Haptics.selectionAsync();
+    history.apply((cur) => {
+      const sku = variant?.sku ?? p.sku;
+      const idx = cur.lines.findIndex((l) => l.sku === sku && l.room === cur.activeRoom);
+      if (idx >= 0) {
+        const next = [...cur.lines]; next[idx] = { ...next[idx], qty: next[idx].qty + 1 };
+        return { ...cur, lines: next };
+      }
+      const finish = variant?.finish ?? variant?.color ?? variant?.size ?? p.finish ?? null;
+      const displayName = variant && (variant.finish || variant.color || variant.size)
+        ? `${p.name} · ${variant.finish || variant.color || variant.size}`
+        : p.name;
+      return {
+        ...cur,
+        lines: [...cur.lines, {
+          id: `${p.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          product_id: p.id, sku,
+          name: displayName, image: p.images?.[0],
+          category_id: p.category_id, room: cur.activeRoom,
+          qty: 1, unit_price: variant?.price ?? p.price,
+          discount_pct: null, tax_pct: 18, finish,
+        }],
+      };
+    });
+  };
+
+  const updateLine = (id: string, patch: Partial<Line>, coalesceKey?: string) =>
+    history.apply(
+      (cur) => ({ ...cur, lines: cur.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)) }),
+      { coalesceKey: coalesceKey ? `${coalesceKey}:${id}` : undefined },
+    );
+
   const removeLine = (id: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setLines(lines.filter((l) => l.id !== id));
+    history.apply((cur) => ({ ...cur, lines: cur.lines.filter((l) => l.id !== id) }));
   };
   const duplicateLine = (id: string) => {
-    const idx = lines.findIndex((l) => l.id === id);
-    if (idx < 0) return;
-    const copy = { ...lines[idx], id: `${lines[idx].product_id}-${Date.now()}` };
-    const next = [...lines]; next.splice(idx + 1, 0, copy); setLines(next);
     Haptics.selectionAsync();
+    history.apply((cur) => {
+      const idx = cur.lines.findIndex((l) => l.id === id);
+      if (idx < 0) return cur;
+      const copy = { ...cur.lines[idx], id: `${cur.lines[idx].product_id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` };
+      const next = [...cur.lines]; next.splice(idx + 1, 0, copy);
+      return { ...cur, lines: next };
+    });
   };
-  const moveLine = (id: string, room: string) => {
-    updateLine(id, { room });
+  const moveLineToNextRoom = (id: string) => {
+    history.apply((cur) => {
+      const l = cur.lines.find((x) => x.id === id);
+      if (!l) return cur;
+      const idx = cur.rooms.indexOf(l.room || "");
+      const nextRoom = cur.rooms[(idx + 1) % cur.rooms.length];
+      return { ...cur, lines: cur.lines.map((x) => (x.id === id ? { ...x, room: nextRoom } : x)) };
+    });
     Haptics.selectionAsync();
   };
 
-  // ---- Room ops ----
+  // Rooms
   const addRoom = (name: string) => {
     const trimmed = name.trim();
-    if (!trimmed || rooms.includes(trimmed)) return;
-    setRooms([...rooms, trimmed]); setActiveRoom(trimmed);
+    if (!trimmed) return;
+    history.apply((cur) => {
+      if (cur.rooms.includes(trimmed)) return cur;
+      return { ...cur, rooms: [...cur.rooms, trimmed], activeRoom: trimmed };
+    });
   };
   const renameRoom = (from: string, to: string) => {
     const trimmed = to.trim();
     if (!trimmed || trimmed === from) return;
-    setRooms(rooms.map((r) => (r === from ? trimmed : r)));
-    setLines(lines.map((l) => (l.room === from ? { ...l, room: trimmed } : l)));
-    if (activeRoom === from) setActiveRoom(trimmed);
-    setCollapsed(({ [from]: c, ...rest }) => (c ? { ...rest, [trimmed]: true } : rest));
+    history.apply((cur) => {
+      if (cur.rooms.includes(trimmed)) return cur;
+      const rooms = cur.rooms.map((r) => (r === from ? trimmed : r));
+      const lines = cur.lines.map((l) => (l.room === from ? { ...l, room: trimmed } : l));
+      const collapsed = { ...cur.collapsedRooms };
+      if (collapsed[from]) { collapsed[trimmed] = true; delete collapsed[from]; }
+      const activeRoom = cur.activeRoom === from ? trimmed : cur.activeRoom;
+      return { ...cur, rooms, lines, collapsedRooms: collapsed, activeRoom };
+    });
   };
   const duplicateRoom = (name: string) => {
-    let copyName = `${name} (copy)`; let i = 2;
-    while (rooms.includes(copyName)) { copyName = `${name} (copy ${i++})`; }
-    setRooms([...rooms, copyName]);
-    setLines([...lines, ...lines.filter((l) => l.room === name).map((l) => ({ ...l, id: `${l.product_id}-${Date.now()}-${Math.random()}`, room: copyName }))]);
-    setActiveRoom(copyName);
+    history.apply((cur) => {
+      let copyName = `${name} (copy)`; let i = 2;
+      while (cur.rooms.includes(copyName)) copyName = `${name} (copy ${i++})`;
+      const clones = cur.lines
+        .filter((l) => l.room === name)
+        .map((l) => ({ ...l, id: `${l.product_id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, room: copyName }));
+      return { ...cur, rooms: [...cur.rooms, copyName], lines: [...cur.lines, ...clones], activeRoom: copyName };
+    });
   };
   const deleteRoom = (name: string) => {
-    if (rooms.length <= 1) { toast.error("Keep at least one room"); return; }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setRooms(rooms.filter((r) => r !== name));
-    setLines(lines.filter((l) => l.room !== name));
-    if (activeRoom === name) setActiveRoom(rooms.find((r) => r !== name) || DEFAULT_ROOMS[0]);
+    history.apply((cur) => {
+      if (cur.rooms.length <= 1) return cur;
+      const rooms = cur.rooms.filter((r) => r !== name);
+      const lines = cur.lines.filter((l) => l.room !== name);
+      const activeRoom = cur.activeRoom === name ? (rooms[0] || DEFAULT_ROOMS[0]) : cur.activeRoom;
+      const { [name]: _dropped, ...collapsed } = cur.collapsedRooms;
+      return { ...cur, rooms, lines, activeRoom, collapsedRooms: collapsed };
+    });
   };
-  const toggleCollapse = (name: string) => setCollapsed({ ...collapsed, [name]: !collapsed[name] });
+  const toggleCollapse = (name: string) =>
+    // Collapse toggles are UI state — skip history so undo doesn't rewind them.
+    history.apply((cur) => ({ ...cur, collapsedRooms: { ...cur.collapsedRooms, [name]: !cur.collapsedRooms[name] } }), { skipHistory: true });
+  const setActiveRoom = (name: string) =>
+    history.apply((cur) => (cur.activeRoom === name ? cur : { ...cur, activeRoom: name }), { skipHistory: true });
 
-  // ---- Finish / send ----
+  // Discounts
+  const setProjectDiscount = (n: number) =>
+    history.apply((cur) => ({ ...cur, projectDiscount: Math.max(0, Math.min(100, n)) }));
+  const setCategoryDiscount = (cid: string, pct: number | null) =>
+    history.apply((cur) => {
+      const next = { ...cur.categoryDiscounts };
+      if (pct == null) delete next[cid]; else next[cid] = Math.max(0, Math.min(100, pct));
+      return { ...cur, categoryDiscounts: next };
+    });
+
+  // Notes (unused for now — notes UI lives in the Finish & Review screen; hook
+  // is exposed here so future inline note editing can plug straight in).
+  // const setNotes = (n: string) => history.apply((cur) => ({ ...cur, notes: n }), { coalesceKey: "notes" });
+
+  // DnD — reorder rooms (horizontal)
+  const onRoomDragEnd = ({ data }: { data: string[] }) =>
+    history.apply((cur) => ({ ...cur, rooms: data }));
+
+  // DnD — reorder flat rows (mixed room-headers + lines).
+  const onLinesDragEnd = ({ data }: { data: BuilderRow[] }) => {
+    history.apply((cur) => {
+      const newLines: Line[] = [];
+      let curRoom = cur.rooms[0];
+      for (const row of data) {
+        if (row.kind === "room-header") curRoom = row.roomName;
+        else newLines.push({ ...row.line, room: curRoom });
+      }
+      return { ...cur, lines: newLines };
+    });
+  };
+
+  // Swap alternates
+  const openSwap = async (l: Line) => {
+    setSwapSheet({ line_id: l.id, product_id: l.product_id });
+    setSwapLoading(true); setSwapItems([]);
+    try {
+      const res = await api.get<{ items: Product[] }>(`/products/${l.product_id}/alternates?limit=20`);
+      setSwapItems(res.items || []);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not load alternates");
+    } finally {
+      setSwapLoading(false);
+    }
+  };
+  const commitSwap = (target: Product, variant?: ProductVariant) => {
+    if (!swapSheet) return;
+    Haptics.selectionAsync();
+    history.apply((cur) => {
+      const idx = cur.lines.findIndex((l) => l.id === swapSheet.line_id);
+      if (idx < 0) return cur;
+      const src = cur.lines[idx];
+      const finish = variant?.finish ?? variant?.color ?? variant?.size ?? target.finish ?? null;
+      const displayName = variant && (variant.finish || variant.color || variant.size)
+        ? `${target.name} · ${variant.finish || variant.color || variant.size}`
+        : target.name;
+      const next = [...cur.lines];
+      next[idx] = {
+        ...src, // preserves qty, discount_pct, tax_pct, notes, description, room
+        product_id: target.id,
+        sku: variant?.sku ?? target.sku,
+        name: displayName,
+        image: target.images?.[0] ?? src.image,
+        category_id: target.category_id,
+        unit_price: variant?.price ?? target.price,
+        finish,
+      };
+      return { ...cur, lines: next };
+    });
+    setSwapSheet(null); setSwapItems([]);
+  };
+
+  // ---------- Finish ----------
   const finalize = async () => {
     await persist();
     if (!quotationId) return;
     router.replace(`/(admin)/quotations/${quotationId}` as any);
   };
 
-  // ---- Save status label ----
+  // ---------- Save status label ----------
   const saveLabel = saveState === "saving" ? "Saving…"
     : saveState === "error" ? "Save failed"
     : savedAt ? `Saved · ${savedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`
     : "Draft — no changes yet";
 
-  const catNameById: Record<string, string> = Object.fromEntries(categories.map((c) => [c.id, c.name]));
+  // ---------- Flat rows for the receipt DnD list ----------
+  type BuilderRow =
+    | { kind: "room-header"; id: string; roomName: string; itemCount: number; subtotal: number; collapsed: boolean }
+    | { kind: "line"; id: string; line: Line };
 
-  // ---- Product picker rows ----
-  const pickerList: Product[] = pickerTab === "recent" ? recent : pickerTab === "frequent" ? frequent : products;
+  const flatRows: BuilderRow[] = useMemo(() => {
+    const rows: BuilderRow[] = [];
+    for (const room of s.rooms) {
+      const roomLines = s.lines.filter((l) => l.room === room);
+      const roomSub = roomLines.reduce((sum, l) => {
+        const eff = effectivePct(l, s.categoryDiscounts, s.projectDiscount);
+        return sum + l.qty * l.unit_price * (1 - eff.pct / 100);
+      }, 0);
+      const collapsed = !!s.collapsedRooms[room];
+      rows.push({ kind: "room-header", id: `hdr-${room}`, roomName: room, itemCount: roomLines.length, subtotal: roomSub, collapsed });
+      if (!collapsed) for (const l of roomLines) rows.push({ kind: "line", id: l.id, line: l });
+    }
+    return rows;
+  }, [s]);
+
+  // ---------- Web: cmd/ctrl+K focuses search ----------
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  // ---------- Renderers ----------
+  const renderProductRow = ({ item }: { item: Product }) => {
+    const hasVariants = (item.variants || []).length > 0;
+    return (
+      <View style={{ gap: 6 }}>
+        <Pressable
+          testID={`add-product-${item.id}`}
+          onPress={() => addFromProduct(item)}
+          style={({ pressed }) => [styles.pRow, { backgroundColor: pressed ? colors.surfaceTertiary : colors.surfaceSecondary }]}
+        >
+          {item.images?.[0] ? <Image source={{ uri: item.images[0] }} style={styles.pThumb} /> : <View style={styles.pThumb} />}
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{item.name}</Text>
+            <Text style={type.caption}>{item.sku}{item.finish ? ` · ${item.finish}` : ""}</Text>
+          </View>
+          <Text style={[type.mono, { fontSize: 13, fontWeight: "600" }]}>{money(item.price)}</Text>
+          <Feather name="plus" size={16} color={colors.brand} />
+        </Pressable>
+        {hasVariants ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 6, paddingLeft: 54, paddingBottom: 2 }}
+          >
+            {(item.variants || []).map((v) => {
+              const delta = (v.price ?? item.price) - item.price;
+              return (
+                <Pressable
+                  key={v.sku}
+                  testID={`add-variant-${v.sku}`}
+                  onPress={() => addFromProduct(item, v)}
+                  style={({ pressed }) => [styles.variantChip, pressed && { opacity: 0.85 }]}
+                >
+                  <View style={[styles.swatch, { backgroundColor: finishSwatch(v.finish) }]} />
+                  <Text style={styles.variantChipLabel} numberOfLines={1}>
+                    {v.finish || v.color || v.size || v.sku}
+                  </Text>
+                  {delta !== 0 ? (
+                    <Text style={[styles.variantDelta, { color: delta > 0 ? colors.onSurfaceMuted : colors.success }]}>
+                      {delta > 0 ? "+" : "−"}{money(Math.abs(delta))}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+      </View>
+    );
+  };
+
+  const renderRoomChipDraggable = ({ item, drag, isActive }: RenderItemParams<string>) => {
+    const active = s.activeRoom === item;
+    return (
+      <ScaleDecorator>
+        <Pressable
+          onLongPress={drag}
+          delayLongPress={180}
+          onPress={() => setActiveRoom(item)}
+          testID={`room-${item}`}
+          style={[styles.roomTab, active && styles.roomTabActive, isActive && { opacity: 0.7 }]}
+        >
+          <Feather name="menu" size={11} color={active ? colors.onBrand : colors.onSurfaceMuted} style={{ opacity: 0.7, marginRight: 4 }} />
+          <Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.onBrand : colors.onSurfaceSecondary }}>{item}</Text>
+        </Pressable>
+      </ScaleDecorator>
+    );
+  };
+
+  const renderReceiptRow = ({ item, drag, isActive }: RenderItemParams<BuilderRow>) => {
+    if (item.kind === "room-header") {
+      const isActiveRoom = s.activeRoom === item.roomName;
+      return (
+        <View style={[styles.roomHeader, isActiveRoom && { borderColor: colors.brand }, isActive && { opacity: 0.7 }]}>
+          <Pressable onPress={() => toggleCollapse(item.roomName)} testID={`room-toggle-${item.roomName}`}>
+            <Feather name={item.collapsed ? "chevron-right" : "chevron-down"} size={16} color={colors.onSurface} />
+          </Pressable>
+          <Pressable onPress={() => setActiveRoom(item.roomName)} style={{ flex: 1 }}>
+            <Text style={{ fontSize: 14, fontWeight: "700", color: colors.onSurface }}>{item.roomName}</Text>
+            <Text style={type.caption}>{item.itemCount} items · {money(item.subtotal)}</Text>
+          </Pressable>
+          <Pressable
+            testID={`room-rename-${item.roomName}`}
+            hitSlop={8}
+            onPress={() => { setRoomSheet({ kind: "rename", name: item.roomName }); setRoomInput(item.roomName); }}
+          >
+            <Feather name="edit-2" size={14} color={colors.onSurfaceMuted} />
+          </Pressable>
+          <Pressable testID={`room-dup-${item.roomName}`} hitSlop={8} onPress={() => duplicateRoom(item.roomName)}>
+            <Feather name="copy" size={14} color={colors.onSurfaceMuted} />
+          </Pressable>
+          <Pressable testID={`room-delete-${item.roomName}`} hitSlop={8} onPress={() => deleteRoom(item.roomName)}>
+            <Feather name="trash-2" size={14} color={colors.error} />
+          </Pressable>
+        </View>
+      );
+    }
+
+    const l = item.line;
+    const eff = effectivePct(l, s.categoryDiscounts, s.projectDiscount);
+    const badge = sourceBadge(eff.source);
+    const total = l.qty * l.unit_price * (1 - eff.pct / 100);
+    return (
+      <View style={[styles.lineRow, isActive && { opacity: 0.75, transform: [{ scale: 0.99 }] }]}>
+        <Pressable
+          onLongPress={drag}
+          delayLongPress={180}
+          hitSlop={6}
+          style={styles.dragHandle}
+          testID={`line-drag-${l.id}`}
+        >
+          <Feather name="menu" size={14} color={colors.onSurfaceMuted} />
+        </Pressable>
+        {l.image ? <Image source={{ uri: l.image }} style={styles.lineThumb} /> : <View style={styles.lineThumb} />}
+        <View style={{ flex: 1, gap: 4 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface, flex: 1 }} numberOfLines={1}>{l.name}</Text>
+            {l.finish ? <View style={[styles.swatch, { backgroundColor: finishSwatch(l.finish), width: 10, height: 10, borderWidth: 0.5 }]} /> : null}
+            {badge ? <Badge tone={badge.tone} label={badge.label} /> : null}
+          </View>
+          <Text style={type.caption}>{l.sku}</Text>
+          {l.description ? <Text style={type.caption} numberOfLines={2}>{l.description}</Text> : null}
+          <View style={{ flexDirection: "row", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+            <View style={styles.inputMini}>
+              <Text style={styles.inputLabel}>QTY</Text>
+              <TextInput
+                testID={`qty-${l.id}`}
+                value={String(l.qty)}
+                keyboardType="number-pad"
+                onChangeText={(v) => updateLine(l.id, { qty: Math.max(0, Number(v) || 0) }, "qty")}
+                style={styles.inputVal}
+                selectTextOnFocus
+              />
+            </View>
+            <View style={styles.inputMini}>
+              <Text style={styles.inputLabel}>RATE</Text>
+              <TextInput
+                testID={`rate-${l.id}`}
+                value={String(l.unit_price)}
+                keyboardType="decimal-pad"
+                onChangeText={(v) => updateLine(l.id, { unit_price: Number(v) || 0 }, "rate")}
+                style={styles.inputVal}
+                selectTextOnFocus
+              />
+            </View>
+            <Pressable
+              testID={`disc-${l.id}`}
+              onPress={() => setDiscountSheet({ kind: "line", line_id: l.id })}
+              style={[styles.inputMini, { justifyContent: "center", flexDirection: "row", alignItems: "center", gap: 4 }]}
+            >
+              <Text style={styles.inputLabel}>DISC</Text>
+              <Text style={styles.inputVal}>{eff.pct}%</Text>
+              {l.discount_pct == null && eff.source !== "none" ? <Feather name="link" size={9} color={colors.onSurfaceMuted} /> : null}
+            </Pressable>
+
+            <Pressable testID={`line-desc-${l.id}`} onPress={() => setDescSheet({ line_id: l.id })} style={styles.lineIcon}>
+              <Feather name="align-left" size={13} color={colors.onSurfaceMuted} />
+            </Pressable>
+            <Pressable testID={`line-swap-${l.id}`} onPress={() => openSwap(l)} style={styles.lineIcon}>
+              <Feather name="refresh-cw" size={13} color={colors.onSurfaceMuted} />
+            </Pressable>
+            <Pressable testID={`line-dup-${l.id}`} onPress={() => duplicateLine(l.id)} style={styles.lineIcon}>
+              <Feather name="copy" size={13} color={colors.onSurfaceMuted} />
+            </Pressable>
+            <Pressable testID={`line-move-${l.id}`} onPress={() => moveLineToNextRoom(l.id)} style={styles.lineIcon}>
+              <Feather name="corner-up-right" size={13} color={colors.onSurfaceMuted} />
+            </Pressable>
+            <Pressable testID={`line-del-${l.id}`} onPress={() => removeLine(l.id)} style={styles.lineIcon}>
+              <Feather name="trash-2" size={13} color={colors.error} />
+            </Pressable>
+          </View>
+        </View>
+        <Text style={[type.mono, { fontSize: 13, fontWeight: "700" }]}>{money(total)}</Text>
+      </View>
+    );
+  };
 
   const CatalogPanel = (
     <View style={styles.panel}>
@@ -252,13 +655,14 @@ export default function QuotationBuilder() {
         <View style={styles.searchWrap}>
           <Feather name="search" size={16} color={colors.onSurfaceMuted} />
           <TextInput
+            ref={searchRef}
             testID="builder-search"
             value={q}
             onChangeText={(v) => { setQ(v); setPickerTab("search"); }}
-            placeholder="Search catalog · Enter to add first"
+            placeholder={Platform.OS === "web" ? "Search catalog · ⌘K to focus · Enter to add" : "Search catalog · Enter to add first"}
             placeholderTextColor={colors.onSurfaceMuted}
             style={styles.searchInput}
-            onSubmitEditing={() => pickerList[0] && addProduct(pickerList[0])}
+            onSubmitEditing={() => pickerList[0] && addFromProduct(pickerList[0])}
           />
         </View>
         <View style={styles.pickerTabs}>
@@ -283,21 +687,7 @@ export default function QuotationBuilder() {
         data={pickerList}
         keyExtractor={(p) => p.id}
         contentContainerStyle={{ padding: spacing.md, gap: 8 }}
-        renderItem={({ item }) => (
-          <Pressable
-            testID={`add-product-${item.id}`}
-            onPress={() => addProduct(item)}
-            style={({ pressed }) => [styles.pRow, { backgroundColor: pressed ? colors.surfaceTertiary : colors.surfaceSecondary }]}
-          >
-            {item.images?.[0] ? <Image source={{ uri: item.images[0] }} style={styles.pThumb} /> : <View style={styles.pThumb} />}
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{item.name}</Text>
-              <Text style={type.caption}>{item.sku}{item.finish ? ` · ${item.finish}` : ""}</Text>
-            </View>
-            <Text style={[type.mono, { fontSize: 13, fontWeight: "600" }]}>{money(item.price)}</Text>
-            <Feather name="plus" size={16} color={colors.brand} />
-          </Pressable>
-        )}
+        renderItem={renderProductRow}
         ListEmptyComponent={
           <EmptyState
             icon={pickerTab === "search" ? "search" : pickerTab === "recent" ? "clock" : "star"}
@@ -308,114 +698,6 @@ export default function QuotationBuilder() {
       />
     </View>
   );
-
-  const roomActiveIsCollapsed = (r: string) => !!collapsed[r];
-
-  const RoomBlock = ({ name }: { name: string }) => {
-    const roomLines = lines.filter((l) => l.room === name);
-    const roomSub = roomLines.reduce((s, l) => s + l.qty * l.unit_price * (1 - (effectivePct(l, categoryDiscounts, projectDiscount).pct / 100)), 0);
-    const isColl = roomActiveIsCollapsed(name);
-    const isActive = activeRoom === name;
-    return (
-      <View style={{ gap: 8, marginBottom: 6 }}>
-        <View style={[styles.roomHeader, isActive && { borderColor: colors.brand }]}>
-          <Pressable onPress={() => toggleCollapse(name)} testID={`room-toggle-${name}`}>
-            <Feather name={isColl ? "chevron-right" : "chevron-down"} size={16} color={colors.onSurface} />
-          </Pressable>
-          <Pressable onPress={() => setActiveRoom(name)} style={{ flex: 1 }}>
-            <Text style={{ fontSize: 14, fontWeight: "700", color: colors.onSurface }}>{name}</Text>
-            <Text style={type.caption}>{roomLines.length} items · {money(roomSub)}</Text>
-          </Pressable>
-          <Pressable
-            testID={`room-rename-${name}`}
-            hitSlop={8}
-            onPress={() => { setRoomSheet({ kind: "rename", name }); setRoomInput(name); }}
-          >
-            <Feather name="edit-2" size={14} color={colors.onSurfaceMuted} />
-          </Pressable>
-          <Pressable testID={`room-dup-${name}`} hitSlop={8} onPress={() => duplicateRoom(name)}>
-            <Feather name="copy" size={14} color={colors.onSurfaceMuted} />
-          </Pressable>
-          <Pressable testID={`room-delete-${name}`} hitSlop={8} onPress={() => deleteRoom(name)}>
-            <Feather name="trash-2" size={14} color={colors.error} />
-          </Pressable>
-        </View>
-
-        {!isColl ? (
-          roomLines.length === 0 ? (
-            <View style={styles.roomEmpty}>
-              <Text style={type.caption}>No items yet — pick from Add products.</Text>
-            </View>
-          ) : roomLines.map((l) => {
-            const eff = effectivePct(l, categoryDiscounts, projectDiscount);
-            const total = l.qty * l.unit_price * (1 - eff.pct / 100);
-            return (
-              <View key={l.id} style={styles.lineRow}>
-                {l.image ? <Image source={{ uri: l.image }} style={styles.lineThumb} /> : <View style={styles.lineThumb} />}
-                <View style={{ flex: 1, gap: 4 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface, flex: 1 }} numberOfLines={1}>{l.name}</Text>
-                    {eff.source !== "none" && eff.source !== "product" ? (
-                      <Badge tone={eff.source === "category" ? "info" : "success"} label={eff.source === "category" ? "Cat" : "Proj"} />
-                    ) : null}
-                  </View>
-                  <Text style={type.caption}>{l.sku}</Text>
-                  {l.description ? <Text style={type.caption} numberOfLines={2}>{l.description}</Text> : null}
-                  <View style={{ flexDirection: "row", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
-                    <View style={styles.inputMini}>
-                      <Text style={styles.inputLabel}>QTY</Text>
-                      <TextInput
-                        testID={`qty-${l.id}`}
-                        value={String(l.qty)}
-                        keyboardType="number-pad"
-                        onChangeText={(v) => updateLine(l.id, { qty: Math.max(0, Number(v) || 0) })}
-                        style={styles.inputVal}
-                        selectTextOnFocus
-                      />
-                    </View>
-                    <View style={styles.inputMini}>
-                      <Text style={styles.inputLabel}>RATE</Text>
-                      <TextInput
-                        testID={`rate-${l.id}`}
-                        value={String(l.unit_price)}
-                        keyboardType="decimal-pad"
-                        onChangeText={(v) => updateLine(l.id, { unit_price: Number(v) || 0 })}
-                        style={styles.inputVal}
-                        selectTextOnFocus
-                      />
-                    </View>
-                    <Pressable
-                      testID={`disc-${l.id}`}
-                      onPress={() => setDiscountSheet({ kind: "line", line_id: l.id })}
-                      style={[styles.inputMini, { justifyContent: "center", flexDirection: "row", alignItems: "center", gap: 4 }]}
-                    >
-                      <Text style={styles.inputLabel}>DISC</Text>
-                      <Text style={styles.inputVal}>{eff.pct}%</Text>
-                      {l.discount_pct == null && eff.source !== "none" ? <Feather name="link" size={9} color={colors.onSurfaceMuted} /> : null}
-                    </Pressable>
-
-                    <Pressable testID={`line-menu-${l.id}`} onPress={() => setDescSheet({ line_id: l.id })} style={styles.lineIcon}>
-                      <Feather name="align-left" size={13} color={colors.onSurfaceMuted} />
-                    </Pressable>
-                    <Pressable testID={`line-dup-${l.id}`} onPress={() => duplicateLine(l.id)} style={styles.lineIcon}>
-                      <Feather name="copy" size={13} color={colors.onSurfaceMuted} />
-                    </Pressable>
-                    <Pressable testID={`line-move-${l.id}`} onPress={() => moveLine(l.id, rooms[(rooms.indexOf(l.room || "") + 1) % rooms.length])} style={styles.lineIcon}>
-                      <Feather name="corner-up-right" size={13} color={colors.onSurfaceMuted} />
-                    </Pressable>
-                    <Pressable testID={`line-del-${l.id}`} onPress={() => removeLine(l.id)} style={styles.lineIcon}>
-                      <Feather name="trash-2" size={13} color={colors.error} />
-                    </Pressable>
-                  </View>
-                </View>
-                <Text style={[type.mono, { fontSize: 13, fontWeight: "700" }]}>{money(total)}</Text>
-              </View>
-            );
-          })
-        ) : null}
-      </View>
-    );
-  };
 
   const ReceiptPanel = (
     <View style={[styles.panel, { backgroundColor: colors.surfaceSecondary }]}>
@@ -437,44 +719,57 @@ export default function QuotationBuilder() {
             <Pressable
               key={c.id}
               testID={`cust-${c.id}`}
-              onPress={() => setCustomerId(c.id)}
-              style={[styles.custChip, customerId === c.id && styles.custChipActive]}
+              onPress={() => setCustomer(c.id)}
+              style={[styles.custChip, s.customerId === c.id && styles.custChipActive]}
             >
-              <Text style={{ fontSize: 12, fontWeight: "600", color: customerId === c.id ? colors.onBrand : colors.onSurface }}>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: s.customerId === c.id ? colors.onBrand : colors.onSurface }}>
                 {c.company || c.name}
               </Text>
             </Pressable>
           ))}
         </ScrollView>
 
-        {/* Room chips */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 2 }}>
-          {rooms.map((r) => (
-            <Pressable
-              key={r}
-              testID={`room-${r}`}
-              onPress={() => setActiveRoom(r)}
-              style={[styles.roomTab, activeRoom === r && styles.roomTabActive]}
-            >
-              <Text style={{ fontSize: 12, fontWeight: "600", color: activeRoom === r ? colors.onBrand : colors.onSurfaceSecondary }}>{r}</Text>
-            </Pressable>
-          ))}
+        {/* Room chips — horizontal drag reorder */}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <View style={{ flex: 1 }}>
+            <DraggableFlatList
+              data={s.rooms}
+              horizontal
+              keyExtractor={(r) => r}
+              onDragEnd={onRoomDragEnd}
+              renderItem={renderRoomChipDraggable}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
+              activationDistance={8}
+            />
+          </View>
           <Pressable
             onPress={() => { setRoomInput(""); setRoomSheet({ kind: "add" }); }}
             testID="add-room-btn"
-            style={[styles.roomTab, { borderStyle: "dashed" }]}
+            style={[styles.roomTab, { borderStyle: "dashed", paddingHorizontal: 10 }]}
           >
             <Feather name="plus" size={13} color={colors.onSurfaceMuted} />
           </Pressable>
-        </ScrollView>
+        </View>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: spacing.md, gap: 4 }} keyboardShouldPersistTaps="handled">
-        {rooms.map((r) => <RoomBlock key={r} name={r} />)}
-        {lines.length === 0 ? (
+      {/* Receipt DnD list — mixes headers and lines */}
+      <View style={{ flex: 1 }}>
+        {flatRows.length === 0 || (flatRows.length <= s.rooms.length && s.lines.length === 0) ? (
           <EmptyState icon="file-plus" title="Add your first product" subtitle="Search on the left and tap to add. Everything totals live." />
-        ) : null}
-      </ScrollView>
+        ) : (
+          <DraggableFlatList
+            data={flatRows}
+            keyExtractor={(row) => row.id}
+            onDragEnd={onLinesDragEnd}
+            renderItem={renderReceiptRow}
+            contentContainerStyle={{ padding: spacing.md, gap: 6 }}
+            activationDistance={10}
+            keyboardShouldPersistTaps="handled"
+            testID="receipt-list"
+          />
+        )}
+      </View>
 
       {/* Footer totals + CTA */}
       <View style={styles.footer}>
@@ -486,8 +781,8 @@ export default function QuotationBuilder() {
           <View style={{ flex: 1 }}>
             <Text style={type.overline}>Discount</Text>
             <Text style={{ fontSize: 12, color: colors.onSurfaceSecondary }} numberOfLines={1}>
-              {projectDiscount ? `Project ${projectDiscount}%` : "No project discount"}
-              {Object.keys(categoryDiscounts).length ? ` · ${Object.keys(categoryDiscounts).length} category discounts` : ""}
+              {s.projectDiscount ? `Project ${s.projectDiscount}%` : "No project discount"}
+              {Object.keys(s.categoryDiscounts).length ? ` · ${Object.keys(s.categoryDiscounts).length} category discounts` : ""}
             </Text>
           </View>
           <Feather name="sliders" size={14} color={colors.onSurface} />
@@ -505,8 +800,8 @@ export default function QuotationBuilder() {
         <Pressable
           testID="save-quotation-btn"
           onPress={finalize}
-          disabled={!customerId || lines.length === 0}
-          style={({ pressed }) => [styles.saveBtn, { opacity: !customerId || lines.length === 0 ? 0.4 : pressed ? 0.9 : 1 }]}
+          disabled={!s.customerId || s.lines.length === 0}
+          style={({ pressed }) => [styles.saveBtn, { opacity: !s.customerId || s.lines.length === 0 ? 0.4 : pressed ? 0.9 : 1 }]}
         >
           <Feather name="check" size={16} color={colors.onBrand} />
           <Text style={styles.saveBtnText}>Finish & review</Text>
@@ -515,46 +810,39 @@ export default function QuotationBuilder() {
     </View>
   );
 
-  // ------ Discount sheet ------
+  // ---------- Discount sheet plumbing ----------
   const currentDiscSheet = discountSheet;
   const closeDiscount = () => setDiscountSheet(null);
-
-  const projectPct = projectDiscount;
   const [tempProjPct, setTempProjPct] = useState<string>("0");
   const [tempLinePct, setTempLinePct] = useState<string>("");
   const [tempCatPct, setTempCatPct] = useState<string>("");
-
   useEffect(() => {
     if (!currentDiscSheet) return;
-    if (currentDiscSheet.kind === "project") setTempProjPct(String(projectPct));
+    if (currentDiscSheet.kind === "project") setTempProjPct(String(s.projectDiscount));
     else if (currentDiscSheet.kind === "line") {
-      const l = lines.find((x) => x.id === currentDiscSheet.line_id);
+      const l = s.lines.find((x) => x.id === currentDiscSheet.line_id);
       setTempLinePct(l?.discount_pct != null ? String(l.discount_pct) : "");
     } else if (currentDiscSheet.kind === "category") {
-      setTempCatPct(categoryDiscounts[currentDiscSheet.category_id] != null ? String(categoryDiscounts[currentDiscSheet.category_id]) : "");
+      setTempCatPct(s.categoryDiscounts[currentDiscSheet.category_id] != null ? String(s.categoryDiscounts[currentDiscSheet.category_id]) : "");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDiscSheet]);
-
   const applyDiscount = () => {
     if (!currentDiscSheet) return;
-    if (currentDiscSheet.kind === "project") setProjectDiscount(Math.max(0, Math.min(100, Number(tempProjPct) || 0)));
+    if (currentDiscSheet.kind === "project") setProjectDiscount(Number(tempProjPct) || 0);
     else if (currentDiscSheet.kind === "line") {
       updateLine(currentDiscSheet.line_id, { discount_pct: tempLinePct === "" ? null : Math.max(0, Math.min(100, Number(tempLinePct) || 0)) });
     } else if (currentDiscSheet.kind === "category") {
-      const next = { ...categoryDiscounts };
-      if (tempCatPct === "") delete next[currentDiscSheet.category_id];
-      else next[currentDiscSheet.category_id] = Math.max(0, Math.min(100, Number(tempCatPct) || 0));
-      setCategoryDiscounts(next);
+      setCategoryDiscount(currentDiscSheet.category_id, tempCatPct === "" ? null : Number(tempCatPct) || 0);
     }
     closeDiscount();
   };
+  const currentLine = currentDiscSheet?.kind === "line" ? s.lines.find((l) => l.id === currentDiscSheet.line_id) : null;
+  const currentLineEff = currentLine ? effectivePct(currentLine, s.categoryDiscounts, s.projectDiscount) : null;
 
-  const currentLine = currentDiscSheet?.kind === "line" ? lines.find((l) => l.id === currentDiscSheet.line_id) : null;
-  const currentLineEff = currentLine ? effectivePct(currentLine, categoryDiscounts, projectDiscount) : null;
+  const descLine = descSheet ? s.lines.find((x) => x.id === descSheet.line_id) : null;
 
-  // Categories that appear in lines (for the project sheet listing)
-  const usedCategoryIds = Array.from(new Set(lines.map((l) => l.category_id).filter(Boolean))) as string[];
-
+  // ---------- Render ----------
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={styles.topbar}>
@@ -564,10 +852,35 @@ export default function QuotationBuilder() {
         </Pressable>
         <View style={{ flex: 1, alignItems: "center" }}>
           <Text style={type.titleMd}>New Quotation</Text>
-          <Text style={type.caption} numberOfLines={1}>{lines.length} items · {money(totals.grand)} · {saveLabel}</Text>
+          <Text style={type.caption} numberOfLines={1}>
+            {s.lines.length} items · {money(totals.grand)} · {saveLabel}
+            {history.pastSize > 0 ? ` · ${history.pastSize} step${history.pastSize === 1 ? "" : "s"}` : ""}
+          </Text>
         </View>
-        <View style={{ width: 60 }} />
+        <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+          <Pressable
+            testID="undo-btn"
+            onPress={history.undo}
+            disabled={!history.canUndo}
+            style={({ pressed }) => [styles.topBtn, { opacity: !history.canUndo ? 0.35 : pressed ? 0.7 : 1 }]}
+            hitSlop={6}
+          >
+            <Feather name="corner-up-left" size={16} color={colors.onSurface} />
+            {isDesktop ? <Text style={styles.topBtnLabel}>Undo</Text> : null}
+          </Pressable>
+          <Pressable
+            testID="redo-btn"
+            onPress={history.redo}
+            disabled={!history.canRedo}
+            style={({ pressed }) => [styles.topBtn, { opacity: !history.canRedo ? 0.35 : pressed ? 0.7 : 1 }]}
+            hitSlop={6}
+          >
+            <Feather name="corner-up-right" size={16} color={colors.onSurface} />
+            {isDesktop ? <Text style={styles.topBtnLabel}>Redo</Text> : null}
+          </Pressable>
+        </View>
       </View>
+
       {isTablet ? (
         <View style={{ flex: 1, flexDirection: "row" }}>
           <View style={{ flex: 1.1 }}>{CatalogPanel}</View>
@@ -585,7 +898,7 @@ export default function QuotationBuilder() {
                 testID={`builder-tab-${t}`}
               >
                 <Text style={{ color: tab === t ? colors.onBrand : colors.onSurface, fontSize: 13, fontWeight: "600" }}>
-                  {t === "catalog" ? "Add products" : `Quotation (${lines.length})`}
+                  {t === "catalog" ? "Add products" : `Quotation (${s.lines.length})`}
                 </Text>
               </Pressable>
             ))}
@@ -594,7 +907,7 @@ export default function QuotationBuilder() {
         </>
       )}
 
-      {/* Discount Sheet — universal */}
+      {/* Discount Sheet */}
       <BottomSheet
         visible={!!discountSheet}
         onClose={closeDiscount}
@@ -638,8 +951,8 @@ export default function QuotationBuilder() {
                   style={styles.catRow}
                 >
                   <Text style={{ flex: 1, fontSize: 13, fontWeight: "600" }}>{catNameById[cid] || "—"}</Text>
-                  <Text style={type.mono}>{categoryDiscounts[cid] != null ? `${categoryDiscounts[cid]}%` : "Add discount"}</Text>
-                  <Feather name={categoryDiscounts[cid] != null ? "edit-2" : "plus"} size={14} color={colors.brand} />
+                  <Text style={type.mono}>{s.categoryDiscounts[cid] != null ? `${s.categoryDiscounts[cid]}%` : "Add discount"}</Text>
+                  <Feather name={s.categoryDiscounts[cid] != null ? "edit-2" : "plus"} size={14} color={colors.brand} />
                 </Pressable>
               ))}
             </View>
@@ -678,9 +991,7 @@ export default function QuotationBuilder() {
             {currentLineEff && currentLineEff.source !== "none" && currentLine.discount_pct == null ? (
               <View style={styles.calloutBox}>
                 <Text style={type.overline}>Currently inheriting</Text>
-                <Text style={type.body}>
-                  {currentLineEff.pct}% from {currentLineEff.source}
-                </Text>
+                <Text style={type.body}>{currentLineEff.pct}% from {currentLineEff.source}</Text>
               </View>
             ) : null}
           </View>
@@ -710,7 +1021,7 @@ export default function QuotationBuilder() {
       >
         <View style={{ gap: spacing.md }}>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-            {DEFAULT_ROOMS.filter((r) => !rooms.includes(r)).map((r) => (
+            {DEFAULT_ROOMS.filter((r) => !s.rooms.includes(r)).map((r) => (
               <Pressable
                 key={r}
                 testID={`suggest-${r}`}
@@ -744,23 +1055,79 @@ export default function QuotationBuilder() {
           </View>
         }
       >
-        {(() => {
-          const l = descSheet ? lines.find((x) => x.id === descSheet.line_id) : null;
-          if (!l) return null;
-          return (
-            <View style={{ gap: spacing.md }}>
-              <Text style={type.body}>{l.name}</Text>
-              <TextInput
-                testID="desc-input"
-                value={l.description || ""}
-                onChangeText={(v) => updateLine(l.id, { description: v })}
-                multiline
-                placeholder="Add a note visible on the PDF (e.g. Installation excluded)"
-                style={[styles.bigInput, { minHeight: 110, textAlignVertical: "top" }]}
-              />
-            </View>
-          );
-        })()}
+        {descLine ? (
+          <View style={{ gap: spacing.md }}>
+            <Text style={type.body}>{descLine.name}</Text>
+            <TextInput
+              testID="desc-input"
+              value={descLine.description || ""}
+              onChangeText={(v) => updateLine(descLine.id, { description: v }, "desc")}
+              multiline
+              placeholder="Add a note visible on the PDF (e.g. Installation excluded)"
+              style={[styles.bigInput, { minHeight: 110, textAlignVertical: "top" }]}
+            />
+          </View>
+        ) : null}
+      </BottomSheet>
+
+      {/* Alternates swap sheet */}
+      <BottomSheet
+        visible={!!swapSheet}
+        onClose={() => { setSwapSheet(null); setSwapItems([]); }}
+        title="Swap for an alternate"
+        testID="swap-sheet"
+      >
+        {swapLoading ? (
+          <View style={{ alignItems: "center", padding: spacing.xl }}>
+            <ActivityIndicator />
+          </View>
+        ) : swapItems.length === 0 ? (
+          <EmptyState icon="refresh-cw" title="No alternates found" subtitle="Try a different product." />
+        ) : (
+          <View style={{ gap: 8 }}>
+            <Text style={type.caption}>Ranked closest-first · family → brand+category → category. Qty, discount and room are preserved.</Text>
+            {swapItems.map((p) => (
+              <View key={p.id} style={{ gap: 4 }}>
+                <Pressable
+                  testID={`swap-target-${p.id}`}
+                  onPress={() => commitSwap(p)}
+                  style={({ pressed }) => [styles.pRow, { backgroundColor: pressed ? colors.surfaceTertiary : colors.surfaceSecondary }]}
+                >
+                  {p.images?.[0] ? <Image source={{ uri: p.images[0] }} style={styles.pThumb} /> : <View style={styles.pThumb} />}
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
+                    <Text style={type.caption}>{p.sku}{p.finish ? ` · ${p.finish}` : ""}</Text>
+                  </View>
+                  <Text style={[type.mono, { fontSize: 13, fontWeight: "600" }]}>{money(p.price)}</Text>
+                  <Feather name="corner-down-right" size={14} color={colors.brand} />
+                </Pressable>
+                {(p.variants || []).length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingLeft: 54, paddingBottom: 2 }}>
+                    {(p.variants || []).map((v) => {
+                      const delta = (v.price ?? p.price) - p.price;
+                      return (
+                        <Pressable
+                          key={v.sku}
+                          testID={`swap-variant-${v.sku}`}
+                          onPress={() => commitSwap(p, v)}
+                          style={({ pressed }) => [styles.variantChip, pressed && { opacity: 0.85 }]}
+                        >
+                          <View style={[styles.swatch, { backgroundColor: finishSwatch(v.finish) }]} />
+                          <Text style={styles.variantChipLabel} numberOfLines={1}>{v.finish || v.color || v.size || v.sku}</Text>
+                          {delta !== 0 ? (
+                            <Text style={[styles.variantDelta, { color: delta > 0 ? colors.onSurfaceMuted : colors.success }]}>
+                              {delta > 0 ? "+" : "−"}{money(Math.abs(delta))}
+                            </Text>
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                ) : null}
+              </View>
+            ))}
+          </View>
+        )}
       </BottomSheet>
     </KeyboardAvoidingView>
   );
@@ -770,8 +1137,15 @@ const styles = StyleSheet.create({
   topbar: {
     flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg,
     paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surface, gap: 6,
   },
+  topBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,
+  },
+  topBtnLabel: { fontSize: 12, fontWeight: "600", color: colors.onSurface },
+
   panel: { flex: 1, backgroundColor: colors.surface },
   panelHead: {
     padding: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
@@ -794,23 +1168,32 @@ const styles = StyleSheet.create({
   },
   pThumb: { width: 44, height: 44, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
 
+  variantChip: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+  },
+  variantChipLabel: { fontSize: 11, fontWeight: "600", color: colors.onSurface, maxWidth: 96 },
+  variantDelta: { fontSize: 10, fontWeight: "700", fontVariant: ["tabular-nums"] },
+  swatch: { width: 12, height: 12, borderRadius: 999, borderWidth: 1, borderColor: "rgba(0,0,0,0.12)" },
+
   custChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
   custChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
-  roomTab: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  roomTab: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
   roomTabActive: { backgroundColor: colors.brand, borderColor: colors.brand },
 
   roomHeader: {
     flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
   },
-  roomEmpty: {
-    padding: spacing.md, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-    borderStyle: "dashed", alignItems: "center", backgroundColor: colors.surface,
-  },
 
   lineRow: {
     flexDirection: "row", gap: 10, padding: 10, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  dragHandle: {
+    width: 20, alignItems: "center", justifyContent: "center", alignSelf: "stretch",
+    marginRight: -2, marginLeft: -4,
   },
   lineThumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
   inputMini: {
