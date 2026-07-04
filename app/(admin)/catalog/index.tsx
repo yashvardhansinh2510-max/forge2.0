@@ -17,6 +17,9 @@ type Product = {
   family_name?: string | null; variant_label?: string | null; colour?: string | null;
   price: number; mrp: number; finish?: string | null; images: string[]; stock: number;
   image_quality?: string | null;
+  hero_image_url?: string | null;
+  gallery?: { url: string; role?: string; source_type?: string; quality?: string }[];
+  media_summary?: { supplier: number; manufacturer: number; internal: number; best_quality: string; total: number };
 };
 type Family = {
   family_key: string; family_name: string; brand_id: string; category_id: string;
@@ -290,7 +293,7 @@ function ProductGrid({
           style={({ pressed }) => [styles.card, { width: cardWidth, opacity: pressed ? 0.85 : 1 }]}
         >
           <View style={styles.imageWrap}>
-            <ProductImage source={p.images} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel={p.sku} borderRadius={0} />
+            <ProductImage source={p.hero_image_url ? [p.hero_image_url, ...(p.images || [])] : p.images} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel={p.sku} borderRadius={0} />
             <View style={styles.brandBadge}><Text style={styles.brandBadgeText}>{brandById[p.brand_id] || "—"}</Text></View>
             <View style={styles.qualityBadgeWrap}><QualityBadge quality={p.image_quality} /></View>
             {p.mrp > p.price ? (
