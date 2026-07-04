@@ -1,7 +1,8 @@
 // Thin fetch wrapper with token injection.
 import { storage } from "@/src/utils/storage";
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
+// Empty string ⇒ same-origin fetch. Kubernetes ingress routes `/api/*` to backend.
+const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 const TOKEN_KEY = "forge.jwt";
 const TOKEN_KIND_KEY = "forge.jwt.kind"; // "staff" | "customer"
 
