@@ -14,6 +14,7 @@ export const colors = {
   brand: "#18181B",
   brandSecondary: "#3F3F46",
   brandTertiary: "#E4E4E7",
+  brandTint: "#E4E4E7",
   onBrand: "#FFFFFF",
   success: "#166534",
   successBg: "#DCFCE7",
