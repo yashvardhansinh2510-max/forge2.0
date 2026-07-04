@@ -16,7 +16,6 @@
 // Keyboard on web: Cmd/Ctrl+Z / Cmd/Ctrl+Shift+Z / Cmd/Ctrl+K.
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -30,6 +29,7 @@ import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-nativ
 const grabCursor: any = Platform.OS === "web" ? { cursor: "grab" } : null;
 
 import { BottomSheet } from "@/src/components/BottomSheet";
+import { ProductImage } from "@/src/components/ProductImage";
 import { Badge, Button, EmptyState, StatusBadge } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { api } from "@/src/api/client";
@@ -495,7 +495,11 @@ export default function QuotationBuilder() {
           onPress={() => addFromProduct(item)}
           style={({ pressed }) => [styles.pRow, { backgroundColor: pressed ? colors.surfaceTertiary : colors.surfaceSecondary }]}
         >
-          {item.images?.[0] ? <Image source={{ uri: item.images[0] }} style={styles.pThumb} /> : <View style={styles.pThumb} />}
+          {item.images?.[0] ? (
+            <ProductImage source={item.images} style={styles.pThumb} fallbackLabel={item.sku} />
+          ) : (
+            <ProductImage source={null} style={styles.pThumb} fallbackLabel={item.sku} />
+          )}
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{item.name}</Text>
             <Text style={type.caption}>{item.sku}{item.finish ? ` · ${item.finish}` : ""}</Text>
@@ -630,7 +634,7 @@ export default function QuotationBuilder() {
         >
           <Feather name="menu" size={14} color={colors.onSurfaceMuted} />
         </Pressable>
-        {l.image ? <Image source={{ uri: l.image }} style={styles.lineThumb} /> : <View style={styles.lineThumb} />}
+        <ProductImage source={l.image} style={styles.lineThumb} fallbackLabel={l.sku} />
         <View style={{ flex: 1, gap: 4 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
             <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface, flex: 1 }} numberOfLines={1}>{l.name}</Text>
@@ -1162,7 +1166,7 @@ export default function QuotationBuilder() {
                   onPress={() => commitSwap(p)}
                   style={({ pressed }) => [styles.pRow, { backgroundColor: pressed ? colors.surfaceTertiary : colors.surfaceSecondary }]}
                 >
-                  {p.images?.[0] ? <Image source={{ uri: p.images[0] }} style={styles.pThumb} /> : <View style={styles.pThumb} />}
+                  <ProductImage source={p.images} style={styles.pThumb} fallbackLabel={p.sku} />
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
                     <Text style={type.caption}>{p.sku}{p.finish ? ` · ${p.finish}` : ""}</Text>

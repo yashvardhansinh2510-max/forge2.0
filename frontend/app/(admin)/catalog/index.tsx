@@ -1,10 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
+import { ProductImage } from "@/src/components/ProductImage";
 import { Chip, EmptyState, Skeleton } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
@@ -136,9 +136,7 @@ export default function Catalog() {
               style={({ pressed }) => [styles.card, { width: cardWidth as any, opacity: pressed ? 0.85 : 1 }]}
             >
               <View style={styles.imageWrap}>
-                {p.images?.[0] ? (
-                  <Image source={{ uri: p.images[0] }} style={StyleSheet.absoluteFill} contentFit="cover" transition={200} />
-                ) : null}
+                <ProductImage source={p.images} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel={p.sku} borderRadius={0} />
                 <View style={styles.brandBadge}>
                   <Text style={styles.brandBadgeText}>{brandById[p.brand_id] || "—"}</Text>
                 </View>

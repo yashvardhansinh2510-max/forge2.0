@@ -47,54 +47,37 @@ CATEGORIES = [
     ("Flush Plates", "flush-plates"),
 ]
 
-# Curated sanitaryware imagery (Unsplash / Pexels). All royalty-free.
-# Only the 5 supplier brands we distribute: Hansgrohe, Axor, Grohe, Vitra, Geberit.
+# Demo product catalog for the 5 supplier brands we distribute.
+# NOTE: No product imagery is seeded — the real product images ship with the
+# supplier catalog imports (see backend/catalog_pipeline). The frontend renders
+# a graceful "no image" placeholder for these demo products; once the 2026
+# supplier PDFs / XLSX are imported the placeholders are automatically replaced.
 PRODUCT_SEEDS = [
     # ---- Hansgrohe ----
-    ("Talis E Single Lever Basin Mixer", "Faucets", "Hansgrohe", "Chrome", 24800, 18500,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("Metris Single Lever Kitchen Mixer", "Faucets", "Hansgrohe", "Chrome", 32500, 24800,
-     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
-    ("Croma Select S Overhead 280", "Showers", "Hansgrohe", "Chrome", 28500, 21500,
-     "https://images.unsplash.com/photo-1584622781564-1d987f7333c1?auto=format&fit=crop&w=800&q=80"),
-    ("Raindance Select E Hand Shower", "Showers", "Hansgrohe", "Chrome", 18500, 13800,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    ("Talis E Single Lever Basin Mixer", "Faucets", "Hansgrohe", "Chrome", 24800, 18500),
+    ("Metris Single Lever Kitchen Mixer", "Faucets", "Hansgrohe", "Chrome", 32500, 24800),
+    ("Croma Select S Overhead 280", "Showers", "Hansgrohe", "Chrome", 28500, 21500),
+    ("Raindance Select E Hand Shower", "Showers", "Hansgrohe", "Chrome", 18500, 13800),
     # ---- Axor ----
-    ("Axor Citterio Basin Mixer 180", "Faucets", "Axor", "Brushed Brass", 68500, 52000,
-     "https://images.pexels.com/photos/36718391/pexels-photo-36718391.jpeg?auto=compress&cs=tinysrgb&w=800"),
-    ("Axor Uno Single Lever Basin Mixer", "Faucets", "Axor", "Polished Chrome", 58000, 44500,
-     "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80"),
-    ("Axor Starck Organic Overhead", "Showers", "Axor", "Chrome", 82000, 62500,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("Axor Massaud Wash Basin", "Basins", "Axor", "White", 145000, 112000,
-     "https://images.unsplash.com/photo-1631679706909-1844bbd07221?auto=format&fit=crop&w=800&q=80"),
+    ("Axor Citterio Basin Mixer 180", "Faucets", "Axor", "Brushed Brass", 68500, 52000),
+    ("Axor Uno Single Lever Basin Mixer", "Faucets", "Axor", "Polished Chrome", 58000, 44500),
+    ("Axor Starck Organic Overhead", "Showers", "Axor", "Chrome", 82000, 62500),
+    ("Axor Massaud Wash Basin", "Basins", "Axor", "White", 145000, 112000),
     # ---- Grohe ----
-    ("Grohe Essence Kitchen Mixer", "Faucets", "Grohe", "Chrome", 28900, 21500,
-     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
-    ("Grohe Grandera Basin Mixer", "Faucets", "Grohe", "Warm Sunset", 42500, 32800,
-     "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80"),
-    ("Grohe Rainshower SmartActive 310", "Showers", "Grohe", "Chrome", 32500, 24800,
-     "https://images.unsplash.com/photo-1584622781564-1d987f7333c1?auto=format&fit=crop&w=800&q=80"),
-    ("Grohe Eurosmart CE Concealed", "Faucets", "Grohe", "Chrome", 16500, 12500,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    ("Grohe Essence Kitchen Mixer", "Faucets", "Grohe", "Chrome", 28900, 21500),
+    ("Grohe Grandera Basin Mixer", "Faucets", "Grohe", "Warm Sunset", 42500, 32800),
+    ("Grohe Rainshower SmartActive 310", "Showers", "Grohe", "Chrome", 32500, 24800),
+    ("Grohe Eurosmart CE Concealed", "Faucets", "Grohe", "Chrome", 16500, 12500),
     # ---- Vitra ----
-    ("Vitra S20 Wall-Hung WC", "Water Closets", "Vitra", "White", 32000, 24500,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("Vitra Sento Rimless WC", "Water Closets", "Vitra", "White", 48500, 37500,
-     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
-    ("Vitra Nest Countertop Basin", "Basins", "Vitra", "White", 22800, 17500,
-     "https://images.unsplash.com/photo-1631679706909-1844bbd07221?auto=format&fit=crop&w=800&q=80"),
-    ("Vitra Options Vanity Basin", "Basins", "Vitra", "White", 18500, 14200,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
+    ("Vitra S20 Wall-Hung WC", "Water Closets", "Vitra", "White", 32000, 24500),
+    ("Vitra Sento Rimless WC", "Water Closets", "Vitra", "White", 48500, 37500),
+    ("Vitra Nest Countertop Basin", "Basins", "Vitra", "White", 22800, 17500),
+    ("Vitra Options Vanity Basin", "Basins", "Vitra", "White", 18500, 14200),
     # ---- Geberit ----
-    ("Geberit AquaClean Mera Comfort Shower Toilet", "Water Closets", "Geberit", "White", 385000, 298000,
-     "https://images.unsplash.com/photo-1620626011761-996317b8d101?auto=format&fit=crop&w=800&q=80"),
-    ("Geberit Sigma70 Flush Plate", "Flush Plates", "Geberit", "Brushed Steel", 42500, 32500,
-     "https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?auto=format&fit=crop&w=800&q=80"),
-    ("Geberit Duofix In-Wall Cistern", "Accessories", "Geberit", "Grey", 28500, 21800,
-     "https://images.unsplash.com/photo-1584622650111-993a426fbf0a?auto=format&fit=crop&w=800&q=80"),
-    ("Geberit Monolith Plus WC Module", "Water Closets", "Geberit", "Umber Glass", 158000, 122000,
-     "https://images.unsplash.com/photo-1631679706909-1844bbd07221?auto=format&fit=crop&w=800&q=80"),
+    ("Geberit AquaClean Mera Comfort Shower Toilet", "Water Closets", "Geberit", "White", 385000, 298000),
+    ("Geberit Sigma70 Flush Plate", "Flush Plates", "Geberit", "Brushed Steel", 42500, 32500),
+    ("Geberit Duofix In-Wall Cistern", "Accessories", "Geberit", "Grey", 28500, 21800),
+    ("Geberit Monolith Plus WC Module", "Water Closets", "Geberit", "Umber Glass", 158000, 122000),
 ]
 
 # Curated sanitaryware imagery (Unsplash / Pexels). All royalty-free.
@@ -142,7 +125,7 @@ async def resync_catalog_if_needed():
         cat_by_name[name] = c
         await db.categories.insert_one(c.dict())
 
-    for i, (name, cat, brand, finish, mrp, price, image) in enumerate(PRODUCT_SEEDS, start=1):
+    for i, (name, cat, brand, finish, mrp, price) in enumerate(PRODUCT_SEEDS, start=1):
         p = Product(
             name=name,
             sku=f"{brand[:3].upper()}-{cat_by_name[cat].slug[:3].upper()}-{i:03d}",
@@ -156,8 +139,11 @@ async def resync_catalog_if_needed():
             mrp=float(mrp),
             price=float(price),
             stock=25 + (i % 40),
-            images=[image],
-            tags=[cat.lower(), brand.lower(), finish.lower()],
+            # Demo products carry no image — the ProductImage component renders a
+            # branded fallback. Real supplier imports (via catalog_pipeline) will
+            # replace these entries with the actual product images by SKU.
+            images=[],
+            tags=[cat.lower(), brand.lower(), finish.lower(), "demo"],
         )
         await db.products.insert_one(p.dict())
 

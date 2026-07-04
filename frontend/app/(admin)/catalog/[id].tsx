@@ -1,10 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { ProductImage } from "@/src/components/ProductImage";
 import { Button, Card } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
@@ -39,8 +39,8 @@ export default function ProductDetail() {
 
       <ScrollView contentContainerStyle={{ padding: isTablet ? spacing.xxl : spacing.lg, gap: spacing.xl }} showsVerticalScrollIndicator={false}>
         <View style={{ flexDirection: isTablet ? "row" : "column", gap: spacing.xl }}>
-          <View style={{ flex: 1, aspectRatio: 1, borderRadius: radius.lg, backgroundColor: colors.surfaceTertiary, overflow: "hidden" }}>
-            {p.images?.[0] ? <Image source={{ uri: p.images[0] }} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}
+          <View style={{ flex: 1, aspectRatio: 1, borderRadius: radius.lg, overflow: "hidden" }}>
+            <ProductImage source={p.images} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel={p.sku} borderRadius={radius.lg} />
           </View>
 
           <View style={{ flex: 1.1, gap: spacing.lg }}>
