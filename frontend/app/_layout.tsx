@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider, useAuth } from "@/src/state/auth";
 import { colors } from "@/src/theme/tokens";
+import { ToastHost } from "@/src/components/Toast";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -50,6 +51,7 @@ export default function RootLayout() {
           <AuthGate>
             <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.surface } }} />
           </AuthGate>
+          <ToastHost />
         </AuthProvider>
       </View>
     </SafeAreaProvider>

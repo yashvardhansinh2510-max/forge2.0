@@ -163,17 +163,21 @@ class QuotationLineItem(BaseModel):
     sku: str
     name: str
     image: Optional[str] = None
+    category_id: Optional[str] = None      # denormalized for category-level discounts
     room: Optional[str] = None
     qty: float = 1
     unit_price: float = 0
-    discount_pct: float = 0
+    discount_pct: Optional[float] = None   # None → inherit from category/project
     tax_pct: float = 18
     notes: Optional[str] = None
+    description: Optional[str] = None      # inline override of product description
+    sort_order: int = 0
 
     @property
     def net(self) -> float:
         gross = self.qty * self.unit_price
-        disc = gross * self.discount_pct / 100
+        disc_pct = self.discount_pct or 0
+        disc = gross * disc_pct / 100
         return round(gross - disc, 2)
 
     @property
@@ -201,8 +205,11 @@ class Quotation(TimestampedModel):
     status: QuotationStatus = "draft"
     items: list[QuotationLineItem] = []
     rooms: list[str] = []                # ordered list of room labels
+    collapsed_rooms: list[str] = []      # ui state — persisted so it survives reloads
+    project_discount_pct: float = 0      # applied on top of item net (after item discount)
+    category_discounts: dict[str, float] = {}  # {category_id: discount_pct}
     subtotal: float = 0
-    discount_total: float = 0
+    discount_total: float = 0            # total of all discounts (item + cat + project)
     tax_total: float = 0
     grand_total: float = 0
     notes: Optional[str] = None
@@ -219,15 +226,21 @@ class QuotationCreate(BaseModel):
     rooms: list[str] = []
     notes: Optional[str] = None
     valid_until: Optional[str] = None
+    project_discount_pct: float = 0
+    category_discounts: dict[str, float] = {}
 
 
 class QuotationUpdate(BaseModel):
     items: Optional[list[QuotationLineItem]] = None
     rooms: Optional[list[str]] = None
+    collapsed_rooms: Optional[list[str]] = None
     notes: Optional[str] = None
     valid_until: Optional[str] = None
     status: Optional[QuotationStatus] = None
+    project_discount_pct: Optional[float] = None
+    category_discounts: Optional[dict[str, float]] = None
     reason: Optional[str] = None         # for revision log
+    silent: bool = False                 # if true, skip revision snapshot (autosave)
 
 
 # ---------- Ops modules (scaffold) ----------

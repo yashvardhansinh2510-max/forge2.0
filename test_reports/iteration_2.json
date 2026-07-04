@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 2 Quotation Builder 2.0 backend + frontend verification. Backend: 14/14 pytest cases pass covering multi-level discount priority (product>category>project) on create + breakdown, silent vs default PATCH revision behaviour, collapsed_rooms persistence, POST /quotations/{id}/duplicate, GET /products/recent + /products/frequent, and iteration-1 regression (dashboard, products list, customers, quotations list, PDF still returns %PDF). Frontend (owner @ 1200x850): New Quotation builder loads, customer chip pick works, adding 2 products triggers save-status transition 'Draft — no changes yet' -> 'Saved · HH:MM' (autosave via silent PATCH). Discount sheet open-discount-sheet+project-disc-input 10+apply-discount closes sheet and shows 'Project 10%' in the discount bar, per-line 'Proj' badge appears on inherited lines. Clicking disc-{lineId} opens line sheet, line-disc-input 15+apply removes the Proj badge and shows 15% override. Rooms 2.0: add-room-btn opens sheet, save-room with 'Kitchen' creates the chip; room-toggle/rename/dup/delete icons all render. line-dup, line-move, line-del testIDs all present and clickable. picker-tab-search/recent/frequent tabs all render. Finish & review saves and navigates to /quotations/{id} detail page which shows 'Project discount 10%', Subtotal/Discount/Tax/Grand total card, and per-line 'via project' hint under DISC% column for inherited lines. Fixed one real backend bug: POST /api/quotations/{id}/duplicate returned 500 because QuotationCreate(items=[QuotationLineItem(**{**i, 'id': None}) ...]) violated the pydantic id: str constraint before the code re-assigned body.items on the next line. Removed the crash line to match the developer's intent (comment already said 'instead build fresh objects'). Duplicate now creates a fresh quotation with new number, new line ids, and identical SKUs.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_quotation_v2.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Please review and confirm the duplicate_quotation fix in /app/backend/routes/quotation_routes.py (removed the crashing QuotationLineItem(**{**i,'id':None}) init in QuotationCreate and kept only the explicit rebuild below that regenerates ids via default_factory). Verified: duplicate now returns 200 with a new number (FQ-YYYY-####), regenerated line ids (orig_ids ∩ dup_ids == ∅), same SKUs and totals.",
+    "Optional: 'Category discounts N rules' hint on quotation detail could not be exercised in the UI because there is no visible entry point on the New Quotation screen to set a per-category discount before finishing (edit-cat-{catId} did not surface until a category discount is already set on the doc). The backend + detail rendering support it; consider adding an explicit 'Add category discount' affordance in the open-discount-sheet."
+  ],
+  "critical_code_review_comments": [
+    "quotation_routes.duplicate_quotation had a latent 500: QuotationCreate(items=[QuotationLineItem(**{**i,'id':None})]) fails Pydantic validation because id:str disallows None; the intent (per the inline comment) was to build fresh line objects on the next statement. Fixed.",
+    "_recalc computes tax from unit_price*qty*(1-disc%)*tax% each call. Grand totals are stored on the doc but per-line tax is not persisted — breakdown endpoint recomputes on the fly. Acceptable for now, but consider persisting per-line net/tax for auditability, especially since discount source can change if category_discounts are edited later.",
+    "duplicate_quotation calls create_quotation directly with the sales user dependency — this bypasses re-validation that require_min_role('sales') has already run; fine now but be careful if the create endpoint gains additional side effects."
+  ],
+  "updated_files": [
+    "/app/backend/routes/quotation_routes.py",
+    "/app/backend/tests/test_quotation_v2.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% of iteration-2 flows verified end-to-end"},
+  "seed_data_creation": "No new seed data. Tests created transient quotations via POST /api/quotations tagged notes=TEST_*.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "BASE URL env key is EXPO_PUBLIC_BACKEND_URL. Owner login pre-fills — one click on [data-testid=login-submit-button] is enough. Tablet viewport 1200x850 for admin flows. Discount priority: line.discount_pct (product) > category_discounts[category_id] > project_discount_pct. 'silent': true on PATCH skips the revision snapshot. duplicate_quotation had a Pydantic id:None validation bug — now fixed. Frontend testIDs used: login-submit-button, login-email-input, login-password-input, new-quotation-btn, cust-{id}, builder-search, add-product-{id}, save-status, open-discount-sheet, project-disc-input, apply-discount, disc-{lineId}, line-disc-input, add-room-btn, room-input, save-room, room-{name}, room-toggle-{name}, room-rename-{name}, room-dup-{name}, room-delete-{name}, line-dup-{id}, line-move-{id}, line-del-{id}, picker-tab-search|recent|frequent, save-quotation-btn. Detail page renders 'Project discount N%' in totals card and 'via project' / 'via category' under the DISC% column for inherited lines. Category-discount entry point on the New Quotation UI is not obvious (edit-cat-{catId} only appears if a category discount already exists).",
+  "rca_of_issue": "duplicate_quotation 500: /app/backend/routes/quotation_routes.py line 229 built QuotationCreate with items=[QuotationLineItem(**{**i,'id':None}) ...]. Pydantic v2 rejects id=None because id: str = Field(default_factory=lambda: str(uuid4())) requires a string when a value is supplied. The developer's own comment two lines below said 'instead build fresh objects' and rebuilt body.items, so the first list-comprehension was dead-on-arrival. Fix: replaced items with [] in the initial QuotationCreate() and kept the rebuild that constructs QuotationLineItem without an id, letting default_factory generate fresh uuids. Verified: POST /quotations/{id}/duplicate returns 200, new number, disjoint line ids, identical SKUs, correct recomputed totals."
+}

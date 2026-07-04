@@ -53,6 +53,41 @@ async def list_products(
     return {"total": total, "items": strip_ids(docs)}
 
 
+@router.get("/products/recent")
+async def recent_products(
+    limit: int = 12,
+    user: UserPublic = Depends(get_current_user),
+):
+    """Products this user has recently added to a quotation."""
+    usages = await db.product_usage.find(
+        {"user_id": user.id}, {"_id": 0}
+    ).sort("last_used_at", -1).limit(limit).to_list(limit)
+    if not usages:
+        return []
+    ids = [u["product_id"] for u in usages]
+    docs = await db.products.find({"id": {"$in": ids}, "active": True}, {"_id": 0}).to_list(limit)
+    by_id = {d["id"]: d for d in docs}
+    # preserve recent order
+    return [by_id[i] for i in ids if i in by_id]
+
+
+@router.get("/products/frequent")
+async def frequent_products(
+    limit: int = 12,
+    user: UserPublic = Depends(get_current_user),
+):
+    """Products this user adds most often."""
+    usages = await db.product_usage.find(
+        {"user_id": user.id}, {"_id": 0}
+    ).sort("count", -1).limit(limit).to_list(limit)
+    if not usages:
+        return []
+    ids = [u["product_id"] for u in usages]
+    docs = await db.products.find({"id": {"$in": ids}, "active": True}, {"_id": 0}).to_list(limit)
+    by_id = {d["id"]: d for d in docs}
+    return [by_id[i] for i in ids if i in by_id]
+
+
 @router.get("/products/{product_id}", response_model=Product)
 async def get_product(product_id: str, _: UserPublic = Depends(get_current_user)):
     doc = await db.products.find_one({"id": product_id}, {"_id": 0})

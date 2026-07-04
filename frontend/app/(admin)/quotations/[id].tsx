@@ -8,12 +8,20 @@ import { Button, Card, StatusBadge } from "@/src/components/ui";
 import { api, getToken } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
-type Line = { id: string; sku: string; name: string; qty: number; unit_price: number; discount_pct: number; tax_pct: number; room?: string };
+type Line = { id: string; sku: string; name: string; qty: number; unit_price: number; discount_pct: number | null; tax_pct: number; room?: string; description?: string | null; category_id?: string | null };
 type Quotation = {
   id: string; number: string; customer_name: string; status: string;
   items: Line[]; rooms: string[]; subtotal: number; discount_total: number;
   tax_total: number; grand_total: number; created_at: string; notes?: string;
   created_by_name: string;
+  project_discount_pct?: number;
+  category_discounts?: Record<string, number>;
+};
+type Breakdown = {
+  lines: { line_id: string; discount_pct: number; discount_source: string; discount_amount: number; gross: number; net: number; total: number }[];
+  totals: { subtotal: number; discount_total: number; tax_total: number; grand_total: number };
+  project_discount_pct: number;
+  category_discounts: Record<string, number>;
 };
 
 const NEXT_STATUS: Record<string, string> = {
@@ -26,10 +34,14 @@ export default function QuotationDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [q, setQ] = useState<Quotation | null>(null);
+  const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
 
   const load = async () => {
-    const doc = await api.get<Quotation>(`/quotations/${id}`);
-    setQ(doc);
+    const [doc, br] = await Promise.all([
+      api.get<Quotation>(`/quotations/${id}`),
+      api.get<Breakdown>(`/quotations/${id}/breakdown`).catch(() => null),
+    ]);
+    setQ(doc); setBreakdown(br);
   };
   useEffect(() => { load(); }, [id]);
 
@@ -92,28 +104,51 @@ export default function QuotationDetail() {
             <Text style={[type.overline, { flex: 1 }]}>Item</Text>
             <Text style={[type.overline, { width: 60, textAlign: "right" }]}>QTY</Text>
             <Text style={[type.overline, { width: 90, textAlign: "right" }]}>RATE</Text>
-            <Text style={[type.overline, { width: 60, textAlign: "right" }]}>DISC%</Text>
+            <Text style={[type.overline, { width: 70, textAlign: "right" }]}>DISC%</Text>
             <Text style={[type.overline, { width: 100, textAlign: "right" }]}>AMOUNT</Text>
           </View>
-          {q.items.map((it, i) => (
-            <View key={it.id} style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]}>
-              <Text style={[type.mono, { width: 40 }]}>{String(i + 1).padStart(2, "0")}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={2}>{it.name}</Text>
-                <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
+          {q.items.map((it, i) => {
+            const br = breakdown?.lines.find((b) => b.line_id === it.id);
+            const pct = br?.discount_pct ?? (it.discount_pct ?? 0);
+            const source = br?.discount_source ?? (it.discount_pct != null ? "product" : "none");
+            return (
+              <View key={it.id} style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]}>
+                <Text style={[type.mono, { width: 40 }]}>{String(i + 1).padStart(2, "0")}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={2}>{it.name}</Text>
+                  <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
+                  {it.description ? <Text style={[type.caption, { marginTop: 2 }]} numberOfLines={2}>{it.description}</Text> : null}
+                </View>
+                <Text style={[type.mono, { width: 60, textAlign: "right" }]}>{it.qty}</Text>
+                <Text style={[type.mono, { width: 90, textAlign: "right" }]}>{money(it.unit_price)}</Text>
+                <View style={{ width: 70, alignItems: "flex-end" }}>
+                  <Text style={type.mono}>{pct}%</Text>
+                  {source !== "none" && source !== "product" ? (
+                    <Text style={[type.caption, { fontSize: 10 }]}>via {source}</Text>
+                  ) : null}
+                </View>
+                <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]}>
+                  {money(it.qty * it.unit_price * (1 - pct / 100))}
+                </Text>
               </View>
-              <Text style={[type.mono, { width: 60, textAlign: "right" }]}>{it.qty}</Text>
-              <Text style={[type.mono, { width: 90, textAlign: "right" }]}>{money(it.unit_price)}</Text>
-              <Text style={[type.mono, { width: 60, textAlign: "right" }]}>{it.discount_pct}%</Text>
-              <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]}>
-                {money(it.qty * it.unit_price * (1 - it.discount_pct / 100))}
-              </Text>
-            </View>
-          ))}
+            );
+          })}
         </Card>
 
         <Card>
           <View style={{ gap: 6, marginLeft: "auto", minWidth: 280 }}>
+            {q.project_discount_pct ? (
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={type.bodyMuted}>Project discount</Text>
+                <Text style={type.mono}>{q.project_discount_pct}%</Text>
+              </View>
+            ) : null}
+            {q.category_discounts && Object.keys(q.category_discounts).length ? (
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={type.bodyMuted}>Category discounts</Text>
+                <Text style={type.mono}>{Object.keys(q.category_discounts).length} rules</Text>
+              </View>
+            ) : null}
             {[
               ["Subtotal", q.subtotal, ""],
               ["Discount", q.discount_total, "-"],
