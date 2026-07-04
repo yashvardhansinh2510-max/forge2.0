@@ -201,11 +201,11 @@ backend:
 frontend:
   - task: "Quotation Builder 2.0 Phase 1A — undo/redo, DnD, variants, alternates"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/app/(admin)/quotations/new.tsx, frontend/src/hooks/useHistory.ts, frontend/app/_layout.tsx, frontend/src/components/ProductImage.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
@@ -227,8 +227,7 @@ metadata:
   run_ui: true
 
 test_plan:
-  current_focus:
-    - "P1/P2 Recovery — Product catalog regression after ProductImage patch"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
