@@ -156,6 +156,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
         # Hierarchy fields — never fabricate; missing supplier data stays null.
         subcategory = _clean(r.get("subcategory"))
         series = _clean(r.get("series"))
+        collection = _clean(r.get("collection"))
         family_key = _clean(r.get("family_key"))
         variant_label = _clean(r.get("variant"))
         finish = _clean(r.get("finish"))
@@ -203,6 +204,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
             "category_id": cat["id"],
             "subcategory": subcategory,
             "series": series,
+            "collection": collection,
             "family_key": family_key,
             "family_name": family_name,
             "variant_label": variant_label,

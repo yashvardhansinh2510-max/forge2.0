@@ -127,6 +127,7 @@ class Product(TimestampedModel):
     category_id: str
     subcategory: Optional[str] = None      # e.g. "Wall Hung WC", "Console Basin"
     series: Optional[str] = None            # e.g. "Metropole", "Sento", "Zentrum"
+    collection: Optional[str] = None        # e.g. "AXOR" (premium line under Hansgrohe brand)
     family_key: Optional[str] = None        # variants that share this key are the same family
     family_name: Optional[str] = None       # human-readable family label
     variant_label: Optional[str] = None     # e.g. "Matt Black", "Chrome"

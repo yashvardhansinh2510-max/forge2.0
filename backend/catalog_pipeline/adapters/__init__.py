@@ -2,15 +2,16 @@
 from .grohe import GroheAdapter
 from .geberit import GeberitAdapter
 from .vitra import VitraAdapter
+from .hansgrohe import HansgroheAdapter
 
 REGISTRY = {
     "grohe": GroheAdapter,
     "geberit": GeberitAdapter,
     "vitra": VitraAdapter,
-    # Hansgrohe + Axor share Grohe's Hansgrohe-like format; use Grohe adapter as a starting
-    # point until a dedicated file is available.
-    "hansgrohe": GroheAdapter,
-    "axor": GroheAdapter,
+    # Hansgrohe (with AXOR merged as an internal collection).
+    "hansgrohe": HansgroheAdapter,
+    # AXOR routed to Hansgrohe adapter — same file format, brand folded.
+    "axor": HansgroheAdapter,
 }
 
 

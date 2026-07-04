@@ -10,7 +10,7 @@ MISSING = "[MISSING DATA]"
 ALLOWED_CATEGORIES = [
     "Faucets", "Basins", "Water Closets", "Showers", "Bathtubs",
     "Accessories", "Flush Plates", "Urinals", "Kitchen Sinks",
-    "Concealed Cisterns", "Bidets",
+    "Concealed Cisterns", "Bidets", "Thermostats",
 ]
 
 

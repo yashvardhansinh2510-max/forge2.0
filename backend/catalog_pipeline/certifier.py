@@ -140,8 +140,6 @@ def validate(rows: list[ProductRow]) -> tuple[list[ProductRow], CertificationRep
             report.missing_mrp += 1
         if r.category in (MISSING, None):
             report.missing_categories += 1
-        elif r.category not in ALLOWED_CATEGORIES:
-            report.warnings.append(f"Unknown category '{r.category}' on SKU {r.sku}")
 
     report.excellent_images = q_counts["excellent"]
     report.good_images = q_counts["good"]
