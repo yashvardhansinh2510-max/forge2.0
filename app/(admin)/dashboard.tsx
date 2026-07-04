@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
+import { ProductImage } from "@/src/components/ProductImage";
 import { Card, EmptyState, Skeleton, StatusBadge } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
@@ -145,11 +146,7 @@ export default function Dashboard() {
             ) : (
               stats.top_products.map((p, i) => (
                 <View key={p.product_id} style={[styles.productRow, { borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderColor: colors.border }]}>
-                  {p.image ? (
-                    <Image source={{ uri: p.image }} style={styles.thumb} />
-                  ) : (
-                    <View style={[styles.thumb, { backgroundColor: colors.surfaceTertiary }]} />
-                  )}
+                  <ProductImage source={p.image} style={styles.thumb} fallbackLabel={p.sku} borderRadius={8} />
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
                     <Text style={type.caption}>{p.sku} · {p.qty} units</Text>
