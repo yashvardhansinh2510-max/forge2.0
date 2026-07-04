@@ -296,7 +296,7 @@ export default function CatalogImport() {
   return (
     <AdminPage
       title="AI Catalog Import"
-      subtitle="Upload supplier price-lists — Claude Sonnet 4.5 normalizes rows in seconds. Only 5 supplier brands are supported."
+      subtitle="Upload supplier price-lists — Forge extracts, classifies, maps images and produces a certification report. Only 5 supplier brands are supported."
       right={
         <Pressable
           testID="back-to-catalog"
