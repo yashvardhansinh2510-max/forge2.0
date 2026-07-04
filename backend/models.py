@@ -125,15 +125,25 @@ class Product(TimestampedModel):
     sku: str
     brand_id: str
     category_id: str
+    subcategory: Optional[str] = None      # e.g. "Wall Hung WC", "Console Basin"
+    series: Optional[str] = None            # e.g. "Metropole", "Sento", "Zentrum"
+    family_key: Optional[str] = None        # variants that share this key are the same family
+    family_name: Optional[str] = None       # human-readable family label
+    variant_label: Optional[str] = None     # e.g. "Matt Black", "Chrome"
+    finish_code: Optional[str] = None       # supplier finish code (e.g. "483" for Vitra Matt Black)
+    colour: Optional[str] = None
     description: Optional[str] = None
-    finish: Optional[str] = None       # e.g. "Chrome", "Matt Black", "Brushed Brass"
+    finish: Optional[str] = None            # e.g. "Chrome", "Matt Black", "Brushed Brass"
     material: Optional[str] = None
     dimensions: Optional[str] = None
     warranty: Optional[str] = None
     mrp: float
-    price: float                        # trade price
+    price: float                            # trade price
     stock: int = 0
     images: list[str] = []
+    image_meta: list[dict] = []             # per-image {width,height,quality,source_format}
+    image_quality: Optional[str] = None     # aggregate: excellent|good|acceptable|poor|missing
+    specs: dict = {}                        # freeform key/value spec extras
     tags: list[str] = []
     variants: list[ProductVariant] = []
     active: bool = True

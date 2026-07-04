@@ -29,6 +29,11 @@ class CertificationReport:
     missing_images: int = 0
     missing_mrp: int = 0
     missing_categories: int = 0
+    image_quality: dict = field(default_factory=dict)   # ImageQualityReport dump
+    excellent_images: int = 0
+    good_images: int = 0
+    acceptable_images: int = 0
+    poor_images: int = 0
     variant_conflicts: list[str] = field(default_factory=list)
     category_conflicts: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -113,17 +118,67 @@ def validate(rows: list[ProductRow]) -> tuple[list[ProductRow], CertificationRep
             if len(dupset) > 1:
                 report.variant_conflicts.append(f"Family '{fk}' has {len(dupset)} rows for variant '{v}'")
 
-    # 5) Missing data + category validity
+    # 5) Missing data + category validity + image quality tally
+    edges: list[int] = []
+    q_counts = {"excellent": 0, "good": 0, "acceptable": 0, "poor": 0}
+    by_src: dict[str, int] = {}
     for r in rows:
         if not r.images:
             report.missing_images += 1
             r.issues.append("No image mapped")
+        else:
+            for meta in (r.image_meta or []):
+                q = str(meta.get("quality") or "poor")
+                if q in q_counts:
+                    q_counts[q] += 1
+                src = str(meta.get("source_format") or "unknown")
+                by_src[src] = by_src.get(src, 0) + 1
+                w, h = int(meta.get("width", 0)), int(meta.get("height", 0))
+                if max(w, h) > 0:
+                    edges.append(max(w, h))
         if r.mrp in (MISSING, None):
             report.missing_mrp += 1
         if r.category in (MISSING, None):
             report.missing_categories += 1
         elif r.category not in ALLOWED_CATEGORIES:
             report.warnings.append(f"Unknown category '{r.category}' on SKU {r.sku}")
+
+    report.excellent_images = q_counts["excellent"]
+    report.good_images = q_counts["good"]
+    report.acceptable_images = q_counts["acceptable"]
+    report.poor_images = q_counts["poor"]
+    total_imgs = sum(q_counts.values())
+    if total_imgs > 0:
+        edges.sort()
+        median_edge = edges[len(edges) // 2] if edges else 0
+        min_edge = edges[0] if edges else 0
+        max_edge = edges[-1] if edges else 0
+        premium_pct = (q_counts["excellent"] + q_counts["good"]) * 100 // total_imgs
+        if premium_pct >= 80:
+            verdict = f"Supplier ships production-quality artwork ({premium_pct}% excellent/good)"
+        elif premium_pct >= 50:
+            verdict = f"Mixed quality — {premium_pct}% premium, remainder is thumbnail-grade"
+        else:
+            verdict = (
+                f"Supplier file only contains thumbnail-grade artwork "
+                f"({premium_pct}% premium; median longest edge = {median_edge}px). "
+                "Recommend sourcing official product photography separately."
+            )
+        report.image_quality = {
+            "total": total_imgs,
+            "excellent": q_counts["excellent"], "good": q_counts["good"],
+            "acceptable": q_counts["acceptable"], "poor": q_counts["poor"],
+            "by_source": by_src,
+            "min_edge_px": min_edge, "median_edge_px": median_edge, "max_edge_px": max_edge,
+            "premium_pct": premium_pct,
+            "verdict": verdict,
+        }
+    else:
+        report.image_quality = {
+            "total": 0, "excellent": 0, "good": 0, "acceptable": 0, "poor": 0,
+            "by_source": {}, "min_edge_px": 0, "median_edge_px": 0, "max_edge_px": 0,
+            "premium_pct": 0, "verdict": "No images extracted from supplier file",
+        }
 
     # 6) Certification scores
     n = report.total_products or 1

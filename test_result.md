@@ -186,6 +186,18 @@ backend:
           agent: "testing"
           comment: "Phase 1A ACCEPTANCE — All 2 test cases PASSED. ✅ P4.1: GET /api/catalog/imports/config/brands returns 200 with brands array ['Hansgrohe', 'Axor', 'Grohe', 'Vitra', 'Geberit']. ✅ P4.2: GET /api/catalog/imports returns 200 with array (returned 0 jobs). Iteration-3 catalog import functionality intact and not broken."
 
+  - task: "Iteration 1: VITRA reference implementation — image extractor overhaul + hierarchy + grouped catalog"
+    implemented: true
+    working: true
+    file: "backend/catalog_pipeline/image_extractor.py, backend/catalog_pipeline/adapters/vitra.py, backend/catalog_pipeline/orchestrator.py, backend/catalog_pipeline/certifier.py, backend/models.py, backend/routes/catalog_routes.py, frontend/app/(admin)/catalog/index.tsx, frontend/app/(admin)/catalog/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Iteration 1 shipped — image extractor overhaul (WMF via ImageMagick+libwmf, EMF via emf2svg-conv+rsvg-convert at 2048px), quality classification (excellent/good/acceptable/poor/missing), 1024px cap+JPEG q=82 storage optimisation, sha1 dedupe, Product model extended (subcategory/series/family_key/family_name/variant_label/finish_code/colour/image_meta/image_quality/specs — all optional/backward-compat), Vitra adapter fixed (category from detail column not sheet, subcategory from keyword list, colour cleaned from finish header, ±2 exclusive image-row mapping), certifier emits image quality histogram + verdict, orchestrator offloads images to catalog_image_blobs collection (46MB→0.28MB job docs), new endpoints /api/catalog/hierarchy and /api/products/families, frontend gained Families/All-variants toggle + subcategory+series chip filters + quality badges + rebuilt product detail with breadcrumb, finish selector, spec sheet, and honesty callout for thumbnail-grade images. VITRA re-imported: 250 products / 101 families / 39 series / 6 categories / 19 subcategories / cert 97.9. Image split: 31 excellent + 30 good + 55 acceptable + 148 poor. Honest verdict: median 306px, 23% premium — supplier ships thumbnails, we surface it (never upscale). Awaiting user approval before GROHE / GEBERIT / HANSGROHE / AXOR."
+
   - task: "P1/P2 Recovery — Product catalog regression after ProductImage patch"
     implemented: true
     working: true

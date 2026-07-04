@@ -26,10 +26,14 @@ async def list_categories(_: UserPublic = Depends(get_current_user)):
 # ---------- Products ----------
 @router.get("/products")
 async def list_products(
-    q: Optional[str] = Query(None, description="Free text search on name/sku/description"),
+    q: Optional[str] = Query(None, description="Free text search on name/sku/description/series/family"),
     brand_id: Optional[str] = None,
     category_id: Optional[str] = None,
+    subcategory: Optional[str] = None,
+    series: Optional[str] = None,
+    family_key: Optional[str] = None,
     finish: Optional[str] = None,
+    colour: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
     _: UserPublic = Depends(get_current_user),
@@ -39,18 +43,204 @@ async def list_products(
         query["brand_id"] = brand_id
     if category_id:
         query["category_id"] = category_id
+    if subcategory:
+        query["subcategory"] = subcategory
+    if series:
+        query["series"] = series
+    if family_key:
+        query["family_key"] = family_key
     if finish:
         query["finish"] = finish
+    if colour:
+        query["colour"] = colour
     if q:
         query["$or"] = [
-            {"name": {"$regex": q, "$options": "i"}},
-            {"sku": {"$regex": q, "$options": "i"}},
+            {"name":        {"$regex": q, "$options": "i"}},
+            {"sku":         {"$regex": q, "$options": "i"}},
             {"description": {"$regex": q, "$options": "i"}},
-            {"tags": {"$regex": q, "$options": "i"}},
+            {"series":      {"$regex": q, "$options": "i"}},
+            {"family_name": {"$regex": q, "$options": "i"}},
+            {"subcategory": {"$regex": q, "$options": "i"}},
+            {"finish":      {"$regex": q, "$options": "i"}},
+            {"colour":      {"$regex": q, "$options": "i"}},
+            {"dimensions":  {"$regex": q, "$options": "i"}},
+            {"tags":        {"$regex": q, "$options": "i"}},
         ]
     total = await db.products.count_documents(query)
     docs = await db.products.find(query, {"_id": 0}).skip(skip).limit(limit).to_list(limit)
     return {"total": total, "items": strip_ids(docs)}
+
+
+# ---------- Hierarchy + family-grouped views ----------
+@router.get("/catalog/hierarchy")
+async def catalog_hierarchy(_: UserPublic = Depends(get_current_user)):
+    """Return the full Brand → Category → Subcategory → Series → Family tree.
+
+    Only counts active products. Perfect for browsable navigation in the
+    catalog and quotation-builder pickers.
+    """
+    pipeline = [
+        {"$match": {"active": True}},
+        {"$group": {
+            "_id": {
+                "brand_id":    "$brand_id",
+                "category_id": "$category_id",
+                "subcategory": "$subcategory",
+                "series":      "$series",
+                "family_key":  "$family_key",
+                "family_name": "$family_name",
+            },
+            "product_count": {"$sum": 1},
+            "min_price":     {"$min": "$price"},
+            "sample_image":  {"$first": {"$arrayElemAt": ["$images", 0]}},
+            "image_quality": {"$first": "$image_quality"},
+        }},
+    ]
+    rows = await db.products.aggregate(pipeline).to_list(5000)
+    brands = {b["id"]: b for b in await db.brands.find({}, {"_id": 0}).to_list(500)}
+    cats = {c["id"]: c for c in await db.categories.find({}, {"_id": 0}).to_list(500)}
+
+    # Fold into brand → category → subcategory → series → family tree
+    tree: dict = {}
+    for r in rows:
+        k = r["_id"]
+        bid = k.get("brand_id") or "_"
+        cid = k.get("category_id") or "_"
+        subcat = k.get("subcategory") or "General"
+        series = k.get("series") or "Uncategorised"
+        family_key = k.get("family_key") or f"{bid}:{cid}:{subcat}:{series}:_"
+        family_name = k.get("family_name") or series
+
+        brand = brands.get(bid, {"id": bid, "name": "Unknown"})
+        category = cats.get(cid, {"id": cid, "name": "Uncategorised"})
+        b = tree.setdefault(bid, {"brand": brand, "categories": {}})
+        c = b["categories"].setdefault(cid, {"category": category, "subcategories": {}})
+        s = c["subcategories"].setdefault(subcat, {"name": subcat, "series": {}})
+        se = s["series"].setdefault(series, {"name": series, "families": {}})
+        fam = se["families"].setdefault(family_key, {
+            "family_key": family_key, "family_name": family_name,
+            "product_count": 0, "min_price": 0.0,
+            "sample_image": None, "image_quality": None,
+        })
+        fam["product_count"] += r["product_count"]
+        if fam["min_price"] == 0 or r["min_price"] < fam["min_price"]:
+            fam["min_price"] = r["min_price"]
+        if not fam["sample_image"] and r.get("sample_image"):
+            fam["sample_image"] = r["sample_image"]
+        if not fam["image_quality"]:
+            fam["image_quality"] = r.get("image_quality")
+
+    # Flatten to arrays for JSON friendliness
+    def _flatten(d: dict) -> list:
+        out = []
+        for bid, b in d.items():
+            cats_out = []
+            for cid, c in b["categories"].items():
+                subs_out = []
+                for subname, s in c["subcategories"].items():
+                    ser_out = []
+                    for sername, se in s["series"].items():
+                        fams_out = list(se["families"].values())
+                        fams_out.sort(key=lambda f: f["family_name"] or "")
+                        ser_out.append({
+                            "name": sername, "family_count": len(fams_out),
+                            "product_count": sum(f["product_count"] for f in fams_out),
+                            "families": fams_out,
+                        })
+                    ser_out.sort(key=lambda x: x["name"])
+                    subs_out.append({
+                        "name": subname, "series_count": len(ser_out),
+                        "product_count": sum(sr["product_count"] for sr in ser_out),
+                        "series": ser_out,
+                    })
+                subs_out.sort(key=lambda x: x["name"])
+                cats_out.append({
+                    "category": c["category"],
+                    "subcategory_count": len(subs_out),
+                    "product_count": sum(sub["product_count"] for sub in subs_out),
+                    "subcategories": subs_out,
+                })
+            cats_out.sort(key=lambda x: x["category"].get("name", ""))
+            out.append({
+                "brand": b["brand"],
+                "category_count": len(cats_out),
+                "product_count": sum(c["product_count"] for c in cats_out),
+                "categories": cats_out,
+            })
+        out.sort(key=lambda x: x["brand"].get("name", ""))
+        return out
+
+    return {"tree": _flatten(tree)}
+
+
+@router.get("/products/families")
+async def list_families(
+    brand_id: Optional[str] = None,
+    category_id: Optional[str] = None,
+    subcategory: Optional[str] = None,
+    series: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 60,
+    skip: int = 0,
+    _: UserPublic = Depends(get_current_user),
+):
+    """Return products grouped by family_key — one card per family, variants
+    collapsed underneath. Ideal for the premium grouped catalog view.
+    """
+    match: dict = {"active": True, "family_key": {"$ne": None}}
+    if brand_id:      match["brand_id"] = brand_id
+    if category_id:   match["category_id"] = category_id
+    if subcategory:   match["subcategory"] = subcategory
+    if series:        match["series"] = series
+    if q:
+        match["$or"] = [
+            {"name":        {"$regex": q, "$options": "i"}},
+            {"family_name": {"$regex": q, "$options": "i"}},
+            {"series":      {"$regex": q, "$options": "i"}},
+            {"subcategory": {"$regex": q, "$options": "i"}},
+            {"finish":      {"$regex": q, "$options": "i"}},
+            {"colour":      {"$regex": q, "$options": "i"}},
+            {"sku":         {"$regex": q, "$options": "i"}},
+        ]
+
+    pipeline = [
+        {"$match": match},
+        {"$sort": {"family_name": 1, "colour": 1, "sku": 1}},
+        {"$group": {
+            "_id": "$family_key",
+            "family_key":  {"$first": "$family_key"},
+            "family_name": {"$first": "$family_name"},
+            "brand_id":    {"$first": "$brand_id"},
+            "category_id": {"$first": "$category_id"},
+            "subcategory": {"$first": "$subcategory"},
+            "series":      {"$first": "$series"},
+            "min_price":   {"$min": "$price"},
+            "max_price":   {"$max": "$price"},
+            "product_count": {"$sum": 1},
+            "sample_image": {"$first": {"$arrayElemAt": ["$images", 0]}},
+            "sample_image_quality": {"$first": "$image_quality"},
+            "variants": {"$push": {
+                "id": "$id", "sku": "$sku", "variant_label": "$variant_label",
+                "colour": "$colour", "finish": "$finish", "finish_code": "$finish_code",
+                "price": "$price", "mrp": "$mrp",
+                "image": {"$arrayElemAt": ["$images", 0]},
+                "image_quality": "$image_quality",
+            }},
+        }},
+        {"$sort": {"family_name": 1}},
+        {"$skip": skip}, {"$limit": limit},
+    ]
+    fams = await db.products.aggregate(pipeline).to_list(limit)
+    for f in fams:
+        f.pop("_id", None)
+    # total distinct families for this query
+    total_pipeline = [
+        {"$match": match}, {"$group": {"_id": "$family_key"}}, {"$count": "n"},
+    ]
+    total = 0
+    async for r in db.products.aggregate(total_pipeline):
+        total = r.get("n", 0)
+    return {"total": total, "items": fams}
 
 
 @router.get("/products/recent")

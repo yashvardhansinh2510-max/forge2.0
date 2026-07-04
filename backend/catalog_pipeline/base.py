@@ -37,7 +37,10 @@ class ProductRow:
     collection: str = MISSING
     accessories: list[str] = field(default_factory=list)
     images: list[str] = field(default_factory=list)  # data-URLs (base64) or absolute URLs
+    image_meta: list[dict] = field(default_factory=list)   # {width, height, quality, source_format}
+    image_quality: str = "missing"                          # "excellent"|"good"|"acceptable"|"poor"|"missing"
     image_page: Optional[int] = None
+    specs: dict[str, Any] = field(default_factory=dict)     # freeform key/value spec extras
     tags: list[str] = field(default_factory=list)
     confidence: float = 1.0
     issues: list[str] = field(default_factory=list)
@@ -52,7 +55,9 @@ class ProductRow:
             "dimensions": self.dimensions, "description": self.description,
             "mrp": self.mrp, "dealer_price": self.dealer_price, "warranty": self.warranty,
             "collection": self.collection, "accessories": self.accessories,
-            "images": self.images, "image_page": self.image_page, "tags": self.tags,
+            "images": self.images, "image_meta": self.image_meta,
+            "image_quality": self.image_quality, "image_page": self.image_page,
+            "specs": self.specs, "tags": self.tags,
             "confidence": self.confidence, "issues": self.issues, "status": self.status,
         }
 
