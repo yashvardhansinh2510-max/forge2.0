@@ -37,12 +37,28 @@ export const spacing = {
 export const radius = { sm: 6, md: 12, lg: 20, pill: 999 } as const;
 
 export const shadow = {
+  // Barely-there for card lift on light surfaces
+  hair: {
+    shadowColor: "#000",
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
   soft: {
     shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
+  },
+  // For floating/sticky bars & sheets
+  lifted: {
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 5,
   },
   strong: {
     shadowColor: "#000",
@@ -51,6 +67,13 @@ export const shadow = {
     shadowOffset: { width: 0, height: 12 },
     elevation: 8,
   },
+} as const;
+
+export const motion = {
+  fast:    { duration: 140 },
+  base:    { duration: 220 },
+  slow:    { duration: 320 },
+  spring:  { damping: 18, stiffness: 220, mass: 0.9 },
 } as const;
 
 const systemSans = Platform.select({ ios: "System", android: "sans-serif", default: "System" });
