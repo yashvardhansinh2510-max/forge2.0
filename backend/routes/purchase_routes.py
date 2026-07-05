@@ -193,12 +193,7 @@ async def list_purchase_orders(
     _: UserPublic = Depends(get_current_user),
 ):
     """Search POs. Free-text `q` matches PO number, customer, brand, supplier, SKU."""
-    import logging
-    logger = logging.getLogger("forge.purchase")
-    
     query: dict = {}
-    logger.info(f"list_purchase_orders called with status={status}, brand_id={brand_id}")
-    
     if status and status != "all":
         query["status"] = status
     if brand_id:
@@ -220,10 +215,7 @@ async def list_purchase_orders(
             {"items.sku": term},
             {"items.name": term},
         ]
-    
-    logger.info(f"MongoDB query: {query}")
     docs = await db.purchase_orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
-    logger.info(f"Found {len(docs)} POs")
     return docs
 
 

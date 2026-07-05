@@ -1,4 +1,6 @@
-"""Scaffold endpoints for PO, Payments, Follow-ups, Notifications, Team, Reports."""
+"""Scaffold endpoints — the /purchase-orders scaffold has been REMOVED and replaced
+by the full module at routes/purchase_routes.py. /payments and /followups remain
+as simple list endpoints until their full modules land."""
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user, require_min_role
@@ -6,11 +8,6 @@ from db import db
 from models import UserPublic
 
 router = APIRouter(tags=["ops"])
-
-
-@router.get("/purchase-orders")
-async def list_pos(_: UserPublic = Depends(get_current_user)):
-    return await db.purchase_orders.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
 
 
 @router.get("/payments")
