@@ -23,9 +23,14 @@ import type { HistoryApi } from "@/src/hooks/useHistory";
 
 import { computeTotals, effectivePct } from "../helpers/pricing";
 import {
-  BuilderRow, BuilderState, Category, Customer, DEFAULT_ROOMS, DescSheetState, DiscountSheetState,
-  INITIAL_BUILDER_STATE, Line, PickerTab, Product, ProductVariant, RoomSheetState, SaveState, SwapSheetState,
+  Brand, BuilderRow, BuilderState, Category, Customer, DEFAULT_ROOMS, DescSheetState, DiscountSheetState,
+  INITIAL_BUILDER_STATE, Line, PickerTab, Product, ProductVariant, QuotationHeader,
+  RecentQuotation, RoomSheetState, SaveState, SwapSheetState,
 } from "../helpers/types";
+
+const LOCAL_SNAPSHOT_KEY = "forge.builder.snapshot.v4";
+
+type SortKey = "popular" | "recent" | "price_asc" | "price_desc" | "name";
 
 // -----------------------------------------------------------------------------
 // Assistant selection — which line/product is currently focused in the right pane.
@@ -55,9 +60,41 @@ export type BuilderApi = {
   setPickerTab: (t: PickerTab) => void;
   pickerList: Product[];
   products: Product[];
+  productTotal: number;
+  productLoading: boolean;
   recent: Product[];
   frequent: Product[];
   searchRef: React.MutableRefObject<TextInput | null>;
+
+  // V4 rail + explorer state
+  brands: Brand[];
+  categoriesForRail: Category[];       // filtered by selectedBrandId if set
+  selectedBrandId: string | null;
+  setSelectedBrandId: (id: string | null) => void;
+  selectedCategoryId: string | null;
+  setSelectedCategoryId: (id: string | null) => void;
+  sortKey: SortKey;
+  setSortKey: (k: SortKey) => void;
+  favouriteIds: string[];
+  toggleFavourite: (id: string) => void;
+
+  // V4 header fields
+  setProjectName: (v: string) => void;
+  setPhone: (v: string) => void;
+  setReferenceSource: (v: string) => void;
+
+  // V4 sheets
+  productModal: Product | null;
+  openProductModal: (p: Product) => void;
+  closeProductModal: () => void;
+  customProductSheetOpen: boolean;
+  setCustomProductSheetOpen: (v: boolean) => void;
+
+  // V4 recent-quotation panel
+  recentQuotations: RecentQuotation[];
+  refreshRecentQuotations: () => Promise<void>;
+  restoreQuotation: (id: string) => Promise<void>;
+  startNewQuotation: () => void;
 
   // Derived
   totals: { subtotal: number; discount: number; grand: number };
@@ -144,11 +181,24 @@ export function BuilderProvider({ onFinalize, children }: {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [productTotal, setProductTotal] = useState(0);
+  const [productLoading, setProductLoading] = useState(false);
   const [recent, setRecent] = useState<Product[]>([]);
   const [frequent, setFrequent] = useState<Product[]>([]);
   const [pickerTab, setPickerTab] = useState<PickerTab>("search");
   const [q, setQ] = useState("");
   const searchRef = useRef<TextInput | null>(null);
+
+  // V4 rail + explorer
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [selectedBrandId, setSelectedBrandIdState] = useState<string | null>(null);
+  const [selectedCategoryId, setSelectedCategoryIdState] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("popular");
+  const [categoriesForRail, setCategoriesForRail] = useState<Category[]>([]);
+  const [favouriteIds, setFavouriteIds] = useState<string[]>([]);
+  const [recentQuotations, setRecentQuotations] = useState<RecentQuotation[]>([]);
+  const [productModal, setProductModal] = useState<Product | null>(null);
+  const [customProductSheetOpen, setCustomProductSheetOpen] = useState(false);
 
   // Undo/redo document state
   const history = useHistory<BuilderState>(INITIAL_BUILDER_STATE, { max: 200, coalesceMs: 800 });
@@ -187,40 +237,90 @@ export function BuilderProvider({ onFinalize, children }: {
   useEffect(() => {
     (async () => {
       try {
-        const [cs, cats, rec, freq] = await Promise.all([
+        const [cs, cats, brs, rec, freq, recentQ] = await Promise.all([
           api.get<Customer[]>("/customers"),
           api.get<Category[]>("/categories"),
+          api.get<Brand[]>("/brands"),
           api.get<Product[]>("/products/recent"),
           api.get<Product[]>("/products/frequent"),
+          api.get<RecentQuotation[]>("/quotations/recent?limit=10"),
         ]);
         setCustomers(cs);
         setCategories(cats);
+        setBrands(brs);
+        setCategoriesForRail(cats);
         setRecent(rec);
         setFrequent(freq);
+        setRecentQuotations(recentQ);
         if (cs[0] && !history.state.customerId) {
           history.replace({ ...history.state, customerId: cs[0].id });
         }
       } catch (e) {
-        // Reference data failure shouldn't nuke the builder shell.
         console.warn("Failed to load builder reference data", e);
       }
     })();
+    // Load favourites from localStorage (web) — safe no-op elsewhere.
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      try {
+        const raw = window.localStorage.getItem("forge.favourites.v1");
+        if (raw) setFavouriteIds(JSON.parse(raw));
+      } catch {}
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------- Product search ----------
+  // ---------- Re-fetch categories when brand changes ----------
   useEffect(() => {
-    if (pickerTab !== "search") return;
-    const t = setTimeout(async () => {
+    (async () => {
       try {
-        const res = await api.get<{ items: Product[] }>(`/products?limit=40${q ? `&q=${encodeURIComponent(q)}` : ""}`);
-        setProducts(res.items);
+        const cats = await api.get<Category[]>(
+          selectedBrandId ? `/categories?brand_id=${selectedBrandId}` : "/categories",
+        );
+        setCategoriesForRail(cats);
+      } catch {}
+    })();
+  }, [selectedBrandId]);
+
+  const setSelectedBrandId = useCallback((id: string | null) => {
+    setSelectedBrandIdState(id);
+    setSelectedCategoryIdState(null); // reset category when brand changes
+  }, []);
+  const setSelectedCategoryId = useCallback((id: string | null) => {
+    setSelectedCategoryIdState(id);
+  }, []);
+
+  const toggleFavourite = useCallback((id: string) => {
+    setFavouriteIds((cur) => {
+      const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        try { window.localStorage.setItem("forge.favourites.v1", JSON.stringify(next)); } catch {}
+      }
+      return next;
+    });
+  }, []);
+
+  // ---------- Product explorer fetch ----------
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      setProductLoading(true);
+      try {
+        const params = new URLSearchParams();
+        params.set("limit", "60");
+        params.set("sort", sortKey);
+        if (q) params.set("q", q);
+        if (selectedBrandId) params.set("brand_id", selectedBrandId);
+        if (selectedCategoryId) params.set("category_id", selectedCategoryId);
+        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`);
+        setProducts(res.items || []);
+        setProductTotal(res.total || 0);
       } catch (e) {
         console.warn("Product search failed", e);
+      } finally {
+        setProductLoading(false);
       }
     }, 180);
     return () => clearTimeout(t);
-  }, [q, pickerTab]);
+  }, [q, selectedBrandId, selectedCategoryId, sortKey]);
 
   // ---------- Autosave ----------
   const persist = useCallback(async () => {
@@ -230,6 +330,14 @@ export function BuilderProvider({ onFinalize, children }: {
       items: s.lines,
       rooms: s.rooms,
       notes: s.notes,
+      project_name: s.header.projectName || null,
+      phone_snapshot: s.header.phone || null,
+      reference_source: s.header.referenceSource || null,
+      ui_state: {
+        activeRoom: s.activeRoom,
+        collapsedRooms: s.collapsedRooms,
+        selectedBrandId, selectedCategoryId, sortKey,
+      },
       project_discount_pct: s.projectDiscount,
       category_discounts: s.categoryDiscounts,
     };
@@ -250,7 +358,7 @@ export function BuilderProvider({ onFinalize, children }: {
       setSaveState("error");
       toast.error(e?.detail || "Save failed");
     }
-  }, [s, quotationId]);
+  }, [s, quotationId, selectedBrandId, selectedCategoryId, sortKey]);
 
   useEffect(() => {
     if (!s.customerId) return;
@@ -259,6 +367,91 @@ export function BuilderProvider({ onFinalize, children }: {
     saveTimer.current = setTimeout(() => { persist(); }, 900);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [s, quotationId, persist]);
+
+  // ---------- LocalStorage snapshot (web only) ----------
+  // Backend autosave is the source of truth, but a lightweight local snapshot
+  // every 3s survives tab crashes / accidental closes / lost network.
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const t = setInterval(() => {
+      try {
+        window.localStorage.setItem(LOCAL_SNAPSHOT_KEY, JSON.stringify({
+          at: Date.now(),
+          quotationId, quotationNumber,
+          state: s,
+          selectedBrandId, selectedCategoryId, sortKey,
+        }));
+      } catch {}
+    }, 3000);
+    return () => clearInterval(t);
+  }, [s, quotationId, quotationNumber, selectedBrandId, selectedCategoryId, sortKey]);
+
+  // ---------- Restore an existing quotation ----------
+  const refreshRecentQuotations = useCallback(async () => {
+    try {
+      const rq = await api.get<RecentQuotation[]>("/quotations/recent?limit=10");
+      setRecentQuotations(rq);
+    } catch {}
+  }, []);
+
+  const restoreQuotation = useCallback(async (id: string) => {
+    try {
+      const doc = await api.get<any>(`/quotations/${id}`);
+      const collapsed: Record<string, boolean> = {};
+      for (const r of doc.collapsed_rooms || []) collapsed[r] = true;
+      const ui: any = doc.ui_state || {};
+      const restored: BuilderState = {
+        customerId: doc.customer_id,
+        header: {
+          projectName: doc.project_name || "",
+          phone: doc.phone_snapshot || "",
+          referenceSource: doc.reference_source || "",
+        },
+        lines: (doc.items || []).map((it: any) => ({
+          id: it.id, product_id: it.product_id, sku: it.sku, name: it.name,
+          image: it.image, category_id: it.category_id, room: it.room,
+          qty: it.qty, unit_price: it.unit_price,
+          discount_pct: it.discount_pct ?? null,
+          description: it.description, notes: it.notes,
+          finish: it.finish ?? null, family_key: it.family_key ?? null,
+        })),
+        rooms: doc.rooms && doc.rooms.length ? doc.rooms : [DEFAULT_ROOMS[0]],
+        collapsedRooms: collapsed,
+        activeRoom: ui.activeRoom || (doc.rooms?.[0] || DEFAULT_ROOMS[0]),
+        notes: doc.notes || "",
+        projectDiscount: doc.project_discount_pct || 0,
+        categoryDiscounts: doc.category_discounts || {},
+      };
+      history.replace(restored);
+      setQuotationId(doc.id);
+      setQuotationNumber(doc.number);
+      setSaveState("saved");
+      setSavedAt(new Date(doc.updated_at || Date.now()));
+      // Restore UI filter state too
+      if (ui.selectedBrandId !== undefined) setSelectedBrandIdState(ui.selectedBrandId);
+      if (ui.selectedCategoryId !== undefined) setSelectedCategoryIdState(ui.selectedCategoryId);
+      if (ui.sortKey) setSortKey(ui.sortKey);
+      toast.success(`Restored ${doc.number}`);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not restore quotation");
+    }
+  }, [history]);
+
+  const startNewQuotation = useCallback(() => {
+    history.replace(INITIAL_BUILDER_STATE);
+    setQuotationId(null);
+    setQuotationNumber(null);
+    setSaveState("idle");
+    setSavedAt(null);
+    setSelectedBrandIdState(null);
+    setSelectedCategoryIdState(null);
+    setQ("");
+    if (customers[0]) history.replace({ ...INITIAL_BUILDER_STATE, customerId: customers[0].id });
+  }, [history, customers]);
+
+  // Product modal helpers
+  const openProductModal = useCallback((p: Product) => setProductModal(p), []);
+  const closeProductModal = useCallback(() => setProductModal(null), []);
 
   // ---------- Derived ----------
   const totals = useMemo(
@@ -437,6 +630,16 @@ export function BuilderProvider({ onFinalize, children }: {
     history.apply((cur) => ({ ...cur, notes: n }), { coalesceKey: "notes" }),
   [history]);
 
+  const setProjectName = useCallback((v: string) =>
+    history.apply((cur) => ({ ...cur, header: { ...cur.header, projectName: v } }), { coalesceKey: "hdr-project" }),
+  [history]);
+  const setPhone = useCallback((v: string) =>
+    history.apply((cur) => ({ ...cur, header: { ...cur.header, phone: v } }), { coalesceKey: "hdr-phone" }),
+  [history]);
+  const setReferenceSource = useCallback((v: string) =>
+    history.apply((cur) => ({ ...cur, header: { ...cur.header, referenceSource: v } }), { coalesceKey: "hdr-ref" }),
+  [history]);
+
   const onRoomDragEnd = useCallback(({ data }: { data: string[] }) =>
     history.apply((cur) => ({ ...cur, rooms: data })),
   [history]);
@@ -527,7 +730,13 @@ export function BuilderProvider({ onFinalize, children }: {
   const value: BuilderApi = {
     history, s,
     customers, categories, categoryById,
-    q, setQ, pickerTab, setPickerTab, pickerList, products, recent, frequent, searchRef,
+    q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading, recent, frequent, searchRef,
+    brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
+    sortKey, setSortKey, favouriteIds, toggleFavourite,
+    setProjectName, setPhone, setReferenceSource,
+    productModal, openProductModal, closeProductModal,
+    customProductSheetOpen, setCustomProductSheetOpen,
+    recentQuotations, refreshRecentQuotations, restoreQuotation, startNewQuotation,
     totals, usedCategoryIds, flatRows,
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
     setCustomer, addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,

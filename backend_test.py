@@ -1,1716 +1,1057 @@
 """
-Forge V2 — Production Milestone 1 — Purchases Module Regression Test Suite
-
-Tests all backend APIs for the Purchases Module:
-1. SUPPLIERS (CRUD + auth)
-2. PLACE ORDER — PREVIEW (non-mutating)
-3. PLACE ORDER — CONFIRM (creates POs)
-4. PURCHASE ORDER LIFECYCLE (status transitions)
-5. RECEIVE FLOW (auto-transition)
-6. LIST + SEARCH (filters)
-7. DASHBOARD (column counts)
-8. ACTIVITY FEED (global + entity-specific)
-9. ATTACHMENTS (file upload)
-10. REGRESSION (previous milestone endpoints)
+Quotation Builder V4 Backend Regression Test Suite
+Tests all V4 additions plus smoke tests for existing endpoints
 """
-import os
-import sys
 import requests
-import base64
-from typing import Optional
+import json
+from datetime import datetime
 
-# Backend URL configuration
-BASE_URL = os.environ.get("TEST_BACKEND_URL", "http://localhost:8001").rstrip("/")
-API_BASE = f"{BASE_URL}/api"
+# Configuration
+BASE_URL = "https://forge-quotes.preview.emergentagent.com/api"
+EMAIL = "owner@forge.app"
+PASSWORD = "Forge@2026"
 
-# Test credentials from /app/memory/test_credentials.md
-TEST_EMAIL = "owner@forge.app"
-TEST_PASSWORD = "Forge@2026"
+# Global state
+token = None
+headers = {}
+test_results = []
 
-class TestResult:
-    def __init__(self):
-        self.passed = 0
-        self.failed = 0
-        self.failures = []
-    
-    def add_pass(self, test_name: str):
-        self.passed += 1
-        print(f"✅ PASS: {test_name}")
-    
-    def add_fail(self, test_name: str, reason: str, details: Optional[dict] = None):
-        self.failed += 1
-        self.failures.append({
-            "test": test_name,
-            "reason": reason,
-            "details": details
-        })
-        print(f"❌ FAIL: {test_name}")
-        print(f"   Reason: {reason}")
-        if details:
-            print(f"   Details: {details}")
-    
-    def summary(self):
-        total = self.passed + self.failed
-        print("\n" + "="*80)
-        print(f"TEST SUMMARY: {self.passed}/{total} passed, {self.failed}/{total} failed")
-        print("="*80)
-        if self.failures:
-            print("\nFAILURES:")
-            for i, f in enumerate(self.failures, 1):
-                print(f"\n{i}. {f['test']}")
-                print(f"   {f['reason']}")
-                if f['details']:
-                    print(f"   {f['details']}")
-        return self.failed == 0
-
-# Global test result tracker
-result = TestResult()
-
-def login() -> str:
-    """Login and return JWT token"""
-    print(f"\n🔐 Logging in as {TEST_EMAIL}...")
-    try:
-        resp = requests.post(
-            f"{API_BASE}/auth/login",
-            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
-            timeout=10
-        )
-        if resp.status_code != 200:
-            print(f"❌ Login failed: {resp.status_code}")
-            print(f"Response: {resp.text[:400]}")
-            sys.exit(1)
-        
-        data = resp.json()
-        token = data.get("access_token")
-        if not token:
-            print(f"❌ No access_token in response: {data}")
-            sys.exit(1)
-        
-        print(f"✅ Login successful")
-        return token
-    except Exception as e:
-        print(f"❌ Login exception: {e}")
-        sys.exit(1)
-
-def get_headers(token: str) -> dict:
-    """Return headers with Authorization"""
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
+def log_test(priority, test_id, description, passed, details=""):
+    """Log test result"""
+    status = "✅ PASS" if passed else "❌ FAIL"
+    result = {
+        "priority": priority,
+        "test_id": test_id,
+        "description": description,
+        "status": status,
+        "passed": passed,
+        "details": details
     }
+    test_results.append(result)
+    print(f"{status} | P{priority}.{test_id} | {description}")
+    if details and not passed:
+        print(f"    Details: {details}")
 
-# =============================================================================
-# 1. SUPPLIERS
-# =============================================================================
-def test_suppliers(token: str):
-    """Test 1: SUPPLIERS CRUD + auth"""
-    print("\n" + "="*80)
-    print("TEST 1: SUPPLIERS")
-    print("="*80)
-    
-    headers = get_headers(token)
-    
-    # Test 1.1: GET /api/suppliers returns 5 seeded suppliers
-    print("\n📦 Test 1.1: GET /api/suppliers returns 5 seeded suppliers")
+def login():
+    """Authenticate and get token"""
+    global token, headers
+    print("\n=== AUTHENTICATION ===")
     try:
-        resp = requests.get(f"{API_BASE}/suppliers", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("1.1: GET suppliers", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return None
-        
-        suppliers = resp.json()
-        if not isinstance(suppliers, list):
-            result.add_fail("1.1: GET suppliers", "Response is not an array", {"response": suppliers})
-            return None
-        
-        if len(suppliers) != 5:
-            result.add_fail("1.1: GET suppliers", f"Expected 5 suppliers, got {len(suppliers)}", {"count": len(suppliers)})
-            return None
-        
-        # Check each supplier has brand_id and brand_name
-        expected_brands = ["Hansgrohe", "Axor", "Grohe", "Vitra", "Geberit"]
-        found_brands = [s.get("brand_name") for s in suppliers]
-        
-        for brand in expected_brands:
-            if brand not in found_brands:
-                result.add_fail("1.1: GET suppliers", f"Missing brand: {brand}", {"found_brands": found_brands})
-                return None
-        
-        # Verify each supplier has brand_id and brand_name populated
-        for s in suppliers:
-            if not s.get("brand_id"):
-                result.add_fail("1.1: GET suppliers", f"Supplier {s.get('name')} missing brand_id", {"supplier": s})
-                return None
-            if not s.get("brand_name"):
-                result.add_fail("1.1: GET suppliers", f"Supplier {s.get('name')} missing brand_name", {"supplier": s})
-                return None
-        
-        result.add_pass(f"1.1: GET suppliers returns 5 seeded suppliers with brand_id and brand_name")
-        return suppliers
-        
+        resp = requests.post(f"{BASE_URL}/auth/login", json={"email": EMAIL, "password": PASSWORD})
+        if resp.status_code == 200:
+            data = resp.json()
+            token = data["access_token"]
+            headers = {"Authorization": f"Bearer {token}"}
+            print(f"✅ Login successful as {EMAIL}")
+            return True
+        else:
+            print(f"❌ Login failed: {resp.status_code} - {resp.text}")
+            return False
     except Exception as e:
-        result.add_fail("1.1: GET suppliers", f"Exception: {e}", None)
-        return None
+        print(f"❌ Login error: {e}")
+        return False
 
-    # Test 1.2: POST /api/suppliers creates new supplier
-    print("\n📦 Test 1.2: POST /api/suppliers creates new supplier")
+def test_priority_1_brands():
+    """PRIORITY 1.1: GET /api/brands with product_count"""
+    print("\n=== PRIORITY 1: V4 CATALOG ADDITIONS ===")
+    print("\n--- Test 1.1: GET /api/brands ---")
+    
     try:
-        # Get a brand_id first
-        resp = requests.get(f"{API_BASE}/brands", headers=headers, timeout=10)
+        resp = requests.get(f"{BASE_URL}/brands", headers=headers)
         if resp.status_code != 200:
-            result.add_fail("1.2: GET brands", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return suppliers
+            log_test(1, "1.1", "GET /api/brands returns 200", False, f"Status: {resp.status_code}")
+            return
         
         brands = resp.json()
-        if not brands:
-            result.add_fail("1.2: GET brands", "No brands found", {"response": brands})
-            return suppliers
         
-        brand_id = brands[0].get("id")
+        # Check it's an array
+        if not isinstance(brands, list):
+            log_test(1, "1.1a", "Brands returns array", False, f"Got {type(brands)}")
+            return
+        log_test(1, "1.1a", "Brands returns array", True)
         
-        resp = requests.post(
-            f"{API_BASE}/suppliers",
-            headers=headers,
-            json={
-                "name": "Test Supplier Ltd",
-                "brand_id": brand_id,
-                "contact_person": "John Doe",
-                "email": "john@testsupplier.com",
-                "phone": "+91 98765 43210"
-            },
-            timeout=10
-        )
-        if resp.status_code not in [200, 201]:
-            result.add_fail("1.2: POST supplier", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return suppliers
-        
-        supplier = resp.json()
-        if not supplier.get("id"):
-            result.add_fail("1.2: POST supplier", "No 'id' in response", {"response": supplier})
-            return suppliers
-        
-        result.add_pass(f"1.2: POST supplier creates new supplier (ID: {supplier.get('id')})")
-        
-        # Test 1.3: GET /api/suppliers/{id} returns single supplier
-        print("\n📦 Test 1.3: GET /api/suppliers/{id} returns single supplier")
-        supplier_id = supplier.get("id")
-        resp = requests.get(f"{API_BASE}/suppliers/{supplier_id}", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("1.3: GET supplier by ID", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+        # Check we have 5 brands
+        expected_brands = ["Axor", "Geberit", "Grohe", "Hansgrohe", "Vitra"]
+        brand_names = [b.get("name") for b in brands]
+        if len(brands) != 5:
+            log_test(1, "1.1b", "Returns 5 brands", False, f"Got {len(brands)} brands: {brand_names}")
         else:
-            fetched = resp.json()
-            if fetched.get("id") != supplier_id:
-                result.add_fail("1.3: GET supplier by ID", "ID mismatch", {"expected": supplier_id, "got": fetched.get("id")})
+            log_test(1, "1.1b", "Returns 5 brands", True)
+        
+        # Check all expected brands present
+        missing = [b for b in expected_brands if b not in brand_names]
+        if missing:
+            log_test(1, "1.1c", "All expected brands present", False, f"Missing: {missing}")
+        else:
+            log_test(1, "1.1c", "All expected brands present (Axor, Geberit, Grohe, Hansgrohe, Vitra)", True)
+        
+        # Check each brand has product_count field
+        brands_without_count = [b.get("name") for b in brands if "product_count" not in b]
+        if brands_without_count:
+            log_test(1, "1.1d", "Each brand has product_count field", False, f"Missing in: {brands_without_count}")
+        else:
+            log_test(1, "1.1d", "Each brand has product_count field", True)
+        
+        # Check product_count is numeric and >= 0
+        invalid_counts = [(b.get("name"), b.get("product_count")) for b in brands 
+                         if not isinstance(b.get("product_count"), (int, float)) or b.get("product_count") < 0]
+        if invalid_counts:
+            log_test(1, "1.1e", "product_count is numeric >= 0", False, f"Invalid: {invalid_counts}")
+        else:
+            log_test(1, "1.1e", "product_count is numeric >= 0", True)
+        
+        # Verify sum of product_count equals total active products
+        total_from_brands = sum(b.get("product_count", 0) for b in brands)
+        
+        # Get total active products
+        prod_resp = requests.get(f"{BASE_URL}/products?limit=1", headers=headers)
+        if prod_resp.status_code == 200:
+            total_products = prod_resp.json().get("total", 0)
+            if total_from_brands == total_products:
+                log_test(1, "1.1f", f"Sum of brand product_counts ({total_from_brands}) equals total active products", True)
             else:
-                result.add_pass(f"1.3: GET supplier by ID returns correct supplier")
+                log_test(1, "1.1f", "Sum of brand product_counts equals total active products", False, 
+                        f"Brands sum: {total_from_brands}, Total products: {total_products}")
         
-        # Test 1.4: PATCH /api/suppliers/{id} updates fields
-        print("\n📦 Test 1.4: PATCH /api/suppliers/{id} updates fields")
-        resp = requests.patch(
-            f"{API_BASE}/suppliers/{supplier_id}",
-            headers=headers,
-            json={
-                "name": "Test Supplier Ltd (Updated)",
-                "phone": "+91 98765 99999"
-            },
-            timeout=10
-        )
-        if resp.status_code != 200:
-            result.add_fail("1.4: PATCH supplier", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            updated = resp.json()
-            if updated.get("name") != "Test Supplier Ltd (Updated)":
-                result.add_fail("1.4: PATCH supplier", "Name not updated", {"response": updated})
-            else:
-                result.add_pass(f"1.4: PATCH supplier updates fields")
+        return brands
         
     except Exception as e:
-        result.add_fail("1.2-1.4: Supplier CRUD", f"Exception: {e}", None)
-    
-    # Test 1.5: Auth required
-    print("\n📦 Test 1.5: Unauthenticated request returns 401")
-    try:
-        resp = requests.get(f"{API_BASE}/suppliers", timeout=10)
-        if resp.status_code not in [401, 403]:
-            result.add_fail("1.5: Auth required", f"Expected 401/403, got {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            result.add_pass(f"1.5: Unauthenticated request returns {resp.status_code}")
-    except Exception as e:
-        result.add_fail("1.5: Auth test", f"Exception: {e}", None)
-    
-    return suppliers
-
-# =============================================================================
-# 2. PLACE ORDER — PREVIEW
-# =============================================================================
-def test_place_order_preview(token: str, quotation_id: str):
-    """Test 2: PLACE ORDER — PREVIEW (non-mutating)"""
-    print("\n" + "="*80)
-    print("TEST 2: PLACE ORDER — PREVIEW")
-    print("="*80)
-    
-    headers = get_headers(token)
-    
-    # Test 2.1: GET /api/quotations/{id}/place-order/preview returns correct shape
-    print(f"\n📦 Test 2.1: GET /api/quotations/{quotation_id}/place-order/preview")
-    try:
-        resp = requests.get(f"{API_BASE}/quotations/{quotation_id}/place-order/preview", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("2.1: Place order preview", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return None
-        
-        preview = resp.json()
-        
-        # Check shape
-        required_keys = ["quotation_id", "quotation_number", "customer_id", "customer_name", "brands", "total_value"]
-        for key in required_keys:
-            if key not in preview:
-                result.add_fail("2.1: Preview shape", f"Missing key: {key}", {"response": preview})
-                return None
-        
-        if not isinstance(preview["brands"], list):
-            result.add_fail("2.1: Preview shape", "'brands' is not an array", {"response": preview})
-            return None
-        
-        # Check each brand card has required fields
-        for brand in preview["brands"]:
-            required_brand_keys = ["brand_id", "brand_name", "items", "subtotal", "item_count"]
-            for key in required_brand_keys:
-                if key not in brand:
-                    result.add_fail("2.1: Brand card shape", f"Missing key: {key}", {"brand": brand})
-                    return None
-            
-            # Check if default_supplier is populated when brand has a supplier
-            if "default_supplier" in brand and brand["default_supplier"]:
-                if not isinstance(brand["default_supplier"], dict):
-                    result.add_fail("2.1: default_supplier", "Not a dict", {"default_supplier": brand["default_supplier"]})
-                    return None
-                if "id" not in brand["default_supplier"] or "name" not in brand["default_supplier"]:
-                    result.add_fail("2.1: default_supplier", "Missing id or name", {"default_supplier": brand["default_supplier"]})
-                    return None
-        
-        result.add_pass(f"2.1: Place order preview returns correct shape with {len(preview['brands'])} brands")
-        return preview
-        
-    except Exception as e:
-        result.add_fail("2.1: Place order preview", f"Exception: {e}", None)
+        log_test(1, "1.1", "GET /api/brands", False, f"Exception: {e}")
         return None
 
-def test_place_order_preview_edge_cases(token: str):
-    """Test 2: PLACE ORDER — PREVIEW edge cases"""
-    headers = get_headers(token)
+def test_priority_1_categories(brands):
+    """PRIORITY 1.2-1.3: GET /api/categories with and without brand filter"""
+    print("\n--- Test 1.2: GET /api/categories (no filter) ---")
     
-    # Test 2.2: 404 for unknown quotation_id
-    print("\n📦 Test 2.2: 404 for unknown quotation_id")
     try:
-        fake_id = "does-not-exist-uuid-12345"
-        resp = requests.get(f"{API_BASE}/quotations/{fake_id}/place-order/preview", headers=headers, timeout=10)
-        if resp.status_code != 404:
-            result.add_fail("2.2: Preview 404", f"Expected 404, got {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            result.add_pass("2.2: Preview returns 404 for unknown quotation")
-    except Exception as e:
-        result.add_fail("2.2: Preview 404", f"Exception: {e}", None)
-    
-    # Test 2.3: 400 when quotation has no items
-    print("\n📦 Test 2.3: 400 when quotation has no items")
-    try:
-        # Create a quotation with no items
-        resp = requests.get(f"{API_BASE}/customers", headers=headers, timeout=10)
+        resp = requests.get(f"{BASE_URL}/categories", headers=headers)
         if resp.status_code != 200:
-            result.add_fail("2.3: Get customers", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+            log_test(1, "1.2", "GET /api/categories returns 200", False, f"Status: {resp.status_code}")
             return
         
-        customers = resp.json()
-        if not customers:
-            result.add_fail("2.3: Get customers", "No customers found", {"response": customers})
+        categories = resp.json()
+        
+        # Check it's an array
+        if not isinstance(categories, list):
+            log_test(1, "1.2a", "Categories returns array", False, f"Got {type(categories)}")
             return
+        log_test(1, "1.2a", "Categories returns array", True)
         
-        customer_id = customers[0].get("id")
-        
-        resp = requests.post(
-            f"{API_BASE}/quotations",
-            headers=headers,
-            json={
-                "customer_id": customer_id,
-                "items": [],
-                "rooms": []
-            },
-            timeout=10
-        )
-        if resp.status_code not in [200, 201]:
-            result.add_fail("2.3: Create empty quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        empty_quot = resp.json()
-        empty_quot_id = empty_quot.get("id")
-        
-        resp = requests.get(f"{API_BASE}/quotations/{empty_quot_id}/place-order/preview", headers=headers, timeout=10)
-        if resp.status_code != 400:
-            result.add_fail("2.3: Preview empty quotation", f"Expected 400, got {resp.status_code}", {"response": resp.text[:400]})
+        # Check each category has product_count
+        cats_without_count = [c.get("name") for c in categories if "product_count" not in c]
+        if cats_without_count:
+            log_test(1, "1.2b", "Each category has product_count field", False, f"Missing in: {cats_without_count}")
         else:
-            data = resp.json()
-            detail = data.get("detail", "")
-            if "no items" not in detail.lower():
-                result.add_fail("2.3: Preview empty quotation detail", f"Detail doesn't mention 'no items': {detail}", {"response": data})
+            log_test(1, "1.2b", "Each category has product_count field", True)
+        
+    except Exception as e:
+        log_test(1, "1.2", "GET /api/categories", False, f"Exception: {e}")
+    
+    # Test 1.3: Categories with brand filter
+    print("\n--- Test 1.3: GET /api/categories?brand_id=<Hansgrohe> ---")
+    
+    if not brands:
+        log_test(1, "1.3", "GET /api/categories with brand filter", False, "No brands available")
+        return
+    
+    # Find Hansgrohe brand
+    hansgrohe = next((b for b in brands if b.get("name") == "Hansgrohe"), None)
+    if not hansgrohe:
+        log_test(1, "1.3", "GET /api/categories with brand filter", False, "Hansgrohe brand not found")
+        return
+    
+    try:
+        resp = requests.get(f"{BASE_URL}/categories?brand_id={hansgrohe['id']}", headers=headers)
+        if resp.status_code != 200:
+            log_test(1, "1.3a", "GET /api/categories?brand_id=<Hansgrohe> returns 200", False, f"Status: {resp.status_code}")
+            return
+        
+        categories = resp.json()
+        log_test(1, "1.3a", "GET /api/categories?brand_id=<Hansgrohe> returns 200", True)
+        
+        # Check all returned categories have product_count > 0
+        zero_count_cats = [c.get("name") for c in categories if c.get("product_count", 0) == 0]
+        if zero_count_cats:
+            log_test(1, "1.3b", "All returned categories have product_count > 0", False, f"Zero count: {zero_count_cats}")
+        else:
+            log_test(1, "1.3b", "All returned categories have product_count > 0 for Hansgrohe", True)
+        
+        # Test with fake brand_id
+        resp = requests.get(f"{BASE_URL}/categories?brand_id=fake-brand-id-12345", headers=headers)
+        if resp.status_code == 200:
+            result = resp.json()
+            if isinstance(result, list) and len(result) == 0:
+                log_test(1, "1.3c", "Fake brand_id returns empty array", True)
             else:
-                result.add_pass("2.3: Preview returns 400 when quotation has no items")
+                log_test(1, "1.3c", "Fake brand_id returns empty array", False, f"Got {len(result)} items")
+        else:
+            log_test(1, "1.3c", "Fake brand_id returns 200", False, f"Status: {resp.status_code}")
+        
     except Exception as e:
-        result.add_fail("2.3: Preview empty quotation", f"Exception: {e}", None)
+        log_test(1, "1.3", "GET /api/categories with brand filter", False, f"Exception: {e}")
 
-# =============================================================================
-# 3. PLACE ORDER — CONFIRM
-# =============================================================================
-def test_place_order_confirm(token: str, preview: dict):
-    """Test 3: PLACE ORDER — CONFIRM"""
-    print("\n" + "="*80)
-    print("TEST 3: PLACE ORDER — CONFIRM")
-    print("="*80)
+def test_priority_1_products():
+    """PRIORITY 1.4-1.10: GET /api/products with new fields and filters"""
+    print("\n--- Test 1.4: GET /api/products?limit=5&sort=popular ---")
     
-    headers = get_headers(token)
-    quotation_id = preview["quotation_id"]
-    
-    # Build supplier_by_brand from preview
-    supplier_by_brand = {}
-    for brand in preview["brands"]:
-        if brand.get("default_supplier"):
-            supplier_by_brand[brand["brand_id"]] = brand["default_supplier"]["id"]
-    
-    # Test 3.1: POST /api/quotations/{id}/place-order/confirm creates POs
-    print(f"\n📦 Test 3.1: POST /api/quotations/{quotation_id}/place-order/confirm")
     try:
-        resp = requests.post(
-            f"{API_BASE}/quotations/{quotation_id}/place-order/confirm",
-            headers=headers,
-            json={
-                "supplier_by_brand": supplier_by_brand,
-                "notes_by_brand": {},
-                "expected_delivery_at": None,
-                "project_name": "Test Project"
-            },
-            timeout=10
-        )
-        if resp.status_code not in [200, 201]:
-            result.add_fail("3.1: Place order confirm", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return None
-        
-        confirm_result = resp.json()
-        
-        # Check shape
-        if "purchase_orders" not in confirm_result or "count" not in confirm_result:
-            result.add_fail("3.1: Confirm shape", "Missing purchase_orders or count", {"response": confirm_result})
-            return None
-        
-        pos = confirm_result["purchase_orders"]
-        count = confirm_result["count"]
-        
-        if len(pos) != count:
-            result.add_fail("3.1: PO count mismatch", f"count={count} but len(purchase_orders)={len(pos)}", {"response": confirm_result})
-            return None
-        
-        if count != len(preview["brands"]):
-            result.add_fail("3.1: PO count", f"Expected {len(preview['brands'])} POs (one per brand), got {count}", {"response": confirm_result})
-            return None
-        
-        result.add_pass(f"3.1: Place order confirm creates {count} POs (one per brand)")
-        
-        # Test 3.2: Each PO has correct structure
-        print("\n📦 Test 3.2: Each PO has correct structure")
-        for po in pos:
-            # Check number format FPO-YYYY-NNNN
-            number = po.get("number", "")
-            if not number.startswith("FPO-2026-"):
-                result.add_fail("3.2: PO number format", f"Number doesn't match FPO-YYYY-NNNN: {number}", {"po": po})
-                return None
-            
-            # Check status is draft
-            if po.get("status") != "draft":
-                result.add_fail("3.2: PO status", f"Expected 'draft', got '{po.get('status')}'", {"po": po})
-                return None
-            
-            # Check quotation_id and quotation_number
-            if po.get("quotation_id") != quotation_id:
-                result.add_fail("3.2: PO quotation_id", f"Mismatch", {"expected": quotation_id, "got": po.get("quotation_id")})
-                return None
-            
-            if po.get("quotation_number") != preview["quotation_number"]:
-                result.add_fail("3.2: PO quotation_number", f"Mismatch", {"expected": preview["quotation_number"], "got": po.get("quotation_number")})
-                return None
-            
-            # Check customer_id
-            if po.get("customer_id") != preview["customer_id"]:
-                result.add_fail("3.2: PO customer_id", f"Mismatch", {"expected": preview["customer_id"], "got": po.get("customer_id")})
-                return None
-            
-            # Check brand_id and brand_name
-            if not po.get("brand_id") or not po.get("brand_name"):
-                result.add_fail("3.2: PO brand", "Missing brand_id or brand_name", {"po": po})
-                return None
-            
-            # Check supplier_id (from body or default)
-            brand_id = po.get("brand_id")
-            expected_supplier_id = supplier_by_brand.get(brand_id)
-            if expected_supplier_id and po.get("supplier_id") != expected_supplier_id:
-                result.add_fail("3.2: PO supplier_id", f"Mismatch", {"expected": expected_supplier_id, "got": po.get("supplier_id")})
-                return None
-            
-            # Check items
-            if not po.get("items") or not isinstance(po["items"], list):
-                result.add_fail("3.2: PO items", "Missing or invalid items", {"po": po})
-                return None
-            
-            for item in po["items"]:
-                if "qty" not in item or "unit_cost" not in item:
-                    result.add_fail("3.2: PO item", "Missing qty or unit_cost", {"item": item})
-                    return None
-            
-            # Check status_history
-            if not po.get("status_history") or not isinstance(po["status_history"], list):
-                result.add_fail("3.2: PO status_history", "Missing or invalid", {"po": po})
-                return None
-            
-            if len(po["status_history"]) != 1:
-                result.add_fail("3.2: PO status_history", f"Expected 1 entry, got {len(po['status_history'])}", {"po": po})
-                return None
-            
-            hist = po["status_history"][0]
-            if hist.get("from_status") is not None:
-                result.add_fail("3.2: PO status_history", f"from_status should be None, got {hist.get('from_status')}", {"hist": hist})
-                return None
-            
-            if hist.get("to_status") != "draft":
-                result.add_fail("3.2: PO status_history", f"to_status should be 'draft', got {hist.get('to_status')}", {"hist": hist})
-                return None
-        
-        result.add_pass("3.2: Each PO has correct structure (number, status, quotation_id, customer_id, brand, supplier, items, status_history)")
-        
-        # Test 3.3: Quotation status becomes 'ordered'
-        print("\n📦 Test 3.3: Quotation status becomes 'ordered'")
-        resp = requests.get(f"{API_BASE}/quotations/{quotation_id}", headers=headers, timeout=10)
+        resp = requests.get(f"{BASE_URL}/products?limit=5&sort=popular", headers=headers)
         if resp.status_code != 200:
-            result.add_fail("3.3: Get quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return pos
-        
-        quot = resp.json()
-        if quot.get("status") != "ordered":
-            result.add_fail("3.3: Quotation status", f"Expected 'ordered', got '{quot.get('status')}'", {"quotation": quot})
-            return pos
-        
-        result.add_pass("3.3: Quotation status becomes 'ordered'")
-        
-        # Test 3.4: Second call returns 400 "Order already placed"
-        print("\n📦 Test 3.4: Second call returns 400 'Order already placed'")
-        resp = requests.post(
-            f"{API_BASE}/quotations/{quotation_id}/place-order/confirm",
-            headers=headers,
-            json={
-                "supplier_by_brand": supplier_by_brand,
-                "notes_by_brand": {},
-                "expected_delivery_at": None,
-                "project_name": "Test Project"
-            },
-            timeout=10
-        )
-        if resp.status_code != 400:
-            result.add_fail("3.4: Idempotency check", f"Expected 400, got {resp.status_code}", {"response": resp.text[:400]})
-            return pos
+            log_test(1, "1.4", "GET /api/products?sort=popular returns 200", False, f"Status: {resp.status_code}")
+            return None
         
         data = resp.json()
-        detail = data.get("detail", "")
-        if "already placed" not in detail.lower():
-            result.add_fail("3.4: Idempotency detail", f"Detail doesn't mention 'already placed': {detail}", {"response": data})
-            return pos
+        log_test(1, "1.4a", "GET /api/products?sort=popular returns 200", True)
         
-        result.add_pass("3.4: Second confirm call returns 400 'Order already placed'")
+        # Check response shape
+        if "total" not in data or "items" not in data:
+            log_test(1, "1.4b", "Response has {total, items} shape", False, f"Keys: {data.keys()}")
+            return None
+        log_test(1, "1.4b", "Response has {total, items} shape", True)
         
-        return pos
+        items = data["items"]
+        if not items:
+            log_test(1, "1.4c", "Items array not empty", False, "No products in database")
+            return None
+        
+        # Check NEW V4 fields on each item
+        required_fields = ["popular", "frequently_used", "recently_used", "usage_count", "my_usage_count"]
+        missing_fields = {}
+        
+        for item in items[:5]:  # Check first 5
+            for field in required_fields:
+                if field not in item:
+                    if field not in missing_fields:
+                        missing_fields[field] = []
+                    missing_fields[field].append(item.get("sku", "unknown"))
+        
+        if missing_fields:
+            log_test(1, "1.4c", "All items have NEW V4 fields (popular, frequently_used, recently_used, usage_count, my_usage_count)", 
+                    False, f"Missing fields: {missing_fields}")
+        else:
+            log_test(1, "1.4c", "All items have NEW V4 fields (popular, frequently_used, recently_used, usage_count, my_usage_count)", True)
+        
+        # Check field types
+        type_errors = []
+        for item in items[:5]:
+            if not isinstance(item.get("popular"), bool):
+                type_errors.append(f"{item.get('sku')}: popular not bool")
+            if not isinstance(item.get("frequently_used"), bool):
+                type_errors.append(f"{item.get('sku')}: frequently_used not bool")
+            if not isinstance(item.get("recently_used"), bool):
+                type_errors.append(f"{item.get('sku')}: recently_used not bool")
+            if not isinstance(item.get("usage_count"), (int, float)):
+                type_errors.append(f"{item.get('sku')}: usage_count not numeric")
+            if not isinstance(item.get("my_usage_count"), (int, float)):
+                type_errors.append(f"{item.get('sku')}: my_usage_count not numeric")
+        
+        if type_errors:
+            log_test(1, "1.4d", "V4 fields have correct types", False, f"Errors: {type_errors[:3]}")
+        else:
+            log_test(1, "1.4d", "V4 fields have correct types (bool/int)", True)
+        
+        return items
         
     except Exception as e:
-        result.add_fail("3.1-3.4: Place order confirm", f"Exception: {e}", None)
+        log_test(1, "1.4", "GET /api/products?sort=popular", False, f"Exception: {e}")
         return None
 
-# =============================================================================
-# 4. PURCHASE ORDER LIFECYCLE
-# =============================================================================
-def test_purchase_order_lifecycle(token: str, po_id: str):
-    """Test 4: PURCHASE ORDER LIFECYCLE"""
-    print("\n" + "="*80)
-    print("TEST 4: PURCHASE ORDER LIFECYCLE")
-    print("="*80)
+def test_priority_1_product_sorts():
+    """PRIORITY 1.5-1.8: Test different sort options"""
     
-    headers = get_headers(token)
-    
-    # Test 4.1: GET /api/purchase-orders/{id} returns PO
-    print(f"\n📦 Test 4.1: GET /api/purchase-orders/{po_id}")
+    # Test 1.5: sort=recent
+    print("\n--- Test 1.5: GET /api/products?sort=recent ---")
     try:
-        resp = requests.get(f"{API_BASE}/purchase-orders/{po_id}", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("4.1: GET PO", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        po = resp.json()
-        if po.get("id") != po_id:
-            result.add_fail("4.1: GET PO", "ID mismatch", {"expected": po_id, "got": po.get("id")})
-            return
-        
-        result.add_pass(f"4.1: GET PO returns correct PO")
-        
+        resp = requests.get(f"{BASE_URL}/products?sort=recent&limit=5", headers=headers)
+        if resp.status_code == 200:
+            log_test(1, "1.5", "GET /api/products?sort=recent returns 200", True)
+        else:
+            log_test(1, "1.5", "GET /api/products?sort=recent returns 200", False, f"Status: {resp.status_code}")
     except Exception as e:
-        result.add_fail("4.1: GET PO", f"Exception: {e}", None)
+        log_test(1, "1.5", "GET /api/products?sort=recent", False, f"Exception: {e}")
+    
+    # Test 1.6: sort=price_asc
+    print("\n--- Test 1.6: GET /api/products?sort=price_asc ---")
+    try:
+        resp = requests.get(f"{BASE_URL}/products?sort=price_asc&limit=10", headers=headers)
+        if resp.status_code == 200:
+            items = resp.json().get("items", [])
+            log_test(1, "1.6a", "GET /api/products?sort=price_asc returns 200", True)
+            
+            # Verify ascending order
+            if len(items) >= 2:
+                prices = [item.get("price", 0) for item in items]
+                is_sorted = all(prices[i] <= prices[i+1] for i in range(len(prices)-1))
+                if is_sorted:
+                    log_test(1, "1.6b", "Items sorted by price ascending", True, f"Prices: {prices[:5]}")
+                else:
+                    log_test(1, "1.6b", "Items sorted by price ascending", False, f"Prices: {prices[:5]}")
+        else:
+            log_test(1, "1.6", "GET /api/products?sort=price_asc", False, f"Status: {resp.status_code}")
+    except Exception as e:
+        log_test(1, "1.6", "GET /api/products?sort=price_asc", False, f"Exception: {e}")
+    
+    # Test 1.7: sort=price_desc
+    print("\n--- Test 1.7: GET /api/products?sort=price_desc ---")
+    try:
+        resp = requests.get(f"{BASE_URL}/products?sort=price_desc&limit=10", headers=headers)
+        if resp.status_code == 200:
+            items = resp.json().get("items", [])
+            log_test(1, "1.7a", "GET /api/products?sort=price_desc returns 200", True)
+            
+            # Verify descending order
+            if len(items) >= 2:
+                prices = [item.get("price", 0) for item in items]
+                is_sorted = all(prices[i] >= prices[i+1] for i in range(len(prices)-1))
+                if is_sorted:
+                    log_test(1, "1.7b", "Items sorted by price descending", True, f"Prices: {prices[:5]}")
+                else:
+                    log_test(1, "1.7b", "Items sorted by price descending", False, f"Prices: {prices[:5]}")
+        else:
+            log_test(1, "1.7", "GET /api/products?sort=price_desc", False, f"Status: {resp.status_code}")
+    except Exception as e:
+        log_test(1, "1.7", "GET /api/products?sort=price_desc", False, f"Exception: {e}")
+    
+    # Test 1.8: sort=name
+    print("\n--- Test 1.8: GET /api/products?sort=name ---")
+    try:
+        resp = requests.get(f"{BASE_URL}/products?sort=name&limit=10", headers=headers)
+        if resp.status_code == 200:
+            items = resp.json().get("items", [])
+            log_test(1, "1.8a", "GET /api/products?sort=name returns 200", True)
+            
+            # Verify alphabetical order
+            if len(items) >= 2:
+                names = [item.get("name", "") for item in items]
+                is_sorted = all(names[i].lower() <= names[i+1].lower() for i in range(len(names)-1))
+                if is_sorted:
+                    log_test(1, "1.8b", "Items sorted alphabetically by name", True, f"Names: {names[:3]}")
+                else:
+                    log_test(1, "1.8b", "Items sorted alphabetically by name", False, f"Names: {names[:3]}")
+        else:
+            log_test(1, "1.8", "GET /api/products?sort=name", False, f"Status: {resp.status_code}")
+    except Exception as e:
+        log_test(1, "1.8", "GET /api/products?sort=name", False, f"Exception: {e}")
+
+def test_priority_1_product_search_and_filters(brands):
+    """PRIORITY 1.9-1.10: Search and combined filters"""
+    
+    # Test 1.9: Search
+    print("\n--- Test 1.9: GET /api/products?q=chrome ---")
+    try:
+        resp = requests.get(f"{BASE_URL}/products?q=chrome&limit=10", headers=headers)
+        if resp.status_code == 200:
+            log_test(1, "1.9", "GET /api/products?q=chrome returns 200", True, f"Found {resp.json().get('total', 0)} items")
+        else:
+            log_test(1, "1.9", "GET /api/products?q=chrome returns 200", False, f"Status: {resp.status_code}")
+    except Exception as e:
+        log_test(1, "1.9", "GET /api/products?q=chrome", False, f"Exception: {e}")
+    
+    # Test 1.10: Combined brand + category filter
+    print("\n--- Test 1.10: GET /api/products?brand_id=X&category_id=Y ---")
+    
+    if not brands:
+        log_test(1, "1.10", "Combined brand+category filter", False, "No brands available")
         return
     
-    # Test 4.2: GET /api/purchase-orders/config/statuses
-    print("\n📦 Test 4.2: GET /api/purchase-orders/config/statuses")
-    try:
-        resp = requests.get(f"{API_BASE}/purchase-orders/config/statuses", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("4.2: GET config/statuses", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        config = resp.json()
-        if "columns" not in config or "transitions" not in config or "labels" not in config:
-            result.add_fail("4.2: Config shape", "Missing columns, transitions, or labels", {"response": config})
-            return
-        
-        result.add_pass("4.2: GET config/statuses returns columns, transitions, labels")
-        
-    except Exception as e:
-        result.add_fail("4.2: GET config/statuses", f"Exception: {e}", None)
+    # Get a brand with products
+    brand_with_products = next((b for b in brands if b.get("product_count", 0) > 0), None)
+    if not brand_with_products:
+        log_test(1, "1.10", "Combined brand+category filter", False, "No brands with products")
         return
     
-    # Test 4.3: POST /api/purchase-orders/{id}/status with legal transition
-    print(f"\n📦 Test 4.3: POST /api/purchase-orders/{po_id}/status (draft → ordered)")
     try:
-        resp = requests.post(
-            f"{API_BASE}/purchase-orders/{po_id}/status",
-            headers=headers,
-            json={
-                "to_status": "ordered",
-                "note": "Test transition"
-            },
-            timeout=10
-        )
+        # Get categories for this brand
+        cat_resp = requests.get(f"{BASE_URL}/categories?brand_id={brand_with_products['id']}", headers=headers)
+        if cat_resp.status_code != 200:
+            log_test(1, "1.10", "Combined brand+category filter", False, "Could not fetch categories")
+            return
+        
+        categories = cat_resp.json()
+        if not categories:
+            log_test(1, "1.10", "Combined brand+category filter", False, "No categories for brand")
+            return
+        
+        category = categories[0]
+        
+        # Test combined filter
+        resp = requests.get(f"{BASE_URL}/products?brand_id={brand_with_products['id']}&category_id={category['id']}&limit=20", 
+                          headers=headers)
         if resp.status_code != 200:
-            result.add_fail("4.3: Status transition", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        po = resp.json()
-        if po.get("status") != "ordered":
-            result.add_fail("4.3: Status transition", f"Expected 'ordered', got '{po.get('status')}'", {"po": po})
-            return
-        
-        # Check status_history grew
-        if len(po.get("status_history", [])) < 2:
-            result.add_fail("4.3: Status history", f"Expected ≥2 entries, got {len(po.get('status_history', []))}", {"po": po})
-            return
-        
-        result.add_pass("4.3: Status transition (draft → ordered) succeeds, status_history grows")
-        
-    except Exception as e:
-        result.add_fail("4.3: Status transition", f"Exception: {e}", None)
-        return
-    
-    # Test 4.4: POST with illegal transition
-    print(f"\n📦 Test 4.4: POST /api/purchase-orders/{po_id}/status with illegal transition (ordered → packed)")
-    try:
-        resp = requests.post(
-            f"{API_BASE}/purchase-orders/{po_id}/status",
-            headers=headers,
-            json={
-                "to_status": "packed",
-                "note": "Illegal transition"
-            },
-            timeout=10
-        )
-        if resp.status_code != 400:
-            result.add_fail("4.4: Illegal transition", f"Expected 400, got {resp.status_code}", {"response": resp.text[:400]})
+            log_test(1, "1.10a", "Combined filter returns 200", False, f"Status: {resp.status_code}")
             return
         
         data = resp.json()
-        detail = data.get("detail", "")
-        if "cannot move" not in detail.lower():
-            result.add_fail("4.4: Illegal transition detail", f"Detail doesn't mention 'cannot move': {detail}", {"response": data})
-            return
+        items = data.get("items", [])
+        log_test(1, "1.10a", "Combined filter returns 200", True, f"Found {len(items)} items")
         
-        result.add_pass("4.4: Illegal transition (ordered → packed) returns 400 'Cannot move from...'")
-        
-    except Exception as e:
-        result.add_fail("4.4: Illegal transition", f"Exception: {e}", None)
-    
-    # Test 4.5: PATCH /api/purchase-orders/{id} updates fields
-    print(f"\n📦 Test 4.5: PATCH /api/purchase-orders/{po_id} updates fields")
-    try:
-        resp = requests.patch(
-            f"{API_BASE}/purchase-orders/{po_id}",
-            headers=headers,
-            json={
-                "internal_notes": "Updated notes",
-                "expected_delivery_at": "2026-02-01T00:00:00Z"
-            },
-            timeout=10
-        )
-        if resp.status_code != 200:
-            result.add_fail("4.5: PATCH PO", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        po = resp.json()
-        if po.get("internal_notes") != "Updated notes":
-            result.add_fail("4.5: PATCH PO", "internal_notes not updated", {"po": po})
-            return
-        
-        result.add_pass("4.5: PATCH PO updates fields (supplier_id, internal_notes, expected_delivery_at)")
-        
-    except Exception as e:
-        result.add_fail("4.5: PATCH PO", f"Exception: {e}", None)
-
-# =============================================================================
-# 5. RECEIVE FLOW (AUTO-TRANSITION)
-# =============================================================================
-def test_receive_flow(token: str):
-    """Test 5: RECEIVE FLOW (AUTO-TRANSITION)"""
-    print("\n" + "="*80)
-    print("TEST 5: RECEIVE FLOW (AUTO-TRANSITION)")
-    print("="*80)
-    
-    headers = get_headers(token)
-    
-    # Create a test quotation with 3 items, place order, get PO
-    print("\n📦 Setting up test PO with 3 items...")
-    try:
-        # Get customer
-        resp = requests.get(f"{API_BASE}/customers", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("5.0: Setup - Get customers", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        customers = resp.json()
-        if not customers:
-            result.add_fail("5.0: Setup - No customers", "No customers found", None)
-            return
-        customer_id = customers[0].get("id")
-        
-        # Get products
-        resp = requests.get(f"{API_BASE}/products?limit=3", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("5.0: Setup - Get products", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        products_data = resp.json()
-        products = products_data.get("items", [])
-        if len(products) < 3:
-            result.add_fail("5.0: Setup - Not enough products", f"Need 3 products, got {len(products)}", None)
-            return
-        
-        # Create quotation with 3 items (qty=2 each)
-        items = []
-        for p in products[:3]:
-            items.append({
-                "product_id": p["id"],
-                "sku": p["sku"],
-                "name": p["name"],
-                "qty": 2,
-                "unit_price": p["price"],
-                "tax_pct": 18
-            })
-        
-        resp = requests.post(
-            f"{API_BASE}/quotations",
-            headers=headers,
-            json={
-                "customer_id": customer_id,
-                "items": items,
-                "rooms": ["Test Room"]
-            },
-            timeout=10
-        )
-        if resp.status_code not in [200, 201]:
-            result.add_fail("5.0: Setup - Create quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        quot = resp.json()
-        quot_id = quot.get("id")
-        
-        # Place order
-        resp = requests.get(f"{API_BASE}/quotations/{quot_id}/place-order/preview", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("5.0: Setup - Preview", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        preview = resp.json()
-        supplier_by_brand = {}
-        for brand in preview["brands"]:
-            if brand.get("default_supplier"):
-                supplier_by_brand[brand["brand_id"]] = brand["default_supplier"]["id"]
-        
-        resp = requests.post(
-            f"{API_BASE}/quotations/{quot_id}/place-order/confirm",
-            headers=headers,
-            json={
-                "supplier_by_brand": supplier_by_brand,
-                "notes_by_brand": {},
-                "expected_delivery_at": None,
-                "project_name": "Receive Test"
-            },
-            timeout=10
-        )
-        if resp.status_code not in [200, 201]:
-            result.add_fail("5.0: Setup - Confirm order", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        confirm_result = resp.json()
-        pos = confirm_result["purchase_orders"]
-        if not pos:
-            result.add_fail("5.0: Setup - No POs", "No POs created", None)
-            return
-        
-        po = pos[0]
-        po_id = po["id"]
-        
-        # Transition to 'ordered' status
-        resp = requests.post(
-            f"{API_BASE}/purchase-orders/{po_id}/status",
-            headers=headers,
-            json={"to_status": "ordered", "note": "Ready for receive test"},
-            timeout=10
-        )
-        if resp.status_code != 200:
-            result.add_fail("5.0: Setup - Transition to ordered", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        po = resp.json()
-        item_ids = [item["id"] for item in po["items"]]
-        
-        print(f"✅ Setup complete: PO {po_id} with {len(item_ids)} items (qty=2 each), status='ordered'")
-        
-    except Exception as e:
-        result.add_fail("5.0: Setup", f"Exception: {e}", None)
-        return
-    
-    # Test 5.1: Partial receive (1 item, qty=1) → auto-transition to 'partial_received'
-    print(f"\n📦 Test 5.1: POST /api/purchase-orders/{po_id}/receive (partial)")
-    try:
-        receipts = {item_ids[0]: 1}
-        resp = requests.post(
-            f"{API_BASE}/purchase-orders/{po_id}/receive",
-            headers=headers,
-            json={
-                "receipts": receipts,
-                "note": "Partial receipt"
-            },
-            timeout=10
-        )
-        if resp.status_code != 200:
-            result.add_fail("5.1: Partial receive", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        po = resp.json()
-        
-        # Check status auto-transitioned to 'partial_received'
-        if po.get("status") != "partial_received":
-            result.add_fail("5.1: Auto-transition", f"Expected 'partial_received', got '{po.get('status')}'", {"po": po})
-            return
-        
-        # Check item qty_received updated
-        item = next((i for i in po["items"] if i["id"] == item_ids[0]), None)
-        if not item:
-            result.add_fail("5.1: Item not found", f"Item {item_ids[0]} not found", {"po": po})
-            return
-        
-        if item.get("qty_received") != 1:
-            result.add_fail("5.1: qty_received", f"Expected 1, got {item.get('qty_received')}", {"item": item})
-            return
-        
-        # Check status_history has new entry
-        if len(po.get("status_history", [])) < 3:  # draft→ordered, ordered→partial_received
-            result.add_fail("5.1: Status history", f"Expected ≥3 entries, got {len(po.get('status_history', []))}", {"po": po})
-            return
-        
-        result.add_pass("5.1: Partial receive → status auto-transitions to 'partial_received', qty_received updated, status_history grows")
-        
-    except Exception as e:
-        result.add_fail("5.1: Partial receive", f"Exception: {e}", None)
-        return
-    
-    # Test 5.2: Full receive (all items) → auto-transition to 'fully_received'
-    print(f"\n📦 Test 5.2: POST /api/purchase-orders/{po_id}/receive (full)")
-    try:
-        receipts = {
-            item_ids[0]: 2,  # complete first item
-            item_ids[1]: 2,  # complete second item
-            item_ids[2]: 2   # complete third item
-        }
-        resp = requests.post(
-            f"{API_BASE}/purchase-orders/{po_id}/receive",
-            headers=headers,
-            json={
-                "receipts": receipts,
-                "note": "Full receipt"
-            },
-            timeout=10
-        )
-        if resp.status_code != 200:
-            result.add_fail("5.2: Full receive", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        po = resp.json()
-        
-        # Check status auto-transitioned to 'fully_received'
-        if po.get("status") != "fully_received":
-            result.add_fail("5.2: Auto-transition", f"Expected 'fully_received', got '{po.get('status')}'", {"po": po})
-            return
-        
-        # Check all items fully received
-        for item_id in item_ids:
-            item = next((i for i in po["items"] if i["id"] == item_id), None)
-            if not item:
-                result.add_fail("5.2: Item not found", f"Item {item_id} not found", {"po": po})
-                return
-            if item.get("qty_received") != 2:
-                result.add_fail("5.2: qty_received", f"Item {item_id}: expected 2, got {item.get('qty_received')}", {"item": item})
-                return
-        
-        result.add_pass("5.2: Full receive → status auto-transitions to 'fully_received', all items qty_received=qty")
-        
-    except Exception as e:
-        result.add_fail("5.2: Full receive", f"Exception: {e}", None)
-        return
-    
-    # Test 5.3: Clamping (receipts value > qty is clamped to qty)
-    print(f"\n📦 Test 5.3: Verify clamping (receipts > qty clamped to qty)")
-    try:
-        # Create another PO for clamping test
-        resp = requests.get(f"{API_BASE}/customers", headers=headers, timeout=10)
-        customers = resp.json()
-        customer_id = customers[0].get("id")
-        
-        resp = requests.get(f"{API_BASE}/products?limit=1", headers=headers, timeout=10)
-        products_data = resp.json()
-        products = products_data.get("items", [])
-        p = products[0]
-        
-        resp = requests.post(
-            f"{API_BASE}/quotations",
-            headers=headers,
-            json={
-                "customer_id": customer_id,
-                "items": [{
-                    "product_id": p["id"],
-                    "sku": p["sku"],
-                    "name": p["name"],
-                    "qty": 5,
-                    "unit_price": p["price"],
-                    "tax_pct": 18
-                }],
-                "rooms": ["Test Room"]
-            },
-            timeout=10
-        )
-        quot = resp.json()
-        quot_id = quot.get("id")
-        
-        resp = requests.get(f"{API_BASE}/quotations/{quot_id}/place-order/preview", headers=headers, timeout=10)
-        preview = resp.json()
-        supplier_by_brand = {}
-        for brand in preview["brands"]:
-            if brand.get("default_supplier"):
-                supplier_by_brand[brand["brand_id"]] = brand["default_supplier"]["id"]
-        
-        resp = requests.post(
-            f"{API_BASE}/quotations/{quot_id}/place-order/confirm",
-            headers=headers,
-            json={
-                "supplier_by_brand": supplier_by_brand,
-                "notes_by_brand": {},
-                "expected_delivery_at": None,
-                "project_name": "Clamp Test"
-            },
-            timeout=10
-        )
-        confirm_result = resp.json()
-        po = confirm_result["purchase_orders"][0]
-        po_id = po["id"]
-        item_id = po["items"][0]["id"]
-        
-        # Transition to ordered
-        resp = requests.post(
-            f"{API_BASE}/purchase-orders/{po_id}/status",
-            headers=headers,
-            json={"to_status": "ordered", "note": "Clamp test"},
-            timeout=10
-        )
-        
-        # Try to receive 10 (more than qty=5)
-        resp = requests.post(
-            f"{API_BASE}/purchase-orders/{po_id}/receive",
-            headers=headers,
-            json={
-                "receipts": {item_id: 10},
-                "note": "Over-receive test"
-            },
-            timeout=10
-        )
-        if resp.status_code != 200:
-            result.add_fail("5.3: Clamping test", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        po = resp.json()
-        item = po["items"][0]
-        
-        # Should be clamped to 5
-        if item.get("qty_received") != 5:
-            result.add_fail("5.3: Clamping", f"Expected qty_received=5 (clamped), got {item.get('qty_received')}", {"item": item})
-            return
-        
-        result.add_pass("5.3: Clamping works (receipts > qty clamped to qty)")
-        
-    except Exception as e:
-        result.add_fail("5.3: Clamping test", f"Exception: {e}", None)
-
-# =============================================================================
-# 6. LIST + SEARCH
-# =============================================================================
-def test_list_and_search(token: str):
-    """Test 6: LIST + SEARCH"""
-    print("\n" + "="*80)
-    print("TEST 6: LIST + SEARCH")
-    print("="*80)
-    
-    headers = get_headers(token)
-    
-    # Test 6.1: GET /api/purchase-orders returns array
-    print("\n📦 Test 6.1: GET /api/purchase-orders returns array")
-    try:
-        resp = requests.get(f"{API_BASE}/purchase-orders", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("6.1: List POs", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        pos = resp.json()
-        if not isinstance(pos, list):
-            result.add_fail("6.1: List POs", "Response is not an array", {"response": pos})
-            return
-        
-        result.add_pass(f"6.1: GET /api/purchase-orders returns array ({len(pos)} POs)")
-        
-    except Exception as e:
-        result.add_fail("6.1: List POs", f"Exception: {e}", None)
-        return
-    
-    # Test 6.2: Filter by status
-    print("\n📦 Test 6.2: GET /api/purchase-orders?status=draft")
-    try:
-        resp = requests.get(f"{API_BASE}/purchase-orders?status=draft", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("6.2: Filter by status", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            pos = resp.json()
-            # Check all returned POs have status=draft
-            non_draft = [po for po in pos if po.get("status") != "draft"]
-            if non_draft:
-                result.add_fail("6.2: Filter by status", f"Found {len(non_draft)} non-draft POs", {"non_draft": non_draft})
-            else:
-                result.add_pass(f"6.2: Filter by status works (returned {len(pos)} draft POs)")
-    except Exception as e:
-        result.add_fail("6.2: Filter by status", f"Exception: {e}", None)
-    
-    # Test 6.3: Filter by brand_id
-    print("\n📦 Test 6.3: GET /api/purchase-orders?brand_id=X")
-    try:
-        # Get a brand_id from the first PO
-        resp = requests.get(f"{API_BASE}/purchase-orders?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("6.3: Get sample PO", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            pos = resp.json()
-            if pos and pos[0].get("brand_id"):
-                brand_id = pos[0]["brand_id"]
-                resp = requests.get(f"{API_BASE}/purchase-orders?brand_id={brand_id}", headers=headers, timeout=10)
-                if resp.status_code != 200:
-                    result.add_fail("6.3: Filter by brand_id", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-                else:
-                    filtered = resp.json()
-                    wrong_brand = [po for po in filtered if po.get("brand_id") != brand_id]
-                    if wrong_brand:
-                        result.add_fail("6.3: Filter by brand_id", f"Found {len(wrong_brand)} POs with wrong brand", {"wrong_brand": wrong_brand})
-                    else:
-                        result.add_pass(f"6.3: Filter by brand_id works (returned {len(filtered)} POs)")
-            else:
-                result.add_pass("6.3: Filter by brand_id (no POs to test)")
-    except Exception as e:
-        result.add_fail("6.3: Filter by brand_id", f"Exception: {e}", None)
-    
-    # Test 6.4: Filter by supplier_id, customer_id, quotation_id
-    print("\n📦 Test 6.4: Filters (supplier_id, customer_id, quotation_id)")
-    try:
-        # Just verify the endpoints accept the parameters (smoke test)
-        resp = requests.get(f"{API_BASE}/purchase-orders?supplier_id=test", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("6.4: Filter by supplier_id", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        
-        resp = requests.get(f"{API_BASE}/purchase-orders?customer_id=test", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("6.4: Filter by customer_id", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        
-        resp = requests.get(f"{API_BASE}/purchase-orders?quotation_id=test", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("6.4: Filter by quotation_id", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        
-        result.add_pass("6.4: Filters (supplier_id, customer_id, quotation_id) work")
-    except Exception as e:
-        result.add_fail("6.4: Filters", f"Exception: {e}", None)
-    
-    # Test 6.5: Search with q parameter
-    print("\n📦 Test 6.5: GET /api/purchase-orders?q=<term>")
-    try:
-        # Get a PO number to search for
-        resp = requests.get(f"{API_BASE}/purchase-orders?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("6.5: Get sample PO", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            pos = resp.json()
-            if pos:
-                po_number = pos[0].get("number", "")
-                if po_number:
-                    # Search by PO number
-                    search_term = po_number.split("-")[-1]  # e.g., "0001" from "FPO-2026-0001"
-                    resp = requests.get(f"{API_BASE}/purchase-orders?q={search_term}", headers=headers, timeout=10)
-                    if resp.status_code != 200:
-                        result.add_fail("6.5: Search by q", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-                    else:
-                        results = resp.json()
-                        # Should find at least the PO we searched for
-                        found = any(po.get("number") == po_number for po in results)
-                        if not found:
-                            result.add_fail("6.5: Search by q", f"Didn't find PO {po_number} in results", {"results": results})
-                        else:
-                            result.add_pass(f"6.5: Search by q works (found {len(results)} results for '{search_term}')")
-                else:
-                    result.add_pass("6.5: Search by q (no PO number to test)")
-            else:
-                result.add_pass("6.5: Search by q (no POs to test)")
-    except Exception as e:
-        result.add_fail("6.5: Search by q", f"Exception: {e}", None)
-
-# =============================================================================
-# 7. DASHBOARD
-# =============================================================================
-def test_dashboard(token: str):
-    """Test 7: DASHBOARD"""
-    print("\n" + "="*80)
-    print("TEST 7: DASHBOARD")
-    print("="*80)
-    
-    headers = get_headers(token)
-    
-    # Test 7.1: GET /api/purchase-orders/dashboard
-    print("\n📦 Test 7.1: GET /api/purchase-orders/dashboard")
-    try:
-        resp = requests.get(f"{API_BASE}/purchase-orders/dashboard", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("7.1: Dashboard", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        dashboard = resp.json()
-        
-        # Check shape
-        if "columns" not in dashboard or "total_open_value" not in dashboard:
-            result.add_fail("7.1: Dashboard shape", "Missing columns or total_open_value", {"response": dashboard})
-            return
-        
-        columns = dashboard["columns"]
-        if not isinstance(columns, list):
-            result.add_fail("7.1: Dashboard columns", "columns is not an array", {"response": dashboard})
-            return
-        
-        # Check all 8 canonical statuses appear
-        expected_statuses = [
-            "draft", "awaiting_review", "ordered", "awaiting_supplier",
-            "partial_received", "fully_received", "packed", "ready_for_dispatch"
-        ]
-        found_statuses = [col.get("status") for col in columns]
-        
-        for status in expected_statuses:
-            if status not in found_statuses:
-                result.add_fail("7.1: Dashboard statuses", f"Missing status: {status}", {"found": found_statuses})
-                return
-        
-        # Check each column has status, label, count, value
-        for col in columns:
-            if not all(k in col for k in ["status", "label", "count", "value"]):
-                result.add_fail("7.1: Column shape", "Missing required keys", {"column": col})
-                return
-        
-        result.add_pass(f"7.1: Dashboard returns all 8 canonical statuses with counts and values")
-        
-        # Test 7.2: Counts match actual data (basic sanity check)
-        print("\n📦 Test 7.2: Dashboard counts match actual data")
-        resp = requests.get(f"{API_BASE}/purchase-orders", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("7.2: Get all POs", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        all_pos = resp.json()
-        actual_counts = {}
-        for po in all_pos:
-            status = po.get("status")
-            actual_counts[status] = actual_counts.get(status, 0) + 1
-        
-        # Compare with dashboard counts
+        # Verify all items match both filters
         mismatches = []
-        for col in columns:
-            status = col["status"]
-            dashboard_count = col["count"]
-            actual_count = actual_counts.get(status, 0)
-            if dashboard_count != actual_count:
-                mismatches.append(f"{status}: dashboard={dashboard_count}, actual={actual_count}")
+        for item in items:
+            if item.get("brand_id") != brand_with_products['id']:
+                mismatches.append(f"{item.get('sku')}: wrong brand")
+            if item.get("category_id") != category['id']:
+                mismatches.append(f"{item.get('sku')}: wrong category")
         
         if mismatches:
-            result.add_fail("7.2: Dashboard counts", "Counts don't match actual data", {"mismatches": mismatches})
+            log_test(1, "1.10b", "All items match both brand_id and category_id", False, f"Mismatches: {mismatches[:3]}")
         else:
-            result.add_pass("7.2: Dashboard counts match actual data")
+            log_test(1, "1.10b", "All items match both brand_id and category_id filters", True)
         
     except Exception as e:
-        result.add_fail("7.1-7.2: Dashboard", f"Exception: {e}", None)
+        log_test(1, "1.10", "Combined brand+category filter", False, f"Exception: {e}")
 
-# =============================================================================
-# 8. ACTIVITY FEED
-# =============================================================================
-def test_activity_feed(token: str, quotation_id: str, po_id: str, customer_id: str):
-    """Test 8: ACTIVITY FEED"""
-    print("\n" + "="*80)
-    print("TEST 8: ACTIVITY FEED")
-    print("="*80)
+def test_priority_2_custom_product(brands):
+    """PRIORITY 2: Custom product creation"""
+    print("\n=== PRIORITY 2: CUSTOM PRODUCT ===")
     
-    headers = get_headers(token)
+    if not brands:
+        log_test(2, "2.1", "Custom product creation", False, "No brands available")
+        return None
     
-    # Test 8.1: GET /api/activity (global feed)
-    print("\n📦 Test 8.1: GET /api/activity (global feed)")
+    brand = brands[0]
+    
+    # Get a category
     try:
-        resp = requests.get(f"{API_BASE}/activity", headers=headers, timeout=10)
+        cat_resp = requests.get(f"{BASE_URL}/categories", headers=headers)
+        categories = cat_resp.json()
+        if not categories:
+            log_test(2, "2.1", "Custom product creation", False, "No categories available")
+            return None
+        category = categories[0]
+    except:
+        log_test(2, "2.1", "Custom product creation", False, "Could not fetch categories")
+        return None
+    
+    # Test 2.1: Create custom product
+    print("\n--- Test 2.1: POST /api/products/custom ---")
+    custom_sku = f"TESTCUST-{datetime.now().strftime('%H%M%S')}"
+    
+    payload = {
+        "name": "Test Custom Sink",
+        "sku": custom_sku,
+        "brand_id": brand["id"],
+        "category_id": category["id"],
+        "price": 5000,
+        "mrp": 6000,
+        "is_custom": True
+    }
+    
+    try:
+        resp = requests.post(f"{BASE_URL}/products/custom", json=payload, headers=headers)
         if resp.status_code != 200:
-            result.add_fail("8.1: Global activity", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+            log_test(2, "2.1a", "POST /api/products/custom returns 200", False, 
+                    f"Status: {resp.status_code}, Body: {resp.text[:200]}")
+            return None
+        
+        product = resp.json()
+        log_test(2, "2.1a", "POST /api/products/custom returns 200", True)
+        
+        # Check is_custom=true
+        if product.get("is_custom") != True:
+            log_test(2, "2.1b", "Product has is_custom=true", False, f"is_custom={product.get('is_custom')}")
         else:
-            events = resp.json()
-            if not isinstance(events, list):
-                result.add_fail("8.1: Global activity", "Response is not an array", {"response": events})
+            log_test(2, "2.1b", "Product has is_custom=true", True)
+        
+        # Check tags contains "custom"
+        tags = product.get("tags", [])
+        if "custom" not in tags:
+            log_test(2, "2.1c", "Tags contains 'custom'", False, f"Tags: {tags}")
+        else:
+            log_test(2, "2.1c", "Tags contains 'custom'", True)
+        
+        product_id = product.get("id")
+        
+        # Test 2.2: Create with same SKU (should auto-suffix)
+        print("\n--- Test 2.2: POST same SKU again (auto-suffix) ---")
+        resp2 = requests.post(f"{BASE_URL}/products/custom", json=payload, headers=headers)
+        if resp2.status_code != 200:
+            log_test(2, "2.2a", "Second POST with same SKU returns 200", False, f"Status: {resp2.status_code}")
+        else:
+            product2 = resp2.json()
+            log_test(2, "2.2a", "Second POST with same SKU returns 200 (auto-suffix)", True)
+            
+            # Check SKU was suffixed
+            new_sku = product2.get("sku")
+            if new_sku == custom_sku:
+                log_test(2, "2.2b", "SKU auto-suffixed", False, f"SKU unchanged: {new_sku}")
             else:
-                result.add_pass(f"8.1: Global activity feed returns {len(events)} events (reverse chrono)")
+                log_test(2, "2.2b", f"SKU auto-suffixed to {new_sku}", True)
+            
+            # Check is_custom still true
+            if product2.get("is_custom") != True:
+                log_test(2, "2.2c", "Second product has is_custom=true", False)
+            else:
+                log_test(2, "2.2c", "Second product has is_custom=true", True)
+        
+        # Test 2.3: Create with is_custom=false and duplicate SKU (should fail)
+        print("\n--- Test 2.3: POST with is_custom=false and duplicate SKU ---")
+        payload_non_custom = {**payload, "is_custom": False}
+        resp3 = requests.post(f"{BASE_URL}/products/custom", json=payload_non_custom, headers=headers)
+        if resp3.status_code == 409:
+            log_test(2, "2.3", "POST with is_custom=false and duplicate SKU returns 409 Conflict", True)
+        else:
+            log_test(2, "2.3", "POST with is_custom=false and duplicate SKU returns 409", False, 
+                    f"Status: {resp3.status_code}")
+        
+        # Test 2.4: Search for custom product
+        print("\n--- Test 2.4: GET /api/products?q=Test Custom ---")
+        resp4 = requests.get(f"{BASE_URL}/products?q=Test%20Custom", headers=headers)
+        if resp4.status_code == 200:
+            data = resp4.json()
+            items = data.get("items", [])
+            found = any(item.get("id") == product_id for item in items)
+            if found:
+                log_test(2, "2.4", "Custom product appears in search results", True)
+            else:
+                log_test(2, "2.4", "Custom product appears in search results", False, 
+                        f"Product {product_id} not found in {len(items)} results")
+        else:
+            log_test(2, "2.4", "Search for custom product", False, f"Status: {resp4.status_code}")
+        
+        # Test 2.5: Auth check
+        print("\n--- Test 2.5: POST /api/products/custom without token ---")
+        resp5 = requests.post(f"{BASE_URL}/products/custom", json=payload)
+        if resp5.status_code == 401:
+            log_test(2, "2.5", "POST /api/products/custom without token returns 401", True)
+        else:
+            log_test(2, "2.5", "POST /api/products/custom without token returns 401", False, 
+                    f"Status: {resp5.status_code}")
+        
+        return product_id
+        
     except Exception as e:
-        result.add_fail("8.1: Global activity", f"Exception: {e}", None)
+        log_test(2, "2.1", "Custom product creation", False, f"Exception: {e}")
+        return None
+
+def test_priority_3_complete_the_set():
+    """PRIORITY 3: Complete the set endpoint"""
+    print("\n=== PRIORITY 3: COMPLETE THE SET ===")
     
-    # Test 8.2: GET /api/activity/quotation/{q_id}
-    print(f"\n📦 Test 8.2: GET /api/activity/quotation/{quotation_id}")
+    # Get any product
     try:
-        resp = requests.get(f"{API_BASE}/activity/quotation/{quotation_id}", headers=headers, timeout=10)
+        resp = requests.get(f"{BASE_URL}/products?limit=1", headers=headers)
+        if resp.status_code != 200 or not resp.json().get("items"):
+            log_test(3, "3.1", "Complete the set", False, "No products available")
+            return
+        
+        product_id = resp.json()["items"][0]["id"]
+        
+        # Test 3.1: Get complete-the-set
+        print("\n--- Test 3.1: GET /api/products/{id}/complete-the-set ---")
+        resp = requests.get(f"{BASE_URL}/products/{product_id}/complete-the-set?limit=6", headers=headers)
         if resp.status_code != 200:
-            result.add_fail("8.2: Quotation activity", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+            log_test(3, "3.1a", "GET /api/products/{id}/complete-the-set returns 200", False, 
+                    f"Status: {resp.status_code}")
+            return
+        
+        data = resp.json()
+        log_test(3, "3.1a", "GET /api/products/{id}/complete-the-set returns 200", True)
+        
+        # Check response shape
+        if "source_product_id" not in data or "items" not in data:
+            log_test(3, "3.1b", "Response has {source_product_id, items} shape", False, f"Keys: {data.keys()}")
         else:
-            events = resp.json()
-            if not isinstance(events, list):
-                result.add_fail("8.2: Quotation activity", "Response is not an array", {"response": events})
+            log_test(3, "3.1b", "Response has {source_product_id, items} shape", True)
+            
+            # Check source_product_id matches
+            if data["source_product_id"] != product_id:
+                log_test(3, "3.1c", "source_product_id matches request", False, 
+                        f"Expected {product_id}, got {data['source_product_id']}")
             else:
-                # Check for expected event types
-                event_types = [e.get("event_type") for e in events]
-                expected_types = ["quotation.created", "quotation.order_placed"]
+                log_test(3, "3.1c", "source_product_id matches request", True)
+            
+            # Items may be empty (small seed catalog)
+            items = data.get("items", [])
+            log_test(3, "3.1d", f"Items array present (found {len(items)} companion products)", True)
+        
+        # Test 3.2: Non-existent product
+        print("\n--- Test 3.2: GET /api/products/fake-id/complete-the-set ---")
+        resp = requests.get(f"{BASE_URL}/products/fake-product-id-12345/complete-the-set", headers=headers)
+        if resp.status_code == 404:
+            body = resp.json()
+            if "Product not found" in body.get("detail", ""):
+                log_test(3, "3.2", "Non-existent product returns 404 with 'Product not found'", True)
+            else:
+                log_test(3, "3.2", "Non-existent product returns 404", False, f"Detail: {body.get('detail')}")
+        else:
+            log_test(3, "3.2", "Non-existent product returns 404", False, f"Status: {resp.status_code}")
+        
+        # Test 3.3: Auth check
+        print("\n--- Test 3.3: GET /api/products/{id}/complete-the-set without token ---")
+        resp = requests.get(f"{BASE_URL}/products/{product_id}/complete-the-set")
+        if resp.status_code == 401:
+            log_test(3, "3.3", "Without token returns 401", True)
+        else:
+            log_test(3, "3.3", "Without token returns 401", False, f"Status: {resp.status_code}")
+        
+    except Exception as e:
+        log_test(3, "3.1", "Complete the set", False, f"Exception: {e}")
+
+def test_priority_4_recent_quotations():
+    """PRIORITY 4: Recent quotations endpoint"""
+    print("\n=== PRIORITY 4: RECENT QUOTATIONS ===")
+    
+    print("\n--- Test 4.1: GET /api/quotations/recent?limit=5 ---")
+    
+    try:
+        resp = requests.get(f"{BASE_URL}/quotations/recent?limit=5", headers=headers)
+        if resp.status_code != 200:
+            log_test(4, "4.1a", "GET /api/quotations/recent returns 200", False, f"Status: {resp.status_code}")
+            return None
+        
+        quotations = resp.json()
+        log_test(4, "4.1a", "GET /api/quotations/recent returns 200", True)
+        
+        # Check it's an array
+        if not isinstance(quotations, list):
+            log_test(4, "4.1b", "Returns array", False, f"Got {type(quotations)}")
+            return None
+        log_test(4, "4.1b", "Returns array", True)
+        
+        # Check limit honored
+        if len(quotations) > 5:
+            log_test(4, "4.1c", "Limit honored (≤5 items)", False, f"Got {len(quotations)} items")
+        else:
+            log_test(4, "4.1c", f"Limit honored (got {len(quotations)} items)", True)
+        
+        if not quotations:
+            log_test(4, "4.1d", "Required fields present", True, "No quotations to check")
+            log_test(4, "4.2", "Ordered by updated_at DESC", True, "No quotations to check")
+            return None
+        
+        # Check required fields
+        required_fields = ["id", "number", "customer_id", "customer_name", "project_name", 
+                          "phone", "grand_total", "status", "revision_count", "updated_at"]
+        
+        missing_fields = {}
+        for quot in quotations:
+            for field in required_fields:
+                if field not in quot:
+                    if field not in missing_fields:
+                        missing_fields[field] = []
+                    missing_fields[field].append(quot.get("number", "unknown"))
+        
+        if missing_fields:
+            log_test(4, "4.1d", "All required fields present", False, f"Missing: {missing_fields}")
+        else:
+            log_test(4, "4.1d", "All required fields present (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at)", True)
+        
+        # Test 4.2: Check ordering by updated_at DESC
+        print("\n--- Test 4.2: Verify ordering by updated_at DESC ---")
+        if len(quotations) >= 2:
+            timestamps = [q.get("updated_at") for q in quotations]
+            is_desc = all(timestamps[i] >= timestamps[i+1] for i in range(len(timestamps)-1) if timestamps[i] and timestamps[i+1])
+            if is_desc:
+                log_test(4, "4.2", "Quotations ordered by updated_at DESC (most recent first)", True)
+            else:
+                log_test(4, "4.2", "Quotations ordered by updated_at DESC", False, f"Timestamps: {timestamps}")
+        else:
+            log_test(4, "4.2", "Ordering check", True, "Only 1 quotation, ordering N/A")
+        
+        # Test 4.3: Auth check
+        print("\n--- Test 4.3: GET /api/quotations/recent without token ---")
+        resp = requests.get(f"{BASE_URL}/quotations/recent")
+        if resp.status_code == 401:
+            log_test(4, "4.3", "Without token returns 401", True)
+        else:
+            log_test(4, "4.3", "Without token returns 401", False, f"Status: {resp.status_code}")
+        
+        return quotations[0] if quotations else None
+        
+    except Exception as e:
+        log_test(4, "4.1", "Recent quotations", False, f"Exception: {e}")
+        return None
+
+def test_priority_5_v4_quotation_fields():
+    """PRIORITY 5: V4 quotation header fields + ui_state"""
+    print("\n=== PRIORITY 5: V4 QUOTATION HEADER FIELDS + UI_STATE ===")
+    
+    # Get a customer
+    try:
+        cust_resp = requests.get(f"{BASE_URL}/customers?limit=1", headers=headers)
+        if cust_resp.status_code != 200 or not cust_resp.json():
+            log_test(5, "5.1", "V4 quotation fields", False, "No customers available")
+            return None
+        customer_id = cust_resp.json()[0]["id"]
+    except:
+        log_test(5, "5.1", "V4 quotation fields", False, "Could not fetch customer")
+        return None
+    
+    # Test 5.1: Create quotation with V4 fields
+    print("\n--- Test 5.1: POST /api/quotations with V4 fields ---")
+    
+    payload = {
+        "customer_id": customer_id,
+        "items": [],
+        "rooms": ["Master Bath"],
+        "project_name": "Villa Phase 2",
+        "phone_snapshot": "+91 9876543210",
+        "reference_source": "Architect referral"
+    }
+    
+    try:
+        resp = requests.post(f"{BASE_URL}/quotations", json=payload, headers=headers)
+        if resp.status_code not in [200, 201]:
+            log_test(5, "5.1a", "POST /api/quotations with V4 fields", False, 
+                    f"Status: {resp.status_code}, Body: {resp.text[:200]}")
+            return None
+        
+        quotation = resp.json()
+        quotation_id = quotation.get("id")
+        log_test(5, "5.1a", "POST /api/quotations with V4 fields returns 200/201", True)
+        
+        # Check V4 fields persisted
+        v4_fields_ok = True
+        errors = []
+        
+        if quotation.get("project_name") != "Villa Phase 2":
+            v4_fields_ok = False
+            errors.append(f"project_name: expected 'Villa Phase 2', got '{quotation.get('project_name')}'")
+        
+        if quotation.get("phone_snapshot") != "+91 9876543210":
+            v4_fields_ok = False
+            errors.append(f"phone_snapshot: expected '+91 9876543210', got '{quotation.get('phone_snapshot')}'")
+        
+        if quotation.get("reference_source") != "Architect referral":
+            v4_fields_ok = False
+            errors.append(f"reference_source: expected 'Architect referral', got '{quotation.get('reference_source')}'")
+        
+        if v4_fields_ok:
+            log_test(5, "5.1b", "V4 fields (project_name, phone_snapshot, reference_source) persisted correctly", True)
+        else:
+            log_test(5, "5.1b", "V4 fields persisted correctly", False, f"Errors: {errors}")
+        
+        # Test 5.2: GET quotation and verify fields
+        print("\n--- Test 5.2: GET /api/quotations/{id} ---")
+        resp = requests.get(f"{BASE_URL}/quotations/{quotation_id}", headers=headers)
+        if resp.status_code != 200:
+            log_test(5, "5.2", "GET /api/quotations/{id}", False, f"Status: {resp.status_code}")
+        else:
+            quot = resp.json()
+            v4_fields_ok = (
+                quot.get("project_name") == "Villa Phase 2" and
+                quot.get("phone_snapshot") == "+91 9876543210" and
+                quot.get("reference_source") == "Architect referral"
+            )
+            if v4_fields_ok:
+                log_test(5, "5.2", "GET returns quotation with V4 fields intact", True)
+            else:
+                log_test(5, "5.2", "GET returns quotation with V4 fields", False, 
+                        f"project_name={quot.get('project_name')}, phone={quot.get('phone_snapshot')}, ref={quot.get('reference_source')}")
+        
+        # Test 5.3: PATCH with ui_state
+        print("\n--- Test 5.3: PATCH /api/quotations/{id} with ui_state ---")
+        ui_state = {
+            "activeRoom": "Master Bath",
+            "collapsedRooms": {"Master Bath": False},
+            "selectedBrandId": "foo",
+            "sortKey": "recent"
+        }
+        
+        patch_payload = {
+            "silent": True,
+            "ui_state": ui_state
+        }
+        
+        resp = requests.patch(f"{BASE_URL}/quotations/{quotation_id}", json=patch_payload, headers=headers)
+        if resp.status_code != 200:
+            log_test(5, "5.3a", "PATCH with ui_state returns 200", False, f"Status: {resp.status_code}")
+        else:
+            log_test(5, "5.3a", "PATCH with ui_state returns 200", True)
+            
+            # GET and verify ui_state persisted
+            resp = requests.get(f"{BASE_URL}/quotations/{quotation_id}", headers=headers)
+            if resp.status_code == 200:
+                quot = resp.json()
+                persisted_ui_state = quot.get("ui_state", {})
                 
-                missing = []
-                for et in expected_types:
-                    if et not in event_types:
-                        missing.append(et)
-                
-                if missing:
-                    result.add_fail("8.2: Quotation activity", f"Missing event types: {missing}", {"found": event_types})
+                if persisted_ui_state == ui_state:
+                    log_test(5, "5.3b", "ui_state persisted with all keys", True)
                 else:
-                    result.add_pass(f"8.2: Quotation activity returns {len(events)} events (includes quotation.created, quotation.order_placed)")
-    except Exception as e:
-        result.add_fail("8.2: Quotation activity", f"Exception: {e}", None)
-    
-    # Test 8.3: GET /api/activity/purchase/{po_id}
-    print(f"\n📦 Test 8.3: GET /api/activity/purchase/{po_id}")
-    try:
-        resp = requests.get(f"{API_BASE}/activity/purchase/{po_id}", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("8.3: Purchase activity", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            events = resp.json()
-            if not isinstance(events, list):
-                result.add_fail("8.3: Purchase activity", "Response is not an array", {"response": events})
+                    log_test(5, "5.3b", "ui_state persisted", False, 
+                            f"Expected {ui_state}, got {persisted_ui_state}")
+        
+        # Test 5.4: PATCH project_name, verify phone_snapshot preserved
+        print("\n--- Test 5.4: PATCH project_name, verify phone_snapshot preserved ---")
+        patch_payload = {
+            "silent": True,
+            "project_name": "Villa Phase 3"
+        }
+        
+        resp = requests.patch(f"{BASE_URL}/quotations/{quotation_id}", json=patch_payload, headers=headers)
+        if resp.status_code == 200:
+            quot = resp.json()
+            if quot.get("project_name") == "Villa Phase 3" and quot.get("phone_snapshot") == "+91 9876543210":
+                log_test(5, "5.4", "PATCH project_name updates field, phone_snapshot preserved", True)
             else:
-                # Check for expected event types
-                event_types = [e.get("event_type") for e in events]
-                expected_types = ["purchase.created", "purchase.status_changed"]
-                
-                missing = []
-                for et in expected_types:
-                    if et not in event_types:
-                        missing.append(et)
-                
-                if missing:
-                    result.add_fail("8.3: Purchase activity", f"Missing event types: {missing}", {"found": event_types})
-                else:
-                    result.add_pass(f"8.3: Purchase activity returns {len(events)} events (includes purchase.created, purchase.status_changed)")
-                
-                # Check each event has required fields
-                for event in events:
-                    required_fields = ["id", "event_type", "entity_type", "entity_id", "created_at"]
-                    missing_fields = [f for f in required_fields if f not in event]
-                    if missing_fields:
-                        result.add_fail("8.3: Event structure", f"Missing fields: {missing_fields}", {"event": event})
-                        break
-    except Exception as e:
-        result.add_fail("8.3: Purchase activity", f"Exception: {e}", None)
-    
-    # Test 8.4: GET /api/activity/customer/{c_id}
-    print(f"\n📦 Test 8.4: GET /api/activity/customer/{customer_id}")
-    try:
-        resp = requests.get(f"{API_BASE}/activity/customer/{customer_id}", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("8.4: Customer activity", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+                log_test(5, "5.4", "PATCH project_name", False, 
+                        f"project_name={quot.get('project_name')}, phone={quot.get('phone_snapshot')}")
         else:
-            events = resp.json()
-            if not isinstance(events, list):
-                result.add_fail("8.4: Customer activity", "Response is not an array", {"response": events})
+            log_test(5, "5.4", "PATCH project_name", False, f"Status: {resp.status_code}")
+        
+        # Test 5.5: PATCH silent=true should NOT create revision
+        print("\n--- Test 5.5: PATCH silent=true should NOT create revision ---")
+        resp = requests.get(f"{BASE_URL}/quotations/{quotation_id}", headers=headers)
+        if resp.status_code == 200:
+            quot = resp.json()
+            revisions = quot.get("revisions", [])
+            if len(revisions) == 0:
+                log_test(5, "5.5", "PATCH silent=true does NOT create revision", True)
             else:
-                result.add_pass(f"8.4: Customer activity returns {len(events)} events (denormalised by customer_id)")
-    except Exception as e:
-        result.add_fail("8.4: Customer activity", f"Exception: {e}", None)
-
-# =============================================================================
-# 9. ATTACHMENTS
-# =============================================================================
-def test_attachments(token: str, po_id: str):
-    """Test 9: ATTACHMENTS"""
-    print("\n" + "="*80)
-    print("TEST 9: ATTACHMENTS")
-    print("="*80)
-    
-    headers = get_headers(token)
-    
-    # Test 9.1: POST /api/purchase-orders/{po_id}/attachments
-    print(f"\n📦 Test 9.1: POST /api/purchase-orders/{po_id}/attachments")
-    try:
-        # Create a small test image (1x1 PNG)
-        png_data = base64.b64encode(b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82').decode('utf-8')
-        data_url = f"data:image/png;base64,{png_data}"
+                log_test(5, "5.5", "PATCH silent=true does NOT create revision", False, 
+                        f"Found {len(revisions)} revisions")
         
-        resp = requests.post(
-            f"{API_BASE}/purchase-orders/{po_id}/attachments",
-            headers=headers,
-            json={
-                "filename": "test_invoice.png",
-                "mime": "image/png",
-                "data_url": data_url,
-                "note": "Test attachment"
-            },
-            timeout=10
-        )
-        if resp.status_code != 200:
-            result.add_fail("9.1: Add attachment", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
+        # Test 5.6: PATCH silent=false should create revision
+        print("\n--- Test 5.6: PATCH silent=false creates revision ---")
+        patch_payload = {
+            "silent": False,
+            "notes": "Test revision",
+            "reason": "Testing revision creation"
+        }
         
-        po = resp.json()
-        
-        # Check attachments array grew
-        attachments = po.get("attachments", [])
-        if len(attachments) < 1:
-            result.add_fail("9.1: Add attachment", "Attachments array didn't grow", {"po": po})
-            return
-        
-        # Check last attachment
-        att = attachments[-1]
-        if att.get("filename") != "test_invoice.png":
-            result.add_fail("9.1: Attachment filename", f"Expected 'test_invoice.png', got '{att.get('filename')}'", {"attachment": att})
-            return
-        
-        result.add_pass(f"9.1: Add attachment succeeds, attachments array grows to {len(attachments)}")
-        
-        # Test 9.2: Activity event 'purchase.attachment_added' logged
-        print(f"\n📦 Test 9.2: Activity event 'purchase.attachment_added' logged")
-        resp = requests.get(f"{API_BASE}/activity/purchase/{po_id}", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("9.2: Get activity", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        
-        events = resp.json()
-        event_types = [e.get("event_type") for e in events]
-        
-        if "purchase.attachment_added" not in event_types:
-            result.add_fail("9.2: Attachment event", "Event 'purchase.attachment_added' not found", {"event_types": event_types})
+        resp = requests.patch(f"{BASE_URL}/quotations/{quotation_id}", json=patch_payload, headers=headers)
+        if resp.status_code == 200:
+            quot = resp.json()
+            revisions = quot.get("revisions", [])
+            if len(revisions) >= 1:
+                log_test(5, "5.6", "PATCH silent=false creates revision", True, f"Revisions: {len(revisions)}")
+            else:
+                log_test(5, "5.6", "PATCH silent=false creates revision", False, "No revisions created")
         else:
-            result.add_pass("9.2: Activity event 'purchase.attachment_added' logged")
+            log_test(5, "5.6", "PATCH silent=false", False, f"Status: {resp.status_code}")
+        
+        return quotation_id
         
     except Exception as e:
-        result.add_fail("9.1-9.2: Attachments", f"Exception: {e}", None)
+        log_test(5, "5.1", "V4 quotation fields", False, f"Exception: {e}")
+        return None
 
-# =============================================================================
-# 10. REGRESSION (previous milestone endpoints)
-# =============================================================================
-def test_regression(token: str):
-    """Test 10: REGRESSION (previous milestone endpoints)"""
-    print("\n" + "="*80)
-    print("TEST 10: REGRESSION (previous milestone endpoints)")
-    print("="*80)
+def test_priority_6_smoke_regression():
+    """PRIORITY 6: Smoke regression on existing endpoints"""
+    print("\n=== PRIORITY 6: SMOKE REGRESSION ===")
     
-    headers = get_headers(token)
-    
-    # Test 10.1: POST /api/quotations creates
-    print("\n📦 Test 10.1: POST /api/quotations creates")
+    # Get a customer for tests
     try:
-        resp = requests.get(f"{API_BASE}/customers", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.1: Get customers", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-            return
-        customers = resp.json()
-        if not customers:
-            result.add_fail("10.1: No customers", "No customers found", None)
-            return
-        customer_id = customers[0].get("id")
-        
-        resp = requests.post(
-            f"{API_BASE}/quotations",
-            headers=headers,
-            json={
+        cust_resp = requests.get(f"{BASE_URL}/customers?limit=1", headers=headers)
+        if cust_resp.status_code != 200 or not cust_resp.json():
+            customer_id = None
+        else:
+            customer_id = cust_resp.json()[0]["id"]
+    except:
+        customer_id = None
+    
+    # Test 6.1: POST /api/quotations (existing shape)
+    print("\n--- Test 6.1: POST /api/quotations (existing shape without V4 fields) ---")
+    if customer_id:
+        try:
+            payload = {
                 "customer_id": customer_id,
                 "items": [],
-                "rooms": []
-            },
-            timeout=10
-        )
-        if resp.status_code not in [200, 201]:
-            result.add_fail("10.1: Create quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            result.add_pass("10.1: POST /api/quotations creates quotation")
-    except Exception as e:
-        result.add_fail("10.1: Create quotation", f"Exception: {e}", None)
+                "rooms": ["Living Room"]
+            }
+            resp = requests.post(f"{BASE_URL}/quotations", json=payload, headers=headers)
+            if resp.status_code in [200, 201]:
+                log_test(6, "6.1", "POST /api/quotations (existing shape) still works", True)
+            else:
+                log_test(6, "6.1", "POST /api/quotations (existing shape)", False, f"Status: {resp.status_code}")
+        except Exception as e:
+            log_test(6, "6.1", "POST /api/quotations", False, f"Exception: {e}")
+    else:
+        log_test(6, "6.1", "POST /api/quotations", False, "No customer available")
     
-    # Test 10.2: PATCH /api/quotations/{id} silent=true does not create revision
-    print("\n📦 Test 10.2: PATCH silent=true does not create revision")
+    # Test 6.2: GET /api/products/{id}/alternates
+    print("\n--- Test 6.2: GET /api/products/{id}/alternates ---")
     try:
-        resp = requests.get(f"{API_BASE}/quotations?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.2: Get quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            quots = resp.json()
-            if quots:
-                quot_id = quots[0].get("id")
-                initial_revisions = len(quots[0].get("revisions", []))
+        prod_resp = requests.get(f"{BASE_URL}/products?limit=1", headers=headers)
+        if prod_resp.status_code == 200 and prod_resp.json().get("items"):
+            product_id = prod_resp.json()["items"][0]["id"]
+            
+            resp = requests.get(f"{BASE_URL}/products/{product_id}/alternates?limit=5", headers=headers)
+            if resp.status_code != 200:
+                log_test(6, "6.2a", "GET /api/products/{id}/alternates returns 200", False, f"Status: {resp.status_code}")
+            else:
+                data = resp.json()
+                log_test(6, "6.2a", "GET /api/products/{id}/alternates returns 200", True)
                 
-                resp = requests.patch(
-                    f"{API_BASE}/quotations/{quot_id}",
-                    headers=headers,
-                    json={"silent": True, "notes": "silent update"},
-                    timeout=10
-                )
-                if resp.status_code != 200:
-                    result.add_fail("10.2: Silent PATCH", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+                # Check shape
+                required_keys = ["source_product_id", "items", "tiers"]
+                missing = [k for k in required_keys if k not in data]
+                if missing:
+                    log_test(6, "6.2b", "Response has correct shape {source_product_id, items, tiers}", False, 
+                            f"Missing: {missing}")
                 else:
-                    resp = requests.get(f"{API_BASE}/quotations/{quot_id}", headers=headers, timeout=10)
-                    quot = resp.json()
-                    final_revisions = len(quot.get("revisions", []))
+                    log_test(6, "6.2b", "Response has correct shape {source_product_id, items, tiers}", True)
                     
-                    if final_revisions != initial_revisions:
-                        result.add_fail("10.2: Silent PATCH", f"Revisions changed from {initial_revisions} to {final_revisions}", None)
+                    # Check tiers structure
+                    tiers = data.get("tiers", {})
+                    tier_keys = ["family", "brand_category", "category"]
+                    missing_tier_keys = [k for k in tier_keys if k not in tiers]
+                    if missing_tier_keys:
+                        log_test(6, "6.2c", "Tiers has {family, brand_category, category}", False, 
+                                f"Missing: {missing_tier_keys}")
                     else:
-                        result.add_pass("10.2: PATCH silent=true does not create revision")
-            else:
-                result.add_pass("10.2: PATCH silent=true (no quotations to test)")
-    except Exception as e:
-        result.add_fail("10.2: Silent PATCH", f"Exception: {e}", None)
-    
-    # Test 10.3: PATCH silent=false creates revision AND emits activity events
-    print("\n📦 Test 10.3: PATCH silent=false creates revision and emits activity events")
-    try:
-        resp = requests.get(f"{API_BASE}/quotations?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.3: Get quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+                        log_test(6, "6.2c", "Tiers structure correct {family, brand_category, category}", True)
         else:
-            quots = resp.json()
-            if quots:
-                quot_id = quots[0].get("id")
-                initial_revisions = len(quots[0].get("revisions", []))
-                
-                resp = requests.patch(
-                    f"{API_BASE}/quotations/{quot_id}",
-                    headers=headers,
-                    json={"silent": False, "notes": "non-silent update", "reason": "test"},
-                    timeout=10
-                )
-                if resp.status_code != 200:
-                    result.add_fail("10.3: Non-silent PATCH", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+            log_test(6, "6.2", "GET /api/products/{id}/alternates", False, "No products available")
+    except Exception as e:
+        log_test(6, "6.2", "GET /api/products/{id}/alternates", False, f"Exception: {e}")
+    
+    # Test 6.3: GET /api/purchase-orders
+    print("\n--- Test 6.3: GET /api/purchase-orders ---")
+    try:
+        resp = requests.get(f"{BASE_URL}/purchase-orders", headers=headers)
+        if resp.status_code == 200:
+            log_test(6, "6.3", "GET /api/purchase-orders returns 200 with array", True)
+        else:
+            log_test(6, "6.3", "GET /api/purchase-orders", False, f"Status: {resp.status_code}")
+    except Exception as e:
+        log_test(6, "6.3", "GET /api/purchase-orders", False, f"Exception: {e}")
+    
+    # Test 6.4: GET /api/payments/stats
+    print("\n--- Test 6.4: GET /api/payments/stats ---")
+    try:
+        resp = requests.get(f"{BASE_URL}/payments/stats", headers=headers)
+        if resp.status_code != 200:
+            log_test(6, "6.4a", "GET /api/payments/stats returns 200", False, f"Status: {resp.status_code}")
+        else:
+            data = resp.json()
+            log_test(6, "6.4a", "GET /api/payments/stats returns 200", True)
+            
+            required_keys = ["total_outstanding", "collected_this_month", "active_orders", "fully_paid"]
+            missing = [k for k in required_keys if k not in data]
+            if missing:
+                log_test(6, "6.4b", "Stats has all required keys", False, f"Missing: {missing}")
+            else:
+                log_test(6, "6.4b", "Stats has {total_outstanding, collected_this_month, active_orders, fully_paid}", True)
+    except Exception as e:
+        log_test(6, "6.4", "GET /api/payments/stats", False, f"Exception: {e}")
+    
+    # Test 6.5: POST /api/quotations/{id}/place-order/preview
+    print("\n--- Test 6.5: POST /api/quotations/{id}/place-order/preview ---")
+    try:
+        # Get a quotation with items
+        quot_resp = requests.get(f"{BASE_URL}/quotations", headers=headers)
+        if quot_resp.status_code == 200:
+            quotations = quot_resp.json()
+            quot_with_items = next((q for q in quotations if q.get("items") and len(q.get("items", [])) > 0), None)
+            
+            if quot_with_items:
+                resp = requests.get(f"{BASE_URL}/quotations/{quot_with_items['id']}/place-order/preview", headers=headers)
+                if resp.status_code == 200:
+                    log_test(6, "6.5", "GET /api/quotations/{id}/place-order/preview returns 200", True)
                 else:
-                    resp = requests.get(f"{API_BASE}/quotations/{quot_id}", headers=headers, timeout=10)
-                    quot = resp.json()
-                    final_revisions = len(quot.get("revisions", []))
-                    
-                    if final_revisions <= initial_revisions:
-                        result.add_fail("10.3: Non-silent PATCH", f"Revisions didn't increase (was {initial_revisions}, now {final_revisions})", None)
+                    log_test(6, "6.5", "GET /api/quotations/{id}/place-order/preview", False, f"Status: {resp.status_code}")
+            else:
+                log_test(6, "6.5", "GET /api/quotations/{id}/place-order/preview", True, "No quotations with items to test")
+        else:
+            log_test(6, "6.5", "GET /api/quotations/{id}/place-order/preview", False, "Could not fetch quotations")
+    except Exception as e:
+        log_test(6, "6.5", "GET /api/quotations/{id}/place-order/preview", False, f"Exception: {e}")
+    
+    # Test 6.6: POST /api/quotations/{id}/duplicate
+    print("\n--- Test 6.6: POST /api/quotations/{id}/duplicate ---")
+    try:
+        quot_resp = requests.get(f"{BASE_URL}/quotations?limit=1", headers=headers)
+        if quot_resp.status_code == 200:
+            quotations = quot_resp.json()
+            if quotations:
+                quotation_id = quotations[0]["id"]
+                resp = requests.post(f"{BASE_URL}/quotations/{quotation_id}/duplicate", headers=headers)
+                if resp.status_code in [200, 201]:
+                    new_quot = resp.json()
+                    if new_quot.get("id") != quotation_id and new_quot.get("number") != quotations[0].get("number"):
+                        log_test(6, "6.6", "POST /api/quotations/{id}/duplicate creates new quotation with new id and number", True)
                     else:
-                        # Check activity events
-                        resp = requests.get(f"{API_BASE}/activity/quotation/{quot_id}", headers=headers, timeout=10)
-                        if resp.status_code != 200:
-                            result.add_fail("10.3: Get activity", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-                        else:
-                            events = resp.json()
-                            event_types = [e.get("event_type") for e in events]
-                            if "quotation.revision_created" in event_types:
-                                result.add_pass("10.3: PATCH silent=false creates revision and emits activity events")
-                            else:
-                                result.add_fail("10.3: Activity events", "quotation.revision_created not found", {"event_types": event_types})
-            else:
-                result.add_pass("10.3: PATCH silent=false (no quotations to test)")
-    except Exception as e:
-        result.add_fail("10.3: Non-silent PATCH", f"Exception: {e}", None)
-    
-    # Test 10.4: POST /api/quotations/{id}/duplicate works
-    print("\n📦 Test 10.4: POST /api/quotations/{id}/duplicate works")
-    try:
-        resp = requests.get(f"{API_BASE}/quotations?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.4: Get quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            quots = resp.json()
-            if quots:
-                quot_id = quots[0].get("id")
-                resp = requests.post(f"{API_BASE}/quotations/{quot_id}/duplicate", headers=headers, timeout=10)
-                if resp.status_code not in [200, 201]:
-                    result.add_fail("10.4: Duplicate quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+                        log_test(6, "6.6", "POST /api/quotations/{id}/duplicate", False, "New quotation has same id or number")
                 else:
-                    result.add_pass("10.4: POST /api/quotations/{id}/duplicate works")
+                    log_test(6, "6.6", "POST /api/quotations/{id}/duplicate", False, f"Status: {resp.status_code}")
             else:
-                result.add_pass("10.4: Duplicate quotation (no quotations to test)")
-    except Exception as e:
-        result.add_fail("10.4: Duplicate quotation", f"Exception: {e}", None)
-    
-    # Test 10.5: GET /api/quotations/{id}/pdf returns 200 with application/pdf AND emits activity event
-    print("\n📦 Test 10.5: GET /api/quotations/{id}/pdf returns 200 and emits activity event")
-    try:
-        resp = requests.get(f"{API_BASE}/quotations?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.5: Get quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
+                log_test(6, "6.6", "POST /api/quotations/{id}/duplicate", True, "No quotations to test")
         else:
-            quots = resp.json()
-            if quots:
-                quot_id = quots[0].get("id")
-                resp = requests.get(f"{API_BASE}/quotations/{quot_id}/pdf", headers=headers, timeout=10)
-                if resp.status_code != 200:
-                    result.add_fail("10.5: PDF generation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-                else:
-                    content_type = resp.headers.get("Content-Type", "")
-                    if "application/pdf" not in content_type:
-                        result.add_fail("10.5: PDF content type", f"Expected application/pdf, got {content_type}", None)
-                    else:
-                        # Check activity event
-                        resp = requests.get(f"{API_BASE}/activity/quotation/{quot_id}", headers=headers, timeout=10)
-                        if resp.status_code != 200:
-                            result.add_fail("10.5: Get activity", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-                        else:
-                            events = resp.json()
-                            event_types = [e.get("event_type") for e in events]
-                            if "quotation.pdf_generated" in event_types:
-                                result.add_pass("10.5: PDF generation returns 200 with application/pdf and emits activity event")
-                            else:
-                                result.add_fail("10.5: PDF activity event", "quotation.pdf_generated not found", {"event_types": event_types})
-            else:
-                result.add_pass("10.5: PDF generation (no quotations to test)")
+            log_test(6, "6.6", "POST /api/quotations/{id}/duplicate", False, "Could not fetch quotations")
     except Exception as e:
-        result.add_fail("10.5: PDF generation", f"Exception: {e}", None)
-    
-    # Test 10.6: GET /api/quotations/{id}/breakdown works
-    print("\n📦 Test 10.6: GET /api/quotations/{id}/breakdown works")
-    try:
-        resp = requests.get(f"{API_BASE}/quotations?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.6: Get quotation", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            quots = resp.json()
-            if quots:
-                quot_id = quots[0].get("id")
-                resp = requests.get(f"{API_BASE}/quotations/{quot_id}/breakdown", headers=headers, timeout=10)
-                if resp.status_code != 200:
-                    result.add_fail("10.6: Breakdown", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-                else:
-                    result.add_pass("10.6: GET /api/quotations/{id}/breakdown works")
-            else:
-                result.add_pass("10.6: Breakdown (no quotations to test)")
-    except Exception as e:
-        result.add_fail("10.6: Breakdown", f"Exception: {e}", None)
-    
-    # Test 10.7: GET /api/products/{id}/alternates works
-    print("\n📦 Test 10.7: GET /api/products/{id}/alternates works")
-    try:
-        resp = requests.get(f"{API_BASE}/products?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.7: Get products", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            products_data = resp.json()
-            products = products_data.get("items", [])
-            if products:
-                product_id = products[0].get("id")
-                resp = requests.get(f"{API_BASE}/products/{product_id}/alternates", headers=headers, timeout=10)
-                if resp.status_code != 200:
-                    result.add_fail("10.7: Alternates", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-                else:
-                    result.add_pass("10.7: GET /api/products/{id}/alternates works")
-            else:
-                result.add_pass("10.7: Alternates (no products to test)")
-    except Exception as e:
-        result.add_fail("10.7: Alternates", f"Exception: {e}", None)
-    
-    # Test 10.8: GET /api/customers works
-    print("\n📦 Test 10.8: GET /api/customers works")
-    try:
-        resp = requests.get(f"{API_BASE}/customers", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.8: List customers", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            result.add_pass("10.8: GET /api/customers works")
-    except Exception as e:
-        result.add_fail("10.8: List customers", f"Exception: {e}", None)
-    
-    # Test 10.9: GET /api/customers/{id} works
-    print("\n📦 Test 10.9: GET /api/customers/{id} works")
-    try:
-        resp = requests.get(f"{API_BASE}/customers", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            result.add_fail("10.9: Get customers", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            customers = resp.json()
-            if customers:
-                customer_id = customers[0].get("id")
-                resp = requests.get(f"{API_BASE}/customers/{customer_id}", headers=headers, timeout=10)
-                if resp.status_code != 200:
-                    result.add_fail("10.9: Get customer by ID", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-                else:
-                    result.add_pass("10.9: GET /api/customers/{id} works")
-            else:
-                result.add_pass("10.9: Get customer by ID (no customers to test)")
-    except Exception as e:
-        result.add_fail("10.9: Get customer by ID", f"Exception: {e}", None)
-    
-    # Test 10.10: POST /api/customers works
-    print("\n📦 Test 10.10: POST /api/customers works")
-    try:
-        resp = requests.post(
-            f"{API_BASE}/customers",
-            headers=headers,
-            json={
-                "name": "Regression Test Customer",
-                "email": "regression@test.com",
-                "phone": "9876543210"
-            },
-            timeout=10
-        )
-        if resp.status_code not in [200, 201]:
-            result.add_fail("10.10: Create customer", f"HTTP {resp.status_code}", {"response": resp.text[:400]})
-        else:
-            result.add_pass("10.10: POST /api/customers works")
-    except Exception as e:
-        result.add_fail("10.10: Create customer", f"Exception: {e}", None)
+        log_test(6, "6.6", "POST /api/quotations/{id}/duplicate", False, f"Exception: {e}")
 
-# =============================================================================
-# MAIN TEST RUNNER
-# =============================================================================
+def print_summary():
+    """Print test summary"""
+    print("\n" + "="*80)
+    print("TEST SUMMARY")
+    print("="*80)
+    
+    # Group by priority
+    by_priority = {}
+    for result in test_results:
+        priority = result["priority"]
+        if priority not in by_priority:
+            by_priority[priority] = []
+        by_priority[priority].append(result)
+    
+    total_tests = len(test_results)
+    passed_tests = sum(1 for r in test_results if r["passed"])
+    failed_tests = total_tests - passed_tests
+    
+    for priority in sorted(by_priority.keys()):
+        results = by_priority[priority]
+        passed = sum(1 for r in results if r["passed"])
+        total = len(results)
+        
+        print(f"\nPRIORITY {priority}: {passed}/{total} passed")
+        print("-" * 80)
+        
+        # Show failed tests first
+        failed = [r for r in results if not r["passed"]]
+        if failed:
+            print("❌ FAILED:")
+            for r in failed:
+                print(f"  {r['test_id']}: {r['description']}")
+                if r["details"]:
+                    print(f"      {r['details']}")
+        
+        # Show passed tests (condensed)
+        passed_list = [r for r in results if r["passed"]]
+        if passed_list:
+            print(f"✅ PASSED: {len(passed_list)} tests")
+    
+    print("\n" + "="*80)
+    print(f"OVERALL: {passed_tests}/{total_tests} tests passed ({passed_tests*100//total_tests if total_tests > 0 else 0}%)")
+    if failed_tests > 0:
+        print(f"FAILED: {failed_tests} tests")
+    print("="*80)
+
 def main():
-    """Main test runner"""
+    """Run all tests"""
     print("="*80)
-    print("FORGE V2 — PRODUCTION MILESTONE 1 — PURCHASES MODULE REGRESSION TEST")
+    print("QUOTATION BUILDER V4 BACKEND REGRESSION TEST")
     print("="*80)
-    print(f"Backend URL: {API_BASE}")
-    print(f"Test User: {TEST_EMAIL}")
+    print(f"API Base URL: {BASE_URL}")
+    print(f"Test User: {EMAIL}")
+    print("="*80)
     
     # Login
-    token = login()
+    if not login():
+        print("\n❌ Authentication failed. Cannot proceed with tests.")
+        return
     
-    # Test 1: SUPPLIERS
-    suppliers = test_suppliers(token)
+    # Run tests in priority order
+    brands = test_priority_1_brands()
+    test_priority_1_categories(brands)
+    test_priority_1_products()
+    test_priority_1_product_sorts()
+    test_priority_1_product_search_and_filters(brands)
     
-    # Test 2 & 3: PLACE ORDER (need a quotation with items)
-    # Create a test quotation with items for place order tests
-    print("\n" + "="*80)
-    print("SETUP: Creating test quotation with items for place order tests")
-    print("="*80)
-    try:
-        headers = get_headers(token)
-        
-        # Get customer
-        resp = requests.get(f"{API_BASE}/customers", headers=headers, timeout=10)
-        customers = resp.json()
-        customer_id = customers[0].get("id")
-        
-        # Get products
-        resp = requests.get(f"{API_BASE}/products?limit=5", headers=headers, timeout=10)
-        products_data = resp.json()
-        products = products_data.get("items", [])
-        
-        # Create quotation with items from different brands
-        items = []
-        for p in products[:5]:
-            items.append({
-                "product_id": p["id"],
-                "sku": p["sku"],
-                "name": p["name"],
-                "qty": 2,
-                "unit_price": p["price"],
-                "tax_pct": 18
-            })
-        
-        resp = requests.post(
-            f"{API_BASE}/quotations",
-            headers=headers,
-            json={
-                "customer_id": customer_id,
-                "items": items,
-                "rooms": ["Master Bath", "Powder Room"]
-            },
-            timeout=10
-        )
-        test_quot = resp.json()
-        test_quot_id = test_quot.get("id")
-        print(f"✅ Created test quotation {test_quot_id} with {len(items)} items")
-        
-    except Exception as e:
-        print(f"❌ Setup failed: {e}")
-        sys.exit(1)
+    test_priority_2_custom_product(brands)
     
-    # Test 2: PLACE ORDER — PREVIEW
-    preview = test_place_order_preview(token, test_quot_id)
-    test_place_order_preview_edge_cases(token)
+    test_priority_3_complete_the_set()
     
-    # Test 3: PLACE ORDER — CONFIRM
-    if preview:
-        pos = test_place_order_confirm(token, preview)
-        
-        if pos and len(pos) > 0:
-            po_id = pos[0]["id"]
-            
-            # Test 4: PURCHASE ORDER LIFECYCLE
-            test_purchase_order_lifecycle(token, po_id)
-            
-            # Test 5: RECEIVE FLOW
-            test_receive_flow(token)
-            
-            # Test 6: LIST + SEARCH
-            test_list_and_search(token)
-            
-            # Test 7: DASHBOARD
-            test_dashboard(token)
-            
-            # Test 8: ACTIVITY FEED
-            test_activity_feed(token, test_quot_id, po_id, customer_id)
-            
-            # Test 9: ATTACHMENTS
-            test_attachments(token, po_id)
+    test_priority_4_recent_quotations()
     
-    # Test 10: REGRESSION
-    test_regression(token)
+    test_priority_5_v4_quotation_fields()
     
-    # Summary
-    success = result.summary()
+    test_priority_6_smoke_regression()
     
-    if success:
-        print("\n🎉 ALL TESTS PASSED!")
-        sys.exit(0)
-    else:
-        print(f"\n⚠️  {result.failed} TEST(S) FAILED")
-        sys.exit(1)
+    # Print summary
+    print_summary()
 
 if __name__ == "__main__":
     main()

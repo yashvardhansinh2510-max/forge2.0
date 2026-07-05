@@ -175,6 +175,7 @@ class Product(TimestampedModel):
     compatible_ids: list[str] = []          # curated compatible parts
     accessory_ids: list[str] = []           # curated accessories
     downloads: list[dict] = []              # [{title, type, url, size_bytes}] — kept for Downloads tab
+    is_custom: bool = False                 # created inline from the builder (custom product flow)
     active: bool = True
 
 
@@ -193,6 +194,7 @@ class ProductCreate(BaseModel):
     stock: int = 0
     images: list[str] = []
     tags: list[str] = []
+    is_custom: bool = False
 
 
 # ---------- Quotations ----------
@@ -238,12 +240,21 @@ class Quotation(TimestampedModel):
     number: str                          # human-readable e.g. FQ-2026-0001
     customer_id: str
     customer_name: str
+    # V4 header fields — captured on the builder header so the sales rep never
+    # leaves the workspace. All optional and safely backward-compatible.
+    project_name: Optional[str] = None
+    phone_snapshot: Optional[str] = None      # frozen at quote time (customer.phone can change)
+    reference_source: Optional[str] = None    # "Walk-in", "Reference", "Instagram", "Architect", etc.
     status: QuotationStatus = "draft"
     items: list[QuotationLineItem] = []
     rooms: list[str] = []                # ordered list of room labels
     collapsed_rooms: list[str] = []      # ui state — persisted so it survives reloads
     project_discount_pct: float = 0      # applied on top of item net (after item discount)
     category_discounts: dict[str, float] = {}  # {category_id: discount_pct}
+    # Full UI state blob — active_room, scroll positions, expanded panels,
+    # last-opened filter, favourite chips. Written on silent autosave so
+    # reopening the quotation puts the salesperson EXACTLY where they left off.
+    ui_state: dict = {}
     subtotal: float = 0
     discount_total: float = 0            # total of all discounts (item + cat + project)
     grand_total: float = 0
@@ -261,6 +272,9 @@ class QuotationCreate(BaseModel):
     rooms: list[str] = []
     notes: Optional[str] = None
     valid_until: Optional[str] = None
+    project_name: Optional[str] = None
+    phone_snapshot: Optional[str] = None
+    reference_source: Optional[str] = None
     project_discount_pct: float = 0
     category_discounts: dict[str, float] = {}
 
@@ -272,6 +286,10 @@ class QuotationUpdate(BaseModel):
     notes: Optional[str] = None
     valid_until: Optional[str] = None
     status: Optional[QuotationStatus] = None
+    project_name: Optional[str] = None
+    phone_snapshot: Optional[str] = None
+    reference_source: Optional[str] = None
+    ui_state: Optional[dict] = None
     project_discount_pct: Optional[float] = None
     category_discounts: Optional[dict[str, float]] = None
     reason: Optional[str] = None         # for revision log

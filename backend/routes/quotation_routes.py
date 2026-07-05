@@ -83,6 +83,43 @@ async def list_quotations(_: UserPublic = Depends(get_current_user)):
     return docs
 
 
+@router.get("/recent")
+async def recent_quotations(
+    limit: int = 8,
+    _: UserPublic = Depends(get_current_user),
+):
+    """Compact list of recent quotations for the Builder V4 left-rail panel.
+
+    Returns just the fields the mini-list card needs — number, customer,
+    project, amount, updated_at, status, revision count. Ordered by
+    updated_at DESC so the most-recently-touched quote sits on top.
+    """
+    docs = await db.quotations.find(
+        {},
+        {
+            "_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
+            "project_name": 1, "phone_snapshot": 1, "grand_total": 1, "status": 1,
+            "revisions": 1, "updated_at": 1, "created_at": 1,
+        },
+    ).sort("updated_at", -1).limit(limit).to_list(limit)
+    out = []
+    for d in docs:
+        out.append({
+            "id": d.get("id"),
+            "number": d.get("number"),
+            "customer_id": d.get("customer_id"),
+            "customer_name": d.get("customer_name"),
+            "project_name": d.get("project_name"),
+            "phone": d.get("phone_snapshot"),
+            "grand_total": d.get("grand_total") or 0,
+            "status": d.get("status") or "draft",
+            "revision_count": len(d.get("revisions") or []),
+            "updated_at": d.get("updated_at"),
+            "created_at": d.get("created_at"),
+        })
+    return out
+
+
 @router.post("", response_model=Quotation)
 async def create_quotation(
     body: QuotationCreate,
@@ -105,6 +142,9 @@ async def create_quotation(
         number=await _next_number(),
         customer_id=customer["id"],
         customer_name=customer.get("company") or customer["name"],
+        project_name=body.project_name,
+        phone_snapshot=body.phone_snapshot or customer.get("phone"),
+        reference_source=body.reference_source,
         items=items,
         rooms=body.rooms or [],
         project_discount_pct=body.project_discount_pct or 0,
@@ -179,6 +219,14 @@ async def update_quotation(
         update["status"] = body.status
         if body.status == "approved":
             update["approved_by"] = user.id
+    if body.project_name is not None:
+        update["project_name"] = body.project_name
+    if body.phone_snapshot is not None:
+        update["phone_snapshot"] = body.phone_snapshot
+    if body.reference_source is not None:
+        update["reference_source"] = body.reference_source
+    if body.ui_state is not None:
+        update["ui_state"] = body.ui_state
 
     # Recalc totals if anything pricing-related changed
     if any(k in update for k in ("items", "project_discount_pct", "category_discounts")):

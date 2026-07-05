@@ -264,15 +264,147 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "2.0"
-  test_sequence: 8
+  test_sequence: 9
   run_ui: true
 
 test_plan:
   current_focus:
-    - "Purchases Material Tracker — backend endpoints (items/brands/stages/move/bulk-move/transfer/export.xlsx/settings) + frontend page"
+    - "Quotation Builder V4 — backend endpoint regression (brands/categories with counts, products sort+badges, custom product, complete-the-set, quotations recent, ui_state persistence, project_name/phone_snapshot/reference_source fields)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+backend:
+  - task: "Quotation Builder V4 — brand/category counts, product ranking, custom product, complete-the-set, recent quotations, V4 header fields"
+    implemented: true
+    working: true
+    file: "backend/routes/catalog_routes.py, backend/routes/quotation_routes.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            V4 backend patch shipped (additive, backwards-compatible):
+            (1) GET /api/brands now returns product_count per brand (aggregation on products.brand_id, active=true). Response is now list[Brand & {product_count}] instead of pure Brand.
+            (2) GET /api/categories accepts ?brand_id= and returns per-brand-scoped product_count on each row. Hides categories with 0 products when brand_id is passed.
+            (3) GET /api/products extended:
+                - sort=popular (default) | recent | price_asc | price_desc | name
+                - "popular" ranking uses aggregated product_usage counts across all users (top-15% globally)
+                - Response items include popular, frequently_used, recently_used, usage_count, my_usage_count booleans/ints — powers Popular / Frequently used / Recent badges on cards
+                - Search $or expanded to include collection field
+            (4) POST /api/products/custom creates a one-off product with is_custom=true, auto-suffixes SKU on collision (never fails), tags with "custom".
+            (5) GET /api/products/{id}/complete-the-set — cross-category same-family/series/collection suggestions (single representative per companion category), used by ProductModal.
+            (6) GET /api/quotations/recent?limit=10 — compact recent-quotations list for the left-rail panel (fields: id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at, created_at). Ordered by updated_at DESC.
+            (7) Quotation model + Create + Update extended with project_name, phone_snapshot, reference_source, ui_state fields (all optional, backwards-compat). PATCH persists these fields when passed; ui_state is a free-form dict where the frontend stores activeRoom, collapsedRooms, selectedBrandId, selectedCategoryId, sortKey — so reopening a quote puts the salesperson EXACTLY where they left off.
+            (8) Product model + ProductCreate extended with is_custom bool (default False).
+            (9) All existing endpoints untouched: quotation autosave, place-order preview/confirm, PO lifecycle, receive, payments, activity feed, PDF, breakdown, duplicate, alternates.
+            
+            Manually verified via curl: brands endpoint returns 5 brands with product_count; categories?brand_id=<HG> returns 2 categories with per-brand counts; products?sort=popular returns 20 items with badge fields; POST /products/custom creates AND persists a custom product; complete-the-set returns [] correctly when no companions exist in the tiny seed catalog; recent quotations returns 8 rows with revision_count. Owner/staff auth honored on all endpoints.
+        - working: true
+          agent: "testing"
+          comment: |
+            Quotation Builder V4 Backend Regression Testing COMPLETE — ALL 63 TESTS PASSED (100% success rate).
+            
+            ✅ PRIORITY 1 — V4 CATALOG ADDITIONS (25/25 passed):
+            • GET /api/brands returns 5 brands (Axor, Geberit, Grohe, Hansgrohe, Vitra) with product_count field on each
+            • Sum of brand product_counts (21) equals total active products — verified
+            • GET /api/categories returns categories with product_count field
+            • GET /api/categories?brand_id=<Hansgrohe> returns ONLY categories with products for that brand (all product_count > 0)
+            • Fake brand_id returns empty array []
+            • GET /api/products?sort=popular returns {total, items} with NEW V4 fields on every item: popular (bool), frequently_used (bool), recently_used (bool), usage_count (int), my_usage_count (int)
+            • All V4 field types correct (booleans and integers)
+            • GET /api/products?sort=recent returns 200
+            • GET /api/products?sort=price_asc returns items sorted by price ascending — verified
+            • GET /api/products?sort=price_desc returns items sorted by price descending — verified
+            • GET /api/products?sort=name returns items sorted alphabetically — verified
+            • GET /api/products?q=chrome search works (returns 200)
+            • GET /api/products?brand_id=X&category_id=Y combined filters work — all returned items match both filters
+            
+            ✅ PRIORITY 2 — CUSTOM PRODUCT (9/9 passed):
+            • POST /api/products/custom creates product with is_custom=true and tags containing "custom"
+            • Second POST with same SKU auto-suffixes (TESTCUST-222211 → TESTCUST-222211-2) — never fails
+            • POST with is_custom=false and duplicate SKU returns 409 Conflict (correct)
+            • Custom product appears in search results (GET /api/products?q=Test Custom)
+            • Auth enforced: POST /api/products/custom without token returns 401
+            
+            ✅ PRIORITY 3 — COMPLETE THE SET (6/6 passed):
+            • GET /api/products/{id}/complete-the-set returns 200 with {source_product_id, items} shape
+            • source_product_id matches request
+            • Items array present (0 companion products found in small seed catalog — expected)
+            • Non-existent product returns 404 with "Product not found" detail
+            • Auth enforced: without token returns 401
+            
+            ✅ PRIORITY 4 — RECENT QUOTATIONS (6/6 passed):
+            • GET /api/quotations/recent?limit=5 returns array (≤5 items)
+            • All required fields present: id, number, customer_id, customer_name, project_name, phone, grand_total, status, revision_count, updated_at
+            • Ordered by updated_at DESC (most recent first) — verified
+            • Auth enforced: without token returns 401
+            
+            ✅ PRIORITY 5 — V4 QUOTATION HEADER FIELDS + UI_STATE (8/8 passed):
+            • POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three V4 fields correctly
+            • GET /api/quotations/{id} returns quotation with V4 fields intact
+            • PATCH with {silent:true, ui_state:{activeRoom, collapsedRooms, selectedBrandId, sortKey}} persists ui_state with all keys
+            • PATCH {silent:true, project_name:"Villa Phase 3"} updates project_name, phone_snapshot preserved
+            • PATCH silent=true does NOT create revision (revisions length unchanged)
+            • PATCH silent=false creates revision AND emits activity event
+            
+            ✅ PRIORITY 6 — SMOKE REGRESSION (9/9 passed):
+            • POST /api/quotations (existing shape without V4 fields) still works
+            • GET /api/products/{id}/alternates returns 200 with {source_product_id, items, tiers:{family, brand_category, category}} — correct shape
+            • GET /api/purchase-orders returns 200 with array
+            • GET /api/payments/stats returns 200 with {total_outstanding, collected_this_month, active_orders, fully_paid}
+            • GET /api/quotations/{id}/place-order/preview returns 200
+            • POST /api/quotations/{id}/duplicate creates new quotation with distinct id and number
+            
+            ALL V4 ADDITIONS WORKING PERFECTLY. NO REGRESSIONS DETECTED. Backend is production-ready.
+
+frontend:
+  - task: "Quotation Builder V4 — three-column shell (BrandRail + ProductExplorer + QuotationPane), ProductModal, CustomProductSheet, RecentQuotationsPanel, LocalStorage snapshot recovery, V4 header fields"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/quotation/**, frontend/app/(admin)/quotations/new.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            V4 frontend shipped. Full architectural upgrade on top of the V3 provider (undo/redo/autosave/DnD preserved untouched):
+            
+            NEW COMPONENTS:
+            * BrandRail (240px dark left rail) — Brands/Categories tabs, search, product counts, active state, brand initials badge, Quick Actions (Custom product + focus search), and embedded RecentQuotationsPanel at bottom.
+            * ProductExplorer (center pane) — breadcrumb "Brand · N products", instant-search input (SKU/brand/finish/color/collection/tags/synonyms), 5 sort chips (Most used / Recent / Price↑ / Price↓ / A–Z), 2-col virtualized product grid with Popular / Frequently used / Recent badges, favourite hearts, MRP-strikethrough + selling price in red, Add button, color swatch strip for variants. Products default-load without a query (per user's requirement) using sort=popular.
+            * ProductModal (floating premium modal) — hero image + thumbnails, editable selling price, MRP strike-through, finish/variant chips with swatches + price delta, spec grid (Category/Collection/Finish/Dimensions/Warranty/Stock), description, quantity stepper, notes, ALTERNATIVES carousel (auto-loaded from /alternates), COMPLETE-THE-SET carousel (auto-loaded from /complete-the-set), Favourite / Add another / Add to quotation actions. Add reuses BuilderContext.addFromProduct so undo/redo works.
+            * CustomProductSheet — quick-add sheet with brand + category pills, editable name/SKU/price/MRP/finish/description, "☐ Save as catalogue product" checkbox toggling POST /products/custom vs. inline-only synthetic product.
+            * RecentQuotationsPanel — compact rows in the rail; click any row triggers restoreQuotation(id) which fetches /quotations/{id}, replays state via history.replace() (undoable), and restores selectedBrandId + selectedCategoryId + sortKey from ui_state.
+            
+            EXTENDED CONTEXT:
+            * BuilderState now includes header {projectName, phone, referenceSource}. Setters coalesced by hdr-* keys so typing = 1 undo entry per field.
+            * Rail state (selectedBrandId, selectedCategoryId, sortKey) NOT undoable — pure UI.
+            * favouriteIds persisted in localStorage (forge.favourites.v1) — survives reloads.
+            * LocalStorage snapshot every 3 s to forge.builder.snapshot.v4 as pragmatic offline-recovery layer; backend autosave stays source of truth.
+            * openProductModal/closeProductModal/customProductSheetOpen/setCustomProductSheetOpen exposed.
+            * refreshRecentQuotations + restoreQuotation + startNewQuotation exposed.
+            
+            SHELL:
+            * BuilderShell rebuilt for 3-pane V4 at ≥1180px: BrandRail 240 | Explorer flex | Quotation 460. On tablet portrait (820–1179): BrandRail + Quotation, Explorer opens as picker sheet. Mobile: Quotation only + sticky bar.
+            * BuilderTopbar rebuilt: Back + "Quotation Builder" title + Q# pill + status pill + Rev pill + save state; inline TextInput chips for Customer/Phone/Project/Ref (Customer is read-only, others editable and undoable); Undo/Redo icon buttons; ⌘Z ⇧⌘Z ⌘K hint.
+            * QuotationPane simplified — CustomerBar removed (moved to topbar); shows number + save state + customer/project subline + status badge; RoomChipRow; canvas; BuilderFooter.
+            * ProductModal + CustomProductSheet mounted at shell level so they overlay everything.
+            
+            VERIFIED VISUALLY at 1440×900 desktop (see /tmp/v4_builder_1440.png, /tmp/v4_builder_modal.png, /tmp/v4_filled_state.png):
+            * Login → open builder → V4 layout renders correctly
+            * Click Hansgrohe brand → center pane filters to 4 Hansgrohe products; breadcrumb updates
+            * Click product card → Premium ProductModal opens with alternates + complete-the-set carousels
+            * Add 3 products → right pane shows 3 line items with editable qty/rate/discount, subtotal ₹60,100
+            * Quotation autosaves silently (FQ-2026-0009 auto-created), Recent Quotations panel updates
+            * Undo/Redo icon buttons + ⌘Z ⇧⌘Z ⌘K hints visible
+            * Customer/Phone/Project/Ref inline fields in topbar
+            
+            REQUEST FROM MAIN AGENT: please regression-test the V4 backend endpoints (see backend task above) — sort options, badges, custom product creation, complete-the-set, recent quotations, V4 quotation field persistence. Frontend testing NOT required unless explicitly requested by user.
 
 backend:
   - task: "Purchases Module — models, place-order flow, PO lifecycle, activity log"
@@ -595,6 +727,65 @@ agent_communication:
       message: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause suspected: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Applied fix: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin). Please verify: (1) Login with owner@forge.app / Forge@2026 succeeds, (2) Dashboard loads, (3) Navigate to catalog screen, (4) Verify products list loads (may be empty), (5) Confirm request URLs are same-origin (preview URL) not localhost:8001, (6) Check browser console for 'Failed to fetch' errors."
     - agent: "testing"
       message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://forge-quotes.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
+    - agent: "main"
+      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://forge-quotes.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
+    - agent: "testing"
+      message: |
+        Quotation Builder V4 Backend Regression Testing COMPLETE — ALL 63 TESTS PASSED (100% success rate).
+        
+        ✅ PRIORITY 1 — V4 CATALOG ADDITIONS (25/25 passed):
+        • GET /api/brands returns 5 brands (Axor, Geberit, Grohe, Hansgrohe, Vitra) with product_count field on each
+        • Sum of brand product_counts (21) equals total active products — VERIFIED
+        • GET /api/categories returns categories with product_count field
+        • GET /api/categories?brand_id=<Hansgrohe> returns ONLY categories with products for that brand (all product_count > 0)
+        • Fake brand_id returns empty array []
+        • GET /api/products?sort=popular returns {total, items} with NEW V4 fields on every item: popular (bool), frequently_used (bool), recently_used (bool), usage_count (int), my_usage_count (int)
+        • All V4 field types correct (booleans and integers)
+        • GET /api/products?sort=recent returns 200
+        • GET /api/products?sort=price_asc returns items sorted by price ascending — VERIFIED
+        • GET /api/products?sort=price_desc returns items sorted by price descending — VERIFIED
+        • GET /api/products?sort=name returns items sorted alphabetically — VERIFIED
+        • GET /api/products?q=chrome search works (returns 200)
+        • GET /api/products?brand_id=X&category_id=Y combined filters work — all returned items match both filters
+        
+        ✅ PRIORITY 2 — CUSTOM PRODUCT (9/9 passed):
+        • POST /api/products/custom creates product with is_custom=true and tags containing "custom"
+        • Second POST with same SKU auto-suffixes (TESTCUST-222211 → TESTCUST-222211-2) — never fails
+        • POST with is_custom=false and duplicate SKU returns 409 Conflict (correct)
+        • Custom product appears in search results (GET /api/products?q=Test Custom)
+        • Auth enforced: POST /api/products/custom without token returns 401
+        
+        ✅ PRIORITY 3 — COMPLETE THE SET (6/6 passed):
+        • GET /api/products/{id}/complete-the-set returns 200 with {source_product_id, items} shape
+        • source_product_id matches request
+        • Items array present (0 companion products found in small seed catalog — expected)
+        • Non-existent product returns 404 with "Product not found" detail
+        • Auth enforced: without token returns 401
+        
+        ✅ PRIORITY 4 — RECENT QUOTATIONS (6/6 passed):
+        • GET /api/quotations/recent?limit=5 returns array (≤5 items)
+        • All required fields present: id, number, customer_id, customer_name, project_name, phone, grand_total, status, revision_count, updated_at
+        • Ordered by updated_at DESC (most recent first) — VERIFIED
+        • Auth enforced: without token returns 401
+        
+        ✅ PRIORITY 5 — V4 QUOTATION HEADER FIELDS + UI_STATE (8/8 passed):
+        • POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three V4 fields correctly
+        • GET /api/quotations/{id} returns quotation with V4 fields intact
+        • PATCH with {silent:true, ui_state:{activeRoom, collapsedRooms, selectedBrandId, sortKey}} persists ui_state with all keys
+        • PATCH {silent:true, project_name:"Villa Phase 3"} updates project_name, phone_snapshot preserved
+        • PATCH silent=true does NOT create revision (revisions length unchanged)
+        • PATCH silent=false creates revision AND emits activity event
+        
+        ✅ PRIORITY 6 — SMOKE REGRESSION (9/9 passed):
+        • POST /api/quotations (existing shape without V4 fields) still works
+        • GET /api/products/{id}/alternates returns 200 with {source_product_id, items, tiers:{family, brand_category, category}} — correct shape
+        • GET /api/purchase-orders returns 200 with array
+        • GET /api/payments/stats returns 200 with {total_outstanding, collected_this_month, active_orders, fully_paid}
+        • GET /api/quotations/{id}/place-order/preview returns 200
+        • POST /api/quotations/{id}/duplicate creates new quotation with distinct id and number
+        
+        ALL V4 ADDITIONS WORKING PERFECTLY. NO REGRESSIONS DETECTED. Backend is production-ready.
+
     - agent: "main"
       message: "Git-history rewrite applied to remove large files (backend/temp/**, *.xlsx, *.pdf) that exceeded GitHub's 100MB limit. Changes: (1) Added backend/temp/**, *.xlsx, *.pdf to .gitignore, (2) Used git filter-repo to purge these files from entire git history, (3) .git folder shrank from 318 MB → 2.3 MB, (4) Recreated empty /app/backend/temp/ with .gitkeep sentinel, (5) Restarted backend and expo supervisors. MongoDB catalog data confirmed intact (Vitra 250, Grohe 854, Geberit 496, Hansgrohe 1272 = 2,872 total products). Images stored in product_media collection with Supabase URLs. Please verify app still works end-to-end: (1) Login with owner@forge.app / Forge@2026, (2) Navigate to catalog screen, (3) Verify products list loads with 200 status (~2,872 products), (4) Verify product images from Supabase (NOT base64), (5) Open at least one Vitra and one Hansgrohe product, (6) Check console for errors, (7) Verify /api/health returns 200."
     - agent: "testing"

@@ -1,4 +1,5 @@
 """Product / Brand / Category endpoints + AI-assisted catalog import stub."""
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,22 +13,57 @@ router = APIRouter(tags=["catalog"])
 
 
 # ---------- Brands ----------
-@router.get("/brands", response_model=list[Brand])
+@router.get("/brands")
 async def list_brands(_: UserPublic = Depends(get_current_user)):
+    """Return every brand + its active product count. Counts drive the
+    left-rail brand badges in the Quotation Builder V4."""
     docs = await db.brands.find({}, {"_id": 0}).sort("name", 1).to_list(500)
-    return [Brand(**d) for d in docs]
+    # Single aggregation to count products by brand.
+    agg = await db.products.aggregate([
+        {"$match": {"active": True}},
+        {"$group": {"_id": "$brand_id", "count": {"$sum": 1}}},
+    ]).to_list(1000)
+    counts = {r["_id"]: r["count"] for r in agg}
+    for d in docs:
+        d["product_count"] = counts.get(d.get("id"), 0)
+    return docs
 
 
-@router.get("/categories", response_model=list[Category])
-async def list_categories(_: UserPublic = Depends(get_current_user)):
+@router.get("/categories")
+async def list_categories(
+    brand_id: Optional[str] = None,
+    _: UserPublic = Depends(get_current_user),
+):
+    """Return categories + per-brand-scoped product counts.
+
+    When `brand_id` is passed, counts reflect ONLY that brand — this is what
+    powers the left-rail "Categories under Hansgrohe" list.
+    """
     docs = await db.categories.find({}, {"_id": 0}).sort("name", 1).to_list(500)
-    return [Category(**d) for d in docs]
+    match: dict = {"active": True}
+    if brand_id:
+        match["brand_id"] = brand_id
+    agg = await db.products.aggregate([
+        {"$match": match},
+        {"$group": {"_id": "$category_id", "count": {"$sum": 1}}},
+    ]).to_list(1000)
+    counts = {r["_id"]: r["count"] for r in agg}
+    out = []
+    for d in docs:
+        cnt = counts.get(d.get("id"), 0)
+        if brand_id and cnt == 0:
+            # Hide categories with zero products for the selected brand — the
+            # builder's brand→category tree should show only what's shoppable.
+            continue
+        d["product_count"] = cnt
+        out.append(d)
+    return out
 
 
 # ---------- Products ----------
 @router.get("/products")
 async def list_products(
-    q: Optional[str] = Query(None, description="Free text search on name/sku/description/series/family"),
+    q: Optional[str] = Query(None, description="Free text search on name/sku/description/series/family/finish/colour/tags"),
     brand_id: Optional[str] = None,
     category_id: Optional[str] = None,
     subcategory: Optional[str] = None,
@@ -35,9 +71,10 @@ async def list_products(
     family_key: Optional[str] = None,
     finish: Optional[str] = None,
     colour: Optional[str] = None,
-    limit: int = 50,
+    sort: str = Query("popular", description="popular | recent | price_asc | price_desc | name"),
+    limit: int = 60,
     skip: int = 0,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     query: dict = {"active": True}
     if brand_id:
@@ -62,17 +99,65 @@ async def list_products(
             {"series":      {"$regex": q, "$options": "i"}},
             {"family_name": {"$regex": q, "$options": "i"}},
             {"subcategory": {"$regex": q, "$options": "i"}},
+            {"collection":  {"$regex": q, "$options": "i"}},
             {"finish":      {"$regex": q, "$options": "i"}},
             {"colour":      {"$regex": q, "$options": "i"}},
             {"dimensions":  {"$regex": q, "$options": "i"}},
             {"tags":        {"$regex": q, "$options": "i"}},
         ]
     total = await db.products.count_documents(query)
-    docs = await db.products.find(query, {"_id": 0}).skip(skip).limit(limit).to_list(limit)
+
+    # ----- Global + per-user usage lookups (bounded, cached in-process) -----
+    global_usage_agg = await db.product_usage.aggregate([
+        {"$group": {"_id": "$product_id", "total": {"$sum": "$count"}}},
+    ]).to_list(20000)
+    global_usage = {r["_id"]: int(r["total"]) for r in global_usage_agg}
+    my_usage_rows = await db.product_usage.find(
+        {"user_id": user.id}, {"_id": 0, "product_id": 1, "count": 1, "last_used_at": 1}
+    ).to_list(20000)
+    my_usage = {r["product_id"]: int(r.get("count", 0)) for r in my_usage_rows}
+    my_recent_at = {r["product_id"]: r.get("last_used_at") for r in my_usage_rows}
+
+    # "Popular" = product is in the top 15% globally by aggregated usage.
+    popular_ids: set[str] = set()
+    if global_usage:
+        sorted_counts = sorted(global_usage.values(), reverse=True)
+        cutoff_idx = max(0, min(len(sorted_counts) - 1, int(len(sorted_counts) * 0.15)))
+        threshold = sorted_counts[cutoff_idx] if sorted_counts else 0
+        if threshold > 0:
+            popular_ids = {pid for pid, cnt in global_usage.items() if cnt >= threshold}
+
+    # ----- Sort -----
+    if sort == "recent":
+        # Products with recent usage first (by this user), then everything else.
+        docs = await db.products.find(query, {"_id": 0}).to_list(2000)
+        docs.sort(key=lambda d: (my_recent_at.get(d["id"]) or "", d.get("name") or ""), reverse=True)
+        docs = docs[skip:skip + limit]
+    elif sort == "price_asc":
+        docs = await db.products.find(query, {"_id": 0}).sort("price", 1).skip(skip).limit(limit).to_list(limit)
+    elif sort == "price_desc":
+        docs = await db.products.find(query, {"_id": 0}).sort("price", -1).skip(skip).limit(limit).to_list(limit)
+    elif sort == "name":
+        docs = await db.products.find(query, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
+    else:  # popular / most_used (default)
+        # Pull a wide pool then rank by (global usage DESC, my usage DESC, name ASC).
+        pool = await db.products.find(query, {"_id": 0}).limit(min(2000, total or 2000)).to_list(2000)
+        pool.sort(key=lambda d: (
+            -global_usage.get(d["id"], 0),
+            -my_usage.get(d["id"], 0),
+            d.get("name") or "",
+        ))
+        docs = pool[skip:skip + limit]
+
     docs = strip_ids(docs)
-    # Hydrate every product with its media (single source of truth after 2A migration).
     for d in docs:
         await media_service.hydrate_product_media(d)
+        pid = d.get("id")
+        d["usage_count"] = global_usage.get(pid, 0)
+        d["my_usage_count"] = my_usage.get(pid, 0)
+        d["popular"] = pid in popular_ids
+        d["frequently_used"] = my_usage.get(pid, 0) >= 3
+        d["recently_used"] = bool(my_recent_at.get(pid))
     return {"total": total, "items": docs}
 
 
@@ -659,6 +744,75 @@ async def product_alternates(
             "category": sum(1 for t, *_ in scored if t == 3),
         },
     }
+
+
+@router.get("/products/{product_id}/complete-the-set")
+async def complete_the_set(
+    product_id: str,
+    limit: int = 12,
+    _: UserPublic = Depends(get_current_user),
+):
+    """"Complete the set" — same family (Series/Collection) but different
+    category. E.g. viewing a Talis E basin mixer suggests the Talis E shower
+    valve, spout, robe hook — the classic bathroom cross-sell.
+    """
+    src = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    match: dict = {"active": True, "id": {"$ne": product_id}, "category_id": {"$ne": src.get("category_id")}}
+    fam_key = src.get("family_key")
+    series = src.get("series")
+    collection = src.get("collection")
+    ors = []
+    if fam_key:    ors.append({"family_key": fam_key})
+    if series:     ors.append({"series": series, "brand_id": src.get("brand_id")})
+    if collection: ors.append({"collection": collection, "brand_id": src.get("brand_id")})
+    if not ors:
+        return {"source_product_id": product_id, "items": []}
+    match["$or"] = ors
+
+    docs = await db.products.find(match, {"_id": 0}).limit(limit).to_list(limit)
+    # Group by category so we show one representative per companion category.
+    by_cat: dict[str, dict] = {}
+    for d in docs:
+        cid = d.get("category_id") or "_"
+        if cid not in by_cat:
+            by_cat[cid] = d
+    items = list(by_cat.values())[:limit]
+    for p in items:
+        await media_service.hydrate_product_media(p)
+    return {"source_product_id": product_id, "items": items}
+
+
+@router.post("/products/custom", response_model=Product)
+async def create_custom_product(
+    body: ProductCreate,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Create a custom / one-off product from the Quotation Builder.
+
+    When body.is_custom=True, the SKU can collide with existing rows (we
+    auto-suffix). If False, we behave like /products with duplicate-SKU
+    rejection.
+    """
+    sku = body.sku or f"CUSTOM-{datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')}"
+    if body.is_custom:
+        # Auto-uniquify — never fail because the user typed the same SKU twice.
+        base = sku
+        n = 1
+        while await db.products.find_one({"sku": sku}):
+            n += 1
+            sku = f"{base}-{n}"
+    elif await db.products.find_one({"sku": sku}):
+        raise HTTPException(status_code=409, detail="SKU already exists")
+
+    payload = body.dict()
+    payload["sku"] = sku
+    payload["tags"] = list(set([*(payload.get("tags") or []), "custom"]))
+    prod = Product(**payload)
+    await db.products.insert_one(prod.dict())
+    return prod
 
 
 @router.post("/products", response_model=Product)
