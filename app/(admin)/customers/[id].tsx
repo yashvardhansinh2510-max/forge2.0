@@ -15,7 +15,7 @@ import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 type Customer = {
   id: string; name: string; company?: string | null; email: string;
   phone?: string | null; city?: string | null; tier: "retail" | "trade" | "vip";
-  gstin?: string | null; address?: string | null;
+  address?: string | null;
 };
 type Quotation = { id: string; number: string; status: string; grand_total: number; created_at: string; items: any[] };
 type PO = { id: string; number: string; brand_name?: string | null; status: string; grand_total: number; created_at: string };
@@ -113,7 +113,6 @@ export default function CustomerDetail() {
                 <Row icon="mail" text={customer.email} />
                 {customer.phone ? <Row icon="phone" text={customer.phone} /> : null}
                 {customer.address ? <Row icon="map-pin" text={customer.address} /> : null}
-                {customer.gstin ? <Row icon="hash" text={`GSTIN · ${customer.gstin}`} /> : null}
               </View>
             </Card>
             <Card>

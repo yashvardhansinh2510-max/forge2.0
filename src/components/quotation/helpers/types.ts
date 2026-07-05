@@ -29,7 +29,7 @@ export type Line = {
   category_id?: string | null; room?: string;
   qty: number; unit_price: number;
   discount_pct: number | null;
-  tax_pct: number; description?: string | null; notes?: string | null;
+  description?: string | null; notes?: string | null;
   finish?: string | null;
   family_key?: string | null;
 };

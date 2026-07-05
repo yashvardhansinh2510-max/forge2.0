@@ -26,7 +26,6 @@ type PreviewItem = {
   room?: string | null;
   qty: number;
   unit_cost: number;
-  tax_pct: number;
 };
 
 type BrandCard = {

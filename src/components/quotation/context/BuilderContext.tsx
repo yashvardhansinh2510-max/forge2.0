@@ -60,7 +60,7 @@ export type BuilderApi = {
   searchRef: React.MutableRefObject<TextInput | null>;
 
   // Derived
-  totals: { subtotal: number; discount: number; tax: number; grand: number };
+  totals: { subtotal: number; discount: number; grand: number };
   usedCategoryIds: string[];
   flatRows: BuilderRow[];
 
@@ -321,7 +321,7 @@ export function BuilderProvider({ onFinalize, children }: {
           name: displayName, image: p.images?.[0],
           category_id: p.category_id, room: cur.activeRoom,
           qty: 1, unit_price: variant?.price ?? p.price,
-          discount_pct: null, tax_pct: 18, finish,
+          discount_pct: null, finish,
           family_key: p.family_key ?? null,
         }],
       };
