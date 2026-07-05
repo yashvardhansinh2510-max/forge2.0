@@ -105,7 +105,7 @@ export default function PlaceOrderReview() {
         },
       );
       toast.success(`Order placed · ${res.count} Purchase Orders created`);
-      router.replace("/(admin)/purchase-orders" as any);
+      router.replace("/(admin)/purchases" as any);
     } catch (e: any) {
       toast.error(e?.detail || "Could not place order");
     } finally {

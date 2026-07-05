@@ -6,7 +6,7 @@ from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Query, status
 
 from db import db, strip_id
 from models import Role, UserPublic, CustomerPublic
@@ -52,8 +52,18 @@ def _extract_token(authorization: Optional[str]) -> str:
     return authorization.split(" ", 1)[1].strip()
 
 
-async def get_current_user(authorization: Optional[str] = Header(None)) -> UserPublic:
-    payload = decode_token(_extract_token(authorization))
+async def get_current_user(
+    authorization: Optional[str] = Header(None),
+    _t: Optional[str] = Query(None, description="Fallback token for browser downloads"),
+) -> UserPublic:
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    elif _t:
+        token = _t
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    payload = decode_token(token)
     if payload.get("kind") != "staff":
         raise HTTPException(status_code=403, detail="Not a staff token")
     user_id = payload["sub"]

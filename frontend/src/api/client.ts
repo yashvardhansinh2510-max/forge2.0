@@ -59,5 +59,12 @@ export const api = {
   patch: <T>(p: string, b?: any) => request<T>("PATCH", p, b),
   delete: <T>(p: string) => request<T>("DELETE", p),
   pdfUrl: (path: string, token: string) => `${BASE}/api${path}?_t=${encodeURIComponent(token)}`,
+  // Build a URL for a browser-download endpoint that includes the JWT as a
+  // query param (backend also accepts this via a lightweight middleware).
+  authenticatedUrl: async (path: string): Promise<string> => {
+    const t = (await storage.secureGet<string>(TOKEN_KEY, "")) || "";
+    const sep = path.includes("?") ? "&" : "?";
+    return `${BASE}/api${path}${sep}_t=${encodeURIComponent(t)}`;
+  },
   base: BASE,
 };

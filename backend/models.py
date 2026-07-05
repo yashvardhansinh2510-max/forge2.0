@@ -308,6 +308,38 @@ class SupplierCreate(BaseModel):
     notes: Optional[str] = None
 
 
+PURCHASE_STAGES = (
+    "order_in_company",
+    "company_billing",
+    "in_box",
+    "dispatched",
+    "in_transit",
+    "delivered",
+)
+PurchaseStage = Literal[
+    "order_in_company",
+    "company_billing",
+    "in_box",
+    "dispatched",
+    "in_transit",
+    "delivered",
+]
+
+
+class PurchaseStageEvent(BaseModel):
+    """Immutable log of a stage transition on a PurchaseOrderItem."""
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    at: str = Field(default_factory=now_iso)
+    from_stage: Optional[PurchaseStage] = None
+    to_stage: PurchaseStage
+    by_user_id: str
+    by_user_name: str
+    note: Optional[str] = None
+    action: Literal["move", "transfer_in", "transfer_out", "create"] = "move"
+    ref_item_id: Optional[str] = None   # opposite side of a transfer
+    ref_po_id: Optional[str] = None
+
+
 class PurchaseOrderItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     product_id: str
@@ -322,6 +354,24 @@ class PurchaseOrderItem(BaseModel):
     notes: Optional[str] = None
     quotation_line_id: Optional[str] = None
     sort_order: int = 0
+
+    # ---- Material-tracking fields (per-line lifecycle) ----
+    stage: PurchaseStage = "order_in_company"
+    # Denormalized so the tracker table doesn't need a join for every row.
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    brand_id: Optional[str] = None
+    brand_name: Optional[str] = None
+    # Timestamps for the "Last Move / Dispatched By" column and Blocked SLA.
+    last_moved_at: Optional[str] = None
+    last_moved_by: Optional[str] = None
+    last_moved_by_name: Optional[str] = None
+    # Immutable stage history — append-only.
+    stage_history: list[PurchaseStageEvent] = []
+    # Transfer bookkeeping
+    transferred_from_item_id: Optional[str] = None   # set on the destination item
+    transferred_from_po_id: Optional[str] = None
+    transferred_from_customer_id: Optional[str] = None
 
 
 class PurchaseStatusEvent(BaseModel):

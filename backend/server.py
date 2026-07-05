@@ -21,6 +21,7 @@ from routes.misc_routes import router as misc_router  # noqa: E402
 from routes.media_routes import router as media_router  # noqa: E402
 from routes.supplier_routes import router as supplier_router  # noqa: E402
 from routes.purchase_routes import router as purchase_router  # noqa: E402
+from routes.purchases_tracker import router as purchases_tracker_router  # noqa: E402
 from routes.payment_routes import router as payment_router  # noqa: E402
 from routes.activity_routes import router as activity_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
@@ -57,6 +58,7 @@ api.include_router(misc_router)
 api.include_router(media_router)
 api.include_router(supplier_router)
 api.include_router(purchase_router)
+api.include_router(purchases_tracker_router)
 api.include_router(payment_router)
 api.include_router(activity_router)
 

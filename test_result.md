@@ -269,7 +269,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Payments Module — backend routes (stats/orders/detail/record/whatsapp-reminder) + frontend page"
+    - "Purchases Material Tracker — backend endpoints (items/brands/stages/move/bulk-move/transfer/export.xlsx/settings) + frontend page"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -494,6 +494,51 @@ frontend:
             The reminder message is pre-composed on the backend with the customer's first name, order number, order total, amount received, and outstanding balance.
             Call button opens tel: link.
             Added new status tones to tokens.ts: ordered/paid/partial/due.
+
+
+backend:
+  - task: "Purchases Material Tracker — /purchases endpoints (items, brands, stages, move, bulk-move, transfer, export.xlsx, settings)"
+    implemented: true
+    working: true
+    file: "backend/routes/purchases_tracker.py, backend/models.py, backend/routes/quotation_routes.py, backend/auth.py, backend/server.py, backend/requirements.txt"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            NEW MODULE — per-LINE-ITEM material lifecycle tracker built on the existing PO document store.
+            Each PO line item now moves through 6 stages independently:
+              order_in_company → company_billing → in_box → dispatched → in_transit → delivered
+            Model changes (models.py):
+              * PURCHASE_STAGES + PurchaseStage Literal + PurchaseStageEvent (immutable stage-transition log).
+              * PurchaseOrderItem extended with: stage, customer_id/name, brand_id/name, last_moved_at/by, stage_history[], transferred_from_* provenance fields.
+            Route changes:
+              * routes/quotation_routes.py — When placing an order, each PO item is now created with stage=order_in_company, denormalized customer + brand, seed stage_history entry.
+              * routes/purchases_tracker.py — Full new module (registered in server.py).
+              * auth.py — get_current_user now accepts token via ?_t= query param (for browser .xlsx download links).
+            Endpoints:
+              * GET /api/purchases/stages — [{key, label, count, tone}]
+              * GET /api/purchases/brands — {all, brands:[{id,name,count}]}
+              * GET /api/purchases/customers — [{id,name,count,open}]
+              * GET /api/purchases/items?view=today|stock|customers|dispatch_record&brand=&customer=&stage=&q=&limit= — {sla_days, count, blocked_count, items[]}
+              * GET /api/purchases/items/{item_id} — includes stage_history + po_status
+              * GET /api/purchases/dispatch-record — items in dispatched|in_transit|delivered
+              * POST /api/purchases/items/{item_id}/move {stage, note?} — appends to stage_history, updates timestamps, emits 'purchase.stage_moved' activity event
+              * POST /api/purchases/items/bulk-move {item_ids[], stage, note?}
+              * POST /api/purchases/items/{item_id}/transfer {new_customer_id, qty, reason?} — reduces qty on source (deletes item if 0), creates NEW draft PO for destination with a single item at the same stage. Both sides get transfer audit entries in stage_history AND full activity-log events (purchase.transferred_out / purchase.transferred_in) so customer timelines pick them up automatically.
+              * GET /api/purchases/export.xlsx — real .xlsx via openpyxl with header, filter summary, formatted columns, freeze panes. Respects view/brand/customer/stage/q filters.
+              * GET /api/purchases/settings, POST /api/purchases/settings {sla_days} — SLA is data-driven (stored in db.settings). Default 7 days; Blocked = item stuck in order_in_company|company_billing|in_box for > sla_days.
+            Seed: 11 sample POs across 5 brands generated from existing ordered/won quotations; items spread across all 6 stages with mixed ages so blocked-detection has data.
+            Manually verified via curl:
+              * brands returns 5 with counts (Vitra 6, Grohe 5, Geberit 5, Axor 5, Hansgrohe 5, total 26)
+              * stages returns all 6 with counts
+              * items?view=today returns 17 items with 9 blocked (aged > 7d)
+              * POST move successfully advanced an item and emitted activity event
+              * POST transfer moved 1 unit from Studio Reddy to Malhotra Interiors, created FPO-2026-0012 (draft), reduced qty on source, wrote both stage_history entries and activity events
+              * export.xlsx returned a valid 7346-byte Excel file with header, filter row, and all 20 stock rows
+              * settings GET/POST round-trips 7→14→7
 
 
 agent_communication:

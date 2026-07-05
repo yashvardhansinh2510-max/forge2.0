@@ -10,9 +10,9 @@ from pydantic import BaseModel
 from auth import get_current_customer, get_current_user, require_min_role
 from db import db
 from models import (
-    CustomerPublic, PurchaseOrder, PurchaseOrderItem, PurchaseStatusEvent,
+    CustomerPublic, PurchaseOrder, PurchaseOrderItem, PurchaseStatusEvent, PurchaseStageEvent,
     Quotation, QuotationCreate, QuotationLineItem, QuotationRevision,
-    QuotationUpdate, UserPublic,
+    QuotationUpdate, UserPublic, now_iso,
 )
 from pdf_generator import build_quotation_pdf
 from services.activity_log import log_event
@@ -512,13 +512,31 @@ async def place_order_confirm(
             supplier_id = card["default_supplier"]["id"]
             supplier_name = card["default_supplier"]["name"]
 
-        # Build PO items
+        # Build PO items — each carries denormalized customer + brand info so
+        # the material tracker can filter without joins.
+        now = now_iso()
         po_items = [
             PurchaseOrderItem(
                 product_id=it["product_id"], sku=it["sku"], name=it["name"],
                 image=it.get("image"), category_id=it.get("category_id"),
                 room=it.get("room"), qty=it["qty"], unit_cost=it["unit_cost"],
                 quotation_line_id=it.get("line_id"),
+                stage="order_in_company",
+                customer_id=doc["customer_id"],
+                customer_name=doc.get("customer_name", ""),
+                brand_id=brand_id,
+                brand_name=card.get("brand_name"),
+                last_moved_at=now,
+                last_moved_by=user.id,
+                last_moved_by_name=user.full_name,
+                stage_history=[
+                    PurchaseStageEvent(
+                        from_stage=None, to_stage="order_in_company",
+                        by_user_id=user.id, by_user_name=user.full_name,
+                        note=f"Created from {doc.get('number')}",
+                        action="create",
+                    )
+                ],
             )
             for it in card["items"]
         ]
