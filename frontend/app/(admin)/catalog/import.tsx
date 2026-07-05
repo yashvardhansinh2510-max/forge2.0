@@ -148,7 +148,7 @@ export default function CatalogImport() {
     return (
       <AdminPage
         title={`Review · ${current.supplier_name}`}
-        subtitle={`${current.filename} · ${current.total_rows} products · Powered by Forge Ingestion Framework`}
+        subtitle={`${current.filename} · ${current.total_rows} products · Powered by BuildCon Ingestion Framework`}
         right={
           <View style={{ flexDirection: "row", gap: 8 }}>
             <Button label="Discard" variant="secondary" onPress={() => setCurrent(null)} testID="discard-import" />
@@ -296,7 +296,7 @@ export default function CatalogImport() {
   return (
     <AdminPage
       title="AI Catalog Import"
-      subtitle="Upload supplier price-lists — Forge extracts, classifies, maps images and produces a certification report. Only 5 supplier brands are supported."
+      subtitle="Upload supplier price-lists — BuildCon House extracts, classifies, maps images and produces a certification report. Only 5 supplier brands are supported."
       right={
         <Pressable
           testID="back-to-catalog"

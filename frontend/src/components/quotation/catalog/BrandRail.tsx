@@ -36,7 +36,13 @@ export function BrandRail() {
   return (
     <View style={styles.panel}>
       <View style={styles.head}>
-        <Text style={styles.brand}>⚡ Forge</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={styles.brandTile}><Feather name="home" size={13} color="#fff" /></View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.brand} numberOfLines={1}>BuildCon House</Text>
+            <Text style={styles.brandSub} numberOfLines={1}>Let you live better</Text>
+          </View>
+        </View>
         <View style={styles.tabs}>
           {[
             { k: "brands" as const, label: "Brands" },
@@ -172,7 +178,13 @@ export function BrandRail() {
 const styles = StyleSheet.create({
   panel: { flex: 1, backgroundColor: colors.surfaceInverse },
   head: { padding: spacing.md, gap: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#27272A" },
-  brand: { fontSize: 15, fontWeight: "700", color: "#FAFAFA", letterSpacing: 0.2 },
+  brand: { fontSize: 14, fontWeight: "700", color: "#FAFAFA", letterSpacing: -0.2 },
+  brandSub: { fontSize: 10, color: "#A1A1AA", marginTop: 1 },
+  brandTile: {
+    width: 26, height: 26, borderRadius: 8,
+    backgroundColor: colors.brand,
+    alignItems: "center", justifyContent: "center",
+  },
   tabs: { flexDirection: "row", backgroundColor: "#27272A", borderRadius: radius.md, padding: 3, gap: 3 },
   tab: { flex: 1, paddingVertical: 6, alignItems: "center", justifyContent: "center", borderRadius: radius.sm },
   tabActive: { backgroundColor: "#3F3F46" },

@@ -38,7 +38,7 @@ export function ScaffoldScreen({
 const styles = StyleSheet.create({
   hero: { alignItems: "center", padding: spacing.xxl },
   iconWrap: {
-    width: 60, height: 60, borderRadius: radius.lg, backgroundColor: colors.brandTertiary,
+    width: 60, height: 60, borderRadius: radius.lg, backgroundColor: colors.brandTint,
     alignItems: "center", justifyContent: "center",
   },
   featRow: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, backgroundColor: colors.surfaceTertiary, borderRadius: radius.md },

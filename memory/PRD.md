@@ -1,6 +1,19 @@
-# Forge — Product Requirements
+# BuildCon House (formerly Forge) — Product Requirements
 
 **Vision:** Premium ERP/CRM/POS for sanitaryware, bath fitting and building material distributors. Combines Linear+Stripe+Apple polish with showroom-grade simplicity.
+
+**Brand:** BuildCon House · Tagline: *"Let you live better"* · Renamed from Forge in Feb 2026.
+
+## Iteration 4 — Design System V1 (Feb 2026, DELIVERED)
+
+Full rebuild of the mobile & tablet design language before adding any more features:
+
+- **Renamed** Forge → BuildCon House across all user-facing surfaces (login, dashboard, sidebar, customer portal, settings, catalog import).
+- **Tokens** — semantic color roles (blue `#2563EB` primary + porcelain gray neutrals), 8pt spacing scale, 6-step radius, 5-level elevation, motion tokens, Inter Variable typography (Regular/Medium/SemiBold/Bold loaded via expo-font).
+- **Primitives** rebuilt from scratch in `/src/components/ui.tsx`: Button (6 variants), IconButton (6 tones + badge), Card (flat/elevated/outlined), Badge, StatusBadge, Chip (with count), Tabs, SegmentedControl, TextField, SearchField, KpiCard, ListRow, Avatar, PriceTag, BrandMark, Alert, EmptyState, ErrorState, LoadingState, Skeleton, SectionHeader, ScreenTitle, Divider.
+- **Shell** — new admin `_layout` with tablet sidebar (blue-tinted active items, BuildCon brand + tagline) and phone bottom-nav featuring a **center floating action button** for New Quotation.
+- **Screens migrated** to the DS: Login (two-pane premium hero), Dashboard (4-col KPI grid, avatar-lead activity, side-by-side content), Quotations list (premium card design with number pill + avatar + status), Customers (tier chips with counts, filter chips), Notifications (typed badges, unread dots), Settings (profile hero + iconed sections), Team, ScaffoldScreen. Payments, Purchases, Catalog and the Quotation Builder inherit the tokens directly.
+- **Quality bar** — Linear/Stripe/Notion/Arc — whitespace over borders, subtle elevation, no hardcoded colors anywhere below the tokens layer.
 
 ## Iteration 2 — Catalog Rebuild (in progress)
 
