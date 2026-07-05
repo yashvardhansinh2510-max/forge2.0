@@ -21,7 +21,7 @@ const NAV: NavItem[] = [
   { href: "/(admin)/quotations", label: "Quotations", icon: "file-text", match: "quotations" },
   { href: "/(admin)/catalog", label: "Catalog", icon: "package", match: "catalog" },
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
-  { href: "/(admin)/purchase-orders", label: "Purchase", icon: "shopping-cart", match: "purchase-orders" },
+  { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
   { href: "/(admin)/followups", label: "Follow-ups", icon: "bell", match: "followups" },
   { href: "/(admin)/reports", label: "Reports", icon: "bar-chart-2", match: "reports" },
