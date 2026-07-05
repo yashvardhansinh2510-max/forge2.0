@@ -6,7 +6,7 @@ import { LogBox, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { useIconFonts } from "@/src/hooks/use-icon-fonts";
+import { useAppFonts } from "@/src/hooks/use-app-fonts";
 import { AuthProvider, useAuth } from "@/src/state/auth";
 import { colors } from "@/src/theme/tokens";
 import { ToastHost } from "@/src/components/Toast";
@@ -38,7 +38,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 }
 
 export default function RootLayout() {
-  const [loaded, error] = useIconFonts();
+  const [loaded, error] = useAppFonts();
   useEffect(() => {
     if (loaded || error) SplashScreen.hideAsync();
   }, [loaded, error]);

@@ -49,8 +49,11 @@ export default function CustomerHome() {
           <View style={{ flex: 1, padding: spacing.xl, justifyContent: "space-between" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                <View style={styles.brandMark}><Text style={styles.brandMarkText}>F</Text></View>
-                <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700", letterSpacing: 1.2 }}>FORGE</Text>
+                <View style={styles.brandMark}><Feather name="home" size={16} color="#fff" /></View>
+                <View>
+                  <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700", letterSpacing: -0.2, fontFamily: type.titleMd.fontFamily }}>BuildCon House</Text>
+                  <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontFamily: type.caption.fontFamily }}>Let you live better</Text>
+                </View>
               </View>
               <Pressable
                 testID="portal-logout"
@@ -122,7 +125,7 @@ export default function CustomerHome() {
           <Card style={styles.support}>
             <View style={{ flex: 1 }}>
               <Text style={[type.titleMd, { color: colors.onSurfaceInverse }]}>Need help?</Text>
-              <Text style={{ color: "rgba(255,255,255,0.72)", fontSize: 13, marginTop: 2 }}>Talk to your Forge representative or browse the catalog.</Text>
+              <Text style={{ color: "rgba(255,255,255,0.72)", fontSize: 13, marginTop: 2 }}>Talk to your BuildCon House representative or browse the catalogue.</Text>
             </View>
             <View style={{ flexDirection: "row", gap: 8 }}>
               <Pressable testID="portal-catalog-btn" onPress={() => {}} style={styles.supportBtn}>

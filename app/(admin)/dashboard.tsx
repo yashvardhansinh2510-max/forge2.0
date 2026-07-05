@@ -1,3 +1,6 @@
+// BuildCon House · Admin Dashboard
+// KPI grid + activity feed + top products — built entirely from DS primitives.
+
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -5,10 +8,18 @@ import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimen
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { ProductImage } from "@/src/components/ProductImage";
-import { Card, EmptyState, Skeleton, StatusBadge } from "@/src/components/ui";
+import {
+  Avatar,
+  Card,
+  EmptyState,
+  KpiCard,
+  ListRow,
+  Skeleton,
+  StatusBadge,
+} from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
-import { colors, money, radius, roleLabels, spacing, type } from "@/src/theme/tokens";
+import { colors, money, moneyShort, radius, roleLabels, spacing, type } from "@/src/theme/tokens";
 
 type Stats = {
   revenue_month: number;
@@ -34,8 +45,8 @@ export default function Dashboard() {
     try {
       const s = await api.get<Stats>("/dashboard/stats");
       setStats(s);
-    } catch (e) {
-      /* handled by empty state */
+    } catch {
+      /* handled via empty state */
     }
   }, []);
 
@@ -43,16 +54,16 @@ export default function Dashboard() {
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
-  const kpiCards = stats ? [
-    { label: "Revenue (this month)", value: money(stats.revenue_month), icon: "trending-up", tone: "success" as const },
-    { label: "Open Pipeline", value: money(stats.open_pipeline), icon: "layers", tone: "neutral" as const },
-    { label: "Quotes this month", value: String(stats.quotes_this_month), icon: "file-text", tone: "neutral" as const },
-    { label: "Pending Approval", value: String(stats.pending_approval), icon: "clock", tone: "warning" as const },
-  ] : [];
-
   const now = new Date();
   const hour = now.getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+
+  const kpis = stats ? [
+    { label: "Revenue (month)", value: moneyShort(stats.revenue_month), sub: money(stats.revenue_month), icon: "trending-up" as const, tone: "success" as const },
+    { label: "Open pipeline",   value: moneyShort(stats.open_pipeline), sub: money(stats.open_pipeline), icon: "layers" as const,      tone: "brand" as const },
+    { label: "Quotes this month", value: String(stats.quotes_this_month), icon: "file-text" as const, tone: "neutral" as const },
+    { label: "Pending approval",  value: String(stats.pending_approval),  icon: "clock" as const,     tone: "warning" as const },
+  ] : [];
 
   return (
     <AdminPage
@@ -62,7 +73,7 @@ export default function Dashboard() {
         <Pressable
           testID="new-quotation-cta"
           onPress={() => router.push("/(admin)/quotations/new" as any)}
-          style={styles.cta}
+          style={({ pressed }) => [styles.cta, { opacity: pressed ? 0.88 : 1 }]}
         >
           <Feather name="plus" size={16} color={colors.onBrand} />
           <Text style={styles.ctaText}>New Quotation</Text>
@@ -71,105 +82,122 @@ export default function Dashboard() {
     >
       <ScrollView
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
         contentContainerStyle={{ gap: spacing.lg }}
       >
-        {/* KPI Row */}
+        {/* KPI grid */}
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.md }}>
-          {stats ? kpiCards.map((k) => (
-            <View key={k.label} style={[styles.kpi, { width: isTablet ? "23.5%" : "48%" }]}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <Text style={type.caption}>{k.label}</Text>
-                <Feather name={k.icon as any} size={14} color={colors.onSurfaceMuted} />
-              </View>
-              <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit>{k.value}</Text>
+          {stats ? kpis.map((k) => (
+            <View key={k.label} style={{ flexBasis: isTablet ? "23.5%" : "47.5%", flexGrow: 1, minWidth: isTablet ? 160 : 140 }}>
+              <KpiCard label={k.label} value={k.value} sub={k.sub} icon={k.icon} tone={k.tone} />
             </View>
           )) : Array.from({ length: 4 }).map((_, i) => (
-            <View key={i} style={[styles.kpi, { width: isTablet ? "23.5%" : "48%" }]}>
-              <Skeleton w={100} h={12} />
-              <Skeleton w={140} h={24} style={{ marginTop: 12 }} />
+            <View key={i} style={{ flexBasis: isTablet ? "23.5%" : "47.5%", flexGrow: 1, minWidth: isTablet ? 160 : 140, padding: spacing.lg, borderRadius: radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, gap: 10 }}>
+              <Skeleton w={110} h={12} />
+              <Skeleton w={150} h={26} />
             </View>
           ))}
         </View>
 
         {/* Content split */}
         <View style={{ flexDirection: isTablet ? "row" : "column", gap: spacing.lg }}>
-          {/* Recent activity */}
-          <Card style={{ flex: isTablet ? 1.4 : undefined, padding: 0 }}>
+          <Card style={{ flex: isTablet ? 1.4 : undefined, padding: 0 }} variant="flat">
             <View style={styles.cardHeader}>
-              <Text style={type.titleMd}>Recent activity</Text>
-              <Pressable onPress={() => router.push("/(admin)/quotations" as any)} testID="view-all-quotations">
-                <Text style={{ color: colors.brand, fontSize: 13, fontWeight: "600" }}>View all</Text>
+              <View>
+                <Text style={type.titleMd}>Recent activity</Text>
+                <Text style={[type.caption, { marginTop: 2 }]}>Latest quotations across your team</Text>
+              </View>
+              <Pressable onPress={() => router.push("/(admin)/quotations" as any)} testID="view-all-quotations" hitSlop={8}>
+                <Text style={styles.viewAll}>View all</Text>
               </Pressable>
             </View>
             {!stats ? (
               <View style={{ padding: spacing.lg, gap: 12 }}>
-                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} h={40} />)}
+                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} h={44} />)}
               </View>
             ) : stats.recent_activity.length === 0 ? (
               <EmptyState icon="inbox" title="No recent activity" subtitle="Quotations will show up here once created." />
             ) : (
               stats.recent_activity.map((a, idx) => (
-                <Pressable
+                <ListRow
                   key={a.id}
-                  onPress={() => router.push(`/(admin)/quotations/${a.id}` as any)}
                   testID={`activity-${a.id}`}
-                  style={({ pressed }) => [styles.row, {
-                    backgroundColor: pressed ? colors.surfaceTertiary : "transparent",
-                    borderTopWidth: idx === 0 ? 0 : StyleSheet.hairlineWidth,
-                    borderColor: colors.border,
-                  }]}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{a.title}</Text>
-                    <Text style={type.caption}>{new Date(a.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</Text>
-                  </View>
-                  <Text style={[type.mono, { marginRight: 10 }]}>{money(a.amount)}</Text>
-                  <StatusBadge status={a.status} />
-                </Pressable>
+                  isFirst={idx === 0}
+                  onPress={() => router.push(`/(admin)/quotations/${a.id}` as any)}
+                  leading={<Avatar name={a.title} size={36} tone="surface" />}
+                  title={a.title}
+                  subtitle={new Date(a.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  meta={money(a.amount)}
+                  right={<View style={{ marginTop: 4 }}><StatusBadge status={a.status} /></View>}
+                />
               ))
             )}
           </Card>
 
-          {/* Top products */}
-          <Card style={{ flex: 1, padding: 0 }}>
+          <Card style={{ flex: 1, padding: 0 }} variant="flat">
             <View style={styles.cardHeader}>
-              <Text style={type.titleMd}>Top products</Text>
-              <Text style={type.caption}>By revenue</Text>
+              <View>
+                <Text style={type.titleMd}>Top products</Text>
+                <Text style={[type.caption, { marginTop: 2 }]}>By revenue · this month</Text>
+              </View>
+              <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: colors.brandTint, alignItems: "center", justifyContent: "center" }}>
+                <Feather name="trending-up" size={16} color={colors.brand} />
+              </View>
             </View>
             {!stats ? (
               <View style={{ padding: spacing.lg, gap: 12 }}>
-                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} h={48} />)}
+                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} h={52} />)}
               </View>
             ) : stats.top_products.length === 0 ? (
               <EmptyState icon="package" title="No products quoted yet" />
             ) : (
               stats.top_products.map((p, i) => (
-                <View key={p.product_id} style={[styles.productRow, { borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderColor: colors.border }]}>
-                  <ProductImage source={p.image} style={styles.thumb} fallbackLabel={p.sku} borderRadius={8} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
-                    <Text style={type.caption}>{p.sku} · {p.qty} units</Text>
+                <View key={p.product_id} style={[styles.productRow, { borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth }]}>
+                  <ProductImage source={p.image} style={styles.thumb} fallbackLabel={p.sku} borderRadius={10} />
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={{ fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
+                    <Text style={type.caption} numberOfLines={1}>{p.sku} · {p.qty} units</Text>
                   </View>
-                  <Text style={type.mono}>{money(p.revenue)}</Text>
+                  <Text style={{
+                    fontSize: 14,
+                    fontFamily: type.titleMd.fontFamily,
+                    fontWeight: "600",
+                    color: colors.onSurface,
+                    fontVariant: ["tabular-nums"],
+                  }}>{moneyShort(p.revenue)}</Text>
                 </View>
               ))
             )}
           </Card>
         </View>
 
-        {/* Quick stats */}
+        {/* Quick stats strip */}
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.md }}>
           {[
-            { label: "Customers", value: stats?.customers ?? "—", icon: "users" },
-            { label: "Active products", value: stats?.products ?? "—", icon: "package" },
-            { label: "Follow-ups due", value: stats?.followups_due ?? "—", icon: "bell" },
+            { label: "Customers",     value: stats?.customers ?? "—",     icon: "users" as const,   route: "/(admin)/customers" },
+            { label: "Active products", value: stats?.products ?? "—",     icon: "package" as const, route: "/(admin)/catalog" },
+            { label: "Follow-ups due", value: stats?.followups_due ?? "—", icon: "bell" as const,    route: "/(admin)/followups" },
           ].map((q) => (
-            <View key={q.label} style={[styles.quickStat, { flex: isTablet ? 1 : undefined, width: isTablet ? undefined : "100%" }]}>
-              <Feather name={q.icon as any} size={16} color={colors.onSurfaceSecondary} />
-              <Text style={type.caption}>{q.label}</Text>
-              <Text style={[type.titleLg, { marginLeft: "auto" }]}>{String(q.value)}</Text>
-            </View>
+            <Pressable
+              key={q.label}
+              onPress={() => router.push(q.route as any)}
+              style={({ pressed }) => [styles.quickStat, {
+                flex: isTablet ? 1 : undefined,
+                width: isTablet ? undefined : "100%",
+                opacity: pressed ? 0.92 : 1,
+              }]}
+            >
+              <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: colors.brandTint, alignItems: "center", justifyContent: "center" }}>
+                <Feather name={q.icon} size={16} color={colors.brand} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={type.captionStrong}>{q.label}</Text>
+                <Text style={{ fontSize: 20, fontFamily: type.titleLg.fontFamily, fontWeight: "700", color: colors.onSurface, marginTop: 2, letterSpacing: -0.2 }}>
+                  {String(q.value)}
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={16} color={colors.onSurfaceMuted} />
+            </Pressable>
           ))}
         </View>
       </ScrollView>
@@ -180,31 +208,40 @@ export default function Dashboard() {
 const styles = StyleSheet.create({
   cta: {
     flexDirection: "row", gap: 6, alignItems: "center",
-    backgroundColor: colors.brand, paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.md,
+    backgroundColor: colors.brand,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: radius.md,
   },
-  ctaText: { color: colors.onBrand, fontSize: 13, fontWeight: "600" },
-  kpi: {
-    backgroundColor: colors.surfaceSecondary, padding: spacing.lg, borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, gap: 12,
+  ctaText: {
+    color: colors.onBrand,
+    fontSize: 13,
+    fontFamily: type.titleMd.fontFamily,
+    fontWeight: "600",
+    letterSpacing: -0.1,
   },
-  kpiValue: { fontSize: 24, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.3 },
   cardHeader: {
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md, flexDirection: "row",
-    justifyContent: "space-between", alignItems: "center",
-    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-  },
-  row: {
-    flexDirection: "row", alignItems: "center", gap: spacing.sm,
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
+    flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start",
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    gap: spacing.md,
+  },
+  viewAll: {
+    color: colors.brand,
+    fontSize: 13,
+    fontFamily: type.titleMd.fontFamily,
+    fontWeight: "600",
   },
   productRow: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
     paddingHorizontal: spacing.lg, paddingVertical: 12,
+    borderColor: colors.divider,
   },
-  thumb: { width: 40, height: 40, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
+  thumb: { width: 44, height: 44, borderRadius: 10, backgroundColor: colors.surfaceTertiary },
   quickStat: {
-    flexDirection: "row", alignItems: "center", gap: 10,
-    backgroundColor: colors.surfaceSecondary, padding: spacing.md, borderRadius: radius.md,
+    flexDirection: "row", alignItems: "center", gap: 12,
+    backgroundColor: colors.surfaceSecondary,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
 });
