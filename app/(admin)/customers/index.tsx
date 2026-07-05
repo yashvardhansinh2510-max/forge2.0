@@ -1,3 +1,4 @@
+import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -11,6 +12,7 @@ type Customer = { id: string; name: string; company?: string | null; email: stri
 const tierTone: Record<string, "success" | "info" | "neutral"> = { vip: "success", trade: "info", retail: "neutral" };
 
 export default function Customers() {
+  const router = useRouter();
   const [items, setItems] = useState<Customer[] | null>(null);
   useEffect(() => { api.get<Customer[]>("/customers").then(setItems); }, []);
 
@@ -28,6 +30,7 @@ export default function Customers() {
             <Pressable
               key={c.id}
               testID={`customer-${c.id}`}
+              onPress={() => router.push(`/(admin)/customers/${c.id}` as any)}
               style={({ pressed }) => [styles.row, {
                 borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth,
                 borderColor: colors.border,
