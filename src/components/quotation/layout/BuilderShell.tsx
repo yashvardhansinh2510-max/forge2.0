@@ -1,11 +1,12 @@
-// BuilderShell
+// BuilderShell V4
 // -----------------------------------------------------------------------------
-// Responsive layout brain. Measures its OWN container (not the window) via
-// onLayout so the sidebar-eating parent layout doesn't skew our breakpoint math.
+// Three-column workspace inspired by the Forge V4 mockup:
+//   [Brand rail 240] · [Product Explorer flex] · [Quotation panel 460]
 //
-//   * width >= 1180 → 3-pane (Catalog · Quotation · Assistant)
-//   * width >= 820  → 2-pane (Catalog · Quotation) + Assistant sheet
-//   * else          → Mobile: Quotation-only + FAB → picker sheet + Assistant sheet
+// Responsive strategy (measured on container width, not window):
+//   * width >= 1180  → full V4 (BrandRail + Explorer + Quotation)
+//   * width >= 820   → BrandRail + Quotation, Explorer opens as picker sheet
+//   * else           → Mobile: Quotation only + FAB → picker sheet, product modal
 // -----------------------------------------------------------------------------
 import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, LayoutChangeEvent, Platform, StyleSheet, View } from "react-native";
@@ -13,23 +14,22 @@ import { KeyboardAvoidingView, LayoutChangeEvent, Platform, StyleSheet, View } f
 import { colors } from "@/src/theme/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
-import { CatalogPane } from "../catalog/CatalogPane";
-import { AssistantPane } from "../panes/AssistantPane";
+import { BrandRail } from "../catalog/BrandRail";
+import { ProductExplorer } from "../catalog/ProductExplorer";
 import { QuotationPane } from "../panes/QuotationPane";
 import { AssistantSheet } from "../sheets/AssistantSheet";
+import { CustomProductSheet } from "../sheets/CustomProductSheet";
 import { DescriptionSheet } from "../sheets/DescriptionSheet";
 import { DiscountSheet } from "../sheets/DiscountSheet";
+import { ProductModal } from "../sheets/ProductModal";
 import { ProductPickerSheet } from "../sheets/ProductPickerSheet";
 import { RoomSheet } from "../sheets/RoomSheet";
 import { SwapSheet } from "../sheets/SwapSheet";
 import { BuilderTopbar } from "./BuilderTopbar";
 import { MobileSummaryBar } from "./MobileControls";
 
-// Layout thresholds tuned for real container width (not window). Tablet
-// landscape must get the true 3-pane experience — the sidebar-eating parent
-// leaves ~1000-1120px on iPad Pro landscape, so THREE_PANE starts at 980.
-const THREE_PANE = 980;
-const TWO_PANE = 720;
+const THREE_PANE = 1180;
+const TWO_PANE = 820;
 
 export function BuilderShell({ onBack }: { onBack: () => void }) {
   const b = useBuilder();
@@ -41,9 +41,8 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
   const twoPane = !threePane && w >= TWO_PANE;
   const isPhone = !threePane && !twoPane;
 
-  // Catalog + assistant widths scale with available room.
-  const catalogW = w >= 1400 ? 340 : w >= 1200 ? 300 : 270;
-  const assistantW = w >= 1400 ? 380 : w >= 1200 ? 340 : 300;
+  const railW = w >= 1400 ? 260 : 240;
+  const quotationW = w >= 1440 ? 480 : w >= 1200 ? 440 : 400;
 
   // On smaller layouts, when a line/product gets focused, open the Assistant sheet.
   useEffect(() => {
@@ -61,24 +60,23 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       <BuilderTopbar onBack={onBack} />
 
       {w === 0 ? (
-        // Wait for measurement to avoid flashing the wrong layout.
         <View style={{ flex: 1, backgroundColor: colors.surface }} />
       ) : threePane ? (
         <View style={{ flex: 1, flexDirection: "row" }}>
-          <View style={{ width: catalogW, borderRightWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
-            <CatalogPane />
+          <View style={{ width: railW }}>
+            <BrandRail />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <QuotationPane />
+            <ProductExplorer />
           </View>
-          <View style={{ width: assistantW }}>
-            <AssistantPane />
+          <View style={{ width: quotationW, borderLeftWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+            <QuotationPane />
           </View>
         </View>
       ) : twoPane ? (
         <View style={{ flex: 1, flexDirection: "row" }}>
-          <View style={{ width: 300, borderRightWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
-            <CatalogPane />
+          <View style={{ width: 220 }}>
+            <BrandRail />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <QuotationPane />
@@ -94,13 +92,15 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       )}
 
       {/* Universal sheets */}
+      <ProductModal />
+      <CustomProductSheet />
       <DiscountSheet />
       <RoomSheet />
       <DescriptionSheet />
       <SwapSheet />
 
-      {/* Mobile-only sheets */}
-      {isPhone ? <ProductPickerSheet /> : null}
+      {/* Mobile / tablet-only sheets */}
+      {isPhone || twoPane ? <ProductPickerSheet /> : null}
       {(isPhone || twoPane) && !threePane ? <AssistantSheet /> : null}
     </KeyboardAvoidingView>
   );

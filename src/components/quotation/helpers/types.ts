@@ -17,12 +17,40 @@ export type Product = {
   collection?: string | null;
   subcategory?: string | null;
   stock?: number | null;
+  description?: string | null;
+  dimensions?: string | null;
+  warranty?: string | null;
   specs?: Record<string, any> | null;
+  // V4 ranking / badge signals (populated by /products endpoint).
+  popular?: boolean;
+  frequently_used?: boolean;
+  recently_used?: boolean;
+  usage_count?: number;
+  my_usage_count?: number;
+  is_custom?: boolean;
 };
 
-export type Category = { id: string; name: string };
+export type Brand = { id: string; name: string; slug?: string; product_count?: number };
 
-export type Customer = { id: string; name: string; company?: string | null; email: string };
+export type Category = { id: string; name: string; product_count?: number };
+
+export type Customer = { id: string; name: string; company?: string | null; email: string; phone?: string | null };
+
+// V4 header fields — captured on the topbar so the salesperson never leaves the workspace.
+export type QuotationHeader = {
+  projectName: string;
+  phone: string;
+  referenceSource: string;
+};
+
+export type RecentQuotation = {
+  id: string; number: string;
+  customer_id?: string | null; customer_name?: string | null;
+  project_name?: string | null; phone?: string | null;
+  grand_total: number; status: string;
+  revision_count: number;
+  updated_at?: string | null; created_at?: string | null;
+};
 
 export type Line = {
   id: string; product_id: string; sku: string; name: string; image?: string | null;
@@ -39,6 +67,7 @@ export type SaveState = "idle" | "saving" | "saved" | "error";
 // One immutable snapshot of everything the user can undo.
 export type BuilderState = {
   customerId: string | null;
+  header: QuotationHeader;
   lines: Line[];
   rooms: string[];
   collapsedRooms: Record<string, boolean>;
@@ -77,6 +106,7 @@ export const DEFAULT_ROOMS = [
 
 export const INITIAL_BUILDER_STATE: BuilderState = {
   customerId: null,
+  header: { projectName: "", phone: "", referenceSource: "" },
   lines: [],
   rooms: [DEFAULT_ROOMS[0]],
   collapsedRooms: {},
