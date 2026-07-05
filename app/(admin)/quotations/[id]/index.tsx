@@ -1,11 +1,11 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
-import { Button, Card, StatusBadge } from "@/src/components/ui";
+import { Button, Card, IconButton, PriceTag, StatusBadge } from "@/src/components/ui";
 import { api, getToken } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
@@ -36,6 +36,9 @@ type PoStub = { id: string; number: string; brand_name?: string | null; status: 
 export default function QuotationDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 900;
+
   const [q, setQ] = useState<Quotation | null>(null);
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -55,10 +58,6 @@ export default function QuotationDetail() {
   const openPdf = async () => {
     const token = await getToken();
     if (!token) return;
-    const url = `${api.base}/api/quotations/${id}/pdf?_t=${encodeURIComponent(token)}`;
-    // browser can't send Authorization headers on window.open; server also accepts _t
-    // (but our route requires header). We'll open a signed link built via fetch instead.
-    // Simplest cross-platform: fetch blob and open via Linking (data:).
     try {
       const res = await fetch(`${api.base}/api/quotations/${id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
       const blob = await res.blob();
@@ -66,7 +65,7 @@ export default function QuotationDetail() {
       reader.onloadend = () => Linking.openURL(reader.result as string);
       reader.readAsDataURL(blob);
     } catch {
-      Linking.openURL(url);
+      Linking.openURL(`${api.base}/api/quotations/${id}/pdf?_t=${encodeURIComponent(token)}`);
     }
   };
 
@@ -82,114 +81,161 @@ export default function QuotationDetail() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+      {/* Sticky top bar — back on left, action buttons on right */}
       <View style={styles.topbar}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Feather name="chevron-left" size={18} color={colors.onSurface} />
-          <Text style={{ fontSize: 14, fontWeight: "500" }}>Quotations</Text>
-        </Pressable>
-        <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+          <IconButton icon="chevron-left" onPress={() => router.back()} size={36} tone="surface" testID="back-btn" accessibilityLabel="Back" />
+          <View style={{ minWidth: 0, flex: 1 }}>
+            <Text style={type.overline}>Quotation</Text>
+            <Text style={[type.titleMd, { marginTop: 2 }]} numberOfLines={1}>{q.number}</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
           <Button label="PDF" icon="download" variant="secondary" size="sm" onPress={openPdf} testID="download-pdf" />
           {NEXT_STATUS[q.status] ? (
-            <Button label={`Mark ${NEXT_STATUS[q.status].replace("_", " ")}`} icon="check" size="sm" onPress={advance} testID="advance-status" />
-          ) : null}
-          {q.status !== "ordered" && q.items.length > 0 ? (
             <Button
-              label="Place Order"
-              icon="shopping-cart"
+              label={isTablet ? `Mark ${NEXT_STATUS[q.status].replace("_", " ")}` : "Mark"}
+              icon="check"
               size="sm"
-              onPress={() => router.push(`/(admin)/quotations/${id}/place-order` as any)}
-              testID="place-order-btn"
+              onPress={advance}
+              testID="advance-status"
             />
           ) : null}
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }}>
-        <View>
-          <Text style={[type.mono, { color: colors.onSurfaceMuted }]}>{q.number}</Text>
-          <Text style={[type.displayLg, { marginTop: 4 }]}>{q.customer_name}</Text>
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 8, alignItems: "center" }}>
-            <StatusBadge status={q.status} />
-            <Text style={type.caption}>Prepared by {q.created_by_name} · {new Date(q.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}</Text>
+      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing.huge }}>
+        {/* Hero section */}
+        <View style={styles.hero}>
+          <StatusBadge status={q.status} />
+          <Text style={[type.displayLg, { marginTop: 10 }]} numberOfLines={2}>{q.customer_name || "Unknown customer"}</Text>
+          <Text style={[type.bodyMuted, { marginTop: 4 }]}>
+            Prepared by {q.created_by_name} · {new Date(q.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+          </Text>
+          <View style={styles.heroDivider} />
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
+            <View>
+              <Text style={type.caption}>Grand total</Text>
+              <PriceTag price={q.grand_total} size="xl" />
+            </View>
+            {q.status !== "ordered" && q.items.length > 0 ? (
+              <Pressable
+                onPress={() => router.push(`/(admin)/quotations/${id}/place-order` as any)}
+                style={({ pressed }) => [styles.placeOrder, { opacity: pressed ? 0.88 : 1 }]}
+                testID="place-order-btn"
+              >
+                <Feather name="shopping-cart" size={14} color={colors.brand} />
+                <Text style={styles.placeOrderText}>Place Order</Text>
+              </Pressable>
+            ) : null}
           </View>
         </View>
 
-        <Card style={{ padding: 0 }}>
-          <View style={styles.headerRow}>
-            <Text style={[type.overline, { width: 40 }]}>#</Text>
-            <Text style={[type.overline, { flex: 1 }]}>Item</Text>
-            <Text style={[type.overline, { width: 60, textAlign: "right" }]}>QTY</Text>
-            <Text style={[type.overline, { width: 90, textAlign: "right" }]}>RATE</Text>
-            <Text style={[type.overline, { width: 70, textAlign: "right" }]}>DISC%</Text>
-            <Text style={[type.overline, { width: 100, textAlign: "right" }]}>AMOUNT</Text>
+        {/* Line items — tablet: table, phone: stacked cards */}
+        {isTablet ? (
+          <Card style={{ padding: 0 }} variant="flat">
+            <View style={styles.tableHead}>
+              <Text style={[type.overline, { width: 40 }]}>#</Text>
+              <Text style={[type.overline, { flex: 1 }]}>Item</Text>
+              <Text style={[type.overline, { width: 60, textAlign: "right" }]}>QTY</Text>
+              <Text style={[type.overline, { width: 100, textAlign: "right" }]}>RATE</Text>
+              <Text style={[type.overline, { width: 70, textAlign: "right" }]}>DISC%</Text>
+              <Text style={[type.overline, { width: 110, textAlign: "right" }]}>AMOUNT</Text>
+            </View>
+            {q.items.map((it, i) => {
+              const br = breakdown?.lines.find((b) => b.line_id === it.id);
+              const pct = br?.discount_pct ?? (it.discount_pct ?? 0);
+              const source = br?.discount_source ?? (it.discount_pct != null ? "product" : "none");
+              return (
+                <View key={it.id} style={styles.tableRow}>
+                  <Text style={[type.mono, { width: 40 }]}>{String(i + 1).padStart(2, "0")}</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface }} numberOfLines={2}>{it.name}</Text>
+                    <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
+                  </View>
+                  <Text style={[type.mono, { width: 60, textAlign: "right" }]}>{it.qty}</Text>
+                  <Text style={[type.mono, { width: 100, textAlign: "right" }]}>{money(it.unit_price)}</Text>
+                  <View style={{ width: 70, alignItems: "flex-end" }}>
+                    <Text style={type.mono}>{pct}%</Text>
+                    {source !== "none" && source !== "product" ? <Text style={[type.caption, { fontSize: 10 }]}>via {source}</Text> : null}
+                  </View>
+                  <Text style={{ width: 110, textAlign: "right", fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "700", fontVariant: ["tabular-nums"], color: colors.onSurface }}>
+                    {money(it.qty * it.unit_price * (1 - pct / 100))}
+                  </Text>
+                </View>
+              );
+            })}
+          </Card>
+        ) : (
+          <View style={{ gap: spacing.sm }}>
+            {q.items.map((it, i) => {
+              const br = breakdown?.lines.find((b) => b.line_id === it.id);
+              const pct = br?.discount_pct ?? (it.discount_pct ?? 0);
+              const lineTotal = it.qty * it.unit_price * (1 - pct / 100);
+              return (
+                <View key={it.id} style={styles.mobileLineCard}>
+                  <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" }}>
+                    <View style={styles.lineIdx}>
+                      <Text style={styles.lineIdxText}>{String(i + 1).padStart(2, "0")}</Text>
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface }} numberOfLines={2}>{it.name}</Text>
+                      <Text style={[type.caption, { marginTop: 2 }]}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.lineMeta}>
+                    <View style={styles.metaCol}>
+                      <Text style={type.caption}>Qty</Text>
+                      <Text style={styles.metaValue}>{it.qty}</Text>
+                    </View>
+                    <View style={styles.metaCol}>
+                      <Text style={type.caption}>Rate</Text>
+                      <Text style={styles.metaValue}>{money(it.unit_price)}</Text>
+                    </View>
+                    <View style={styles.metaCol}>
+                      <Text style={type.caption}>Disc</Text>
+                      <Text style={styles.metaValue}>{pct}%</Text>
+                    </View>
+                    <View style={[styles.metaCol, { alignItems: "flex-end" }]}>
+                      <Text style={type.caption}>Total</Text>
+                      <Text style={[styles.metaValue, { color: colors.brand }]}>{money(lineTotal)}</Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
           </View>
-          {q.items.map((it, i) => {
-            const br = breakdown?.lines.find((b) => b.line_id === it.id);
-            const pct = br?.discount_pct ?? (it.discount_pct ?? 0);
-            const source = br?.discount_source ?? (it.discount_pct != null ? "product" : "none");
-            return (
-              <View key={it.id} style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]}>
-                <Text style={[type.mono, { width: 40 }]}>{String(i + 1).padStart(2, "0")}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={2}>{it.name}</Text>
-                  <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
-                  {it.description ? <Text style={[type.caption, { marginTop: 2 }]} numberOfLines={2}>{it.description}</Text> : null}
-                </View>
-                <Text style={[type.mono, { width: 60, textAlign: "right" }]}>{it.qty}</Text>
-                <Text style={[type.mono, { width: 90, textAlign: "right" }]}>{money(it.unit_price)}</Text>
-                <View style={{ width: 70, alignItems: "flex-end" }}>
-                  <Text style={type.mono}>{pct}%</Text>
-                  {source !== "none" && source !== "product" ? (
-                    <Text style={[type.caption, { fontSize: 10 }]}>via {source}</Text>
-                  ) : null}
-                </View>
-                <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]}>
-                  {money(it.qty * it.unit_price * (1 - pct / 100))}
-                </Text>
-              </View>
-            );
-          })}
-        </Card>
+        )}
 
-        <Card>
-          <View style={{ gap: 6, marginLeft: "auto", minWidth: 280 }}>
+        {/* Totals card */}
+        <Card variant="flat">
+          <View style={{ gap: 8 }}>
             {q.project_discount_pct ? (
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={type.bodyMuted}>Project discount</Text>
-                <Text style={type.mono}>{q.project_discount_pct}%</Text>
-              </View>
+              <Row label="Project discount" value={`${q.project_discount_pct}%`} />
             ) : null}
             {q.category_discounts && Object.keys(q.category_discounts).length ? (
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={type.bodyMuted}>Category discounts</Text>
-                <Text style={type.mono}>{Object.keys(q.category_discounts).length} rules</Text>
-              </View>
+              <Row label="Category discounts" value={`${Object.keys(q.category_discounts).length} rules`} />
             ) : null}
-            {[
-              ["Subtotal", q.subtotal, ""],
-              ["Discount", q.discount_total, "-"],
-            ].map(([l, v, sign]) => (
-              <View key={String(l)} style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={type.bodyMuted}>{l as string}</Text>
-                <Text style={type.mono}>{sign as string}{money(v as number)}</Text>
-              </View>
-            ))}
-            <View style={{ flexDirection: "row", justifyContent: "space-between", borderTopWidth: 1, borderColor: colors.onSurface, paddingTop: 8, marginTop: 4 }}>
-              <Text style={{ fontSize: 15, fontWeight: "700" }}>Grand total</Text>
-              <Text style={{ fontSize: 22, fontWeight: "700", fontVariant: ["tabular-nums"] }}>{money(q.grand_total)}</Text>
+            <Row label="Subtotal" value={money(q.subtotal)} />
+            <Row label="Discount" value={`- ${money(q.discount_total)}`} />
+            <View style={styles.totalRow}>
+              <Text style={{ fontSize: 15, fontFamily: type.titleMd.fontFamily, fontWeight: "700", color: colors.onSurface }}>Grand total</Text>
+              <Text style={{ fontSize: 22, fontFamily: type.displayMd.fontFamily, fontWeight: "700", fontVariant: ["tabular-nums"], color: colors.onSurface, letterSpacing: -0.3 }}>
+                {money(q.grand_total)}
+              </Text>
             </View>
           </View>
         </Card>
 
         {q.notes ? (
-          <Card>
+          <Card variant="flat">
             <Text style={type.overline}>Notes</Text>
-            <Text style={[type.body, { color: colors.onSurfaceSecondary, marginTop: 6 }]}>{q.notes}</Text>
+            <Text style={[type.body, { color: colors.onSurfaceSecondary, marginTop: 6, lineHeight: 22 }]}>{q.notes}</Text>
           </Card>
         ) : null}
 
         {linkedPos.length > 0 ? (
-          <Card>
+          <Card variant="flat">
             <Text style={type.overline}>Linked Purchase Orders</Text>
             <View style={{ gap: 8, marginTop: spacing.md }}>
               {linkedPos.map((po) => (
@@ -201,10 +247,10 @@ export default function QuotationDetail() {
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={[type.mono, { fontSize: 12 }]}>{po.number}</Text>
-                    <Text style={{ fontSize: 13, fontWeight: "600", marginTop: 2 }}>{po.brand_name || "—"}</Text>
+                    <Text style={{ fontSize: 13, fontFamily: type.titleMd.fontFamily, fontWeight: "600", marginTop: 2, color: colors.onSurface }}>{po.brand_name || "—"}</Text>
                   </View>
                   <StatusBadge status={po.status} />
-                  <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "600" }]}>{money(po.grand_total)}</Text>
+                  <Text style={{ width: 100, textAlign: "right", fontFamily: type.titleMd.fontFamily, fontWeight: "600", fontVariant: ["tabular-nums"], color: colors.onSurface }}>{money(po.grand_total)}</Text>
                   <Feather name="chevron-right" size={14} color={colors.onSurfaceMuted} />
                 </Pressable>
               ))}
@@ -212,7 +258,7 @@ export default function QuotationDetail() {
           </Card>
         ) : null}
 
-        <Card>
+        <Card variant="flat">
           <Text style={type.overline}>Activity</Text>
           <View style={{ marginTop: spacing.md }}>
             <ActivityTimeline events={timeline} emptyLabel="No activity yet — every mutation from now on will land here." />
@@ -223,18 +269,89 @@ export default function QuotationDetail() {
   );
 }
 
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+      <Text style={type.bodyMuted}>{label}</Text>
+      <Text style={{ fontSize: 14, fontFamily: type.bodyStrong.fontFamily, fontWeight: "500", fontVariant: ["tabular-nums"], color: colors.onSurface }}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   topbar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: spacing.lg, paddingVertical: 12,
+    paddingHorizontal: spacing.lg, paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface,
+    gap: spacing.sm,
   },
-  headerRow: {
-    flexDirection: "row", padding: spacing.md, backgroundColor: colors.surfaceTertiary,
-    borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md, alignItems: "center",
+  hero: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    padding: spacing.lg,
   },
-  row: { flexDirection: "row", padding: spacing.md, alignItems: "center", gap: 8 },
+  heroDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.border,
+    marginVertical: spacing.md,
+  },
+  placeOrder: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: radius.md,
+    backgroundColor: colors.brandTint,
+    borderWidth: 1, borderColor: colors.brandBorder,
+  },
+  placeOrderText: {
+    fontSize: 13, fontFamily: type.titleMd.fontFamily,
+    fontWeight: "600", color: colors.brand,
+  },
+  tableHead: {
+    flexDirection: "row",
+    padding: spacing.md,
+    backgroundColor: colors.surfaceTertiary,
+    borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
+    alignItems: "center", gap: 8,
+  },
+  tableRow: {
+    flexDirection: "row", padding: spacing.md, alignItems: "center", gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.divider,
+  },
+  mobileLineCard: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    padding: spacing.md, gap: spacing.md,
+  },
+  lineIdx: {
+    width: 28, height: 28, borderRadius: 8,
+    backgroundColor: colors.brandTint,
+    alignItems: "center", justifyContent: "center",
+  },
+  lineIdxText: {
+    fontSize: 11, fontFamily: type.titleMd.fontFamily,
+    fontWeight: "700", color: colors.brand,
+    fontVariant: ["tabular-nums"],
+  },
+  lineMeta: {
+    flexDirection: "row", justifyContent: "space-between",
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.divider,
+  },
+  metaCol: { gap: 2, minWidth: 60 },
+  metaValue: {
+    fontSize: 13, fontFamily: type.titleMd.fontFamily,
+    fontWeight: "600", color: colors.onSurface,
+    fontVariant: ["tabular-nums"],
+  },
+  totalRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingTop: spacing.md,
+    marginTop: 6,
+    borderTopWidth: 1, borderColor: colors.borderStrong,
+  },
   linkedPoRow: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
     padding: spacing.md, borderRadius: radius.md,
