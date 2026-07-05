@@ -23,11 +23,11 @@ export function AdminPage({
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={[styles.header, { paddingHorizontal: padH }]}>
-        <View style={{ flex: 1 }}>
-          <Text style={type.displayMd}>{title}</Text>
-          {subtitle ? <Text style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={type.displayMd}>{title}</Text>
+          {subtitle ? <Text numberOfLines={1} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
         </View>
-        {right}
+        {right ? <View style={{ flexShrink: 0 }}>{right}</View> : null}
       </View>
       <Container
         {...(scroll ? { showsVerticalScrollIndicator: false, contentContainerStyle: { padding: padH, paddingTop: spacing.lg, gap: spacing.lg, ...contentStyle } } : { style: [{ flex: 1, padding: padH }, contentStyle] })}

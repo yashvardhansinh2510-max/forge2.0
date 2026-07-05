@@ -1,12 +1,34 @@
+// Product Detail — premium, mobile-first, Amazon-caliber.
+// -----------------------------------------------------------------------------
+// Layout
+//   * Phone: full-bleed swipeable gallery with page dots, sticky bottom CTA
+//   * Tablet: two-column (gallery / details) matching Apple Store PDP
+// Content sequence
+//   1. Brand & series overline
+//   2. Family name (display), colour badge
+//   3. Price + save %
+//   4. Variant/finish selector (large swatches)
+//   5. Description
+//   6. Spec table (clean pairs)
+//   7. Related products carousel
+// Details
+//   * Quality banner only when supplier shipped a low-res thumbnail (rare) —
+//     styled as a soft inline hint, never a screaming red alert.
+//   * Sticky bottom bar on phone: price on left, "Add to quotation" on right.
+// -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Pressable,
+  ScrollView, StyleSheet, Text, View,
+} from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ProductImage } from "@/src/components/ProductImage";
-import { Button, Card } from "@/src/components/ui";
+import { Button, Card, IconButton, PriceTag } from "@/src/components/ui";
 import { api } from "@/src/api/client";
+import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
 type Product = {
@@ -18,25 +40,12 @@ type Product = {
   family_name?: string | null; variant_label?: string | null;
   finish_code?: string | null; colour?: string | null;
   image_quality?: string | null;
-  image_meta?: { width: number; height: number; quality: string; source_format: string; sha1?: string }[];
   hero_image_url?: string | null;
   gallery?: { url: string; role?: string; source_type?: string; quality?: string }[];
-  media_summary?: { supplier: number; manufacturer: number; internal: number; best_quality: string; total: number };
   specs?: Record<string, any>;
 };
 
-const QUALITY_STYLES: Record<string, { bg: string; fg: string; label: string; hint: string }> = {
-  excellent: { bg: "#DCFCE7", fg: "#166534", label: "Excellent quality",
-               hint: "Vector or ≥1024px source — production-ready." },
-  good:      { bg: "#DBEAFE", fg: "#1E3A8A", label: "Good quality",
-               hint: "640–1024px source — suitable for cards and PDFs." },
-  acceptable:{ bg: "#FEF3C7", fg: "#92400E", label: "Acceptable quality",
-               hint: "320–640px source — usable but not premium." },
-  poor:      { bg: "#FEE2E2", fg: "#991B1B", label: "Thumbnail-grade",
-               hint: "Supplier only shipped a low-res thumbnail. Recommend sourcing official media." },
-  missing:   { bg: "#F3F4F6", fg: "#6B7280", label: "No image available",
-               hint: "Supplier file has no image for this SKU." },
-};
+type Brand = { id: string; name: string };
 
 function swatchColor(label?: string | null): string {
   const l = (label || "").toLowerCase();
@@ -46,23 +55,28 @@ function swatchColor(label?: string | null): string {
   if (l.includes("white")) return "#FFFFFF";
   if (l.includes("taupe") || l.includes("beige")) return "#B7A08A";
   if (l.includes("stone") || l.includes("grey") || l.includes("gray")) return "#8A8A8E";
-  if (l.includes("chrome") || l.includes("steel")) return "#C0C5CB";
+  if (l.includes("chrome") || l.includes("steel") || l.includes("polished")) return "#C0C5CB";
+  if (l.includes("brushed") && l.includes("brass")) return "#B08D57";
   if (l.includes("brass") || l.includes("gold")) return "#C6A664";
   if (l.includes("bronze") || l.includes("copper")) return "#8C5E3C";
   if (l.includes("nickel")) return "#7C8791";
+  if (l.includes("graphite") || l.includes("anthracite")) return "#3A3A3A";
   return "#D1D5DB";
 }
 
 export default function ProductDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 900;
+  const { isPhone, isWide, pad } = useBreakpoint();
+  const insets = useSafeAreaInsets();
 
   const [p, setP] = useState<Product | null>(null);
   const [siblings, setSiblings] = useState<Product[]>([]);
   const [alternates, setAlternates] = useState<Product[]>([]);
+  const [brandName, setBrandName] = useState<string>("");
   const [imageIdx, setImageIdx] = useState(0);
+  const [galleryW, setGalleryW] = useState(0);
+  const galleryRef = useRef<FlatList<string>>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -71,15 +85,18 @@ export default function ProductDetail() {
       try {
         const prod = await api.get<Product>(`/products/${id}`);
         setP(prod);
-        // Fetch sibling variants in the same family
         if (prod.family_key) {
           const res = await api.get<{ items: Product[] }>(`/products?family_key=${encodeURIComponent(prod.family_key)}&limit=20`);
           setSiblings(res.items.filter((x) => x.id !== prod.id));
         }
-        // Fetch alternates (existing endpoint)
         try {
           const alt = await api.get<{ items: Product[] }>(`/products/${prod.id}/alternates?limit=6`);
           setAlternates(alt.items || []);
+        } catch { /* ignore */ }
+        try {
+          const brands = await api.get<Brand[]>("/brands");
+          const b = brands.find((x) => x.id === prod.brand_id);
+          setBrandName(b?.name || "");
         } catch { /* ignore */ }
       } catch {
         setP(null);
@@ -87,203 +104,375 @@ export default function ProductDetail() {
     })();
   }, [id]);
 
-  const qMeta = useMemo(() => {
-    if (!p) return null;
-    return QUALITY_STYLES[p.image_quality || "missing"] || QUALITY_STYLES.missing;
+  const galleryUrls: string[] = useMemo(() => {
+    if (!p) return [];
+    if (p.gallery && p.gallery.length > 0) return p.gallery.map((g) => g.url).filter(Boolean);
+    if (p.hero_image_url) return [p.hero_image_url, ...(p.images || [])];
+    return p.images || [];
   }, [p]);
 
-  if (!p) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
-
-  // Build gallery URLs (prefer new gallery array, fallback to legacy images)
-  const galleryUrls: string[] = (p.gallery && p.gallery.length > 0
-    ? p.gallery.map((g) => g.url).filter(Boolean)
-    : (p.hero_image_url ? [p.hero_image_url, ...(p.images || [])] : (p.images || [])));
-  const currentImage = galleryUrls[imageIdx] || null;
-
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
-      <View style={styles.topbar}>
-        <Pressable testID="back-btn" onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
-          <Feather name="chevron-left" size={18} color={colors.onSurface} />
-          <Text style={{ fontSize: 14, fontWeight: "500" }}>Catalog</Text>
-        </Pressable>
-        <View style={{ flex: 1 }} />
-        {p.series ? <Text style={[type.caption, { marginRight: spacing.md }]}>{p.series}</Text> : null}
+  if (!p) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.surface }}>
+        <SafeAreaView edges={["top"]} style={styles.topBar}>
+          <IconButton icon="chevron-left" onPress={() => router.back()} size={36} tone="surface" accessibilityLabel="Back" />
+          <View style={{ flex: 1 }} />
+        </SafeAreaView>
       </View>
+    );
+  }
 
-      <ScrollView contentContainerStyle={{ padding: isTablet ? spacing.xxl : spacing.lg, gap: spacing.xl }} showsVerticalScrollIndicator={false}>
-        <View style={{ flexDirection: isTablet ? "row" : "column", gap: spacing.xl }}>
-          {/* GALLERY */}
-          <View style={{ flex: 1, gap: spacing.md }}>
-            <View style={{ aspectRatio: 1, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.surfaceTertiary }}>
+  const savedPct = p.mrp > p.price ? Math.round((1 - p.price / p.mrp) * 100) : 0;
+  const showPoorHint = p.image_quality === "poor";
+  const bottomBarHeight = 72;
+
+  const Gallery = (
+    <View
+      style={{ position: "relative" }}
+      onLayout={(e: LayoutChangeEvent) => setGalleryW(e.nativeEvent.layout.width)}
+    >
+      {isWide ? (
+        // Tablet: static hero image + thumb strip (no pager — plays nicer with flex)
+        <View>
+          <View style={{ aspectRatio: 1, backgroundColor: colors.surfaceTertiary, borderRadius: radius.lg, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
+            <View style={{ width: "80%", aspectRatio: 1 }}>
               <ProductImage
-                source={currentImage ? [currentImage] : []}
+                source={galleryUrls[imageIdx] ? [galleryUrls[imageIdx]] : []}
                 style={StyleSheet.absoluteFill as any}
-                contentFit="cover" fallbackLabel={p.sku} borderRadius={radius.lg}
+                contentFit="contain"
+                fallbackLabel={p.sku}
+                borderRadius={0}
               />
-              {qMeta ? (
-                <View style={[styles.qualityBadgeAbs, { backgroundColor: qMeta.bg }]}>
-                  <Text style={{ fontSize: 10, fontWeight: "700", color: qMeta.fg, letterSpacing: 0.4 }}>
-                    {qMeta.label.toUpperCase()}
-                  </Text>
-                </View>
-              ) : null}
             </View>
             {galleryUrls.length > 1 ? (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                {galleryUrls.map((_img, i) => (
-                  <Pressable key={i} onPress={() => setImageIdx(i)}
-                    style={[styles.thumb, imageIdx === i && { borderColor: colors.brand, borderWidth: 2 }]}>
-                    <ProductImage source={[galleryUrls[i]]} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel="" borderRadius={0} />
-                  </Pressable>
-                ))}
-              </ScrollView>
-            ) : null}
-            {qMeta && p.image_quality === "poor" ? (
-              <View style={{ padding: 10, backgroundColor: qMeta.bg, borderRadius: 8, flexDirection: "row", gap: 8, alignItems: "flex-start" }}>
-                <Feather name="alert-triangle" size={14} color={qMeta.fg} style={{ marginTop: 2 }} />
-                <Text style={{ flex: 1, fontSize: 12, color: qMeta.fg, lineHeight: 18 }}>{qMeta.hint}</Text>
+              <View style={styles.countPill}>
+                <Feather name="image" size={11} color="#fff" />
+                <Text style={styles.countPillText}>{imageIdx + 1} / {galleryUrls.length}</Text>
               </View>
             ) : null}
           </View>
-
-          {/* DETAILS */}
-          <View style={{ flex: 1.1, gap: spacing.lg }}>
-            {/* Breadcrumb */}
-            {(p.subcategory || p.series) ? (
-              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                {p.subcategory ? <Text style={type.overline}>{p.subcategory}</Text> : null}
-                {p.subcategory && p.series ? <Feather name="chevron-right" size={12} color={colors.onSurfaceMuted} /> : null}
-                {p.series ? <Text style={type.overline}>{p.series}</Text> : null}
-              </View>
-            ) : null}
-
-            <View>
-              <Text style={[type.displayLg, { marginTop: 4 }]}>{p.family_name || p.name}</Text>
-              <Text style={[type.mono, { marginTop: 4 }]}>{p.sku}</Text>
-              {p.colour ? (
-                <View style={{ flexDirection: "row", gap: 6, alignItems: "center", marginTop: 8 }}>
-                  <View style={[styles.swatchDot, { backgroundColor: swatchColor(p.colour) }]} />
-                  <Text style={{ fontSize: 13, color: colors.onSurfaceSecondary }}>{p.colour}{p.finish_code ? `  ·  code ${p.finish_code}` : ""}</Text>
-                </View>
-              ) : null}
-            </View>
-
-            <View style={{ flexDirection: "row", alignItems: "baseline", gap: spacing.md }}>
-              <Text style={{ fontSize: 30, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] }}>{money(p.price)}</Text>
-              {p.mrp > p.price ? (
-                <>
-                  <Text style={{ fontSize: 16, color: colors.onSurfaceMuted, textDecorationLine: "line-through" }}>{money(p.mrp)}</Text>
-                  <View style={{ backgroundColor: colors.successBg, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4 }}>
-                    <Text style={{ color: colors.success, fontSize: 11, fontWeight: "700" }}>SAVE {Math.round((1 - p.price / p.mrp) * 100)}%</Text>
+          {galleryUrls.length > 1 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingTop: 12 }}>
+              {galleryUrls.map((url, i) => (
+                <Pressable
+                  key={i}
+                  onPress={() => setImageIdx(i)}
+                  style={[styles.thumb, imageIdx === i && { borderColor: colors.brand, borderWidth: 2 }]}
+                >
+                  <ProductImage source={[url]} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel="" borderRadius={0} />
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : null}
+        </View>
+      ) : (
+        // Phone: full-bleed swipeable pager
+        <View style={{ backgroundColor: colors.surfaceTertiary, aspectRatio: 1 }}>
+          {galleryW > 0 ? (
+            <FlatList
+              ref={galleryRef}
+              data={galleryUrls.length > 0 ? galleryUrls : [""]}
+              keyExtractor={(_, i) => `img-${i}`}
+              horizontal pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+                const w = e.nativeEvent.layoutMeasurement.width;
+                const i = Math.round(e.nativeEvent.contentOffset.x / (w || 1));
+                setImageIdx(i);
+              }}
+              renderItem={({ item }) => (
+                <View style={{ width: galleryW, aspectRatio: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary }}>
+                  <View style={{ width: "80%", aspectRatio: 1 }}>
+                    <ProductImage
+                      source={item ? [item] : []}
+                      style={StyleSheet.absoluteFill as any}
+                      contentFit="contain"
+                      fallbackLabel={p.sku}
+                      borderRadius={0}
+                    />
                   </View>
-                </>
-              ) : null}
-            </View>
-
-            {/* Finish selector — sibling variants */}
-            {siblings.length > 0 ? (
-              <View style={{ gap: spacing.sm }}>
-                <Text style={type.overline}>Finish · {siblings.length + 1} variants</Text>
-                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-                  <VariantPill product={p} active onPress={() => {}} />
-                  {siblings.map((s) => (
-                    <VariantPill key={s.id} product={s} active={false} onPress={() => router.replace(`/(admin)/catalog/${s.id}` as any)} />
-                  ))}
                 </View>
-              </View>
-            ) : null}
-
-            {p.description ? (
-              <Text style={[type.body, { color: colors.onSurfaceSecondary, lineHeight: 22 }]}>{p.description}</Text>
-            ) : null}
-
-            {/* Specs */}
-            <Card style={{ padding: 0 }}>
-              {[
-                ["Series",     p.series],
-                ["Family",     p.family_name],
-                ["Subcategory",p.subcategory],
-                ["Colour",     p.colour],
-                ["Finish",     p.finish],
-                ["Finish code",p.finish_code],
-                ["Material",   p.material],
-                ["Dimensions", p.dimensions],
-                ["Warranty",   p.warranty],
-                ["In stock",   String(p.stock)],
-                ...((p.specs && Object.keys(p.specs).length)
-                  ? Object.entries(p.specs).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)])
-                  : []),
-              ]
-                .filter(([, v]) => v && String(v).trim() !== "")
-                .map(([k, v], i) => (
-                  <View key={String(k)} style={[styles.specRow, { borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderColor: colors.border }]}>
-                    <Text style={type.caption}>{k}</Text>
-                    <Text style={{ fontSize: 13, fontWeight: "500", color: colors.onSurface, textAlign: "right", flex: 1, marginLeft: 12 }}>{String(v)}</Text>
-                  </View>
-                ))}
-            </Card>
-
-            <View style={{ flexDirection: "row", gap: spacing.sm }}>
-              <Button label="Add to quotation" icon="plus" onPress={() => router.push("/(admin)/quotations/new" as any)} testID="add-to-quote" size="lg" />
-              <Button label="Share" variant="secondary" icon="share-2" onPress={() => {}} size="lg" />
+              )}
+            />
+          ) : null}
+          {galleryUrls.length > 1 ? (
+            <View style={styles.pageDots}>
+              {galleryUrls.map((_, i) => (
+                <View key={i} style={[styles.dot, imageIdx === i && styles.dotActive]} />
+              ))}
             </View>
+          ) : null}
+          {galleryUrls.length > 1 ? (
+            <View style={styles.countPill}>
+              <Feather name="image" size={11} color="#fff" />
+              <Text style={styles.countPillText}>{imageIdx + 1} / {galleryUrls.length}</Text>
+            </View>
+          ) : null}
+        </View>
+      )}
+    </View>
+  );
+
+  const Details = (
+    <View style={{ paddingHorizontal: isWide ? 0 : pad, paddingTop: isPhone ? spacing.lg : 0, gap: spacing.lg }}>
+      {/* Brand + series overline */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {brandName ? <Text style={styles.brandTag}>{brandName.toUpperCase()}</Text> : null}
+        {p.series ? <Text style={styles.overline}>{p.series}</Text> : null}
+        {p.subcategory ? (
+          <>
+            <Feather name="chevron-right" size={11} color={colors.onSurfaceMuted} />
+            <Text style={styles.overline}>{p.subcategory}</Text>
+          </>
+        ) : null}
+      </View>
+
+      {/* Title */}
+      <View>
+        <Text style={type.displayLg}>{p.family_name || p.name}</Text>
+        <Text style={[type.mono, { marginTop: 6, color: colors.onSurfaceMuted }]}>SKU · {p.sku}</Text>
+      </View>
+
+      {/* Price */}
+      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 12 }}>
+        <PriceTag price={p.price} mrp={p.mrp} size="xl" />
+        {savedPct > 0 ? (
+          <View style={styles.savePill}>
+            <Text style={styles.savePillText}>SAVE {savedPct}%</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {/* Availability */}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.stock > 0 ? colors.success : colors.onSurfaceMuted }} />
+        <Text style={{ fontSize: 13, fontWeight: "600", color: p.stock > 0 ? colors.success : colors.onSurfaceMuted }}>
+          {p.stock > 0 ? `In stock · ${p.stock} available` : "Made to order"}
+        </Text>
+      </View>
+
+      {/* Variant / finish selector */}
+      {siblings.length > 0 ? (
+        <View style={{ gap: spacing.sm }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+            <Text style={type.overline}>Finish</Text>
+            <Text style={type.caption}>{siblings.length + 1} variants</Text>
+          </View>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <VariantSwatch product={p} active onPress={() => {}} />
+            {siblings.map((s) => (
+              <VariantSwatch key={s.id} product={s} onPress={() => router.replace(`/(admin)/catalog/${s.id}` as any)} />
+            ))}
           </View>
         </View>
+      ) : p.colour || p.finish ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <View style={[styles.swatchLg, { backgroundColor: swatchColor(p.colour || p.finish) }]} />
+          <View>
+            <Text style={type.overline}>Finish</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface, marginTop: 2 }}>
+              {p.colour || p.finish}{p.finish_code ? ` · ${p.finish_code}` : ""}
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
-        {/* Related / alternates */}
+      {/* Poor-quality hint — soft inline */}
+      {showPoorHint ? (
+        <View style={styles.poorHint}>
+          <Feather name="info" size={13} color={colors.onSurfaceSecondary} />
+          <Text style={{ flex: 1, fontSize: 12, color: colors.onSurfaceSecondary, lineHeight: 17 }}>
+            Only a thumbnail is available for this item. High-resolution imagery will be added shortly.
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Description */}
+      {p.description ? (
+        <Text style={[type.body, { color: colors.onSurfaceSecondary, lineHeight: 22 }]}>{p.description}</Text>
+      ) : null}
+
+      {/* Spec pairs */}
+      <View style={{ gap: spacing.sm }}>
+        <Text style={type.overline}>Specifications</Text>
+        <Card style={{ padding: 0 }}>
+          {(
+            [
+              ["Series", p.series],
+              ["Subcategory", p.subcategory],
+              ["Colour / Finish", [p.colour, p.finish].filter(Boolean).join(" · ")],
+              ["Finish code", p.finish_code],
+              ["Material", p.material],
+              ["Dimensions", p.dimensions],
+              ["Warranty", p.warranty],
+              ...((p.specs && Object.keys(p.specs).length)
+                ? Object.entries(p.specs).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : String(v)])
+                : []),
+            ] as [string, any][]
+          )
+            .filter(([, v]) => v && String(v).trim() !== "")
+            .map(([k, v], i, arr) => (
+              <View key={k} style={[styles.specRow, i < arr.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]}>
+                <Text style={{ fontSize: 13, color: colors.onSurfaceMuted, flex: 1 }}>{k}</Text>
+                <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface, flex: 1.4, textAlign: "right" }}>{String(v)}</Text>
+              </View>
+            ))}
+        </Card>
+      </View>
+
+      {/* Actions (inline on tablet; sticky on phone below) */}
+      {isWide ? (
+        <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+          <Button label="Add to quotation" icon="plus" size="lg" onPress={() => router.push("/(admin)/quotations/new" as any)} testID="add-to-quote" />
+          <Button label="Share" variant="secondary" icon="share-2" size="lg" onPress={() => {}} />
+        </View>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+      <SafeAreaView edges={["top"]} style={styles.topBar}>
+        <IconButton icon="chevron-left" onPress={() => router.back()} size={36} tone="surface" accessibilityLabel="Back" />
+        <View style={{ flex: 1 }}>
+          <Text style={type.caption} numberOfLines={1}>{brandName}{p.series ? ` · ${p.series}` : ""}</Text>
+        </View>
+        <IconButton icon="heart" onPress={() => {}} size={36} tone="surface" accessibilityLabel="Save" />
+        <IconButton icon="share-2" onPress={() => {}} size={36} tone="surface" accessibilityLabel="Share" />
+      </SafeAreaView>
+
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: isPhone ? bottomBarHeight + insets.bottom + spacing.lg : spacing.xxxl }}
+        showsVerticalScrollIndicator={false}
+      >
+        {isWide ? (
+          <View style={{ flexDirection: "row", padding: pad, gap: spacing.xxl, alignItems: "flex-start" }}>
+            <View style={{ flexBasis: 0, flexGrow: 1, flexShrink: 1, minWidth: 0 }}>{Gallery}</View>
+            <View style={{ flexBasis: 0, flexGrow: 1.05, flexShrink: 1, minWidth: 0 }}>{Details}</View>
+          </View>
+        ) : (
+          <>
+            {Gallery}
+            {Details}
+          </>
+        )}
+
+        {/* Related products */}
         {alternates.length > 0 ? (
-          <View style={{ gap: spacing.md }}>
-            <Text style={type.overline}>Related products</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12 }}>
+          <View style={{ marginTop: spacing.xxxl, gap: spacing.md, paddingHorizontal: pad }}>
+            <View>
+              <Text style={type.overline}>Related</Text>
+              <Text style={[type.titleLg, { marginTop: 2 }]}>You may also like</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingBottom: 4 }} style={{ marginHorizontal: -pad, paddingHorizontal: pad }}>
               {alternates.map((a) => (
                 <Pressable
                   key={a.id}
                   onPress={() => router.replace(`/(admin)/catalog/${a.id}` as any)}
-                  style={{ width: 200 }}
+                  style={{ width: 180 }}
                 >
-                  <View style={{ aspectRatio: 1, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary }}>
-                    <ProductImage source={(a as any).hero_image_url ? [(a as any).hero_image_url, ...(a.images || [])] : a.images} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel={a.sku} borderRadius={radius.md} />
+                  <View style={{ aspectRatio: 1, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+                    <ProductImage
+                      source={(a as any).hero_image_url ? [(a as any).hero_image_url, ...(a.images || [])] : a.images}
+                      style={StyleSheet.absoluteFill as any}
+                      contentFit="contain"
+                      fallbackLabel={a.sku}
+                      borderRadius={0}
+                    />
                   </View>
-                  <Text numberOfLines={2} style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface, marginTop: 6 }}>{a.name}</Text>
-                  <Text style={[type.mono, { fontSize: 13, fontWeight: "700", marginTop: 2 }]}>{money(a.price)}</Text>
+                  <Text numberOfLines={2} style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface, marginTop: 8, minHeight: 34 }}>{a.name}</Text>
+                  <View style={{ marginTop: 4 }}><PriceTag price={a.price} mrp={a.mrp} size="sm" /></View>
                 </Pressable>
               ))}
             </ScrollView>
           </View>
         ) : null}
       </ScrollView>
-    </SafeAreaView>
+
+      {/* Sticky bottom CTA — phone only */}
+      {isPhone ? (
+        <View style={[styles.stickyBar, { paddingBottom: insets.bottom + 10 }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={type.caption}>Total</Text>
+            <Text style={{ fontSize: 18, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] }}>{money(p.price)}</Text>
+          </View>
+          <Button label="Add to quotation" icon="plus" size="lg" onPress={() => router.push("/(admin)/quotations/new" as any)} testID="add-to-quote" />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
-function VariantPill({ product, active, onPress }: { product: Product; active: boolean; onPress: () => void }) {
+function VariantSwatch({ product, active, onPress }: { product: Product; active?: boolean; onPress: () => void }) {
   const label = product.colour || product.variant_label || product.finish || "Variant";
+  const c = swatchColor(label);
   return (
     <Pressable
       onPress={onPress}
       style={{
         flexDirection: "row", alignItems: "center", gap: 8,
         borderWidth: active ? 2 : 1, borderColor: active ? colors.brand : colors.border,
-        paddingLeft: 6, paddingRight: 12, paddingVertical: 6, borderRadius: 999,
+        paddingLeft: 5, paddingRight: 12, paddingVertical: 5, borderRadius: 999,
         backgroundColor: active ? colors.brandTint : colors.surfaceSecondary,
       }}
     >
-      <View style={[styles.swatchDot, { backgroundColor: swatchColor(label) }]} />
-      <Text style={{ fontSize: 12, fontWeight: active ? "700" : "600", color: colors.onSurface }}>{label}</Text>
+      <View style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 1, borderColor: colors.border, backgroundColor: c }} />
+      <Text style={{ fontSize: 12, fontWeight: active ? "700" : "600", color: colors.onSurface, maxWidth: 140 }} numberOfLines={1}>{label}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  topbar: {
-    flexDirection: "row", alignItems: "center",
-    paddingHorizontal: spacing.lg, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border, backgroundColor: colors.surface,
+  topBar: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingHorizontal: spacing.md, paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
-  backBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
-  specRow: { flexDirection: "row", justifyContent: "space-between", padding: spacing.md },
-  swatchDot: { width: 18, height: 18, borderRadius: 9, borderWidth: 1, borderColor: colors.border },
-  thumb: { width: 64, height: 64, borderRadius: radius.sm, overflow: "hidden", backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
-  qualityBadgeAbs: { position: "absolute", top: 12, left: 12, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
+  brandTag: { fontSize: 10, fontWeight: "800", color: colors.brand, letterSpacing: 1.3 },
+  overline: { fontSize: 10, fontWeight: "700", letterSpacing: 1.1, color: colors.onSurfaceMuted, textTransform: "uppercase" },
+
+  pageDots: {
+    position: "absolute", left: 0, right: 0, bottom: 12,
+    flexDirection: "row", justifyContent: "center", gap: 5,
+  },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(15,23,42,0.25)" },
+  dotActive: { width: 18, backgroundColor: colors.brand },
+  countPill: {
+    position: "absolute", top: 12, right: 12,
+    backgroundColor: "rgba(15,23,42,0.72)",
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999,
+    flexDirection: "row", alignItems: "center", gap: 4,
+  },
+  countPillText: { color: "#fff", fontSize: 11, fontWeight: "700" },
+
+  thumb: {
+    width: 64, height: 64, borderRadius: radius.sm, overflow: "hidden",
+    backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border,
+  },
+
+  savePill: {
+    backgroundColor: colors.successBg, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
+  },
+  savePillText: { color: colors.success, fontSize: 11, fontWeight: "800", letterSpacing: 0.4 },
+  swatchLg: {
+    width: 40, height: 40, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  poorHint: {
+    flexDirection: "row", gap: 8, alignItems: "flex-start",
+    padding: 10, backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm,
+    borderLeftWidth: 3, borderLeftColor: colors.onSurfaceMuted,
+  },
+  specRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    padding: 14, gap: 12,
+  },
+  stickyBar: {
+    position: "absolute", left: 0, right: 0, bottom: 0,
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingHorizontal: spacing.lg, paddingTop: 10,
+    backgroundColor: colors.surfaceSecondary,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
+    shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 18, shadowOffset: { width: 0, height: -8 }, elevation: 8,
+  },
 });
