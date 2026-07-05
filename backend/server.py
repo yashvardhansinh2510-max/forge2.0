@@ -19,6 +19,9 @@ from routes.customer_routes import router as customer_router  # noqa: E402
 from routes.quotation_routes import router as quotation_router  # noqa: E402
 from routes.misc_routes import router as misc_router  # noqa: E402
 from routes.media_routes import router as media_router  # noqa: E402
+from routes.supplier_routes import router as supplier_router  # noqa: E402
+from routes.purchase_routes import router as purchase_router  # noqa: E402
+from routes.activity_routes import router as activity_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -51,6 +54,9 @@ api.include_router(customer_router)
 api.include_router(quotation_router)
 api.include_router(misc_router)
 api.include_router(media_router)
+api.include_router(supplier_router)
+api.include_router(purchase_router)
+api.include_router(activity_router)
 
 app.include_router(api)
 

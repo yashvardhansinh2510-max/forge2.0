@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
 import { Button, Card, StatusBadge } from "@/src/components/ui";
 import { api, getToken } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
@@ -30,20 +31,26 @@ const NEXT_STATUS: Record<string, string> = {
   pending_approval: "approved",
 };
 
+type PoStub = { id: string; number: string; brand_name?: string | null; status: string; grand_total: number };
+
 export default function QuotationDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [q, setQ] = useState<Quotation | null>(null);
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [linkedPos, setLinkedPos] = useState<PoStub[]>([]);
 
-  const load = async () => {
-    const [doc, br] = await Promise.all([
+  const load = useCallback(async () => {
+    const [doc, br, tl, pos] = await Promise.all([
       api.get<Quotation>(`/quotations/${id}`),
       api.get<Breakdown>(`/quotations/${id}/breakdown`).catch(() => null),
+      api.get<TimelineEvent[]>(`/activity/quotation/${id}`).catch(() => []),
+      api.get<PoStub[]>(`/purchase-orders?quotation_id=${id}`).catch(() => []),
     ]);
-    setQ(doc); setBreakdown(br);
-  };
-  useEffect(() => { load(); }, [id]);
+    setQ(doc); setBreakdown(br); setTimeline(tl); setLinkedPos(pos);
+  }, [id]);
+  useEffect(() => { load(); }, [load]);
 
   const openPdf = async () => {
     const token = await getToken();
@@ -84,6 +91,15 @@ export default function QuotationDetail() {
           <Button label="PDF" icon="download" variant="secondary" size="sm" onPress={openPdf} testID="download-pdf" />
           {NEXT_STATUS[q.status] ? (
             <Button label={`Mark ${NEXT_STATUS[q.status].replace("_", " ")}`} icon="check" size="sm" onPress={advance} testID="advance-status" />
+          ) : null}
+          {q.status !== "ordered" && q.items.length > 0 ? (
+            <Button
+              label="Place Order"
+              icon="shopping-cart"
+              size="sm"
+              onPress={() => router.push(`/(admin)/quotations/${id}/place-order` as any)}
+              testID="place-order-btn"
+            />
           ) : null}
         </View>
       </View>
@@ -172,6 +188,37 @@ export default function QuotationDetail() {
             <Text style={[type.body, { color: colors.onSurfaceSecondary, marginTop: 6 }]}>{q.notes}</Text>
           </Card>
         ) : null}
+
+        {linkedPos.length > 0 ? (
+          <Card>
+            <Text style={type.overline}>Linked Purchase Orders</Text>
+            <View style={{ gap: 8, marginTop: spacing.md }}>
+              {linkedPos.map((po) => (
+                <Pressable
+                  key={po.id}
+                  testID={`linked-po-${po.id}`}
+                  onPress={() => router.push(`/(admin)/purchase-orders/${po.id}` as any)}
+                  style={styles.linkedPoRow}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[type.mono, { fontSize: 12 }]}>{po.number}</Text>
+                    <Text style={{ fontSize: 13, fontWeight: "600", marginTop: 2 }}>{po.brand_name || "—"}</Text>
+                  </View>
+                  <StatusBadge status={po.status} />
+                  <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "600" }]}>{money(po.grand_total)}</Text>
+                  <Feather name="chevron-right" size={14} color={colors.onSurfaceMuted} />
+                </Pressable>
+              ))}
+            </View>
+          </Card>
+        ) : null}
+
+        <Card>
+          <Text style={type.overline}>Activity</Text>
+          <View style={{ marginTop: spacing.md }}>
+            <ActivityTimeline events={timeline} emptyLabel="No activity yet — every mutation from now on will land here." />
+          </View>
+        </Card>
       </ScrollView>
     </SafeAreaView>
   );
@@ -189,4 +236,10 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md, alignItems: "center",
   },
   row: { flexDirection: "row", padding: spacing.md, alignItems: "center", gap: 8 },
+  linkedPoRow: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    padding: spacing.md, borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
 });

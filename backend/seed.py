@@ -263,6 +263,30 @@ async def seed_if_empty():
         )
         await db.followups.insert_one(f.dict())
 
+    # ---- Suppliers (one dealership per brand) ----
+    from models import Supplier
+    supplier_contacts = {
+        "Hansgrohe": ("Hansgrohe India Pvt. Ltd.", "Rakesh Gupta", "orders@hansgrohe.in", "+91 22 2683 4400", "Mumbai"),
+        "Axor": ("Hansgrohe India Pvt. Ltd. (AXOR)", "Rakesh Gupta", "axor@hansgrohe.in", "+91 22 2683 4400", "Mumbai"),
+        "Grohe": ("LIXIL India — Grohe Division", "Priya Menon", "trade@grohe.in", "+91 124 428 0000", "Gurugram"),
+        "Vitra": ("Eczacıbaşı Vitra India", "Karthik Rao", "orders@vitra.in", "+91 80 4055 8000", "Bengaluru"),
+        "Geberit": ("Geberit Plumbing Technology India", "Anjali Deshpande", "sales@geberit.in", "+91 22 6739 5900", "Mumbai"),
+    }
+    for name, brand in brand_by_name.items():
+        entry = supplier_contacts.get(name, (f"{name} Distributor", "—", None, None, "—"))
+        sup = Supplier(
+            name=entry[0],
+            brand_id=brand.id,
+            brand_name=name,
+            contact_person=entry[1],
+            email=entry[2],
+            phone=entry[3],
+            city=entry[4],
+            payment_terms="30 days credit",
+            active=True,
+        )
+        await db.suppliers.insert_one(sup.dict())
+
     # ---- Notifications for the sales user ----
     for i in range(5):
         n = Notification(

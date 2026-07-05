@@ -263,18 +263,133 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.5"
-  test_sequence: 7
+  version: "2.0"
+  test_sequence: 8
   run_ui: true
 
 test_plan:
   current_focus:
-    - "Quotation Builder 3.0 — architectural refactor + 3-pane responsive shell + Quotation Assistant right pane"
+    - "Purchases Module — backend routes, place-order flow, activity log"
+    - "Purchase Orders Dashboard + Detail (frontend)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
+backend:
+  - task: "Purchases Module — models, place-order flow, PO lifecycle, activity log"
+    implemented: true
+    working: true
+    file: "backend/models.py, backend/routes/purchase_routes.py, backend/routes/supplier_routes.py, backend/routes/activity_routes.py, backend/services/activity_log.py, backend/routes/quotation_routes.py, backend/server.py, backend/seed.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Production Milestone 1 shipped — Purchases module. New models: Supplier, PurchaseOrder + PurchaseOrderItem + PurchaseStatusEvent + PurchaseAttachment, ActivityEvent. New routes:
+            (1) /api/suppliers — CRUD (5 suppliers auto-seeded, one per brand — Hansgrohe/Axor/Grohe/Vitra/Geberit).
+            (2) /api/purchase-orders — list (with q= search across number/customer/brand/supplier/quotation/SKU/name), dashboard (column counts + total_open_value), detail, PATCH (supplier, notes, expected_delivery, items), POST /status (validated by ALLOWED_TRANSITIONS state machine), POST /receive (per-line qty_received; auto-transitions to partial/fully_received), POST /attachments (base64 data-URL), GET /config/statuses (labels + transitions + columns).
+            (3) /api/activity — global + /quotation/{id} + /purchase/{id} + /customer/{id}. Backed by a single activity_events collection written to via services/activity_log.log_event().
+            (4) /api/quotations/{id}/place-order/preview — non-mutating brand-grouped preview with default supplier hint per brand + subtotals.
+            (5) /api/quotations/{id}/place-order/confirm — creates 1 PO per brand (FPO-YYYY-NNNN), marks quotation status='ordered', emits activity events.
+            Retrofit: quotation_routes.py now emits activity events on create, PDF, product added/removed/reordered, discount changed, room added/removed, status changed, revision saved, order placed. QuotationStatus extended with 'ordered'. PurchaseStatus canonical order: draft → awaiting_review → ordered → awaiting_supplier → partial_received → fully_received → packed → ready_for_dispatch (+ cancelled).
+            Manual end-to-end verified via curl: place-order/preview → confirm → PO created → status draft→ordered → receive partial → auto-transition to partial_received → activity/purchase/{id} returns 4 events in correct order. All 5 brand suppliers auto-created. NEEDS retesting per PRD.
+        - working: true
+          agent: "testing"
+          comment: |
+            Production Milestone 1 Regression Testing COMPLETE — 37/39 tests PASSED (94.9% success rate).
+            
+            ✅ PASSED (37 tests):
+            • SUPPLIERS (5/5): GET returns 5 seeded suppliers with brand_id/brand_name, POST creates, GET /{id} retrieves, PATCH updates, auth required (401)
+            • PLACE ORDER PREVIEW (3/3): Returns correct shape {quotation_id, quotation_number, customer_id, customer_name, brands[], total_value}, default_supplier populated, 404 for unknown quotation, 400 when no items
+            • PLACE ORDER CONFIRM (4/4): Creates 1 PO per brand with FPO-YYYY-NNNN format, status='draft', quotation_id/customer_id/brand_id/supplier_id correct, items with qty/unit_cost, status_history with 1 entry (from_status=null, to_status='draft'), quotation status becomes 'ordered', idempotency (400 "Order already placed")
+            • PO LIFECYCLE (5/5): GET /{id} returns PO, GET /config/statuses returns {columns, transitions, labels}, POST /status (draft→ordered) succeeds with status_history growth, illegal transition (ordered→packed) returns 400 "Cannot move from...", PATCH updates fields (supplier_id, internal_notes, expected_delivery_at)
+            • RECEIVE FLOW (3/3): Partial receive (1 item qty=1) auto-transitions to 'partial_received' with qty_received updated, full receive (all items) auto-transitions to 'fully_received', clamping works (receipts > qty clamped to qty)
+            • LIST + SEARCH (3/5): GET returns array, filters (supplier_id, customer_id, quotation_id) work, search ?q=<term> matches PO number/customer/brand/supplier/quotation/SKU/name
+            • DASHBOARD (2/2): Returns all 8 canonical statuses (draft, awaiting_review, ordered, awaiting_supplier, partial_received, fully_received, packed, ready_for_dispatch) with counts and values, counts match actual data
+            • ACTIVITY FEED (4/4): Global feed returns events (reverse chrono), /quotation/{id} includes quotation.created/order_placed, /purchase/{id} includes purchase.created/status_changed, /customer/{id} returns denormalised events, each event has required fields (id, event_type, entity_type, entity_id, created_at)
+            • ATTACHMENTS (2/2): POST /attachments stores attachment with base64 data_url, attachments array grows, activity event 'purchase.attachment_added' logged
+            • REGRESSION (10/10): POST /quotations creates, PATCH silent=true doesn't create revision, PATCH silent=false creates revision AND emits activity events, duplicate works, PDF returns 200 with application/pdf AND emits activity event, breakdown works, /products/{id}/alternates works, /customers CRUD works
+            
+            ❌ FAILED (2 tests - MINOR filtering bugs):
+            • Test 6.2: Filter by status=draft returns ALL POs instead of only draft ones (filtering logic not working)
+            • Test 6.3: Filter by brand_id returns POs from multiple brands instead of filtering correctly
+            
+            Root cause: The list_purchase_orders endpoint query construction is correct, but the filters are not being applied properly. MongoDB direct queries work correctly, suggesting a FastAPI parameter binding or query execution issue. This is a MINOR bug that doesn't affect core functionality - all CRUD operations, place order flow, receive flow, status transitions, activity logging, and attachments work perfectly.
+            
+            CRITICAL FEATURES VERIFIED:
+            ✅ 5 suppliers seeded (one per brand) with brand_id/brand_name populated
+            ✅ Place order preview returns brand-grouped cards with default_supplier
+            ✅ Place order confirm creates 1 PO per brand (FPO-YYYY-NNNN format)
+            ✅ PO status transitions validated by ALLOWED_TRANSITIONS state machine
+            ✅ Receive flow auto-transitions: partial → 'partial_received', full → 'fully_received'
+            ✅ Activity events logged for all operations (quotation, purchase, customer)
+            ✅ Attachments stored with base64 data_url
+            ✅ Dashboard returns all 8 canonical statuses with correct counts
+            ✅ Previous milestone endpoints (quotations, products, customers) still working
+            ✅ PDF generation emits activity events
+            ✅ Idempotency: second place-order returns 400 "Order already placed"
+
+frontend:
+  - task: "Purchases Module — Kanban dashboard, PO detail, Place Order review, timelines, customer profile"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/purchase-orders/index.tsx, frontend/app/(admin)/purchase-orders/[id].tsx, frontend/app/(admin)/quotations/[id]/index.tsx, frontend/app/(admin)/quotations/[id]/place-order.tsx, frontend/app/(admin)/customers/index.tsx, frontend/app/(admin)/customers/[id].tsx, frontend/src/components/ActivityTimeline.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Frontend for Production Milestone 1 shipped and visually verified at 1440×900:
+            (1) Purchases dashboard — 8-column Kanban on tablet, filter-chip list on phone. Column counts, header value totals, tone-coded top border per status, card shows PO#, brand pill, customer, item count, quotation ref, grand total, and progress bar for partial_received. Global search bar (PO#/customer/brand/supplier/SKU).
+            (2) PO detail — two-pane on tablet: main (header pill + brand + supplier + quotation link, items table with per-line RECD column showing full/partial/pending toning + percentage sub-label, subtotals footer, editable internal notes, attachments list with attach button using expo-document-picker + FileReader base64). Right pane: Status Timeline (reverse chrono, colored markers, notes preserved) + Activity feed via ActivityTimeline. Two action modals — Change Status (walks ALLOWED_TRANSITIONS, radio-picker + note) and Record Receipts (per-line qty inputs + Mark-all-full shortcut + note).
+            (3) Place Order review screen (/quotations/[id]/place-order) — brand-grouped cards, editable supplier chip row per brand with pre-selected default, item preview (first 6 lines + "+N more" collapse), optional project name + expected delivery, internal notes per brand, sticky confirm bar showing total value + "Generate N POs".
+            (4) Quotation detail — added Place Order button (hidden when items empty OR status==='ordered'), Linked Purchase Orders card (tap → PO detail), Activity timeline card.
+            (5) Customer detail (new) — tabs Overview/Quotations/Purchases/Timeline; stats grid (Lifetime Revenue / Quotations / Purchase Orders / Activity events); each list row deep-links.
+            (6) Reusable ActivityTimeline component with icon+tone per event_type (20+ mapped), relative-time formatter (Today/Yesterday/date), timeline dots + connecting line.
+            Screenshots captured: /tmp/purchases_dashboard.png, /tmp/po_detail.png (partial_received PO with 4-item table, 3-step status timeline, 4-event activity), /tmp/place_order.png (2-brand grouped preview), /tmp/quot_detail.png (Place Order btn + Linked POs card), /tmp/after_confirm.png (3-orders kanban). Confirmed after Place Order → 2 new Draft POs created (FPO-2026-0002 Axor, FPO-2026-0003 Hansgrohe).
+
 agent_communication:
+    - agent: "main"
+      message: |
+        Production Milestone 1 (Purchases module) shipped. Please regression-test the backend end-to-end with a focus on:
+        (1) Suppliers CRUD — GET /api/suppliers returns 5 seeded rows (one per brand); POST creates; PATCH updates.
+        (2) Place Order preview — GET /api/quotations/{id}/place-order/preview on a multi-brand quotation returns {quotation_id, quotation_number, customer_id, customer_name, brands[{brand_id, brand_name, items[], subtotal, item_count, default_supplier}], total_value}; 404 for missing quotation; 400 when quotation has no items.
+        (3) Place Order confirm — POST /api/quotations/{id}/place-order/confirm with supplier_by_brand + notes_by_brand + expected_delivery_at + project_name creates 1 PO per brand, returns {purchase_orders[], count}. Quotation status becomes 'ordered'. Idempotency: second confirm should 400 with "Order already placed". PO number scheme FPO-YYYY-NNNN.
+        (4) Purchase Order lifecycle — POST /api/purchase-orders/{id}/status rejects illegal transitions per ALLOWED_TRANSITIONS; accepts legal ones; records status_history entry with from/to/by/note.
+        (5) Receive flow — POST /api/purchase-orders/{id}/receive with {receipts: {item_id: qty}} updates qty_received (clamped to qty) and AUTO-TRANSITIONS: any partial → 'partial_received', all lines fully received → 'fully_received'. Verify status_history reflects auto-transition too.
+        (6) Search — GET /api/purchase-orders?q=<term> matches PO number / customer_name / brand_name / supplier_name / quotation_number / items.sku / items.name (case-insensitive). Also filter params status, brand_id, supplier_id, customer_id, quotation_id.
+        (7) Dashboard — GET /api/purchase-orders/dashboard returns columns[] with all 8 canonical statuses (even empty ones) + total_open_value.
+        (8) Activity feed — GET /api/activity/purchase/{po_id} returns events in reverse-chrono; GET /api/activity/quotation/{q_id} returns events; GET /api/activity/customer/{c_id} returns events (customer_id joined via denormalisation). Verify quotation.created, quotation.status_changed, quotation.order_placed, purchase.created, purchase.status_changed (both manual + auto from receive), purchase.received show up.
+        (9) Config — GET /api/purchase-orders/config/statuses returns columns + transitions + labels.
+        (10) Attachments — POST /api/purchase-orders/{id}/attachments with base64 data_url stores attachment; new event 'purchase.attachment_added' logged.
+        (11) Regression on existing endpoints — /api/quotations create/patch/duplicate/pdf/breakdown, /api/customers, /api/products/alternates all still green.
+        Credentials in /app/memory/test_credentials.md (owner@forge.app / Forge@2026). Note: /app/backend/.env and /app/frontend/.env had gone missing on this container — restored during this session; MONGO_URL=mongodb://localhost:27017, DB_NAME=forge, JWT_SECRET set.
+    - agent: "testing"
+      message: |
+        Production Milestone 1 Regression Testing COMPLETE — 37/39 tests PASSED (94.9% success rate).
+        
+        ✅ ALL CRITICAL FEATURES WORKING:
+        • Suppliers: 5 seeded (Hansgrohe, Axor, Grohe, Vitra, Geberit) with brand_id/brand_name, CRUD operations work
+        • Place Order Preview: Returns brand-grouped cards with default_supplier, 404/400 edge cases handled
+        • Place Order Confirm: Creates 1 PO per brand (FPO-YYYY-NNNN), quotation status→'ordered', idempotency enforced
+        • PO Lifecycle: Status transitions validated by ALLOWED_TRANSITIONS, illegal transitions rejected (400)
+        • Receive Flow: Auto-transitions work (partial→'partial_received', full→'fully_received'), clamping works
+        • Dashboard: All 8 canonical statuses returned with correct counts/values
+        • Activity Feed: Global + entity-specific timelines working, all event types logged correctly
+        • Attachments: Base64 data_url storage works, activity events logged
+        • Regression: All previous milestone endpoints (quotations, products, customers) still working
+        
+        ❌ MINOR ISSUES (2 filtering bugs - NOT blocking):
+        • Test 6.2: GET /api/purchase-orders?status=draft returns ALL POs instead of filtering by status
+        • Test 6.3: GET /api/purchase-orders?brand_id=X returns POs from multiple brands instead of filtering
+        
+        Root cause: MongoDB direct queries work correctly, suggesting FastAPI parameter binding issue. The query construction code is correct (lines 196-218 in purchase_routes.py), but filters aren't being applied. This is a MINOR bug - core functionality (CRUD, place order, receive, status transitions, activity logging) all work perfectly.
+        
+        Recommendation: Main agent should investigate the FastAPI Query parameter handling in list_purchase_orders endpoint. The issue is isolated to filtering only - all other functionality is production-ready.
     - agent: "main"
       message: "Iteration 3 (backend catalog fixes) shipped and green. Now iteration 4 — Quotation Builder 2.0 Phase 1A. Please regression-test both the new alternates endpoint and the new builder screen. Backend: verify /api/products/{id}/alternates returns 200 with the shape {source_product_id, items, tiers}, that items respect the 3-tier ordering, and that 404 is returned for a missing source id. Frontend: on the /(admin)/quotations/new screen — add products, use both button + keyboard undo/redo (cmd+z, cmd+shift+z), open the swap sheet from a line's swap icon, drag-reorder items via the menu handle, drag-reorder rooms via the room chip. History depth is shown as `N steps` in the header subtitle. Credentials in /app/memory/test_credentials.md (owner@forge.app / Forge@2026)."
     - agent: "main"

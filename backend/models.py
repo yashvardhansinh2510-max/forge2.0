@@ -14,6 +14,21 @@ Role = Literal[
 
 QuotationStatus = Literal[
     "draft", "pending_approval", "approved", "rejected", "sent", "won", "lost", "expired",
+    "ordered",  # order placed — POs generated
+]
+
+# Purchase Order lifecycle. Ordering matters — the frontend Kanban / status
+# selectors reflect this canonical sequence.
+PurchaseStatus = Literal[
+    "draft",              # PO generated, not yet reviewed
+    "awaiting_review",    # sent for internal approval
+    "ordered",            # sent to supplier
+    "awaiting_supplier",  # supplier acknowledged, awaiting production/ship
+    "partial_received",   # some line items received
+    "fully_received",     # all line items received
+    "packed",             # goods packed for customer dispatch
+    "ready_for_dispatch", # awaiting final dispatch to customer
+    "cancelled",
 ]
 
 
@@ -268,7 +283,152 @@ class QuotationUpdate(BaseModel):
 
 
 # ---------- Ops modules (scaffold) ----------
+class Supplier(TimestampedModel):
+    """A dealership/supplier we buy from — normally one per brand but not strict."""
+    name: str
+    brand_id: Optional[str] = None
+    brand_name: Optional[str] = None
+    contact_person: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    gstin: Optional[str] = None
+    payment_terms: Optional[str] = None   # e.g. "30 days credit"
+    notes: Optional[str] = None
+    active: bool = True
+
+
+class SupplierCreate(BaseModel):
+    name: str
+    brand_id: Optional[str] = None
+    contact_person: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    gstin: Optional[str] = None
+    payment_terms: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class PurchaseOrderItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    product_id: str
+    sku: str
+    name: str
+    image: Optional[str] = None
+    category_id: Optional[str] = None
+    room: Optional[str] = None
+    qty: float = 1
+    qty_received: float = 0
+    unit_cost: float = 0                  # what we pay the supplier (may differ from retail)
+    tax_pct: float = 18
+    notes: Optional[str] = None
+    quotation_line_id: Optional[str] = None
+    sort_order: int = 0
+
+
+class PurchaseStatusEvent(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    at: str = Field(default_factory=now_iso)
+    from_status: Optional[str] = None
+    to_status: str
+    by_user_id: str
+    by_user_name: str
+    note: Optional[str] = None
+
+
+class PurchaseAttachment(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    at: str = Field(default_factory=now_iso)
+    by_user_id: str
+    by_user_name: str
+    filename: str
+    mime: str = "application/octet-stream"
+    data_url: str                          # base64 data URL (kept simple per system rules)
+    size_bytes: int = 0
+    note: Optional[str] = None
+
+
 class PurchaseOrder(TimestampedModel):
+    number: str                            # human — e.g. FPO-2026-0001
+    quotation_id: Optional[str] = None
+    quotation_number: Optional[str] = None
+    customer_id: str
+    customer_name: str
+    project_id: Optional[str] = None       # future: multi-project customers
+    project_name: Optional[str] = None
+    brand_id: Optional[str] = None
+    brand_name: Optional[str] = None
+    supplier_id: Optional[str] = None
+    supplier_name: Optional[str] = None
+    status: PurchaseStatus = "draft"
+    items: list[PurchaseOrderItem] = []
+    status_history: list[PurchaseStatusEvent] = []
+    attachments: list[PurchaseAttachment] = []
+    internal_notes: Optional[str] = None
+    expected_delivery_at: Optional[str] = None
+    delivered_at: Optional[str] = None
+    subtotal: float = 0
+    tax_total: float = 0
+    grand_total: float = 0
+    created_by: str
+    created_by_name: str
+    assigned_to: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+
+
+class PurchaseOrderUpdate(BaseModel):
+    supplier_id: Optional[str] = None
+    supplier_name: Optional[str] = None
+    internal_notes: Optional[str] = None
+    expected_delivery_at: Optional[str] = None
+    assigned_to: Optional[str] = None
+    items: Optional[list[PurchaseOrderItem]] = None
+
+
+class PurchaseStatusPayload(BaseModel):
+    to_status: PurchaseStatus
+    note: Optional[str] = None
+
+
+class PurchaseReceivePayload(BaseModel):
+    """Mark quantities received (per line). Backend infers status transition."""
+    receipts: dict[str, float]             # {item_id: qty_received}
+    note: Optional[str] = None
+
+
+class PurchaseAttachmentCreate(BaseModel):
+    filename: str
+    mime: str = "application/octet-stream"
+    data_url: str
+    note: Optional[str] = None
+
+
+# ---------- Activity Log (audit trail) ----------
+ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup"]
+
+
+class ActivityEvent(TimestampedModel):
+    """Immutable audit entry. Timelines are read models over this collection."""
+    event_type: str                        # e.g. quotation.created, purchase.status_changed
+    entity_type: ActivityEntity
+    entity_id: str
+    actor_id: Optional[str] = None
+    actor_name: Optional[str] = None
+    # De-normalised references so timelines resolve without extra joins.
+    customer_id: Optional[str] = None
+    quotation_id: Optional[str] = None
+    purchase_id: Optional[str] = None
+    payload: dict = {}
+    # Human-readable summary rendered by the frontend as-is when present.
+    summary: Optional[str] = None
+
+
+class PurchaseOrder_Legacy(TimestampedModel):
+    """Kept temporarily so anything still typing against the old scaffold doesn't
+    crash. New code should use PurchaseOrder above."""
     number: str
     supplier_name: str
     status: Literal["draft", "sent", "received", "cancelled"] = "draft"
