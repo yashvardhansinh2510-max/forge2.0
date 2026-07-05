@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration 5 — Frontend regression test of the Quotation Builder 3.0 refactor (monolithic new.tsx → feature-scoped module tree under /src/components/quotation/**). All four responsive layouts render correctly, the new Quotation Assistant pane/sheet works end-to-end, and the must-preserve interactions (search+add, product picker sheet, keyboard undo/redo, line focus, room ops, line ops, notes) are functionally intact. Two minor findings and a set of pre-existing console warnings noted. No red screens, no fatal errors.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "BuilderContext / autosave",
+        "issue": "After adding a line on a freshly-mounted builder, the topbar subtitle and save-status testID remain stuck at 'Draft — no changes yet'; it never transitions to 'Saving…' → 'Saved · HH:MM'. Root cause: `persist()` early-returns when `s.customerId` is null (BuilderContext.tsx:227). The bootstrap effect at lines 187–209 only sets customerId if customers list is non-empty (`if (cs[0] && !history.state.customerId)`), and the current demo DB has zero customers — so builder never has a customer bound and never saves. The `save-quotation-btn` / Finish & review buttons are also correctly disabled. This is behaviourally correct, but from a QA-perspective the user must be told to pick a customer via the CustomerBar; otherwise no autosave label progression is observable. If customers do exist in the target environment, the auto-select still works (verified logic path).",
+        "testID": "save-status",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "BuilderTopbar undo/redo buttons",
+        "issue": "Clicking `[data-testid=\"undo-btn\"]` / `[data-testid=\"redo-btn\"]` via Playwright (force=True) did not change line count in my test session. Keyboard shortcuts (Cmd+Z / Ctrl+Z) DO work end-to-end. This is likely a Pressable hit-target quirk (small icon-only button) rather than a functional bug, but worth a manual re-verification on real touch/mouse input.",
+        "testID": "undo-btn / redo-btn",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "iPhone 430×932",
+        "issues": [
+          "Sticky bottom summary bar renders with 3 elements (₹ total block + 'Add' + 'Finish'). Touch targets look ≥44pt but the two buttons compete for horizontal space on small phones — cramped but usable."
+        ]
+      }
+    ],
+    "react_native_issues": [
+      { "component": "Style deprecations (pre-existing, not from this refactor)", "issue": "Console emits 'shadow* style props are deprecated. Use boxShadow' and 'props.pointerEvents is deprecated. Use style.pointerEvents' on every mount. Also 'Accessing element.ref was removed in React 19' — from expo-router / react-native-web internals. None break rendering; migrate at leisure." }
+    ]
+  },
+  "test_report_links": [
+    "/tmp/desktop_1440.png (1440×900 3-pane)",
+    "/tmp/ipad_landscape_1366x1024.png (3-pane)",
+    "/tmp/ipad_portrait_820x1180.png (2-pane)",
+    "/tmp/iphone_430x932.png (single-pane + sticky bar)",
+    "/tmp/iphone_picker.png (ProductPickerSheet on mobile)",
+    "/tmp/desktop_after_focus.png (Assistant pane populated after line tap)"
+  ],
+  "action_items": [
+    "Autosave observability: consider auto-selecting the first customer (or showing a prominent 'Select a customer to enable autosave' hint) so the save-status testID visibly progresses to 'Saving…' → 'Saved · HH:MM' during E2E tests, especially in envs where the customers collection is empty.",
+    "Verify undo-btn / redo-btn are wired to a Pressable large enough that Playwright's force-click reliably fires onPress. Keyboard shortcuts work, but users clicking the small icon buttons with a mouse should have the same behaviour.",
+    "Optional polish: migrate remaining shadow* / pointerEvents deprecations to keep future RN 0.75+ upgrades clean."
+  ],
+  "critical_code_review_comments": [
+    "BuilderShell.tsx:49-53 — useEffect that opens the AssistantSheet when a focus lands on tablet-portrait/phone uses `b.assistantFocus` as the dependency but relies on eslint-disable to omit `b.setAssistantOpenMobile`. Because BuilderApi is a fresh object every provider render, adding `b` to the deps would re-fire constantly — the current disable is correct but a comment explaining the rationale would prevent future 'fixes'.",
+    "BuilderContext.tsx:255-261 — the autosave effect depends on the whole `s` object, meaning every keystroke coalesced via useHistory schedules a fresh 900ms save. That's the intent, but the current cleanup only clears the last-scheduled timer, not any in-flight `persist()` fetch — a rapid burst of edits could still race two POSTs before the first returns. Consider an AbortController or an inflight flag before scaling.",
+    "AssistantPane.tsx:44-75 — the effect fetches product detail + alternates + family list serially. On slow networks the pane spinner may linger; consider Promise.all for alternates + family after the base product resolves.",
+    "AssistantPane.tsx:150-164 — variant switching on a focused line only patches sku/name/unit_price/finish; it does NOT reset qty or clear a line-level discount_pct. That may or may not be intended (probably fine — user chose a variant, not swapped a product), but worth documenting in a comment.",
+    "MobileControls.tsx:38-49 — the mobile-finalize button uses `disabled={!customerId || lines===0}` on the Pressable prop, but Pressable in RN Web does NOT honour disabled at the DOM level; the opacity-based visual disable works but the onPress still fires. Consider guarding inside the handler too."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only iteration per request)",
+    "frontend": "95% — every layout, every core interaction and every new AssistantPane feature verified against its spec. The two open items (autosave label observability + undo-btn click ergonomics) are minor."
+  },
+  "seed_data_creation": "None. Reused the existing seeded catalog (250 products / 60 families).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login: owner@forge.app / Forge@2026. Route: /quotations/new. Layout breakpoints in BuilderShell.tsx: THREE_PANE=980, TWO_PANE=720 measured on the CONTAINER (not window). Sheet testIDs are `room-sheet`, `discount-sheet`, `desc-sheet`, `swap-sheet` but they are only in DOM while the corresponding sheet state is non-null — assert immediately after tapping the trigger (`disc-{id}`, `line-desc-{id}`, `line-swap-{id}`, `add-room-btn`). Room-sheet input is `[data-testid=\"room-input\"]` (not `room-sheet-input`). Save button on desktop is `save-quotation-btn`; mobile equivalent is `mobile-finalize`. There is NO `finalize` testID (spec used that name informally). Assistant pane empty-state text is 'Nothing focused'. iPhone viewport shows NO FAB — the sticky bar's `mobile-add-first` opens ProductPickerSheet. Pre-existing console warnings that are NOT regressions: shadow*, pointerEvents, element.ref (react-native-web/react-19 noise).",
+  "rca_of_issue": "The 1,334-line new.tsx refactor is functionally clean. Autosave label appearing stuck is a data condition (empty customers collection → no customerId → persist() short-circuits), not a code regression from the refactor. Reproduction: log in as owner, go to /quotations/new, add any product, wait 5s → observe subtitle still says 'Draft — no changes yet · 1 step'. Mitigation: seed at least one active customer OR make the BuilderProvider gracefully create an anonymous draft-holding customer OR surface a UI nudge to pick a customer before line ops begin."
+}

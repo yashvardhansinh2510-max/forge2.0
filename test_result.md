@@ -247,6 +247,20 @@ frontend:
           agent: "main"
           comment: "P1/P2 recovery: (a) NEW <ProductImage> component at frontend/src/components/ProductImage.tsx — expo-image backed, memory-disk cache, blurhash placeholder, animated shimmer skeleton, ordered-candidate fallback (walks the images array on error), graceful FallbackGlyph with SKU label when a product has no image at all. (b) Swapped all 5 product-image call sites to ProductImage: dashboard.tsx top-products list, catalog/index.tsx grid, catalog/[id].tsx product detail, quotations/new.tsx picker rows + line rows + swap-sheet rows. Removed direct expo-image imports from those files. (c) Removed Unsplash/Pexels stock-photo URLs from seed.py — PRODUCT_SEEDS tuples now carry no image column; images=[] for every seed product; tagged 'demo' so they can be filtered later. (d) Cleared existing DB entries: 20 products had their stock URLs zeroed (variants on HAN-FAU-001 and HAN-FAU-002 preserved). No external CDN dependency remains. Verified visually at 1440×900 — catalog grid shows uniform fallback with brand badge + SKU label, discount %; builder picker rows show fallback thumbs with SKU; variant chips still render with swatches + price deltas. Please regression-test the full builder flow (add/remove/undo/redo/DnD/swap/variants/inline rename/autosave) to confirm the ProductImage swap did not introduce any regressions."
 
+frontend:
+  - task: "Quotation Builder 3.0 — architectural refactor + 3-pane responsive shell + Quotation Assistant right pane"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/quotations/new.tsx (thin entry) + frontend/src/components/quotation/**"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Quotation Builder 3.0 shipped. (1) Architectural refactor: split the 1,334-line monolith into a feature-scoped module tree under /app/frontend/src/components/quotation/{context,layout,catalog,canvas,footer,panes,sheets,shared,helpers}. All state centralised in BuilderContext (mutations, sheets, autosave, history, assistant focus). Entry point new.tsx is now ~20 lines. (2) Responsive shell: measures its own container width via onLayout so the parent sidebar doesn't skew breakpoints. THREE_PANE=980, TWO_PANE=720. iPad Pro landscape (1366px viewport → 1122px pane after sidebar) now gets the true 3-pane experience. (3) NEW Assistant right pane (`AssistantPane`): shows large image · name · SKU · brand · series · variant selector · pricing (with slashed MRP + line total + discount source badge) · quantity controls (only when a line is focused) · specifications · stock status · alternates (loaded on demand) · complete-the-set suggestions (via family_key matching, filtered to other categories) · line notes. When a line is focused on tablet-landscape it renders in the right pane; on tablet-portrait and phone it opens as a bottom sheet automatically via a useEffect. (4) Mobile: single-view Quotation with sticky bottom summary bar (item count · save state · grand total · Add · Finish). Removed the FAB (redundant with the sticky bar). Add opens a full-screen `ProductPickerSheet` with the same Catalog inside; tap = quick-add, long-press = open Assistant sheet. (5) All existing behaviour preserved: undo/redo (200 entries, coalesced), autosave (900ms debounce, silent PATCH), drag-and-drop rooms + lines (horizontal + vertical), inline room rename, variant chips + swatches, alternate swap (family → brand+category → category, preserves qty/discount/room), keyboard shortcuts (⌘Z, ⇧⌘Z, ⌘K), category + project discount stacking. (6) Line row is memoised; picker card is memoised; FlatList uses removeClippedSubviews + windowSize=7 for perf. (7) Lint clean, TypeScript clean. Verified visually at 1440×900 desktop (3-pane), 1366×1024 iPad Pro landscape (3-pane), 430×932 iPhone (mobile + picker sheet + assistant sheet)."
+
+
 metadata:
   created_by: "main_agent"
   version: "1.5"
@@ -254,7 +268,8 @@ metadata:
   run_ui: true
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Quotation Builder 3.0 — architectural refactor + 3-pane responsive shell + Quotation Assistant right pane"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
