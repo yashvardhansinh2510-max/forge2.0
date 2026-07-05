@@ -1,5 +1,0 @@
-line-length = 140
-target-version = "py311"
-
-[lint]
-ignore = ["E701", "E702", "E741", "E402", "E501", "F401", "F811"]

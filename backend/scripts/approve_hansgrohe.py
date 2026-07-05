@@ -31,7 +31,8 @@ async def main():
         {"_id": 0}, sort=[("created_at", -1)],
     )
     if not doc:
-        print("no classified Hansgrohe job found"); return
+        print("no classified Hansgrohe job found")
+        return
 
     owner = await db.users.find_one({"email": "owner@forge.app"}, {"id": 1, "_id": 0})
     t0 = time.time()

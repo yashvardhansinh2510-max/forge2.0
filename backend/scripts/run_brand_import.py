@@ -35,7 +35,8 @@ async def run_one(brand: str) -> dict:
     t0 = time.time()
     if url and not Path(path).exists():
         async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as c:
-            r = await c.get(url); r.raise_for_status()
+            r = await c.get(url)
+            r.raise_for_status()
             Path(path).write_bytes(r.content)
     data = Path(path).read_bytes()
     print(f"[{brand}] loaded {len(data):,} bytes")
@@ -55,8 +56,10 @@ async def run_one(brand: str) -> dict:
         rows=rows, created_by=await owner_id(),
     )
     doc = job.dict()
-    doc["extraction"] = ext; doc["certification"] = cert
-    await db.catalog_imports.insert_one(doc); doc.pop("_id", None)
+    doc["extraction"] = ext
+    doc["certification"] = cert
+    await db.catalog_imports.insert_one(doc)
+    doc.pop("_id", None)
 
     accepted = sum(1 for r in rows if r.get("status")=="accepted")
     pending  = sum(1 for r in rows if r.get("status")=="pending")
@@ -71,13 +74,20 @@ async def run_one(brand: str) -> dict:
     dims     = 0
     with_img = 0
     for r in rows:
-        if r.get("family_key"):    families.add(r["family_key"])
-        if r.get("subcategory"):   subcats.add(r["subcategory"])
-        if r.get("series"):        series.add(r["series"])
-        if r.get("finish"):        finishes.add(r["finish"])
-        if r.get("colour"):        colours.add(r["colour"])
-        if r.get("dimensions"):    dims += 1
-        if r.get("images") or r.get("image_meta"):  with_img += 1
+        if r.get("family_key"):
+            families.add(r["family_key"])
+        if r.get("subcategory"):
+            subcats.add(r["subcategory"])
+        if r.get("series"):
+            series.add(r["series"])
+        if r.get("finish"):
+            finishes.add(r["finish"])
+        if r.get("colour"):
+            colours.add(r["colour"])
+        if r.get("dimensions"):
+            dims += 1
+        if r.get("images") or r.get("image_meta"):
+            with_img += 1
 
     qa = {
         "brand": brand,

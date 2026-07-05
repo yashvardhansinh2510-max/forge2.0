@@ -294,14 +294,18 @@ class HansgroheAdapter(BrandAdapter):
                 key = str(val or "").lower().replace("\n", " ").strip()
                 if not key:
                     continue
-                if "article" in key:                col_map["sku"] = c
+                if "article" in key:
+                    col_map["sku"] = c
                 elif "discription" in key or "description" in key or "product" == key.strip():
                     if "sku" not in col_map or c != col_map.get("sku"):
                         # First occurrence of a description-like column
                         col_map.setdefault("name", c)
-                elif key == "mrp":                  col_map["mrp"] = c
-                elif key == "image" or "image" in key: col_map.setdefault("image", c)
-                elif key in ("qty", "qty.", "oty", "oty.", "unit"): col_map["qty"] = c
+                elif key == "mrp":
+                    col_map["mrp"] = c
+                elif key == "image" or "image" in key:
+                    col_map.setdefault("image", c)
+                elif key in ("qty", "qty.", "oty", "oty.", "unit"):
+                    col_map["qty"] = c
 
             if "sku" not in col_map or "name" not in col_map:
                 report.warnings.append(f"Sheet {ws.title!r} in {filename}: could not locate SKU/Name columns")

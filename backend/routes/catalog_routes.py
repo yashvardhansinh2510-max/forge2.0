@@ -278,10 +278,14 @@ async def list_families(
     collapsed underneath. Ideal for the premium grouped catalog view.
     """
     match: dict = {"active": True, "family_key": {"$ne": None}}
-    if brand_id:      match["brand_id"] = brand_id
-    if category_id:   match["category_id"] = category_id
-    if subcategory:   match["subcategory"] = subcategory
-    if series:        match["series"] = series
+    if brand_id:
+        match["brand_id"] = brand_id
+    if category_id:
+        match["category_id"] = category_id
+    if subcategory:
+        match["subcategory"] = subcategory
+    if series:
+        match["series"] = series
     if q:
         match["$or"] = [
             {"name":        {"$regex": q, "$options": "i"}},
@@ -370,10 +374,14 @@ async def catalog_search(
     """
     q = (q or "").strip()
     filters: dict = {"active": True}
-    if brand_id:    filters["brand_id"] = brand_id
-    if category_id: filters["category_id"] = category_id
-    if subcategory: filters["subcategory"] = subcategory
-    if series:      filters["series"] = series
+    if brand_id:
+        filters["brand_id"] = brand_id
+    if category_id:
+        filters["category_id"] = category_id
+    if subcategory:
+        filters["subcategory"] = subcategory
+    if series:
+        filters["series"] = series
 
     if not q:
         # No query — return a lightweight top families list respecting filters.
@@ -425,17 +433,28 @@ async def catalog_search(
         desc = (p.get("description") or "").lower()
 
         if q_lower:
-            if sku == q_lower: s += 100
-            elif sku.startswith(q_lower): s += 60
-            elif q_lower in sku: s += 30
-            if q_lower in name: s += 12
-            if q_lower in family: s += 10
-            if q_lower in series_l: s += 6
-            if q_lower in subcat: s += 4
-            if q_lower in finish: s += 3
-            if q_lower in colour: s += 3
-            if q_lower in dims: s += 1
-            if q_lower in desc: s += 1
+            if sku == q_lower:
+                s += 100
+            elif sku.startswith(q_lower):
+                s += 60
+            elif q_lower in sku:
+                s += 30
+            if q_lower in name:
+                s += 12
+            if q_lower in family:
+                s += 10
+            if q_lower in series_l:
+                s += 6
+            if q_lower in subcat:
+                s += 4
+            if q_lower in finish:
+                s += 3
+            if q_lower in colour:
+                s += 3
+            if q_lower in dims:
+                s += 1
+            if q_lower in desc:
+                s += 1
         return s
 
     for p in docs:
@@ -514,10 +533,14 @@ async def catalog_facets(
     price range) for the current selection. Powers the multi-facet filter UI.
     """
     match: dict = {"active": True}
-    if brand_id:    match["brand_id"] = brand_id
-    if category_id: match["category_id"] = category_id
-    if subcategory: match["subcategory"] = subcategory
-    if series:      match["series"] = series
+    if brand_id:
+        match["brand_id"] = brand_id
+    if category_id:
+        match["category_id"] = category_id
+    if subcategory:
+        match["subcategory"] = subcategory
+    if series:
+        match["series"] = series
 
     async def _bucket(field: str) -> list[dict]:
         pipeline = [
@@ -765,9 +788,12 @@ async def complete_the_set(
     series = src.get("series")
     collection = src.get("collection")
     ors = []
-    if fam_key:    ors.append({"family_key": fam_key})
-    if series:     ors.append({"series": series, "brand_id": src.get("brand_id")})
-    if collection: ors.append({"collection": collection, "brand_id": src.get("brand_id")})
+    if fam_key:
+        ors.append({"family_key": fam_key})
+    if series:
+        ors.append({"series": series, "brand_id": src.get("brand_id")})
+    if collection:
+        ors.append({"collection": collection, "brand_id": src.get("brand_id")})
     if not ors:
         return {"source_product_id": product_id, "items": []}
     match["$or"] = ors

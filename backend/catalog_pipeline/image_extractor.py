@@ -202,7 +202,8 @@ def _convert_emf_to_png(emf_bytes: bytes) -> Optional[bytes]:
     """
     try:
         with tempfile.NamedTemporaryFile(suffix=".emf", delete=False) as inp:
-            inp.write(emf_bytes); inp.flush()
+            inp.write(emf_bytes)
+            inp.flush()
             svg_path = tempfile.mktemp(suffix=".svg")
             r1 = subprocess.run(
                 ["emf2svg-conv", "-i", inp.name, "-o", svg_path],
@@ -238,7 +239,8 @@ def _convert_wmf_to_png(wmf_bytes: bytes) -> Optional[bytes]:
     """
     try:
         with tempfile.NamedTemporaryFile(suffix=".wmf", delete=False) as inp:
-            inp.write(wmf_bytes); inp.flush()
+            inp.write(wmf_bytes)
+            inp.flush()
             out = tempfile.mktemp(suffix=".png")
             r = subprocess.run(
                 ["convert", "-density", "300", f"wmf:{inp.name}", out],
@@ -422,7 +424,8 @@ def extract_images_from_xlsx_ex(xlsx_bytes: bytes) -> Iterator[tuple[str, int, E
             else:
                 sheet_map[name] = "xl/" + target
     except Exception as e:
-        logger.warning("xlsx workbook parse failed: %s", e); return
+        logger.warning("xlsx workbook parse failed: %s", e)
+        return
 
     # Note: we DO NOT dedupe by sha1 across the entire workbook. The same
     # image may legitimately anchor at multiple positions (Vitra ships one

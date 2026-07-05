@@ -705,10 +705,14 @@ async def export_xlsx(
     ws.merge_cells("A1:H1")
     stamp = datetime.now(timezone.utc).strftime("%d %b %Y · %H:%M UTC")
     filter_bits = [f"View: {view}"]
-    if brand:    filter_bits.append(f"Brand: {brand}")
-    if customer: filter_bits.append(f"Customer: {customer}")
-    if stage:    filter_bits.append(f"Stage: {STAGE_LABELS.get(stage, stage)}")
-    if q:        filter_bits.append(f"Search: {q}")
+    if brand:
+        filter_bits.append(f"Brand: {brand}")
+    if customer:
+        filter_bits.append(f"Customer: {customer}")
+    if stage:
+        filter_bits.append(f"Stage: {STAGE_LABELS.get(stage, stage)}")
+    if q:
+        filter_bits.append(f"Search: {q}")
     ws["A2"] = " · ".join(filter_bits) + f" · Exported {stamp}"
     ws["A2"].font = Font(color="6B7280", size=10)
     ws.merge_cells("A2:H2")
@@ -745,7 +749,8 @@ async def export_xlsx(
     ws.freeze_panes = "A5"
 
     buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    wb.save(buf)
+    buf.seek(0)
 
     filename = f"forge-purchases-{view}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.xlsx"
     return StreamingResponse(

@@ -89,7 +89,7 @@ class GroheAdapter(BrandAdapter):
                 text = page.extract_text() or ""
             except Exception:
                 continue
-            lines = [l.strip() for l in text.splitlines() if l.strip()]
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
             report.raw_rows += len(lines)
 
             i = 0
@@ -99,7 +99,8 @@ class GroheAdapter(BrandAdapter):
                 # Section heading
                 if len(line) < 40 and line in CATEGORY_HINTS:
                     current_category = CATEGORY_HINTS[line]
-                    i += 1; continue
+                    i += 1
+                    continue
 
                 # Series heading
                 if len(line) < 80 and SKU_RE.match(line) is None and PRICE_RE.search(line) is None:
@@ -125,7 +126,8 @@ class GroheAdapter(BrandAdapter):
 
                     if not name or name == MISSING or SKU_RE.match(name) or PRICE_RE.search(name):
                         # this block doesn't look like a real product
-                        i += 1; continue
+                        i += 1
+                        continue
 
                     size_m = SIZE_RE.search(name)
                     size = size_m.group(0) if size_m else MISSING

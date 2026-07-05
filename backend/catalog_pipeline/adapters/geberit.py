@@ -70,8 +70,8 @@ class GeberitAdapter(BrandAdapter):
                 text = page.extract_text() or ""
             except Exception:
                 continue
-            lines_all = [l.rstrip() for l in text.splitlines()]
-            lines = [l.strip() for l in lines_all if l.strip()]
+            lines_all = [ln.rstrip() for ln in text.splitlines()]
+            lines = [ln.strip() for ln in lines_all if ln.strip()]
             report.raw_rows += len(lines)
 
             for idx, line in enumerate(lines):

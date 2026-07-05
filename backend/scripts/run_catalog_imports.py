@@ -14,13 +14,13 @@ from pathlib import Path
 # Ensure repo root on path so imports resolve
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx
-from dotenv import load_dotenv
+import httpx  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from catalog_pipeline.orchestrator import run_pipeline, import_accepted
-from db import db
-from models import CatalogImportJob
+from catalog_pipeline.orchestrator import run_pipeline, import_accepted  # noqa: E402
+from db import db  # noqa: E402
+from models import CatalogImportJob  # noqa: E402
 
 
 UPLOADS = [
@@ -99,7 +99,8 @@ async def main():
             continue
         except Exception as e:
             print(f"  ✗ PIPELINE FAILED: {type(e).__name__}: {e}")
-            import traceback; traceback.print_exc()
+            import traceback
+            traceback.print_exc()
             continue
 
         cert = result.get("certification", {})

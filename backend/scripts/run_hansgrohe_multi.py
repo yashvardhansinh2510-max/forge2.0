@@ -132,7 +132,8 @@ async def main():
             if not u:
                 continue
             if u.startswith("blob:"):
-                new_refs.append(u); continue
+                new_refs.append(u)
+                continue
             sha1 = hashlib.sha1(u.encode("utf-8")).hexdigest()[:32]
             unique_blobs.setdefault(sha1, u)
             new_refs.append(f"blob:{sha1}")

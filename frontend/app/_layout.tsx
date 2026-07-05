@@ -2,14 +2,21 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
-import { LogBox, View } from "react-native";
+import { LogBox, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { useAppFonts } from "@/src/hooks/use-app-fonts";
 import { AuthProvider, useAuth } from "@/src/state/auth";
-import { colors } from "@/src/theme/tokens";
+import { colors, font } from "@/src/theme/tokens";
 import { ToastHost } from "@/src/components/Toast";
+
+// Global default: any Text without an explicit fontFamily inherits Inter-Regular.
+// This ensures every legacy screen automatically renders with our typographic voice.
+// Individual weights (Medium/SemiBold/Bold) still opt-in explicitly via type.* tokens.
+const anyText = Text as any;
+anyText.defaultProps = anyText.defaultProps || {};
+anyText.defaultProps.style = [{ fontFamily: font.regular }, anyText.defaultProps.style];
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();

@@ -330,7 +330,8 @@ def _format_amount(v: float) -> str:
     last3, rest = s[-3:], s[:-3]
     parts = []
     while len(rest) > 2:
-        parts.append(rest[-2:]); rest = rest[:-2]
+        parts.append(rest[-2:])
+        rest = rest[:-2]
     if rest:
         parts.append(rest)
     return ",".join(reversed(parts)) + "," + last3
