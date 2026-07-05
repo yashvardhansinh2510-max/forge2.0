@@ -223,7 +223,7 @@ backend:
           comment: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Fix applied: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin)."
         - working: true
           agent: "testing"
-          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://forge-v2.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
+          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://forge-pricing.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
 
 frontend:
   - task: "Quotation Builder 2.0 Phase 1A — undo/redo, DnD, variants, alternates"
@@ -269,8 +269,7 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Purchases Module — backend routes, place-order flow, activity log"
-    - "Purchase Orders Dashboard + Detail (frontend)"
+    - "Payments Module — backend routes (stats/orders/detail/record/whatsapp-reminder) + frontend page"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -352,6 +351,151 @@ frontend:
             (6) Reusable ActivityTimeline component with icon+tone per event_type (20+ mapped), relative-time formatter (Today/Yesterday/date), timeline dots + connecting line.
             Screenshots captured: /tmp/purchases_dashboard.png, /tmp/po_detail.png (partial_received PO with 4-item table, 3-step status timeline, 4-event activity), /tmp/place_order.png (2-brand grouped preview), /tmp/quot_detail.png (Place Order btn + Linked POs card), /tmp/after_confirm.png (3-orders kanban). Confirmed after Place Order → 2 new Draft POs created (FPO-2026-0002 Axor, FPO-2026-0003 Hansgrohe).
 
+backend:
+  - task: "Payments Module — stats, orders list, order detail, record payment, WhatsApp reminder"
+    implemented: true
+    working: true
+    file: "backend/routes/payment_routes.py, backend/models.py, backend/server.py, backend/routes/misc_routes.py, backend/seed.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            New Payments module — treats confirmed sales orders (Quotation.status ∈ {ordered, won})
+            as collectable orders. Endpoints:
+              * GET /api/payments/stats — {total_outstanding, collected_this_month, active_orders, fully_paid}
+              * GET /api/payments/orders?q=&status_filter= — [{id, number, customer_name, grand_total, paid, outstanding, percent_collected, payment_status, outstanding_short, confirmed_at}]
+              * GET /api/payments/orders/:id — order detail with customer, MRP (Σ qty*product.mrp), discounted_rate=grand_total, paid, outstanding, and payments[] history.
+              * POST /api/payments {quotation_id, amount, mode, reference, note, paid_at} — records a payment (min_role='accounts'). Emits `payment.recorded` activity event.
+              * GET /api/payments/orders/:id/whatsapp-reminder — returns {message, phone, wa_url} (wa.me deep link) so the frontend can open WhatsApp with a pre-composed reminder in one click. Handles missing/short phone numbers by defaulting to +91.
+              * GET /api/payments — legacy raw list (kept for backwards compat with any older UI).
+            Model changes:
+              * Payment extended with quotation_number, customer_name, note, paid_at, recorded_by, recorded_by_name.
+              * PaymentCreate added.
+            Seed changes: 8 quotations spread across ordered/won/sent/pending — 4 sample payments (full/partial mix) inserted so the demo has data.
+            Removed the stub GET /api/payments in misc_routes.py.
+            Manually verified end-to-end via curl:
+              * stats: total_outstanding=₹9.4L, collected_this_month=₹2.5L, active=5, fully_paid=2
+              * orders list sorted by outstanding desc, with progress bar %
+              * record payment (UPI ₹50k on FQ-2026-0003) updates paid/outstanding/percent and emits activity event
+              * WhatsApp reminder returns fully-formed wa.me URL with encoded message and +91-prefixed phone.
+        - working: true
+          agent: "testing"
+          comment: |
+            Payments Module End-to-End Testing COMPLETE — ALL 44 TESTS PASSED (100% success rate).
+            
+            ✅ TEST 1: GET /api/payments/stats (4/4 passed)
+            • Returns 200 with all required keys: total_outstanding, collected_this_month, active_orders, fully_paid
+            • All values are numeric
+            • Stats show 7 confirmed orders (active=5, fully_paid=2) as expected from seed
+            • Verified: Total Outstanding=₹949,875, Collected This Month=₹253,429
+            
+            ✅ TEST 2: GET /api/payments/orders (8/8 passed)
+            • Returns 200 with array of 7 orders
+            • All orders have required keys: id, number, customer_id, customer_name, grand_total, paid, outstanding, percent_collected, payment_status, confirmed_at, outstanding_short
+            • payment_status values are valid (paid|partial|due)
+            • Orders correctly sorted by outstanding DESC (highest due first)
+            • outstanding_short format correct: "₹3.1L", "₹2.9L", "₹1.6L" for large amounts
+            
+            ✅ TEST 3: GET /api/payments/orders with filters (2/2 passed)
+            • Search filter (?q=Shah) works correctly, found 2 results
+            • Status filter (?status_filter=paid) works correctly, returns only fully paid orders (2 orders)
+            
+            ✅ TEST 4: GET /api/payments/orders/:id (6/6 passed)
+            • Returns 200 with complete order detail
+            • All required keys present: id, number, status, customer, customer_name, confirmed_at, mrp, discounted_rate, grand_total, paid, outstanding, percent_collected, payment_status, payments
+            • customer is an object with all fields (id, name, company, phone, email, city, address)
+            • MRP (₹501,200) >= discounted_rate (₹362,214) verified (seed products have mrp > price)
+            • discounted_rate == grand_total (no tax logic)
+            • payments is an array with payment history
+            
+            ✅ TEST 5: GET /api/payments/orders/:id edge cases (2/2 passed)
+            • Non-existent order returns 404
+            • Draft quotation (not confirmed order) returns 400
+            
+            ✅ TEST 6: POST /api/payments (7/7 passed)
+            • Returns 200 with payment record
+            • Payment response has all required keys: id, quotation_id, quotation_number, customer_id, customer_name, amount, mode, status, reference, note, paid_at, recorded_by, recorded_by_name, created_at, updated_at
+            • Payment status is 'completed'
+            • Order paid amount updated correctly (₹55,000 → ₹60,000)
+            • Order outstanding updated correctly (₹307,214 → ₹302,214)
+            • Stats updated after payment (total_outstanding decreased)
+            • Activity event 'payment.recorded' logged in /api/activity/quotation/:id
+            
+            ✅ TEST 7: POST /api/payments edge cases (3/3 passed)
+            • amount <= 0 returns 400
+            • Non-existent quotation_id returns 404
+            • Draft quotation returns 400
+            
+            ✅ TEST 8: GET /api/payments/orders/:id/whatsapp-reminder (7/7 passed)
+            • Returns 200 with WhatsApp reminder data
+            • All required keys present: customer_name, phone, phone_display, message, outstanding, wa_url
+            • phone is digits-only string (919987033333) with country code
+            • wa_url starts with 'https://wa.me/' and contains '?text=' with URL-encoded message
+            • Message includes order number (FQ-2026-0003) and outstanding amount (₹3,07,214)
+            • Message uses customer's first name ("Hi Vikram,") correctly
+            
+            ✅ TEST 9: GET /api/payments (legacy) (2/2 passed)
+            • Returns 200 with array of payments (7 payments)
+            • Backwards compatibility maintained
+            
+            ✅ TEST 10: AUTH checks (1/1 passed)
+            • All 6 endpoints return 401 without bearer token
+            
+            ✅ TEST 11: REGRESSION checks (5/5 passed)
+            • GET /api/quotations returns 200
+            • NO tax fields found in quotations (tax_total, tax_pct, tax_amount)
+            • NO tax_pct in line items
+            • GET /api/purchase-orders returns 200
+            • GET /api/customers returns 200
+            • GET /api/products/:id/alternates returns 200 with correct shape {source_product_id, items, tiers}
+            
+            BUSINESS LOGIC VERIFIED:
+            ✅ quotation.grand_total is the final price (no tax layered on top)
+            ✅ Payments accumulate against grand_total directly
+            ✅ outstanding = grand_total - sum(payments)
+            ✅ Only quotations with status='ordered' OR status='won' are treated as collectable orders
+            ✅ active_orders = count of ordered/won quotations NOT fully paid
+            ✅ fully_paid = count of ordered/won quotations where sum(payments) >= grand_total
+            ✅ MRP calculation: Σ(qty × product.mrp) for line items
+            ✅ MRP >= discounted_rate (since seed products have mrp > price)
+            ✅ discounted_rate == grand_total (no tax)
+            
+            All endpoints working perfectly. Tax removal verified across all responses. Payments module is production-ready.
+
+frontend:
+  - task: "Payments page — hero + stats + orders list + order detail + Record Payment modal + WhatsApp reminder"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/payments.tsx, frontend/src/theme/tokens.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Payments page shipped — full replacement of the scaffold. Cloned the reference layout at 1440×900:
+              * Soft-blue hero card (BUILDCON HOUSE overline + Payments title + subtitle)
+              * 4 stat cards (Total Outstanding red, Collected This Month green, Active Orders, Fully Paid green ✓)
+              * Two-column body — left (360px) search + orders list, right flex order detail
+              * Orders list cards show customer, order#, date, colored progress bar (red=due, amber=partial, green=paid), badge ("₹1.6L due" / "✓ Paid"), and active state (indigo tint) on the selected row.
+              * Order detail: header row with customer/company, status pill, and two action buttons — WhatsApp (green) and Call (neutral). Below: 4 metric cards (MRP/Disc.Rate/Paid/Outstanding) with tone-coded values matching reference.
+              * Payment History card — either a red "outstanding" banner OR list of past payments (mode icon, date, reference/note, + amount).
+              * Sticky "+ Record Payment" primary button; when order is fully paid, shows a green "Order fully paid — great job!" banner.
+              * Record Payment modal (right-anchored on desktop, bottom-sheet on mobile): Amount (numeric, prefilled with outstanding), Date (native picker on web / text on native), Payment method chips (Cash default, UPI, Bank Transfer, Cheque, Credit Card), Reference/Notes textarea, Save Payment (dark) + Cancel.
+              * Responsive: on width<900 the two columns stack vertically and stat cards wrap.
+            WhatsApp reminder is the new capability — one press:
+              (1) fetches /api/payments/orders/:id/whatsapp-reminder
+              (2) opens `wa.me/<phone>?text=<reminder>` via Linking.openURL
+              (3) toasts if the customer has no phone on file
+            The reminder message is pre-composed on the backend with the customer's first name, order number, order total, amount received, and outstanding balance.
+            Call button opens tel: link.
+            Added new status tones to tokens.ts: ordered/paid/partial/due.
+
+
 agent_communication:
     - agent: "main"
       message: |
@@ -405,10 +549,61 @@ agent_communication:
     - agent: "main"
       message: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause suspected: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Applied fix: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin). Please verify: (1) Login with owner@forge.app / Forge@2026 succeeds, (2) Dashboard loads, (3) Navigate to catalog screen, (4) Verify products list loads (may be empty), (5) Confirm request URLs are same-origin (preview URL) not localhost:8001, (6) Check browser console for 'Failed to fetch' errors."
     - agent: "testing"
-      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://forge-v2.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
+      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://forge-pricing.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
     - agent: "main"
       message: "Git-history rewrite applied to remove large files (backend/temp/**, *.xlsx, *.pdf) that exceeded GitHub's 100MB limit. Changes: (1) Added backend/temp/**, *.xlsx, *.pdf to .gitignore, (2) Used git filter-repo to purge these files from entire git history, (3) .git folder shrank from 318 MB → 2.3 MB, (4) Recreated empty /app/backend/temp/ with .gitkeep sentinel, (5) Restarted backend and expo supervisors. MongoDB catalog data confirmed intact (Vitra 250, Grohe 854, Geberit 496, Hansgrohe 1272 = 2,872 total products). Images stored in product_media collection with Supabase URLs. Please verify app still works end-to-end: (1) Login with owner@forge.app / Forge@2026, (2) Navigate to catalog screen, (3) Verify products list loads with 200 status (~2,872 products), (4) Verify product images from Supabase (NOT base64), (5) Open at least one Vitra and one Hansgrohe product, (6) Check console for errors, (7) Verify /api/health returns 200."
     - agent: "testing"
       message: "Purchases Module regression COMPLETE — 37/39 tests PASSED. All critical paths green (suppliers, place-order preview/confirm, PO lifecycle, receive auto-transitions, dashboard, activity feed, attachments, regression on existing quotation/customer/alternates endpoints). Only 2 minor bugs: /api/purchase-orders?status= and ?brand_id= filters ignored (root cause was route shadowing by an old scaffold in misc_routes.py — GET /purchase-orders registered without prefix, matched before the new prefixed router)."
     - agent: "main"
       message: "Filter shadowing bug fixed — deleted the scaffold `@router.get('/purchase-orders')` in routes/misc_routes.py (misc router registered before purchase router, so its wildcard route was catching everything). Verified via curl: ?status=draft → 3/3, ?brand_id=Axor → 2/2, ?q=FPO-2026-0001 → 1/1. All 39 tests should now pass. Purchases Module Production Milestone 1 COMPLETE."
+    - agent: "main"
+      message: |
+        BUSINESS RULE APPLIED — All tax logic permanently removed from Forge.
+        Backend changes:
+          * models.py — Removed tax_pct from QuotationLineItem + PurchaseOrderItem, removed tax property, dropped tax_total from Quotation + PurchaseOrder. `total` on QuotationLineItem now aliases `net`.
+          * routes/quotation_routes.py — Removed tax from _recalc, breakdown, duplicate, place-order preview/confirm. grand_total = subtotal - discount only.
+          * routes/purchase_routes.py — _recalc_totals now returns {subtotal, grand_total} (equal).
+          * pdf_generator.py — Removed Tax row from totals block.
+          * seed.py — Removed tax_pct=18 and tax_total from demo quotations.
+          * tests/test_quotation_v2.py — Removed tax_pct from _line helper.
+        Frontend changes:
+          * quotation/helpers/types.ts — Removed tax_pct from Line type.
+          * quotation/helpers/pricing.ts — computeTotals returns {subtotal, discount, grand}.
+          * quotation/context/BuilderContext.tsx — Removed tax from totals type + tax_pct: 18 default in addFromProduct.
+          * quotation/footer/BuilderFooter.tsx — Removed Tax row.
+          * quotations/[id]/index.tsx — Removed Tax row & tax_pct from Line type.
+          * quotations/[id]/place-order.tsx — Removed tax_pct from PreviewItem.
+          * purchase-orders/[id].tsx — Removed Tax FooterRow, tax_pct from PoItem, tax_total from PoDoc.
+          * reports.tsx — Replaced "GST" mentions with "receivables".
+          * customers/[id].tsx — Removed GSTIN row.
+        Verified: /api/quotations returns items with no tax_pct; grand_total = subtotal - discount; backend healthy at /api/health.
+    - agent: "testing"
+      message: |
+        Payments Module End-to-End Testing COMPLETE — ALL 44 TESTS PASSED (100% success rate).
+        
+        ✅ COMPREHENSIVE VERIFICATION:
+        • GET /api/payments/stats: Returns correct KPIs (total_outstanding, collected_this_month, active_orders, fully_paid). Verified 7 confirmed orders (5 active, 2 fully paid) with ₹949,875 outstanding and ₹253,429 collected this month.
+        • GET /api/payments/orders: Returns array of orders sorted by outstanding DESC. All required keys present. outstanding_short format correct ("₹3.1L", "₹2.9L").
+        • GET /api/payments/orders with filters: Search (?q=) and status_filter (?status_filter=paid) both working correctly.
+        • GET /api/payments/orders/:id: Returns complete order detail with customer object, MRP calculation (Σ qty×product.mrp), discounted_rate==grand_total, payments history. Verified MRP (₹501,200) >= discounted_rate (₹362,214).
+        • GET /api/payments/orders/:id edge cases: 404 for non-existent order, 400 for draft quotation (not confirmed).
+        • POST /api/payments: Records payment successfully, updates paid/outstanding amounts, emits 'payment.recorded' activity event. Verified payment flow: ₹55,000 → ₹60,000 paid, ₹307,214 → ₹302,214 outstanding.
+        • POST /api/payments edge cases: 400 for amount<=0, 404 for non-existent quotation, 400 for draft quotation.
+        • GET /api/payments/orders/:id/whatsapp-reminder: Returns wa.me URL with pre-composed message. Phone format correct (digits-only with country code). Message includes customer first name, order number, outstanding amount.
+        • GET /api/payments (legacy): Returns array of payments (backwards compatibility maintained).
+        • AUTH: All 6 endpoints return 401 without bearer token.
+        • REGRESSION: /api/quotations, /api/purchase-orders, /api/customers, /api/products/:id/alternates all return 200. NO tax fields found anywhere (tax_total, tax_pct, tax_amount removed from quotations and line items).
+        
+        ✅ BUSINESS LOGIC VERIFIED:
+        • quotation.grand_total is the final price (no tax)
+        • Payments accumulate against grand_total directly
+        • outstanding = grand_total - sum(payments)
+        • Only status='ordered' OR status='won' treated as collectable orders
+        • active_orders = count of non-fully-paid confirmed orders
+        • fully_paid = count where sum(payments) >= grand_total
+        • MRP >= discounted_rate (seed products have mrp > price)
+        • discounted_rate == grand_total (no tax layer)
+        
+        Payments module is production-ready. All endpoints working perfectly. Tax removal verified across all responses.
+
+

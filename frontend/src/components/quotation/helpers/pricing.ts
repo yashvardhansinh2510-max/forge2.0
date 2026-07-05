@@ -22,17 +22,15 @@ export function computeTotals(
   lines: Line[],
   projectDiscount: number,
   categoryDiscounts: Record<string, number>,
-): { subtotal: number; discount: number; tax: number; grand: number } {
-  let sub = 0, disc = 0, tax = 0;
+): { subtotal: number; discount: number; grand: number } {
+  let sub = 0, disc = 0;
   for (const l of lines) {
     const gross = l.qty * l.unit_price;
     const { pct } = effectivePct(l, categoryDiscounts, projectDiscount);
     const d = gross * pct / 100;
-    const net = gross - d;
-    const t = net * (l.tax_pct || 0) / 100;
-    sub += gross; disc += d; tax += t;
+    sub += gross; disc += d;
   }
-  return { subtotal: sub, discount: disc, tax, grand: Math.round((sub - disc + tax) * 100) / 100 };
+  return { subtotal: sub, discount: disc, grand: Math.round((sub - disc) * 100) / 100 };
 }
 
 // Approximate swatch colour from a finish label. Kept deliberately small — we

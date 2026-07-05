@@ -36,7 +36,6 @@ type PoItem = {
   qty: number;
   qty_received: number;
   unit_cost: number;
-  tax_pct: number;
 };
 
 type StatusEvent = {
@@ -78,7 +77,6 @@ type PO = {
   internal_notes?: string | null;
   expected_delivery_at?: string | null;
   subtotal: number;
-  tax_total: number;
   grand_total: number;
   created_at: string;
   created_by_name: string;
@@ -306,7 +304,6 @@ export default function PurchaseOrderDetail() {
               <View style={{ flex: 1 }} />
               <View style={{ minWidth: 220, gap: 4 }}>
                 <FooterRow label="Subtotal" value={money(po.subtotal)} />
-                <FooterRow label="Tax" value={money(po.tax_total)} />
                 <View style={{ borderTopWidth: 1, borderColor: colors.onSurface, paddingTop: 8, marginTop: 4 }}>
                   <FooterRow label="Grand total" value={money(po.grand_total)} bold />
                 </View>

@@ -115,4 +115,8 @@ export const statusMeta: Record<string, { label: string; bg: string; fg: string 
   won: { label: "Won", bg: "#DCFCE7", fg: "#166534" },
   lost: { label: "Lost", bg: "#FEE2E2", fg: "#991B1B" },
   expired: { label: "Expired", bg: "#F4F4F5", fg: "#71717A" },
+  ordered: { label: "Confirmed", bg: "#DBEAFE", fg: "#1E40AF" },
+  paid: { label: "Paid", bg: "#DCFCE7", fg: "#166534" },
+  partial: { label: "Partial", bg: "#FEF9C3", fg: "#854D0E" },
+  due: { label: "Due", bg: "#FEE2E2", fg: "#991B1B" },
 };

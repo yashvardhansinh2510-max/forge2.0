@@ -205,27 +205,24 @@ class QuotationLineItem(BaseModel):
     category_id: Optional[str] = None      # denormalized for category-level discounts
     room: Optional[str] = None
     qty: float = 1
-    unit_price: float = 0
+    unit_price: float = 0                  # final selling price per unit
     discount_pct: Optional[float] = None   # None → inherit from category/project
-    tax_pct: float = 18
     notes: Optional[str] = None
     description: Optional[str] = None      # inline override of product description
     sort_order: int = 0
 
     @property
     def net(self) -> float:
+        """Line total after discount — final price the customer pays for this line."""
         gross = self.qty * self.unit_price
         disc_pct = self.discount_pct or 0
         disc = gross * disc_pct / 100
         return round(gross - disc, 2)
 
     @property
-    def tax(self) -> float:
-        return round(self.net * self.tax_pct / 100, 2)
-
-    @property
     def total(self) -> float:
-        return round(self.net + self.tax, 2)
+        """Alias for net — Forge uses final prices only, no tax layered on top."""
+        return self.net
 
 
 class QuotationRevision(BaseModel):
@@ -249,7 +246,6 @@ class Quotation(TimestampedModel):
     category_discounts: dict[str, float] = {}  # {category_id: discount_pct}
     subtotal: float = 0
     discount_total: float = 0            # total of all discounts (item + cat + project)
-    tax_total: float = 0
     grand_total: float = 0
     notes: Optional[str] = None
     valid_until: Optional[str] = None
@@ -322,8 +318,7 @@ class PurchaseOrderItem(BaseModel):
     room: Optional[str] = None
     qty: float = 1
     qty_received: float = 0
-    unit_cost: float = 0                  # what we pay the supplier (may differ from retail)
-    tax_pct: float = 18
+    unit_cost: float = 0                  # final cost per unit paid to supplier
     notes: Optional[str] = None
     quotation_line_id: Optional[str] = None
     sort_order: int = 0
@@ -371,7 +366,6 @@ class PurchaseOrder(TimestampedModel):
     expected_delivery_at: Optional[str] = None
     delivered_at: Optional[str] = None
     subtotal: float = 0
-    tax_total: float = 0
     grand_total: float = 0
     created_by: str
     created_by_name: str
@@ -438,11 +432,26 @@ class PurchaseOrder_Legacy(TimestampedModel):
 
 class Payment(TimestampedModel):
     quotation_id: Optional[str] = None
+    quotation_number: Optional[str] = None
     customer_id: str
+    customer_name: Optional[str] = None
     amount: float
     mode: Literal["cash", "upi", "bank", "card", "cheque"] = "upi"
     status: Literal["pending", "completed", "failed"] = "completed"
+    reference: Optional[str] = None            # cheque no. / UTR / short note
+    note: Optional[str] = None                 # freeform note (optional)
+    paid_at: Optional[str] = None              # ISO date of receipt (defaults to created_at)
+    recorded_by: Optional[str] = None          # user id
+    recorded_by_name: Optional[str] = None
+
+
+class PaymentCreate(BaseModel):
+    quotation_id: str
+    amount: float
+    mode: Literal["cash", "upi", "bank", "card", "cheque"] = "cash"
     reference: Optional[str] = None
+    note: Optional[str] = None
+    paid_at: Optional[str] = None
 
 
 class Followup(TimestampedModel):

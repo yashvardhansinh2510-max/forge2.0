@@ -97,11 +97,10 @@ def build_quotation_pdf(quotation: dict, customer: dict) -> bytes:
     story.append(tbl)
     story.append(Spacer(1, 12))
 
-    # Totals block (right aligned)
+    # Totals block (right aligned) — Forge uses final prices only
     totals_rows = [
         ["Subtotal", _money(quotation.get("subtotal", 0))],
         ["Discount", f"- {_money(quotation.get('discount_total', 0))}"],
-        ["Tax", _money(quotation.get("tax_total", 0))],
         ["Grand Total", _money(quotation.get("grand_total", 0))],
     ]
     totals = Table(totals_rows, colWidths=[40 * mm, 35 * mm], hAlign="RIGHT")

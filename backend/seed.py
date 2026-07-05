@@ -212,7 +212,9 @@ async def seed_if_empty():
 
     # ---- Quotations ----
     sales_user = users["sales"]
-    statuses = ["draft", "sent", "won", "pending_approval", "sent", "won"]
+    # Ensure a healthy mix of confirmed orders for the Payments module.
+    statuses = ["ordered", "sent", "won", "pending_approval", "ordered", "won", "ordered", "sent"]
+    ordered_quotations: list[dict] = []
     for idx, cust_id in enumerate(customer_ids * 2):
         cust = await db.customers.find_one({"id": cust_id}, {"_id": 0})
         picked = products[(idx * 3) % len(products): (idx * 3) % len(products) + 4]
@@ -221,24 +223,23 @@ async def seed_if_empty():
                 product_id=p.id, sku=p.sku, name=p.name, image=p.images[0] if p.images else None,
                 room=["Master Bath", "Powder Room", "Guest Bath", "Kitchen"][k % 4],
                 qty=1 + (k % 3), unit_price=p.price,
-                discount_pct=[0, 5, 10, 12][k % 4], tax_pct=18,
+                discount_pct=[0, 5, 10, 12][k % 4],
             )
             for k, p in enumerate(picked)
         ]
         subtotal = sum(i.qty * i.unit_price for i in items)
         disc = sum(i.qty * i.unit_price * i.discount_pct / 100 for i in items)
-        tax = sum(i.tax for i in items)
+        status = statuses[idx % len(statuses)]
         q = Quotation(
             number=f"FQ-2026-{idx + 1:04d}",
             customer_id=cust_id,
             customer_name=cust.get("company") or cust["name"],
-            status=statuses[idx % len(statuses)],  # type: ignore[arg-type]
+            status=status,  # type: ignore[arg-type]
             items=items,
             rooms=list({i.room for i in items if i.room}),
             subtotal=round(subtotal, 2),
             discount_total=round(disc, 2),
-            tax_total=round(tax, 2),
-            grand_total=round(subtotal - disc + tax, 2),
+            grand_total=round(subtotal - disc, 2),
             notes="Prices are valid for 30 days. Delivery in 2–3 weeks after confirmation.",
             valid_until=(now + timedelta(days=30)).isoformat(),
             created_by=sales_user.id,
@@ -249,6 +250,39 @@ async def seed_if_empty():
         q_dict["created_at"] = (now - timedelta(days=idx)).isoformat()
         q_dict["updated_at"] = (now - timedelta(days=idx)).isoformat()
         await db.quotations.insert_one(q_dict)
+        if status in ("ordered", "won"):
+            ordered_quotations.append(q_dict)
+
+    # ---- Sample payments — mix of partial + fully paid + due orders ----
+    # Every third ordered/won quotation gets a partial payment, every fifth gets fully paid.
+    from models import Payment
+    for i, q_dict in enumerate(ordered_quotations):
+        grand = float(q_dict.get("grand_total") or 0)
+        if grand <= 0:
+            continue
+        if i % 5 == 0:
+            # Full payment
+            paid_at = (now - timedelta(days=i, hours=3)).isoformat()
+            p = Payment(
+                quotation_id=q_dict["id"], quotation_number=q_dict.get("number"),
+                customer_id=q_dict["customer_id"], customer_name=q_dict.get("customer_name"),
+                amount=round(grand, 2), mode="bank", status="completed",
+                reference=f"UTR{1000 + i}", note="Full & final",
+                paid_at=paid_at, recorded_by=users["accounts"].id, recorded_by_name=users["accounts"].full_name,
+            )
+            await db.payments.insert_one(p.dict())
+        elif i % 3 == 0:
+            # 50% partial
+            paid_at = (now - timedelta(days=i, hours=2)).isoformat()
+            p = Payment(
+                quotation_id=q_dict["id"], quotation_number=q_dict.get("number"),
+                customer_id=q_dict["customer_id"], customer_name=q_dict.get("customer_name"),
+                amount=round(grand * 0.5, 2), mode="upi", status="completed",
+                reference=f"UPI-{2000 + i}", note="Advance received",
+                paid_at=paid_at, recorded_by=users["accounts"].id, recorded_by_name=users["accounts"].full_name,
+            )
+            await db.payments.insert_one(p.dict())
+        # else: remains fully due
 
     # ---- Follow-ups ----
     for i, cust_id in enumerate(customer_ids):

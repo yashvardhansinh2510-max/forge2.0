@@ -42,7 +42,6 @@ export function BuilderFooter() {
       <View style={styles.totals}>
         <Row label="Subtotal" value={money(b.totals.subtotal)} />
         <Row label="Discount" value={`− ${money(b.totals.discount)}`} valueColor={colors.error} />
-        <Row label="Tax" value={money(b.totals.tax)} />
         <View style={[styles.tRow, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border, paddingTop: 8, marginTop: 4 }]}>
           <Text style={{ fontSize: 14, fontWeight: "700" }}>Grand total</Text>
           <Text style={{ fontSize: 20, fontWeight: "700", fontVariant: ["tabular-nums"] }}>{money(b.totals.grand)}</Text>

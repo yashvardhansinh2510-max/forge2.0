@@ -9,18 +9,18 @@ import { Button, Card, StatusBadge } from "@/src/components/ui";
 import { api, getToken } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
-type Line = { id: string; sku: string; name: string; qty: number; unit_price: number; discount_pct: number | null; tax_pct: number; room?: string; description?: string | null; category_id?: string | null };
+type Line = { id: string; sku: string; name: string; qty: number; unit_price: number; discount_pct: number | null; room?: string; description?: string | null; category_id?: string | null };
 type Quotation = {
   id: string; number: string; customer_name: string; status: string;
   items: Line[]; rooms: string[]; subtotal: number; discount_total: number;
-  tax_total: number; grand_total: number; created_at: string; notes?: string;
+  grand_total: number; created_at: string; notes?: string;
   created_by_name: string;
   project_discount_pct?: number;
   category_discounts?: Record<string, number>;
 };
 type Breakdown = {
   lines: { line_id: string; discount_pct: number; discount_source: string; discount_amount: number; gross: number; net: number; total: number }[];
-  totals: { subtotal: number; discount_total: number; tax_total: number; grand_total: number };
+  totals: { subtotal: number; discount_total: number; grand_total: number };
   project_discount_pct: number;
   category_discounts: Record<string, number>;
 };
@@ -168,7 +168,6 @@ export default function QuotationDetail() {
             {[
               ["Subtotal", q.subtotal, ""],
               ["Discount", q.discount_total, "-"],
-              ["Tax", q.tax_total, ""],
             ].map(([l, v, sign]) => (
               <View key={String(l)} style={{ flexDirection: "row", justifyContent: "space-between" }}>
                 <Text style={type.bodyMuted}>{l as string}</Text>

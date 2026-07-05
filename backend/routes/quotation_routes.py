@@ -43,23 +43,18 @@ def _recalc(
     category_discounts = category_discounts or {}
     subtotal = 0.0
     discount_total = 0.0
-    tax_total = 0.0
 
     for it in items:
         gross = it.qty * it.unit_price
         pct, _ = _effective_discount_pct(it, category_discounts, project_discount_pct)
         disc = gross * pct / 100
-        net = gross - disc
-        tax = net * (it.tax_pct or 0) / 100
         subtotal += gross
         discount_total += disc
-        tax_total += tax
 
-    grand_total = subtotal - discount_total + tax_total
+    grand_total = subtotal - discount_total
     return {
         "subtotal": round(subtotal, 2),
         "discount_total": round(discount_total, 2),
-        "tax_total": round(tax_total, 2),
         "grand_total": round(grand_total, 2),
     }
 
@@ -305,7 +300,7 @@ async def duplicate_quotation(
             product_id=i["product_id"], sku=i["sku"], name=i["name"], image=i.get("image"),
             category_id=i.get("category_id"), room=i.get("room"),
             qty=i["qty"], unit_price=i["unit_price"],
-            discount_pct=i.get("discount_pct"), tax_pct=i.get("tax_pct", 18),
+            discount_pct=i.get("discount_pct"),
             notes=i.get("notes"), description=i.get("description"),
             sort_order=i.get("sort_order", 0),
         )
@@ -331,13 +326,12 @@ async def quotation_breakdown(quotation_id: str, _: UserPublic = Depends(get_cur
         pct, source = _effective_discount_pct(it, cat_discs, project_pct)
         disc = gross * pct / 100
         net = gross - disc
-        tax = net * (it.tax_pct or 0) / 100
         lines_out.append({
             "line_id": it.id, "product_id": it.product_id, "sku": it.sku, "name": it.name,
             "qty": it.qty, "unit_price": it.unit_price, "gross": round(gross, 2),
             "discount_pct": pct, "discount_source": source, "discount_amount": round(disc, 2),
-            "net": round(net, 2), "tax_pct": it.tax_pct, "tax_amount": round(tax, 2),
-            "total": round(net + tax, 2),
+            "net": round(net, 2),
+            "total": round(net, 2),
         })
 
     totals = _recalc([QuotationLineItem(**i) for i in doc.get("items", [])], project_pct, cat_discs)
@@ -444,7 +438,6 @@ async def _brand_grouped_preview(doc: dict) -> dict:
             "room": it.get("room"),
             "qty": float(it.get("qty", 1)),
             "unit_cost": unit_cost,
-            "tax_pct": float(it.get("tax_pct", 18)),
         })
         grouped[brand_id]["subtotal"] += unit_cost * float(it.get("qty", 1))
         if default_supplier_by_brand.get(brand_id) and not grouped[brand_id]["default_supplier"]:
@@ -525,12 +518,11 @@ async def place_order_confirm(
                 product_id=it["product_id"], sku=it["sku"], name=it["name"],
                 image=it.get("image"), category_id=it.get("category_id"),
                 room=it.get("room"), qty=it["qty"], unit_cost=it["unit_cost"],
-                tax_pct=it.get("tax_pct", 18), quotation_line_id=it.get("line_id"),
+                quotation_line_id=it.get("line_id"),
             )
             for it in card["items"]
         ]
         subtotal = sum(i.qty * i.unit_cost for i in po_items)
-        tax_total = sum(i.qty * i.unit_cost * (i.tax_pct or 0) / 100 for i in po_items)
 
         number = await _next_po_number_local()
         po = PurchaseOrder(
@@ -549,8 +541,7 @@ async def place_order_confirm(
             internal_notes=body.notes_by_brand.get(brand_id or "") if body.notes_by_brand else None,
             expected_delivery_at=body.expected_delivery_at,
             subtotal=round(subtotal, 2),
-            tax_total=round(tax_total, 2),
-            grand_total=round(subtotal + tax_total, 2),
+            grand_total=round(subtotal, 2),
             created_by=user.id,
             created_by_name=user.full_name,
             status_history=[

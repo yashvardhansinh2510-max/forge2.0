@@ -75,16 +75,13 @@ async def _next_po_number() -> str:
 
 
 def _recalc_totals(items: list[PurchaseOrderItem]) -> dict:
+    """Sum line totals — Forge uses final prices only."""
     subtotal = 0.0
-    tax_total = 0.0
     for it in items:
-        gross = it.qty * it.unit_cost
-        subtotal += gross
-        tax_total += gross * (it.tax_pct or 0) / 100
+        subtotal += it.qty * it.unit_cost
     return {
         "subtotal": round(subtotal, 2),
-        "tax_total": round(tax_total, 2),
-        "grand_total": round(subtotal + tax_total, 2),
+        "grand_total": round(subtotal, 2),
     }
 
 

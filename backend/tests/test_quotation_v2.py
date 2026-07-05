@@ -8,7 +8,7 @@ import os
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://forge-v2.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://forge-pricing.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 PASSWORD = "Forge@2026"
 OWNER_EMAIL = "owner@forge.app"
@@ -67,7 +67,6 @@ def _line(p, qty=1, disc=None, room=None):
         "qty": qty,
         "unit_price": p["price"],
         "discount_pct": disc,
-        "tax_pct": 18,
     }
 
 
