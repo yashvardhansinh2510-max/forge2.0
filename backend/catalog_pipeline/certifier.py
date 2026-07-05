@@ -4,9 +4,8 @@ Every import produces a numeric certification score across every axis.
 from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
-from typing import Iterable
 
-from .base import ALLOWED_CATEGORIES, MISSING, ProductRow
+from .base import MISSING, ProductRow
 
 
 @dataclass

@@ -5,7 +5,10 @@ supplier_name='Hansgrohe'. AXOR products stay under Hansgrohe brand with
 collection='AXOR'. Category comes verbatim from each file's stem.
 """
 from __future__ import annotations
-import asyncio, json, sys, time
+import asyncio
+import json
+import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

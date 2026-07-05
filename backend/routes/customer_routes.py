@@ -6,7 +6,7 @@ from auth import (
 )
 from db import db
 from models import (
-    CustomerBase, CustomerCreate, CustomerPublic, UserPublic,
+    CustomerCreate, CustomerPublic, UserPublic,
 )
 
 router = APIRouter(tags=["customers"])

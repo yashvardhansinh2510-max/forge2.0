@@ -29,12 +29,13 @@ from imagecodecs import jpegxr_encode, png_encode
 
 # Ensure /app/backend is on sys.path so `catalog_pipeline`, `models`, ...
 # resolve when pytest is invoked from repo root.
-import sys, pathlib
+import sys
+import pathlib
 BACKEND_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from catalog_pipeline.base import MISSING, ProductRow  # noqa: E402
+from catalog_pipeline.base import ProductRow  # noqa: E402
 from catalog_pipeline.certifier import CertificationReport, validate  # noqa: E402
 from catalog_pipeline.image_extractor import extract_images_from_xlsx  # noqa: E402
 

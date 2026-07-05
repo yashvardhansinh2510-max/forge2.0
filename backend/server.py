@@ -1,6 +1,5 @@
 """Forge backend entrypoint. Wires routes and boots demo data on first run."""
 import logging
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv

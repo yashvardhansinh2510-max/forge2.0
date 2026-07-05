@@ -5,9 +5,7 @@ Pipeline (via `catalog_pipeline/`):
 """
 from __future__ import annotations
 import logging
-import os
 from pathlib import Path
-from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv

@@ -21,10 +21,8 @@ import argparse
 import asyncio
 import base64
 import hashlib
-import io
 import json
 import logging
-import os
 import re
 import sys
 from datetime import datetime, timezone

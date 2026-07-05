@@ -1,128 +1,123 @@
-<analysis>**original_problem_statement**: Change the roadmap and pause Phase 2B UI work. The priority is completing the production catalog before building additional catalog features. Complete supplier imports for Grohe, Geberit, Hansgrohe, and Axor. For each brand: extract products/images, build hierarchy, validate prices, upload images to Supabase, run certification, generate QA report, and import into production. Generate a final tally/catalog quality report at the end.
+<analysis>**original_problem_statement**: The user requested a Final Production Redesign of the Forge Quotation Builder V4. The goal is to create the best quotation builder in the sanitaryware industry with a premium 3-column layout (Brands/Categories, Product Explorer, Quotation Builder), a comprehensive Product Modal, an embedded Quotation List that restores full session state, a Revision System, Auto-Save with Local Storage offline recovery, Smart Product Ranking (Most used, recently used), and complete Automation from Quote to Payment record.
 
 **User's preferred language**: English
-*(INSTRUCT next agent to respond in English only)*
+(INSTRUCT NEXT AGENT: You MUST respond in English only).
 
-**what currently exists?**: A full-stack application (Expo React Native, FastAPI, MongoDB) with a Supabase media storage integration. The product database is now successfully populated with a single-source-of-truth catalog spanning 5 brands (Vitra, Grohe, Geberit, Hansgrohe, Axor) with 2,872 production-ready products and their associated media.
+**what currently exists?**: Phase A (The V4 Shell & Core Workflow) is complete. The system features a fully functional 3-pane responsive layout (Brand Rail, Product Explorer, Quotation Pane), real-time product search/filtering, a premium product modal with alternates and specs, a custom product quick-add sheet, and robust state management via  backing up to both local storage and the database. Backend routes have been upgraded to support smart rankings, badges, product counts, and recent quotations.
 
-**Last working item**:
-- Last item agent was working: Fixing a Git push error (GH001: Large files detected) caused by tracking 130MB+ supplier  and  files in the  directory. The agent rewrote the git history to purge the large files and updated .
-- Status: RESOLVED
-- Agent Testing Done: Y
-- Which testing method agent to use? Frontend testing agent
-- User Testing Done: N
+**Last working item**: 
+    - Last item agent was working: Building the Quotation Builder V4 Shell (Phase A) including backend endpoint additions and a complete frontend redesign of the builder screen.
+    - Status: USER VERIFICATION PENDING
+    - Agent Testing Done: Y (Deep Backend Testing ran and passed 63/63 tests; multiple frontend visual verifications via screenshots).
+    - Which testing method agent to use?: NA (Testing is already done).
+    - User Testing Done: N
 
 **All Pending/In progress Issue list**:
-None.
+  None currently identified. The agent successfully built the core layout and fixed minor rendering bugs during the session.
 
 **In progress Task List**:
-None.
+  None. Phase A was successfully completed. 
 
-**Upcoming and Future Tasks**:
-Upcoming Tasks:
-- Task 1: Resume Phase 2B UI work (P0). This includes building a world-class catalog UI, family-first product pages, advanced filters, and search functionalities across the newly imported 2,872 product catalog. (This was paused to complete the backend catalog imports).
+**Upcoming and Future Tasks**
+  Phase B (Automation Polish) - P0:
+  - Implement Place Order confirmation UI matching the mockup workflow strip.
+  - Automate Follow-up creation upon quotation save.
+  - Update the Customer Timeline surface on the quotation screen.
+  
+  Dedicated Quotation Page Update - P0:
+  - Update  (dedicated full page) to match the new premium card/table design from the V4 mockup. (This was planned in Phase A but deferred).
 
-**Completed work in this session**:
-- Environment configuration recovery ( and  scripts created) (DONE)
-- Vitra verification and full re-import (250 products) (DONE)
-- Grohe extraction, certification, and production import (864 products) (DONE)
-- Geberit extraction, certification, and production import (496 products) (DONE)
-- Hansgrohe extraction (from 14 separate XLSX files) and production import. Axor was successfully merged as a Collection within the Hansgrohe brand (1,272 products total) (DONE)
-- Frontend Failed to fetch bug resolved by fixing  routing (DONE)
-- Git large file block resolved by purging  from repository history (DONE)
+  Phase C (PDF Redesign) - P1:
+  - Generate a professional premium PDF quotation with brand logos, room grouping, customer info, price summary, terms, watermark, and high-resolution images.
 
-**Earlier issues found/mentioned but not fixed**:
-None.
+  Advanced V4 Features - P2:
+  - Implement a side-by-side Compare revisions viewer.
+  - Implement Frequently quoted together analytics (requires mining historical order data to accurately populate  endpoints).
 
-**Known issue recurrence from previous fork**:
-- Issue recurrence in previous fork: The  and  files were missing at the beginning of the container startup. 
-- Recurrence count: 1
-- Status: RESOLVED (Agent created   ✓ backend/.env already exists (use --force to overwrite)
-  ✓ frontend/.env already exists (use --force to overwrite)
-==> Done. Restart supervisor: sudo supervisorctl restart backend expo and  to quickly recover the environment in future forks).
+**Completed work in this session**
+- Extended Backend Models & Endpoints (, , ) for smart ranking, counts, and UI state persistence (DONE).
+- Builder V4 3-pane Shell (, , , ) (DONE).
+- Premium Product Modal () and Custom Product Sheet () (DONE).
+- Upgraded Context State to support Local Storage snapshots and new V4 header fields (, ) (DONE).
+- Embedded Recent Quotations list () (DONE).
 
-**Code Architecture**:
-- : Expo React Native mobile application.
-- : FastAPI application connected to MongoDB.
-- : Data ingestion ETL containing adapters for different brands, certifier logic, orchestrator, and image extraction scripts.
-- : Ad-hoc Python scripts for executing bulk imports.
-- : Markdown QA reports and JSON artifact storage.
+**Earlier issues found/mentioned but not fixed**
+  None.
 
-**Key Technical Concepts**:
-React Native (Expo), FastAPI, MongoDB (Motor Async), Supabase Storage (for media), Python  &  (for parsing supplier Excel and PDF files), Git history rewriting.
+**Known issue recurrence from previous fork**
+  None.
 
-**key DB schema**:
-- : {name, sku, brand_id, category_id, subcategory, family_key, active, collection, variant_attributes (finish, colour)}
-- : {product_id, family_key, file_name, type, url, priority}
-- : {name, slug, country}
-- : {name, slug, active}
-
-**changes in tech stack**:
-None. Maintained MongoDB + Supabase pipeline established in prior iterations.
-
-**All files of reference**:
--   ✓ backend/.env already exists (use --force to overwrite)
-  ✓ frontend/.env already exists (use --force to overwrite)
-==> Done. Restart supervisor: sudo supervisorctl restart backend expo, ,  (Environment recovery scripts)
--  &  (Fixed API routing mapping to Kubernetes ingress)
--  (New adapter created for Hansgrohe)
-- ,  (Extraction and approval runners)
-- ,  (Updated to handle collection property for AXOR merger)
--  (Updated to block )
-
-**Areas that need refactoring**:
-- Temporary cache files like  (27MB) could be automatically cleaned up post-import to save container space.
-
-**key api endpoints**:
-- : Endpoints handling upload, status, and processing.
-- : Healthcheck.
-
-**Critical Info for New Agent**:
-- **API Routing:** NEVER set absolute URLs with ports (like ) in the frontend . Because of Kubernetes ingress, the frontend must use relative paths (empty ), which automatically route  to the backend.
-- **Brand Hierarchy Rules:** AXOR is NOT a standalone brand. It must remain structured as  with .
-- **Media Storage:** All product images are safely uploaded to Supabase. Do not attempt to store base64 strings in MongoDB.
-- **Git Restrictions:** Supplier source PDFs and XLSX files exceed GitHub's 100MB file limit. Keep all files in  and do not forcefully track them.
-
-**documents and test reports created in this job**:
+**Code Architecture**
 - 
 - 
 - 
 - 
 - 
--  (Updated)
+- 
+- 
+- 
+- 
+- 
+- 
+- 
 
-**Last 10 User Messages and any pending HUMAN messages**:
-1. (Latest) User reported Git push error () - RESOLVED.
-2. System Reminder to test bug fixes - RESOLVED.
-3. User recharged credits - COMPLETED.
-4. User requested  - COMPLETED.
-5. User uploaded 5 more Hansgrohe  files and reiterated instructions - COMPLETED.
-6. User uploaded 5 Hansgrohe  files and instructed categories to be named after the filename verbatim - COMPLETED.
-7. User uploaded Hansgrohe rules: Keep Axor under Hansgrohe, preserve hierarchy, do not fabricate data, and provided initial 5 files - COMPLETED.
-8. User requested  - COMPLETED.
-9. System reminder to test bug fixes - RESOLVED.
-10. User reported frontend bug: Failed to fetch - RESOLVED.
+**Key Technical Concepts**
+Frontend: Expo, React Native,  (for 60fps virtualized scrolling of 2,800+ products), Context API for state management, LocalStorage snapshot fallback.
+Backend: FastAPI, MongoDB (aggregation, data-driven ranking).
 
-*Pending HUMAN messages:* None.
+**key DB schema**
+  - : {id, is_custom, usage_count, recently_used, popular, brand_id, category_id}
+  - : {id, ui_state, project_name, reference_source, customer_phone, lines, rooms, status, revision}
 
-**Project Health Check**:
-- Broken: None
-- Mocked: None
+**changes in tech stack**
+  - Added frontend LocalStorage snapshot logic (every 3 seconds) as a crash-recovery fallback to the standard backend autosave.
 
-**3rd Party Integrations**:
-- Supabase Storage — requires User Keys (Anon + Service Role Key mapped in backend)
-- MongoDB Atlas — requires User Key (Local  configured)
+**All files of reference** 
+  -  (Extended schemas for V4 ranking and state)
+  -  (Added sorting, product counts, alternates endpoints)
+  -  (Added UI state blob, header fields, recent endpoints)
+  -  (Handles robust state sync, local storage backup, and restore routines)
+  -  (Main 3-column layout container)
+  -  (Complex premium modal UI)
 
-**Testing status**:
-- Testing agent used after significant changes: YES
-- Troubleshoot agent used after agent stuck in loop: NO
-- Test files created: None explicit (managed by test agent)
-- Known regressions: None
+**Areas that need refactoring**
+  -  (Needs UI redesign to match the new V4 aesthetic. Old V3 aesthetic currently exists).
 
-**Credentials to test flow**:
-Email: 
-Password: 
-*(Always verify against )*
+**key api endpoints**
+  - ,  (Returns active product counts)
+  -  (Accepts rich search parameters, dynamic sorting, and returns Popular/Recent badges)
+  -  (Persists ad-hoc catalogue items)
+  -  (Returns categorized alternatives: same finish, better model, etc.)
+  -  (Fetches lightweight data for the left-rail embedded list)
 
-**What agent forgot to execute**:
-Nothing. The agent successfully extracted, verified, and pushed all 5 requested brands into production, and successfully handled subsequent frontend fetch bugs and Git size limit errors.</analysis>
+**Critical Info for New Agent** 
+  - The Builder screen () has been fully converted to V4. Do NOT attempt to build a separate  route or maintain the V3 code. V4 replaces V3 entirely.
+  - The app must remain purely data-driven. Do NOT use fake/placeholder demo data; use the existing products seeded in MongoDB.
+  - No tax is a strict business rule. Never display GST or tax calculations.
+  - Backend  remains the primary source of truth.  is strictly a secondary fallback for rapid recovery if the browser crashes.
+
+**documents and test reports created in this job**
+  - 
+  - 
+
+**Last 10 User Messages and any pending HUMAN messages** 
+ 1. Start the task now - (COMPLETED)
+ 2. User answered 5 clarifying questions validating the 3-column replacement, list placement, usage of real database info, custom product persisting, and offline recovery logic. - (COMPLETED)
+
+**Project Health Check:**
+Healthy.
+
+**3rd Party Integrations** 
+  - None newly introduced. (Supabase URLs are utilized under the hood for  images, handled naturally via React Native  components).
+
+**Testing status**
+  - Testing agent used after significant changes: YES ( achieved 63/63 passing tests).
+  - Troubleshoot agent used after agent stuck in loop: NO
+  - Test files created: NONE
+  - Known regressions: NONE
+
+**Credentials to test flow:**
+Available inside .
+
+**What agent forgot to execute**
+The agent planned to update the dedicated Quotations list page () to match the new V4 premium card/table design at the end of Phase A, but finished the job without modifying this specific file. Ensure this is prioritized in the next job under upcoming tasks.</analysis>

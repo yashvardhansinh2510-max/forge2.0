@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_user, require_min_role
 from db import db, strip_ids
-from models import Brand, Category, Product, ProductCreate, UserPublic
+from models import Product, ProductCreate, UserPublic
 from services import media_service
 
 router = APIRouter(tags=["catalog"])

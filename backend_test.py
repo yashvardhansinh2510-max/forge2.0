@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 
 # Configuration
-BASE_URL = "https://forge-quotes.preview.emergentagent.com/api"
+BASE_URL = "https://builder-redesign-1.preview.emergentagent.com/api"
 EMAIL = "owner@forge.app"
 PASSWORD = "Forge@2026"
 

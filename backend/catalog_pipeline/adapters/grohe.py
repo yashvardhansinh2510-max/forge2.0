@@ -7,7 +7,6 @@ from __future__ import annotations
 import io
 import logging
 import re
-from typing import Iterable
 
 from ..base import MISSING, BrandAdapter, ExtractionReport, ProductRow
 from ..image_extractor import extract_images_from_pdf

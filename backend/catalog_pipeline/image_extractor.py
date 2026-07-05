@@ -29,10 +29,8 @@ it out.
 from __future__ import annotations
 import base64
 import hashlib
-import io
 import logging
 import os
-import re
 import subprocess
 import tempfile
 import zipfile

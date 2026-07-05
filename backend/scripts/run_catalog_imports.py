@@ -95,7 +95,7 @@ async def main():
         try:
             result = await asyncio.wait_for(run_pipeline(brand, fn, data), timeout=600)
         except asyncio.TimeoutError:
-            print(f"  ✗ PIPELINE TIMEOUT (>600s)")
+            print("  ✗ PIPELINE TIMEOUT (>600s)")
             continue
         except Exception as e:
             print(f"  ✗ PIPELINE FAILED: {type(e).__name__}: {e}")

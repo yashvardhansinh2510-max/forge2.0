@@ -11,7 +11,6 @@ media migration. Covers:
   - MongoDB direct: products.images is empty for every doc (2A migration done)
 """
 import os
-import re
 
 import pytest
 import requests

@@ -10,7 +10,6 @@ import io
 import logging
 import re
 from typing import Optional
-from uuid import uuid4
 
 from PIL import Image
 

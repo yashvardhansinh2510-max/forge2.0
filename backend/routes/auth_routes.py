@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from auth import (
     create_token, get_current_customer, get_current_user,
-    hash_password, verify_password,
+    verify_password,
 )
 from db import db
 from models import (

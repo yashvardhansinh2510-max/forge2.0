@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from db import db
 from models import Product
 
-from .base import MISSING, ProductRow
-from .certifier import CertificationReport, validate
+from .base import MISSING
+from .certifier import validate
 from .adapters import get_adapter
 
 logger = logging.getLogger("forge.catalog_pipeline")

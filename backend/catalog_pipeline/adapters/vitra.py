@@ -25,13 +25,6 @@ import io
 import re
 
 from ..base import MISSING, BrandAdapter, ExtractionReport, ProductRow, dedupe_iter
-from ..framework import (
-    classify_category as fw_classify,
-    extract_subcategory as fw_subcategory,
-    resolve_finish as fw_resolve_finish,
-    make_family_key as fw_family_key,
-    get_manifest,
-)
 from ..image_extractor import ExtractedImage, extract_images_from_xlsx_ex
 
 SKU_RE = re.compile(r"[A-Z]?\d{3,6}B[A-Z0-9]+H\d{2,6}", re.IGNORECASE)
@@ -177,7 +170,6 @@ class VitraAdapter(BrandAdapter):
         # used by at most one primary product row. Variant siblings within the
         # same family still get the *same* image because they resolve to the
         # same closest anchor (single lookup per row).
-        consumed: set[tuple[str, int]] = set()
 
         for ws in wb.worksheets:
             all_rows: list[list] = [list(r) for r in ws.iter_rows(values_only=True)]

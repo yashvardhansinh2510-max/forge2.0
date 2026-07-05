@@ -6,9 +6,9 @@ from typing import Optional
 
 import bcrypt
 import jwt
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Depends, Header, HTTPException, Query
 
-from db import db, strip_id
+from db import db
 from models import Role, UserPublic, CustomerPublic
 
 JWT_SECRET = os.environ["JWT_SECRET"]

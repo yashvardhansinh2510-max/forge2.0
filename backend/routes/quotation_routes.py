@@ -1,6 +1,5 @@
 """Quotation Builder API — v2 with multi-level discounts, autosave, duplicate."""
 from collections import defaultdict
-from copy import deepcopy
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -659,7 +658,7 @@ async def place_order_confirm(
         actor=user,
         customer_id=doc["customer_id"],
         quotation_id=quotation_id,
-        summary=f"Status changed to ordered",
+        summary="Status changed to ordered",
         payload={"from": doc.get("status"), "to": "ordered"},
     )
 

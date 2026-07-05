@@ -129,7 +129,6 @@ SKU_TAIL_FINISH = {
     "820": ("Polished Gold Optic", "PGO"),
     "830": ("Brushed Gold Optic",  "BGO"),
     "310": ("Brushed Nickel", "BN"),
-    "820": ("Polished Gold Optic", "PGO"),
     "180": ("Chrome",         "CR"),
     "007": ("Chrome",         "CR"),
     "400": ("Stainless Steel Optic", "SSO"),
@@ -387,7 +386,7 @@ class HansgroheAdapter(BrandAdapter):
                 colour = finish_label
                 subcategory = current_subcat if current_subcat else default_subcat
 
-                family_name = f"{series} · {base}".strip(" ·") if series else base
+                f"{series} · {base}".strip(" ·") if series else base
 
                 specs: dict = {}
                 if current_section:
