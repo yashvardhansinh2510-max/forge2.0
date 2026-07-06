@@ -8,9 +8,11 @@
 // autosaved).
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
+import { useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, money, radius, spacing, statusMeta, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 
 import { useBuilder } from "../context/BuilderContext";
@@ -61,12 +63,19 @@ export function BuilderTopbar({ onBack }: { onBack: () => void }) {
 
       {isDesktop ? (
         <View style={styles.headerFieldsRow}>
-          <FieldPill
-            label="Customer"
-            value={b.customers.find((c) => c.id === b.s.customerId)?.name || ""}
-            readonly
+          <Pressable
             testID="hdr-customer"
-          />
+            onPress={() => b.setCustomerSwitcherOpen(true)}
+            style={({ pressed }) => [styles.field, styles.fieldPressable, pressed && styles.fieldPressed]}
+          >
+            <Text style={styles.fieldLabel}>Customer</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Text style={styles.fieldValue} numberOfLines={1}>
+                {b.customers.find((c) => c.id === b.s.customerId)?.name || "Select customer"}
+              </Text>
+              <Feather name="chevron-down" size={11} color={colors.onSurfaceMuted} />
+            </View>
+          </Pressable>
           <FieldPill
             label="Phone"
             value={b.s.header.phone}
@@ -134,8 +143,9 @@ function FieldPill({
   label: string; value: string; onChange?: (v: string) => void;
   placeholder?: string; readonly?: boolean; testID?: string;
 }) {
+  const [focused, setFocused] = useState(false);
   return (
-    <View style={styles.field}>
+    <View style={[styles.field, focused && styles.fieldFocused]}>
       <Text style={styles.fieldLabel}>{label}</Text>
       {readonly ? (
         <Text style={styles.fieldValue} numberOfLines={1} testID={testID}>{value || "—"}</Text>
@@ -145,7 +155,9 @@ function FieldPill({
           onChangeText={onChange}
           placeholder={placeholder}
           placeholderTextColor={colors.onSurfaceMuted}
-          style={styles.fieldInput}
+          style={[styles.fieldInput, Platform.OS === "web" && ({ outlineStyle: "none" } as any)]}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           testID={testID}
         />
       )}
@@ -183,9 +195,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface, minWidth: 120, maxWidth: 200,
   },
+  fieldFocused: { borderColor: ds.brass, backgroundColor: ds.brassTint },
+  fieldPressable: {},
+  fieldPressed: { borderColor: ds.brassLine, backgroundColor: ds.brassTint },
   fieldLabel: { fontSize: 9, fontWeight: "700", color: colors.onSurfaceMuted, letterSpacing: 0.8, textTransform: "uppercase" },
   fieldValue: { fontSize: 12, fontWeight: "600", color: colors.onSurface, marginTop: 1 },
-  fieldInput: { fontSize: 12, fontWeight: "600", color: colors.onSurface, padding: 0, marginTop: 1 },
+  fieldInput: { fontSize: 12, fontWeight: "600", color: colors.onSurface, padding: 0, marginTop: 1, borderWidth: 0 },
 
   iconBtn: {
     padding: 8, borderRadius: radius.md,

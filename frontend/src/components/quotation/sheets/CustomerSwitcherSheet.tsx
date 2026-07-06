@@ -1,0 +1,199 @@
+// Customer switcher — searchable list + inline "create new customer" form.
+// Opens from the topbar's Customer field. Switching preserves every line
+// item / room / discount already in the builder; only customer_id (and its
+// denormalised name snapshot) changes.
+import { Feather } from "@expo/vector-icons";
+import { useMemo, useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+
+import { BottomSheet } from "@/src/components/BottomSheet";
+import { Button } from "@/src/components/ui";
+import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
+
+import { useBuilder } from "../context/BuilderContext";
+
+export function CustomerSwitcherSheet() {
+  const b = useBuilder();
+  const [q, setQ] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [project, setProject] = useState("");
+  const [address, setAddress] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const close = () => {
+    b.setCustomerSwitcherOpen(false);
+    setCreating(false);
+    setQ(""); setName(""); setPhone(""); setProject(""); setAddress("");
+  };
+
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return b.customers;
+    return b.customers.filter((c) =>
+      c.name?.toLowerCase().includes(term)
+      || c.company?.toLowerCase().includes(term)
+      || c.phone?.toLowerCase().includes(term)
+      || c.email?.toLowerCase().includes(term),
+    );
+  }, [b.customers, q]);
+
+  const pick = (id: string) => {
+    b.setCustomer(id);
+    close();
+  };
+
+  const save = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    const id = await b.createCustomer({ name: name.trim(), phone: phone.trim(), address: address.trim() });
+    setSaving(false);
+    if (id) {
+      if (project.trim()) b.setProjectName(project.trim());
+      close();
+    }
+  };
+
+  return (
+    <BottomSheet
+      visible={b.customerSwitcherOpen}
+      onClose={close}
+      title={creating ? "New customer" : "Switch customer"}
+      testID="customer-switcher-sheet"
+      footer={
+        creating ? (
+          <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
+            <Button label="Cancel" variant="secondary" onPress={() => setCreating(false)} />
+            <Button label={saving ? "Saving…" : "Create & select"} onPress={save} disabled={!name.trim() || saving} testID="save-new-customer" />
+          </View>
+        ) : undefined
+      }
+    >
+      {creating ? (
+        <View style={{ gap: spacing.md }}>
+          <View style={{ gap: 6 }}>
+            <Text style={type.overline}>Name *</Text>
+            <TextInput
+              testID="new-cust-name"
+              value={name}
+              onChangeText={setName}
+              placeholder="Customer or company name"
+              style={styles.input}
+              autoFocus
+            />
+          </View>
+          <View style={{ gap: 6 }}>
+            <Text style={type.overline}>Phone</Text>
+            <TextInput
+              testID="new-cust-phone"
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="+91 ·········"
+              keyboardType="phone-pad"
+              style={styles.input}
+            />
+          </View>
+          <View style={{ gap: 6 }}>
+            <Text style={type.overline}>Project</Text>
+            <TextInput
+              testID="new-cust-project"
+              value={project}
+              onChangeText={setProject}
+              placeholder="Project name (optional)"
+              style={styles.input}
+            />
+          </View>
+          <View style={{ gap: 6 }}>
+            <Text style={type.overline}>Address</Text>
+            <TextInput
+              testID="new-cust-address"
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Site / delivery address (optional)"
+              style={styles.input}
+              multiline
+            />
+          </View>
+        </View>
+      ) : (
+        <View style={{ gap: spacing.md }}>
+          <View style={styles.searchWrap}>
+            <Feather name="search" size={14} color={colors.onSurfaceMuted} />
+            <TextInput
+              testID="customer-switcher-search"
+              value={q}
+              onChangeText={setQ}
+              placeholder="Search by name, company, phone…"
+              placeholderTextColor={colors.onSurfaceMuted}
+              style={styles.searchInput}
+              autoFocus
+            />
+            {q ? (
+              <Pressable hitSlop={8} onPress={() => setQ("")}>
+                <Feather name="x" size={14} color={colors.onSurfaceMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          <Pressable testID="open-create-customer" onPress={() => setCreating(true)} style={styles.createRow}>
+            <View style={styles.createIcon}>
+              <Feather name="plus" size={14} color={ds.brass} />
+            </View>
+            <Text style={styles.createLabel}>Create new customer</Text>
+          </Pressable>
+
+          {filtered.length === 0 ? (
+            <Text style={[type.caption, { padding: 12, textAlign: "center" }]}>No customers match “{q}”.</Text>
+          ) : filtered.map((c) => {
+            const active = c.id === b.s.customerId;
+            return (
+              <Pressable
+                key={c.id}
+                testID={`customer-option-${c.id}`}
+                onPress={() => pick(c.id)}
+                style={[styles.custRow, active && styles.custRowActive]}
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.custName} numberOfLines={1}>{c.company || c.name}</Text>
+                  <Text style={type.caption} numberOfLines={1}>
+                    {[c.name !== (c.company || c.name) ? c.name : null, c.phone, c.email].filter(Boolean).join(" · ") || "—"}
+                  </Text>
+                </View>
+                {active ? <Feather name="check" size={16} color={ds.brass} /> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+    </BottomSheet>
+  );
+}
+
+const styles = StyleSheet.create({
+  input: {
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+    borderRadius: radius.md, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: colors.onSurface,
+  },
+  searchWrap: {
+    flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  searchInput: { flex: 1, fontSize: 14, color: colors.onSurface, padding: 0 },
+  createRow: {
+    flexDirection: "row", alignItems: "center", gap: 10, padding: 10,
+    borderRadius: radius.md, backgroundColor: ds.brassTint,
+  },
+  createIcon: {
+    width: 26, height: 26, borderRadius: 13, backgroundColor: colors.surface,
+    alignItems: "center", justifyContent: "center",
+  },
+  createLabel: { fontSize: 13, fontWeight: "700", color: ds.brass },
+  custRow: {
+    flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 8,
+    borderRadius: radius.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  custRowActive: { backgroundColor: ds.brassTint },
+  custName: { fontSize: 13.5, fontWeight: "600", color: colors.onSurface },
+});
