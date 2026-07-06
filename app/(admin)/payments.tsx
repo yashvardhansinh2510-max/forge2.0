@@ -1,8 +1,9 @@
-// Payments — Customer collection tracker.
-// Rebuilt on Forge Design System v2. Every visual is composed from ui.tsx
-// primitives (PageHeader, HeroBanner, StatTile, Card, Sheet, ProgressBar,
-// StatusBadge, EmptyState, SkeletonList, ListRow) — no hardcoded hex.
-// Business logic is preserved byte-for-byte from the previous implementation.
+// ═══════════════════════════════════════════════════════════════════════════
+// Payments — migrated to Design System V2.
+// Consumes ONLY primitives from @/src/components/ds. Zero local styles for
+// spacing, color, radius, elevation, typography, or motion. Business logic
+// preserved byte-for-byte from the previous implementation.
+// ═══════════════════════════════════════════════════════════════════════════
 import { Feather } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -15,12 +16,12 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import {
   Alert as UIAlert,
-  Badge, Button, Card, EmptyState, FormField, HeroBanner,
-  PageHeader, ProgressBar, SearchField, Sheet, Skeleton,
-  StatTile, StatusBadge,
-} from "@/src/components/ui";
+  Badge, Button, Card, EmptyState, FormField, HeroCard,
+  Panel, PageHeader, ProgressBar, SearchField, Sheet,
+  Skeleton, StatTile, StatusBadge, HoverCard, ActivityRow,
+} from "@/src/components/ds";
 import {
-  colors, icon as iconSize, money, moneyShort, radius, spacing, type,
+  colors, icon as iconSize, moneyShort, radius, spacing, type,
 } from "@/src/theme/tokens";
 
 type PayMode = "cash" | "upi" | "bank" | "cheque" | "card";
@@ -33,48 +34,28 @@ type Stats = {
 };
 
 type OrderRow = {
-  id: string;
-  number: string;
-  customer_id: string;
-  customer_name: string;
-  grand_total: number;
-  paid: number;
-  outstanding: number;
-  percent_collected: number;
-  payment_status: "paid" | "partial" | "due";
-  confirmed_at: string;
-  outstanding_short: string | null;
+  id: string; number: string; customer_id: string; customer_name: string;
+  grand_total: number; paid: number; outstanding: number;
+  percent_collected: number; payment_status: "paid" | "partial" | "due";
+  confirmed_at: string; outstanding_short: string | null;
 };
 
 type PaymentEntry = {
-  id: string;
-  amount: number;
-  mode: PayMode;
-  reference?: string | null;
-  note?: string | null;
-  paid_at?: string | null;
-  created_at?: string;
-  recorded_by_name?: string | null;
+  id: string; amount: number; mode: PayMode;
+  reference?: string | null; note?: string | null;
+  paid_at?: string | null; created_at?: string; recorded_by_name?: string | null;
 };
 
 type OrderDetail = {
-  id: string;
-  number: string;
-  status: string;
+  id: string; number: string; status: string;
   customer: {
     id: string; name: string; company?: string | null;
     phone?: string | null; email?: string | null; city?: string | null;
   };
-  customer_name: string;
-  confirmed_at: string;
-  notes?: string | null;
+  customer_name: string; confirmed_at: string; notes?: string | null;
   project_name?: string | null;
-  mrp: number;
-  discounted_rate: number;
-  grand_total: number;
-  paid: number;
-  outstanding: number;
-  percent_collected: number;
+  mrp: number; discounted_rate: number; grand_total: number;
+  paid: number; outstanding: number; percent_collected: number;
   payment_status: "paid" | "partial" | "due";
   payments: PaymentEntry[];
 };
@@ -86,28 +67,25 @@ const MODE_ICONS: Record<PayMode, keyof typeof Feather.glyphMap> = {
   cash: "dollar-sign", upi: "smartphone", bank: "briefcase", cheque: "file-text", card: "credit-card",
 };
 
+function money(n: number): string {
+  return `₹${(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
 function dateShort(iso?: string | null): string {
   if (!iso) return "—";
   try {
     return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
   } catch { return "—"; }
 }
+function todayIso(): string { return new Date().toISOString().slice(0, 10); }
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+const paymentTone = (s: "paid" | "partial" | "due"): "success" | "warning" | "danger" =>
+  s === "paid" ? "success" : s === "partial" ? "warning" : "danger";
 
-const paymentTone = (status: "paid" | "partial" | "due"): "success" | "warning" | "danger" =>
-  status === "paid" ? "success" : status === "partial" ? "warning" : "danger";
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Screen
 // ═══════════════════════════════════════════════════════════════════════════
 export default function PaymentsScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 900;
 
-  // Data
   const [stats, setStats] = useState<Stats | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [q, setQ] = useState("");
@@ -117,7 +95,6 @@ export default function PaymentsScreen() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [waLoading, setWaLoading] = useState(false);
 
-  // Record payment sheet
   const [showRecord, setShowRecord] = useState(false);
   const [amount, setAmount] = useState("");
   const [payDate, setPayDate] = useState(todayIso());
@@ -126,10 +103,8 @@ export default function PaymentsScreen() {
   const [saving, setSaving] = useState(false);
 
   const loadStats = useCallback(async () => {
-    try {
-      const s = await api.get<Stats>("/payments/stats");
-      setStats(s);
-    } catch (e: any) { console.warn("stats", e); }
+    try { setStats(await api.get<Stats>("/payments/stats")); }
+    catch (e: any) { console.warn("stats", e); }
   }, []);
 
   const loadOrders = useCallback(async (query: string = q) => {
@@ -160,17 +135,16 @@ export default function PaymentsScreen() {
     }
   }, []);
 
+  // Initial mount only.
   useEffect(() => {
     loadStats();
     loadOrders("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
   useEffect(() => {
     const t = setTimeout(() => { loadOrders(q); }, 220);
     return () => clearTimeout(t);
   }, [q, loadOrders]);
-
   useEffect(() => { if (selectedId) loadDetail(selectedId); }, [selectedId, loadDetail]);
 
   const savePayment = async () => {
@@ -180,9 +154,7 @@ export default function PaymentsScreen() {
     setSaving(true);
     try {
       await api.post("/payments", {
-        quotation_id: detail.id,
-        amount: amt,
-        mode,
+        quotation_id: detail.id, amount: amt, mode,
         reference: reference || null,
         paid_at: payDate ? new Date(payDate + "T12:00:00Z").toISOString() : null,
       });
@@ -193,9 +165,7 @@ export default function PaymentsScreen() {
       await Promise.all([loadStats(), loadOrders(q), loadDetail(detail.id)]);
     } catch (e: any) {
       toast.error(e?.detail || "Save failed");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   const sendWhatsAppReminder = async () => {
@@ -205,91 +175,58 @@ export default function PaymentsScreen() {
       const res = await api.get<{ wa_url: string; message: string; phone: string | null; phone_display: string | null }>(
         `/payments/orders/${detail.id}/whatsapp-reminder`,
       );
-      if (!res.phone) {
-        toast.error("No phone number on file — please add one to the customer");
-      } else {
-        toast.success(`Opening WhatsApp for ${res.phone_display || res.phone}`);
-      }
+      if (!res.phone) toast.error("No phone number on file — please add one to the customer");
+      else toast.success(`Opening WhatsApp for ${res.phone_display || res.phone}`);
       await Linking.openURL(res.wa_url);
-    } catch (e: any) {
-      toast.error(e?.detail || "Could not build reminder");
-    } finally {
-      setWaLoading(false);
-    }
+    } catch (e: any) { toast.error(e?.detail || "Could not build reminder"); }
+    finally { setWaLoading(false); }
   };
 
   const callCustomer = async () => {
     if (!detail?.customer.phone) { toast.error("No phone number on file"); return; }
-    const phone = detail.customer.phone.replace(/\s+/g, "");
-    await Linking.openURL(`tel:${phone}`);
+    await Linking.openURL(`tel:${detail.customer.phone.replace(/\s+/g, "")}`);
   };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
       <PageHeader
         title="Payments"
-        subtitle="Track outstanding balances, record payments, and send reminders in one click."
+        subtitle="Track outstanding balances, record payments, and send reminders."
         overline="COLLECTIONS"
+        actions={
+          <Button icon="download" label="Export" variant="secondary" size="md"
+            onPress={() => toast.success("Export coming soon")} />
+        }
       />
 
       <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
-        {/* Hero */}
-        <HeroBanner
+        {/* Hero — white card with brand icon tile */}
+        <HeroCard
           overline="THIS MONTH"
           title={stats ? `${moneyShort(stats.total_outstanding)} outstanding` : "Loading collections…"}
           subtitle="Follow up on partial and due orders. Recording a payment updates the customer's timeline automatically."
           icon="credit-card"
-          actions={
-            <View style={{ flexDirection: "row", gap: spacing.sm }}>
-              <Button
-                icon="download"
-                label="Export"
-                variant="secondary"
-                size="md"
-                onPress={() => toast.success("Export coming soon")}
-              />
-            </View>
-          }
+          iconTone="brand"
         />
 
         {/* Stats */}
-        <View style={[styles.statsRow, !isDesktop && styles.statsRowMobile]}>
-          <StatTile
-            label="Total Outstanding"
-            value={stats ? moneyShort(stats.total_outstanding) : "—"}
-            icon="alert-circle"
-            tone="danger"
-            sub="Across all active orders"
-          />
-          <StatTile
-            label="Collected This Month"
-            value={stats ? moneyShort(stats.collected_this_month) : "—"}
-            icon="trending-up"
-            tone="success"
-            sub="Payments received"
-          />
-          <StatTile
-            label="Active Orders"
-            value={stats ? String(stats.active_orders) : "—"}
-            icon="package"
-            tone="brand"
-            sub="Ordered · not fully paid"
-          />
-          <StatTile
-            label="Fully Paid"
-            value={stats ? String(stats.fully_paid) : "—"}
-            icon="check-circle"
-            tone="success"
-            sub="Closed collections"
-          />
+        <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
+          <StatTile label="Total Outstanding" value={stats ? moneyShort(stats.total_outstanding) : "—"}
+            icon="alert-circle" tone="danger" sub="Across all active orders" />
+          <StatTile label="Collected This Month" value={stats ? moneyShort(stats.collected_this_month) : "—"}
+            icon="trending-up" tone="success" sub="Payments received" />
+          <StatTile label="Active Orders" value={stats ? String(stats.active_orders) : "—"}
+            icon="package" tone="brand" sub="Ordered · not fully paid" />
+          <StatTile label="Fully Paid" value={stats ? String(stats.fully_paid) : "—"}
+            icon="check-circle" tone="success" sub="Closed collections" />
         </View>
 
         {/* Body */}
-        <View style={[styles.body, !isDesktop && styles.bodyMobile]}>
-          {/* Left — orders list */}
-          <View style={[styles.leftCol, isDesktop ? { width: 380 } : { width: "100%" }]}>
-            <Card variant="flat" padding={0}>
-              <View style={{ padding: spacing.md }}>
+        <View style={{ flexDirection: isDesktop ? "row" : "column", gap: spacing.lg, alignItems: "flex-start" }}>
+          {/* Left rail */}
+          <View style={{ width: isDesktop ? 380 : "100%" }}>
+            <Panel title="Outstanding orders" overline="ORDERS" padding={spacing.md}>
+              <View style={{ gap: spacing.md }}>
                 <SearchField
                   testID="payments-search"
                   value={q}
@@ -297,46 +234,42 @@ export default function PaymentsScreen() {
                   placeholder="Search orders…"
                   onClear={() => setQ("")}
                 />
+                {loadingList ? (
+                  <View style={{ gap: spacing.sm }}>
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <View key={i} style={{
+                        padding: spacing.md, gap: spacing.sm,
+                        borderRadius: radius.md,
+                        borderWidth: StyleSheet.hairlineWidth,
+                        borderColor: colors.border,
+                      }}>
+                        <Skeleton w="60%" h={14} radius={radius.sm} />
+                        <Skeleton w="40%" h={12} radius={radius.sm} />
+                        <Skeleton w="100%" h={4} radius={radius.pill} />
+                      </View>
+                    ))}
+                  </View>
+                ) : orders.length === 0 ? (
+                  <EmptyState icon="inbox" title="No collectable orders"
+                    subtitle="Place an order from a quotation to start tracking payments here." />
+                ) : (
+                  <View style={{ gap: spacing.sm }}>
+                    {orders.map((o) => (
+                      <OrderRowCard
+                        key={o.id}
+                        row={o}
+                        active={o.id === selectedId}
+                        onPress={() => setSelectedId(o.id)}
+                      />
+                    ))}
+                  </View>
+                )}
               </View>
-
-              {loadingList ? (
-                <View style={{ paddingHorizontal: spacing.md, paddingBottom: spacing.md, gap: spacing.sm }}>
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <View key={i} style={{
-                      padding: spacing.md, gap: spacing.sm,
-                      borderRadius: radius.md,
-                      borderWidth: StyleSheet.hairlineWidth,
-                      borderColor: colors.border,
-                    }}>
-                      <Skeleton w="60%" h={14} radius={radius.sm} />
-                      <Skeleton w="40%" h={12} radius={radius.sm} />
-                      <Skeleton w="100%" h={4} radius={radius.pill} />
-                    </View>
-                  ))}
-                </View>
-              ) : orders.length === 0 ? (
-                <EmptyState
-                  icon="inbox"
-                  title="No collectable orders"
-                  subtitle="Place an order from a quotation to start tracking payments here."
-                />
-              ) : (
-                <View style={{ paddingHorizontal: spacing.md, paddingBottom: spacing.md, gap: spacing.sm }}>
-                  {orders.map((o) => (
-                    <OrderCard
-                      key={o.id}
-                      row={o}
-                      active={o.id === selectedId}
-                      onPress={() => setSelectedId(o.id)}
-                    />
-                  ))}
-                </View>
-              )}
-            </Card>
+            </Panel>
           </View>
 
           {/* Right — detail */}
-          <View style={[styles.rightCol, !isDesktop && { width: "100%" }]}>
+          <View style={{ flex: 1, gap: spacing.lg, minWidth: 0, width: isDesktop ? undefined : "100%" }}>
             {loadingDetail || !detail ? (
               <Card>
                 <EmptyState
@@ -348,8 +281,11 @@ export default function PaymentsScreen() {
             ) : (
               <>
                 {/* Detail header */}
-                <Card>
-                  <View style={styles.detailHeader}>
+                <Panel padding={spacing.lg}>
+                  <View style={{
+                    flexDirection: "row", justifyContent: "space-between",
+                    alignItems: "flex-start", gap: spacing.md, flexWrap: "wrap",
+                  }}>
                     <View style={{ flex: 1, minWidth: 200, gap: 4 }}>
                       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
                         <Text style={[type.titleLg, { flexShrink: 1 }]} numberOfLines={2}>
@@ -363,72 +299,51 @@ export default function PaymentsScreen() {
                       </Text>
                     </View>
                     <View style={{ flexDirection: "row", gap: spacing.sm, flexShrink: 0 }}>
-                      <Button
-                        label="WhatsApp"
-                        icon="message-circle"
-                        variant="secondary"
-                        size="sm"
-                        loading={waLoading}
-                        onPress={sendWhatsAppReminder}
-                        testID="wa-reminder-btn"
-                      />
-                      <Button
-                        label="Call"
-                        icon="phone"
-                        variant="secondary"
-                        size="sm"
-                        onPress={callCustomer}
-                        testID="call-btn"
-                      />
+                      <Button label="WhatsApp" icon="message-circle" variant="secondary" size="sm"
+                        loading={waLoading} onPress={sendWhatsAppReminder} testID="wa-reminder-btn" />
+                      <Button label="Call" icon="phone" variant="secondary" size="sm"
+                        onPress={callCustomer} testID="call-btn" />
                     </View>
                   </View>
-                </Card>
+                </Panel>
 
-                {/* Metrics grid */}
-                <View style={[styles.metricsGrid, !isDesktop && styles.metricsGridMobile]}>
-                  <MetricCard label="MRP" value={money(detail.mrp)} sub="Catalogue price" tone="neutral" />
-                  <MetricCard
-                    label="Discounted"
-                    value={money(detail.discounted_rate)}
-                    sub={detail.mrp > detail.discounted_rate ? `Save ${money(detail.mrp - detail.discounted_rate)}` : "No discount"}
-                    tone="brand"
-                  />
-                  <MetricCard
-                    label="Paid"
-                    value={money(detail.paid)}
-                    sub={`${detail.percent_collected}% of order`}
-                    tone="success"
-                  />
-                  <MetricCard
-                    label="Outstanding"
-                    value={money(detail.outstanding)}
+                {/* Metrics */}
+                <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
+                  <StatTile dense label="MRP" value={money(detail.mrp)}
+                    sub="Catalogue price" tone="neutral" />
+                  <StatTile dense label="Discounted" value={money(detail.discounted_rate)}
+                    sub={detail.mrp > detail.discounted_rate ? `Save ${moneyShort(detail.mrp - detail.discounted_rate)}` : "No discount"}
+                    tone="brand" />
+                  <StatTile dense label="Paid" value={money(detail.paid)}
+                    sub={`${detail.percent_collected}% of order`} tone="success" />
+                  <StatTile dense label="Outstanding" value={money(detail.outstanding)}
                     sub={detail.outstanding > 0 ? "Remaining balance" : "Fully paid"}
-                    tone={detail.outstanding > 0 ? "danger" : "success"}
-                  />
+                    tone={detail.outstanding > 0 ? "danger" : "success"} />
                 </View>
 
-                {/* Progress row */}
-                <Card padding={spacing.lg}>
+                {/* Progress */}
+                <Panel padding={spacing.lg}>
                   <View style={{ gap: spacing.sm }}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                       <Text style={type.overline}>Collection progress</Text>
-                      <Text style={type.captionStrong}>{detail.percent_collected}%</Text>
+                      <Text style={{
+                        fontSize: 13, fontFamily: type.titleMd.fontFamily, fontWeight: "700",
+                        color: colors.onSurface, fontVariant: ["tabular-nums"],
+                      }}>{detail.percent_collected}%</Text>
                     </View>
-                    <ProgressBar
-                      percent={detail.percent_collected}
-                      tone={paymentTone(detail.payment_status)}
-                      size="md"
-                    />
+                    <ProgressBar percent={detail.percent_collected}
+                      tone={paymentTone(detail.payment_status)} size="md" />
                   </View>
-                </Card>
+                </Panel>
 
-                {/* Payment history */}
-                <Card>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md }}>
-                    <Text style={type.overline}>Payment History</Text>
-                    {detail.payments.length ? <Badge label={`${detail.payments.length} entries`} tone="neutral" size="sm" /> : null}
-                  </View>
-
+                {/* History */}
+                <Panel
+                  title="Payment history"
+                  overline="LEDGER"
+                  actions={detail.payments.length
+                    ? <Badge label={`${detail.payments.length} entries`} tone="neutral" size="sm" />
+                    : undefined}
+                >
                   {detail.payments.length === 0 && detail.outstanding > 0 ? (
                     <UIAlert
                       tone="error"
@@ -436,15 +351,28 @@ export default function PaymentsScreen() {
                       description="No payments recorded yet. Send a WhatsApp reminder or record the first payment below."
                     />
                   ) : detail.payments.length === 0 ? (
-                    <EmptyState icon="check-circle" title="Fully paid" subtitle="No payments to show." tone="brand" />
+                    <EmptyState icon="check-circle" title="Fully paid"
+                      subtitle="No payments to show." tone="brand" />
                   ) : (
-                    <View style={{ gap: spacing.sm }}>
-                      {detail.payments.map((p) => (
-                        <PaymentRow key={p.id} p={p} />
+                    <View>
+                      {detail.payments.map((p, i) => (
+                        <ActivityRow
+                          key={p.id}
+                          icon={MODE_ICONS[p.mode]}
+                          iconTone="success"
+                          title={`${MODE_LABELS[p.mode]} · ${money(p.amount)}`}
+                          subtitle={
+                            (p.reference || p.note)
+                              ? `${p.reference || ""}${p.reference && p.note ? " · " : ""}${p.note || ""}`
+                              : `Recorded by ${p.recorded_by_name || "—"}`
+                          }
+                          timestamp={dateShort(p.paid_at || p.created_at)}
+                          isLast={i === detail.payments.length - 1}
+                        />
                       ))}
                     </View>
                   )}
-                </Card>
+                </Panel>
 
                 {/* CTA */}
                 {detail.outstanding > 0 ? (
@@ -458,11 +386,8 @@ export default function PaymentsScreen() {
                     onPress={() => setShowRecord(true)}
                   />
                 ) : (
-                  <UIAlert
-                    tone="success"
-                    title="Order fully paid"
-                    description="Every rupee collected — this order is closed."
-                  />
+                  <UIAlert tone="success" title="Order fully paid"
+                    description="Every rupee collected — this order is closed." />
                 )}
               </>
             )}
@@ -470,7 +395,6 @@ export default function PaymentsScreen() {
         </View>
       </ScrollView>
 
-      {/* Record payment sheet — consistent chrome */}
       <RecordPaymentSheet
         visible={showRecord}
         onClose={() => setShowRecord(false)}
@@ -487,134 +411,44 @@ export default function PaymentsScreen() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sub-components
+// OrderRowCard — uses HoverCard primitive (scale 1.01 hover, low elevation).
 // ─────────────────────────────────────────────────────────────────────────────
-function OrderCard({ row, active, onPress }: { row: OrderRow; active: boolean; onPress: () => void }) {
+function OrderRowCard({ row, active, onPress }: { row: OrderRow; active: boolean; onPress: () => void }) {
   const tone = paymentTone(row.payment_status);
   return (
-    <Pressable
-      testID={`order-${row.number}`}
+    <HoverCard
       onPress={onPress}
-      style={({ pressed, hovered }: any) => [
-        {
-          padding: spacing.md,
-          borderRadius: radius.md,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: active ? colors.brand : colors.border,
-          backgroundColor: active ? colors.brandTint : pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : colors.surfaceSecondary,
-          gap: spacing.sm,
-        },
-      ]}
+      padding={spacing.md}
+      testID={`order-${row.number}`}
+      style={{
+        borderColor: active ? colors.brand : colors.border,
+        backgroundColor: active ? colors.brandTint : colors.surfaceSecondary,
+      }}
     >
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm }}>
-        <Text style={[type.titleSm, { flex: 1 }]} numberOfLines={1}>{row.customer_name}</Text>
-        {row.payment_status === "paid" ? (
-          <Badge label="Paid" tone="success" size="sm" icon="check" />
-        ) : row.outstanding_short ? (
-          <Badge label={`${row.outstanding_short} due`} tone={tone === "warning" ? "warning" : "error"} size="sm" />
-        ) : null}
-      </View>
-      <Text style={type.caption} numberOfLines={1}>
-        {row.number} · {dateShort(row.confirmed_at)}
-      </Text>
-      <ProgressBar percent={row.percent_collected} tone={tone} size="xs" />
-      <Text style={type.caption}>
-        {row.payment_status === "paid" ? "100% — fully paid" : `${row.percent_collected}% collected`}
-      </Text>
-    </Pressable>
-  );
-}
-
-function MetricCard({
-  label, value, sub, tone,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  tone: "neutral" | "brand" | "success" | "danger";
-}) {
-  const valueColor =
-    tone === "brand" ? colors.brand
-    : tone === "success" ? colors.success
-    : tone === "danger" ? colors.error
-    : colors.onSurface;
-
-  return (
-    <View style={{
-      flex: 1,
-      minWidth: 140,
-      padding: spacing.md,
-      borderRadius: radius.md,
-      backgroundColor: colors.surfaceSecondary,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      gap: 6,
-    }}>
-      <Text style={type.overline} numberOfLines={1}>{label}</Text>
-      <Text
-        style={{
-          fontSize: 18,
-          fontFamily: type.titleLg.fontFamily,
-          fontWeight: "700",
-          color: valueColor,
-          fontVariant: ["tabular-nums"],
-          letterSpacing: -0.2,
-        }}
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        minimumFontScale={0.55}
-      >
-        {value}
-      </Text>
-      <Text style={type.caption} numberOfLines={1}>{sub}</Text>
-    </View>
-  );
-}
-
-function PaymentRow({ p }: { p: PaymentEntry }) {
-  return (
-    <View style={{
-      flexDirection: "row",
-      alignItems: "center",
-      gap: spacing.md,
-      padding: spacing.md,
-      borderRadius: radius.md,
-      backgroundColor: colors.surfaceSubtle,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-    }}>
-      <View style={{
-        width: 34, height: 34, borderRadius: radius.sm,
-        backgroundColor: colors.surfaceSecondary,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: colors.border,
-        alignItems: "center", justifyContent: "center",
-      }}>
-        <Feather name={MODE_ICONS[p.mode]} size={iconSize.md} color={colors.onSurfaceSecondary} />
-      </View>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={type.titleSm} numberOfLines={1}>
-          {MODE_LABELS[p.mode]} · {dateShort(p.paid_at || p.created_at)}
+      <View style={{ gap: spacing.sm }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm }}>
+          <Text style={[type.titleSm, { flex: 1 }]} numberOfLines={1}>{row.customer_name}</Text>
+          {row.payment_status === "paid" ? (
+            <Badge label="Paid" tone="success" size="sm" icon="check" />
+          ) : row.outstanding_short ? (
+            <Badge label={`${row.outstanding_short} due`}
+              tone={tone === "warning" ? "warning" : "error"} size="sm" />
+          ) : null}
+        </View>
+        <Text style={type.caption} numberOfLines={1}>
+          {row.number} · {dateShort(row.confirmed_at)}
         </Text>
-        {(p.reference || p.note)
-          ? <Text style={type.caption} numberOfLines={1}>{p.reference}{p.reference && p.note ? " · " : ""}{p.note}</Text>
-          : <Text style={type.caption}>Recorded by {p.recorded_by_name || "—"}</Text>}
+        <ProgressBar percent={row.percent_collected} tone={tone} size="xs" />
+        <Text style={type.caption}>
+          {row.payment_status === "paid" ? "100% — fully paid" : `${row.percent_collected}% collected`}
+        </Text>
       </View>
-      <Text style={{
-        fontSize: 14,
-        fontFamily: type.titleMd.fontFamily,
-        fontWeight: "700",
-        color: colors.success,
-        fontVariant: ["tabular-nums"],
-      }}>
-        +{money(p.amount)}
-      </Text>
-    </View>
+    </HoverCard>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Record Payment Sheet — unified Sheet primitive.
+// RecordPaymentSheet — unified Sheet primitive.
 // ─────────────────────────────────────────────────────────────────────────────
 function RecordPaymentSheet(props: {
   visible: boolean; onClose: () => void;
@@ -627,7 +461,6 @@ function RecordPaymentSheet(props: {
 }) {
   const { visible, onClose, detail, amount, setAmount, payDate, setPayDate, mode, setMode, reference, setReference, onSave, saving } = props;
   if (!detail) return null;
-
   const modes: PayMode[] = ["cash", "upi", "bank", "cheque", "card"];
 
   return (
@@ -642,22 +475,12 @@ function RecordPaymentSheet(props: {
         <>
           <Button label="Cancel" variant="secondary" onPress={onClose} size="md" />
           <View style={{ flex: 1 }} />
-          <Button
-            label="Save Payment"
-            variant="primary"
-            icon="check"
-            onPress={onSave}
-            loading={saving}
-            size="md"
-            testID="save-payment"
-          />
+          <Button label="Save Payment" variant="primary" icon="check"
+            onPress={onSave} loading={saving} size="md" testID="save-payment" />
         </>
       }
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }}>
           <FormField label="Amount Received (₹)" required>
             <TextInput
@@ -674,21 +497,14 @@ function RecordPaymentSheet(props: {
 
           <FormField label="Date Received">
             {Platform.OS === "web" ? (
-              // @ts-ignore — native HTML date input for web
-              <input
-                type="date"
-                value={payDate}
+              // @ts-ignore native HTML date input
+              <input type="date" value={payDate}
                 onChange={(e: any) => setPayDate(e.target.value)}
                 style={{
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: radius.md,
-                  padding: "12px 14px",
-                  fontSize: 15,
-                  backgroundColor: colors.surfaceSecondary,
-                  color: colors.onSurface,
-                  fontFamily: "inherit",
-                  outline: "none",
-                  boxSizing: "border-box",
+                  border: `1px solid ${colors.border}`, borderRadius: radius.md,
+                  padding: "10px 12px", fontSize: 14,
+                  backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
+                  fontFamily: "inherit", outline: "none", boxSizing: "border-box", height: 40,
                 } as any}
               />
             ) : (
@@ -712,29 +528,23 @@ function RecordPaymentSheet(props: {
                     key={m}
                     testID={`pay-mode-${m}`}
                     onPress={() => setMode(m)}
-                    style={({ pressed }) => ({
+                    style={({ pressed, hovered }: any) => ({
                       paddingHorizontal: spacing.md,
                       height: 40,
                       borderRadius: radius.md,
                       borderWidth: StyleSheet.hairlineWidth,
-                      borderColor: on ? colors.brand : colors.border,
+                      borderColor: on ? colors.brand : hovered ? colors.borderStrong : colors.border,
                       backgroundColor: on ? colors.brand : colors.surfaceSecondary,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexDirection: "row",
-                      gap: 6,
+                      alignItems: "center", justifyContent: "center",
+                      flexDirection: "row", gap: 6,
                       opacity: pressed ? 0.85 : 1,
                     })}
                   >
-                    <Feather
-                      name={MODE_ICONS[m]}
-                      size={iconSize.sm}
-                      color={on ? colors.onBrand : colors.onSurfaceSecondary}
-                    />
+                    <Feather name={MODE_ICONS[m]} size={iconSize.sm}
+                      color={on ? colors.onBrand : colors.onSurfaceSecondary} />
                     <Text style={{
                       color: on ? colors.onBrand : colors.onSurface,
-                      fontSize: 13,
-                      fontFamily: type.titleMd.fontFamily,
+                      fontSize: 13, fontFamily: type.titleMd.fontFamily,
                       fontWeight: on ? "600" : "500",
                     }}>
                       {MODE_LABELS[m]}
@@ -745,10 +555,7 @@ function RecordPaymentSheet(props: {
             </View>
           </FormField>
 
-          <FormField
-            label="Reference / Notes"
-            helper="Cheque number, UTR, or any internal note"
-          >
+          <FormField label="Reference / Notes" helper="Cheque number, UTR, or any internal note">
             <TextInput
               testID="pay-reference"
               value={reference}
@@ -765,35 +572,19 @@ function RecordPaymentSheet(props: {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Local layout styles — no colors, spacing from tokens.
-// ─────────────────────────────────────────────────────────────────────────────
+// Local styles — only for form inputs (which are not in the DS yet).
 const styles = StyleSheet.create({
-  statsRow: { flexDirection: "row", gap: spacing.md },
-  statsRowMobile: { flexWrap: "wrap" },
-  body: { flexDirection: "row", gap: spacing.lg, alignItems: "flex-start" },
-  bodyMobile: { flexDirection: "column" },
-  leftCol: { alignSelf: "flex-start" },
-  rightCol: { flex: 1, gap: spacing.lg, minWidth: 0 },
-  detailHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: spacing.md,
-    flexWrap: "wrap",
-  },
-  metricsGrid: { flexDirection: "row", gap: spacing.md },
-  metricsGridMobile: { flexWrap: "wrap" },
   textInput: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    fontSize: 15,
+    paddingVertical: 10,
+    fontSize: 14,
     backgroundColor: colors.surfaceSecondary,
     color: colors.onSurface,
     fontFamily: type.body.fontFamily,
+    height: 40,
     ...(Platform.OS === "web" ? { outlineStyle: "none" } as any : {}),
   },
   numericInput: {

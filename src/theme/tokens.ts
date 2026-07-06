@@ -9,22 +9,23 @@ import { Platform } from "react-native";
 // Palette (raw)
 // ─────────────────────────────────────────────────────────────────────────────
 const palette = {
-  // Blues — refined premium accent (between Stripe & Linear)
+  // Blues — spec-locked
   blue50:  "#EFF6FF",
   blue100: "#DBEAFE",
   blue200: "#BFDBFE",
   blue500: "#3B82F6",
-  blue600: "#2563EB",   // primary
+  blue600: "#2563EB",   // primary — LOCKED
   blue700: "#1D4ED8",   // primary pressed
   blue900: "#1E3A8A",
 
-  // Porcelain neutrals — off-white surfaces, cooler than pure gray
-  gray0:   "#FFFFFF",
-  gray25:  "#FCFCFD",
-  gray50:  "#F7F8FA",
-  gray75:  "#F1F3F6",
-  gray100: "#EAECEF",
-  gray150: "#DFE3E8",
+  // Porcelain neutrals — off-white surfaces
+  gray0:   "#FFFFFF",   // pure white cards — LOCKED
+  gray15:  "#FAFBFC",   // page background — LOCKED (matches spec #FAFBFC)
+  gray25:  "#F7F8FA",   // hover fill / subtle surface
+  gray50:  "#F3F4F6",   // legacy alias
+  gray75:  "#EEF0F3",
+  gray100: "#E5E7EB",   // default border — LOCKED (matches spec #E5E7EB)
+  gray150: "#D1D5DB",
   gray200: "#C6CCD3",
   gray400: "#8A95A3",
   gray500: "#6B7280",
@@ -59,13 +60,13 @@ const palette = {
 // Semantic color roles — the ONLY thing screens should reference.
 // ─────────────────────────────────────────────────────────────────────────────
 export const colors = {
-  // Surfaces (page → card → nested)
-  surface: palette.gray50,             // primary app background
-  surfaceSecondary: palette.gray0,     // cards, sheets, elevated
-  surfaceTertiary: palette.gray75,     // subtle chips, hover fill
+  // Surfaces (page → card → nested) — LOCKED to spec
+  surface: palette.gray15,             // #FAFBFC — page background
+  surfaceSecondary: palette.gray0,     // #FFFFFF — cards, sheets, elevated
+  surfaceTertiary: palette.gray25,     // hover fill on white cards
   surfaceInverse: palette.gray900,     // dark heroes, inverse chips
   surfaceRaised: palette.gray0,        // synonym for elevated card
-  surfaceSubtle: palette.gray25,       // barely-there surface (e.g. table rows)
+  surfaceSubtle: palette.gray15,       // table zebra / muted panel
 
   // Text
   onSurface: palette.gray900,          // primary text
@@ -74,7 +75,7 @@ export const colors = {
   onSurfaceSubtle: palette.gray400,    // placeholders, disabled
   onSurfaceInverse: palette.gray0,     // text on dark
 
-  // Brand (blue) — primary accent
+  // Brand — LOCKED to #2563EB
   brand: palette.blue600,
   brandHover: palette.blue700,
   brandTint: palette.blue50,           // faint blue background wash
@@ -83,8 +84,8 @@ export const colors = {
   onBrand: palette.gray0,
   brandSecondary: palette.gray900,     // neutral dark for "secondary CTA"
 
-  // Borders & dividers
-  border: palette.gray100,             // default hairline
+  // Borders & dividers — LOCKED to #E5E7EB
+  border: palette.gray100,             // #E5E7EB — default hairline
   borderStrong: palette.gray150,       // hovered/emphasized
   borderMuted: "rgba(15, 23, 42, 0.06)",
   divider: palette.gray100,
@@ -164,9 +165,12 @@ export const radius = {
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Elevation — exactly 4 canonical levels + none.
-// e0 = flat surface · e1 = resting card · e2 = sticky toolbar · e3 = sheet · e4 = popover
-// Older names (hairline / low / medium / high / overlay) preserved as aliases.
+// Elevation — LOCKED to 4 subtle levels + none. Very subtle only. No garish shadows.
+//   low      = e1  resting card (barely visible, 1px offset)
+//   medium   = e2  sticky toolbar / floating pill
+//   high     = e3  sheets, modals
+//   overlay  = e4  popovers, dropdowns lifted above sheets
+// Every card in the app uses ONE of these.
 // ─────────────────────────────────────────────────────────────────────────────
 export const elevation = {
   none: {
@@ -176,42 +180,42 @@ export const elevation = {
     shadowOffset: { width: 0, height: 0 },
     elevation: 0,
   },
-  // e1 — resting card
+  // e1 — resting card (very subtle, Linear/Stripe style)
   low: {
     shadowColor: "#0B1220",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
     elevation: 1,
   },
   // e2 — sticky toolbars, floating pills
   medium: {
     shadowColor: "#0B1220",
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   // e3 — sheets, modals
   high: {
     shadowColor: "#0B1220",
-    shadowOpacity: 0.12,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 8,
+    shadowOpacity: 0.10,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
   },
   // e4 — popovers, dropdowns lifted above sheets
   overlay: {
     shadowColor: "#0B1220",
-    shadowOpacity: 0.16,
-    shadowRadius: 32,
-    shadowOffset: { width: 0, height: 18 },
-    elevation: 12,
+    shadowOpacity: 0.14,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
   },
   // Legacy alias — treat as e1
   hairline: {
     shadowColor: "#0B1220",
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.03,
     shadowRadius: 2,
     shadowOffset: { width: 0, height: 1 },
     elevation: 1,
@@ -227,23 +231,32 @@ export const shadow = {
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Motion — one animation language for the entire app.
-//   fast   → hover / press feedback / chip toggles           (140ms)
-//   base   → drawer open, dropdown, tooltip                  (220ms)
-//   slow   → modal enter/exit, page transition               (320ms)
-//   spring → interactive drag / swipe (stiff)                 (physics)
-//   softSpring → gentle re-order / list re-flow               (physics)
-// Every drawer, dialog, dropdown, hover, button, and page transition MUST
-// pick one of these presets. No custom durations anywhere else.
+// Motion — LOCKED to the V2 spec.
+//   press      → button press feedback                        (80ms)
+//   hover      → chip toggles, card hover fills, link hover    (120ms)
+//   modal      → modal enter/exit                              (180ms)
+//   drawer     → sheet enter/exit                              (220ms)
+//   page       → route transitions                             (220ms)
+//   base/fast/slow/instant kept as aliases for existing screens.
+//   spring / springSoft → interactive drag/reorder (physics)
+// Card-hover: scale 1.01 only. No other size transforms allowed.
+// Every drawer, dialog, dropdown, hover, button, and page transition MUST pick one.
 // ─────────────────────────────────────────────────────────────────────────────
 export const motion = {
-  instant: { duration: 80 },
-  fast:    { duration: 140 },
-  base:    { duration: 220 },
-  slow:    { duration: 320 },
+  press:   { duration: 80,  easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  hover:   { duration: 120, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  modal:   { duration: 180, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  drawer:  { duration: 220, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  page:    { duration: 220, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  // Card hover scale
+  cardHoverScale: 1.01,
+  // Legacy aliases
+  instant: { duration: 80,  easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  fast:    { duration: 120, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  base:    { duration: 220, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  slow:    { duration: 320, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
   spring:  { damping: 22, stiffness: 260, mass: 0.9 },
   springSoft: { damping: 18, stiffness: 160, mass: 0.9 },
-  // Easing curves (RN Animated / web transitions)
   easeStandard: "cubic-bezier(0.2, 0.0, 0.0, 1.0)",
   easeEmphasized: "cubic-bezier(0.05, 0.7, 0.1, 1.0)",
   easeDecel: "cubic-bezier(0.0, 0.0, 0.2, 1.0)",
