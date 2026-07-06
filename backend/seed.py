@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from auth import hash_password
 from db import db
 from models import (
-    Brand, Category, CustomerInDB, Followup, Notification,
+    Brand, Category, CustomerInDB, Notification,
     Product, Quotation, QuotationLineItem, UserInDB,
 )
 
@@ -230,6 +230,10 @@ async def seed_if_empty():
         subtotal = sum(i.qty * i.unit_price for i in items)
         disc = sum(i.qty * i.unit_price * i.discount_pct / 100 for i in items)
         status = statuses[idx % len(statuses)]
+        # Deliberate variety so the Follow-ups Sales Command Center has real
+        # signal on first load — some already expired, one expiring tomorrow,
+        # one expiring today, the rest comfortably valid.
+        valid_until_offsets = [30, -3, 1, 15, 0, 20, -6, 5]
         q = Quotation(
             number=f"FQ-2026-{idx + 1:04d}",
             customer_id=cust_id,
@@ -241,7 +245,7 @@ async def seed_if_empty():
             discount_total=round(disc, 2),
             grand_total=round(subtotal - disc, 2),
             notes="Prices are valid for 30 days. Delivery in 2–3 weeks after confirmation.",
-            valid_until=(now + timedelta(days=30)).isoformat(),
+            valid_until=(now + timedelta(days=valid_until_offsets[idx % len(valid_until_offsets)])).isoformat(),
             created_by=sales_user.id,
             created_by_name=sales_user.full_name,
         )
@@ -285,17 +289,10 @@ async def seed_if_empty():
         # else: remains fully due
 
     # ---- Follow-ups ----
-    for i, cust_id in enumerate(customer_ids):
-        cust = await db.customers.find_one({"id": cust_id}, {"_id": 0})
-        f = Followup(
-            customer_id=cust_id,
-            customer_name=cust.get("company") or cust["name"],
-            due_at=(now + timedelta(hours=i * 6)).isoformat(),
-            channel=["call", "whatsapp", "email", "visit"][i % 4],  # type: ignore[arg-type]
-            note=["Confirm order", "Share latest catalog", "Payment reminder", "Site visit"][i % 4],
-            assigned_to=sales_user.id,
-        )
-        await db.followups.insert_one(f.dict())
+    # No static seed rows — the Sales Command Center's reconciliation engine
+    # (services/followup_engine.reconcile_followups) derives every card live
+    # from the quotations/payments/purchase-orders/customers created above,
+    # the moment the workspace first loads (and on every manual refresh).
 
     # ---- Suppliers (one dealership per brand) ----
     from models import Supplier

@@ -522,15 +522,103 @@ class PaymentCreate(BaseModel):
     paid_at: Optional[str] = None
 
 
+# ---------- Follow-ups (Sales Command Center) ----------
+FollowupRuleType = Literal[
+    "quotation_new", "quotation_inactive", "quotation_expiring", "quotation_expired",
+    "payment_overdue", "payment_partial", "purchase_dispatched", "purchase_delivered",
+    "customer_inactive", "manual",
+]
+FollowupCategory = Literal[
+    "quotation", "payment", "purchase", "dispatch", "delivery",
+    "complaint", "general", "sales", "support",
+]
+FollowupChannel = Literal["call", "whatsapp", "email", "visit"]
+FollowupPriorityLevel = Literal["critical", "high", "medium", "low"]
+FollowupStatus = Literal["open", "snoozed", "done", "dismissed"]
+FollowupOutcome = Literal["interested", "call_back", "no_answer", "rejected", "converted"]
+
+
 class Followup(TimestampedModel):
+    """A single actionable card in the Follow-ups workspace. Automated rows are
+    produced (and kept in sync / auto-resolved) by services/followup_engine.py —
+    never created ad-hoc elsewhere. Manual rows (is_automated=False) are created
+    by staff via the '+ New Follow-up' action or a logged call outcome."""
+    source_key: Optional[str] = None        # dedupe key for automated rules, e.g. "payment_overdue:<qid>"
+    rule_type: FollowupRuleType = "manual"
+    category: FollowupCategory = "general"
     customer_id: str
     customer_name: str
+    customer_phone: Optional[str] = None
+    customer_tier: Literal["retail", "trade", "vip"] = "retail"
     quotation_id: Optional[str] = None
+    quotation_number: Optional[str] = None
+    purchase_id: Optional[str] = None
+    purchase_number: Optional[str] = None
+    project_name: Optional[str] = None
+    value: float = 0                        # quotation value / outstanding amount — powers scoring + Today's Mission
+    reason: str = ""                        # one-line headline shown on the card
+    reason_factors: list[str] = []          # explainability bullets behind the priority score
+    next_action: str = ""                   # deterministic recommendation, e.g. "Call customer"
+    next_action_reason: str = ""            # WHY — shown under the action
+    suggested_channel: FollowupChannel = "call"
+    priority_score: int = 0                 # 0-100, deterministic (see services/followup_engine.py)
+    priority_level: FollowupPriorityLevel = "medium"
+    manual_priority_override: Optional[FollowupPriorityLevel] = None
     due_at: str
-    channel: Literal["call", "whatsapp", "email", "visit"] = "call"
-    note: str
-    status: Literal["open", "done", "snoozed"] = "open"
-    assigned_to: str
+    status: FollowupStatus = "open"
+    snoozed_until: Optional[str] = None
+    is_automated: bool = True
+    auto_resolved: bool = False
+    resolution_note: Optional[str] = None
+    assigned_to: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+    last_contacted_at: Optional[str] = None
+    contact_attempts: int = 0
+    tags: list[str] = []
+    completed_at: Optional[str] = None
+    completed_outcome: Optional[FollowupOutcome] = None
+    notes: Optional[str] = None
+
+
+class FollowupCreate(BaseModel):
+    customer_id: str
+    quotation_id: Optional[str] = None
+    purchase_id: Optional[str] = None
+    category: FollowupCategory = "general"
+    channel: FollowupChannel = "call"
+    reason: str
+    notes: Optional[str] = None
+    due_at: Optional[str] = None
+    assigned_to: Optional[str] = None
+    priority_level: Optional[FollowupPriorityLevel] = None
+
+
+class FollowupUpdate(BaseModel):
+    notes: Optional[str] = None
+    due_at: Optional[str] = None
+    assigned_to: Optional[str] = None
+    manual_priority_override: Optional[FollowupPriorityLevel] = None
+    reason: Optional[str] = None
+
+
+class FollowupSnoozePayload(BaseModel):
+    minutes: Optional[int] = None
+    until: Optional[str] = None
+    preset: Optional[Literal["15m", "1h", "tomorrow", "next_week", "custom"]] = None
+
+
+class FollowupCompletePayload(BaseModel):
+    notes: Optional[str] = None
+    channel: Optional[FollowupChannel] = None
+
+
+class FollowupCallOutcomePayload(BaseModel):
+    outcome: FollowupOutcome
+    notes: Optional[str] = None
+
+
+class FollowupContactPayload(BaseModel):
+    channel: FollowupChannel
 
 
 class Notification(TimestampedModel):

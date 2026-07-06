@@ -23,7 +23,9 @@ from routes.purchase_routes import router as purchase_router  # noqa: E402
 from routes.purchases_tracker import router as purchases_tracker_router  # noqa: E402
 from routes.payment_routes import router as payment_router  # noqa: E402
 from routes.activity_routes import router as activity_router  # noqa: E402
+from routes.followup_routes import router as followup_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
+from services.followup_engine import reconcile_followups  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("forge")
@@ -76,6 +78,10 @@ app.add_middleware(
 async def _startup():
     await seed_if_empty()
     await resync_catalog_if_needed()
+    try:
+        await reconcile_followups()
+    except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load
+        logger.warning("Initial follow-up reconciliation skipped: %s", e)
     logger.info("Forge API ready.")
 
 

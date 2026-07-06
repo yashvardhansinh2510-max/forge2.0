@@ -1,7 +1,7 @@
 """Scaffold endpoints — the /purchase-orders scaffold has been REMOVED and replaced
 by the full module at routes/purchase_routes.py. The /payments scaffold has been
-REMOVED and replaced by routes/payment_routes.py. /followups remains as a simple
-list endpoint until its full module lands."""
+REMOVED and replaced by routes/payment_routes.py. /followups has been REMOVED and
+replaced by the full Sales Command Center module at routes/followup_routes.py."""
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user, require_min_role
@@ -9,11 +9,6 @@ from db import db
 from models import UserPublic
 
 router = APIRouter(tags=["ops"])
-
-
-@router.get("/followups")
-async def list_followups(_: UserPublic = Depends(get_current_user)):
-    return await db.followups.find({}, {"_id": 0}).sort("due_at", 1).to_list(200)
 
 
 @router.get("/notifications")
