@@ -1,0 +1,112 @@
+{
+  "environment_recovery": [
+    {
+      "test": "Login with owner@forge.app",
+      "passed": true,
+      "details": "Token: eyJhbGciOiJIUzI1NiIs...",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:18.057189"
+    },
+    {
+      "test": "GET /api/quotations without auth returns 401",
+      "passed": true,
+      "details": "Status: 401",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:18.158873"
+    },
+    {
+      "test": "GET /api/quotations with auth returns 200",
+      "passed": true,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:18.267081"
+    }
+  ],
+  "quotation_module": [
+    {
+      "test": "Create quotation",
+      "passed": false,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:18.993099"
+    }
+  ],
+  "purchases_module": [
+    {
+      "test": "Create quotation",
+      "passed": false,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:19.347203"
+    }
+  ],
+  "payments_module": [
+    {
+      "test": "Create quotation",
+      "passed": false,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:19.663548"
+    }
+  ],
+  "followups_v2": [
+    {
+      "test": "Reconcile idempotency",
+      "passed": true,
+      "details": "First: 9, Second: 9",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:20.416412"
+    },
+    {
+      "test": "V2 split overdue KPI fields present",
+      "passed": true,
+      "details": "Fields: overdue_payments_count, overdue_payments_amount, overdue_payments_amount_short, expiring_quotations_count",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:20.522253"
+    },
+    {
+      "test": "Followup detail V2 stats fields",
+      "passed": true,
+      "details": "Fields present: True, risk_level: high",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:20.736399"
+    },
+    {
+      "test": "Export XLSX (magic bytes check)",
+      "passed": true,
+      "details": "Size: 6144 bytes",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:20.902989"
+    },
+    {
+      "test": "Export CSV (header row check)",
+      "passed": true,
+      "details": "Size: 1644 bytes",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:21.038281"
+    },
+    {
+      "test": "Regression: GET /followups/mission",
+      "passed": true,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:21.270162"
+    },
+    {
+      "test": "Regression: GET /followups/insights",
+      "passed": true,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:21.372684"
+    }
+  ],
+  "cross_module_e2e": [
+    {
+      "test": "STEP 1: Create quotation",
+      "passed": false,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:51:21.686586"
+    }
+  ]
+}

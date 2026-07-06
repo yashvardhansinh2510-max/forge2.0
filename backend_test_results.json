@@ -1,0 +1,39 @@
+{
+  "environment_recovery": [
+    {
+      "test": "Login with owner@forge.app",
+      "passed": true,
+      "details": "Token received: eyJhbGciOiJIUzI1NiIs...",
+      "evidence": {
+        "email": "owner@forge.app",
+        "token_length": 228
+      },
+      "timestamp": "2026-07-06T22:49:05.025384"
+    },
+    {
+      "test": "GET /api/quotations without auth returns 401",
+      "passed": true,
+      "details": "Status: 401",
+      "evidence": {
+        "status_code": 401,
+        "response": "{\"detail\":\"Missing bearer token\"}"
+      },
+      "timestamp": "2026-07-06T22:49:05.164640"
+    },
+    {
+      "test": "GET /api/quotations with auth returns 200",
+      "passed": true,
+      "details": "Status: 200, Count: 8",
+      "evidence": {
+        "status_code": 200,
+        "count": 8
+      },
+      "timestamp": "2026-07-06T22:49:05.268999"
+    }
+  ],
+  "quotation_module": [],
+  "purchases_module": [],
+  "payments_module": [],
+  "followups_v2": [],
+  "cross_module_e2e": []
+}
