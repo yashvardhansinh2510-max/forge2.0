@@ -2,7 +2,8 @@
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 
@@ -43,8 +44,8 @@ export function BuilderFooter() {
         <Row label="Subtotal" value={money(b.totals.subtotal)} />
         <Row label="Discount" value={`− ${money(b.totals.discount)}`} valueColor={colors.error} />
         <View style={[styles.tRow, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border, paddingTop: 8, marginTop: 4 }]}>
-          <Text style={{ fontSize: 14, fontWeight: "700" }}>Grand total</Text>
-          <Text style={{ fontSize: 20, fontWeight: "700", fontVariant: ["tabular-nums"] }}>{money(b.totals.grand)}</Text>
+          <Text style={{ fontSize: 13, fontFamily: font.medium, fontWeight: "500", color: colors.onSurfaceSecondary }}>Grand total</Text>
+          <Text style={{ fontSize: 22, fontFamily: font.regular, letterSpacing: -0.4, color: colors.onSurface, fontVariant: ["tabular-nums"] }}>{money(b.totals.grand)}</Text>
         </View>
       </View>
 
@@ -65,7 +66,7 @@ function Row({ label, value, valueColor }: { label: string; value: string; value
   return (
     <View style={styles.tRow}>
       <Text style={type.caption}>{label}</Text>
-      <Text style={[{ fontFamily: "System", fontVariant: ["tabular-nums"], fontSize: 13, color: colors.onSurface }, valueColor ? { color: valueColor } : null]}>{value}</Text>
+      <Text style={[{ fontFamily: font.regular, fontVariant: ["tabular-nums"] as any, fontSize: 13, color: colors.onSurface }, valueColor ? { color: valueColor } : null]}>{value}</Text>
     </View>
   );
 }
@@ -87,8 +88,8 @@ const styles = StyleSheet.create({
   totals: { gap: 4 },
   tRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   saveBtn: {
-    backgroundColor: colors.brand, paddingVertical: 14, borderRadius: radius.md,
+    backgroundColor: ds.brass, paddingVertical: 14, borderRadius: radius.md,
     flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8,
   },
-  saveBtnText: { color: colors.onBrand, fontSize: 15, fontWeight: "700" },
+  saveBtnText: { color: ds.canvas, fontSize: 15, fontFamily: font.semibold, fontWeight: "600", letterSpacing: -0.1 },
 });

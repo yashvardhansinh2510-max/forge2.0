@@ -12,6 +12,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
 import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import type { Product, ProductVariant } from "../helpers/types";
 
@@ -266,7 +267,7 @@ export function ProductModal() {
               style={styles.footerGhost}
               testID="pm-favourite"
             >
-              <Feather name="heart" size={14} color={b.favouriteIds.includes(product.id) ? "#E11D48" : colors.onSurface} />
+              <Feather name="heart" size={14} color={b.favouriteIds.includes(product.id) ? ds.brass : colors.onSurface} />
               <Text style={styles.footerGhostLabel}>{b.favouriteIds.includes(product.id) ? "Favourited" : "Favourite"}</Text>
             </Pressable>
             <View style={{ flex: 1 }} />
@@ -337,7 +338,7 @@ const styles = StyleSheet.create({
     padding: 12, borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, gap: 6,
   },
-  priceBig: { fontSize: 22, fontWeight: "800", color: "#DC2626", fontVariant: ["tabular-nums"] },
+  priceBig: { fontSize: 22, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"], letterSpacing: -0.3 },
   mrpBig: { fontSize: 12, color: colors.onSurfaceMuted, textDecorationLine: "line-through", fontVariant: ["tabular-nums"] },
   priceHint: { fontSize: 10, color: colors.onSurfaceMuted },
   priceInput: {
@@ -388,7 +389,7 @@ const styles = StyleSheet.create({
   relCard: { width: 130, gap: 4 },
   relThumb: { width: "100%", aspectRatio: 1, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
   relName: { fontSize: 11, fontWeight: "600", color: colors.onSurface, marginTop: 4 },
-  relPrice: { fontSize: 11, fontWeight: "700", color: "#DC2626", fontVariant: ["tabular-nums"] },
+  relPrice: { fontSize: 11, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"] },
 
   footer: {
     flexDirection: "row", alignItems: "center", gap: 8,

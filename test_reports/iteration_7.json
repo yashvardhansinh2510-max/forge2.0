@@ -1,0 +1,55 @@
+{
+  "summary": "Frontend regression for the 'Showroom' UI redesign — everything the review asked for works. Login → dashboard, Quotations list (search + status chips + rows + status badges + New Quotation nav), Quotation Builder (Add product from grid, qty edit updates grand total, Discount chip opens the item-discount sheet with apply/close, Undo reverses the qty edit, room header shows the active brass bar, autosave label updates), BrandRail brand filter narrows the grid correctly, RecentQuotations click restores a saved quotation session with a 'Restored FQ-2026-…' toast, Purchases Stock view lists 4 seeded items, Move opens the stage menu and moving to a different stage fires the 'Moved to Company Billing' toast + updates stage counts and the dot+word badge, and brand facet (Axor) filters the table to 2 rows. Design cues intact: warm off-white canvas, ink text, brass on active nav/chips/room bar/facet rows, Fraunces serif on display headings only, status pills render as dot+word. No red screen, no broken imports, no 'undefined ds' / missing style token errors on any screen.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "Third-party dep (surfaces on every screen via react-native-web) — react-dom/react-native-web ref forwarding",
+        "issue": "Console warning: 'Accessing element.ref was removed in React 19. ref is now a regular prop.' — non-blocking, comes from react-native-web / react-navigation internals, not from the redesign code. Safe to ignore; will be resolved by upstream library updates."
+      },
+      {
+        "component": "react-native-web deprecated style shim",
+        "issue": "Console warning: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' — from RN-web compatibility layer, not from the design tokens (tokens.ts still exposes shadow.raised / shadow.overlay in the native shape, which is correct for iOS/Android). Non-blocking on web preview."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/tmp/00_landing.png",
+    "/tmp/01_dashboard.png",
+    "/tmp/03_builder.png",
+    "/tmp/04_filter_sent.png",
+    "/tmp/05_builder_after_add.png",
+    "/tmp/06_disc_sheet.png",
+    "/tmp/07_after_undo.png",
+    "/tmp/08_brand_axor.png",
+    "/tmp/09_recent_restored.png",
+    "/tmp/11_stock_view.png",
+    "/tmp/12_stage_menu.png",
+    "/tmp/15_after_real_move.png",
+    "/tmp/16_brand_facet_axor.png"
+  ],
+  "action_items": [
+    "No functional action items — the UI redesign is regression-clean for every flow the review requested. Optionally: consider adding data-testid props on the Purchases Brand-facet rows (Axor / Grohe / ALL) and Stage-facet rows (All stages / Order in Company / Company Billing / …); today they're only reachable by visible text, which works but is less robust for future test automation."
+  ],
+  "critical_code_review_comments": [
+    "tokens.ts is a clean single-source-of-truth: semantic color roles, dot+word statusTone map, 4pt spacing, one serif voice (Fraunces) reserved for display, brass constrained to guidance — matches the redesign brief.",
+    "Builder testID hygiene is excellent: add-<SKU>, qty-<lineId>, disc-<lineId>, undo-btn, rail-brand-<name>, rail-recent-<FQ>, discount-sheet-backdrop/close, apply-discount all present and stable across two full builder sessions.",
+    "Quotations list testIDs (filter-all/draft/pending_approval/sent/won/lost, quotations-search, quotation-<uuid>, new-quotation-btn) match the review spec; filter-sent chip visibly renders brass tint when active.",
+    "Purchases testIDs (view-today/stock/customers/dispatch_record, row-move-<id>, row-transfer-<id>, move-to-<stage>, move-to-last-stage) are complete for the primary flow. Only gap noted above (brand/stage facet rows lack testIDs)."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (backend testing explicitly skipped per review request)",
+    "frontend": "100% — every flow enumerated in features_or_bugs_to_test passed on the first attempt"
+  },
+  "seed_data_creation": "None persisted. One test move (Axor Starck: Order in Company → Company Billing) was performed to verify the toast + stage-count update, then reverted back to 'Order in Company' at the end of the session. Purchases state is identical to pre-test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview URL https://fbf0265a-dad6-4745-8310-f75d13585928.preview.emergentagent.com, owner@forge.app / Forge@2026. Tested at desktop 1440x900 (the app's rich-canvas breakpoint — sidebar + 3-column builder + full purchases table are all present). Mobile viewport (375x667) was NOT re-verified this round because the review was scoped to functional-regression-only after a pure restyle; if the redesign also changed the mobile builder / mobile purchases layouts, retest 375x667 explicitly (there is a src/components/quotation/footer/MobileControls.tsx that specifically renders on narrow widths). Everything else — auth, quotations, builder, purchases — is confirmed regression-clean at desktop."
+}

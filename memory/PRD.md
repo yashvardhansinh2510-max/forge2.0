@@ -160,3 +160,19 @@ Iteration-1 endpoints unchanged plus:
 - Auto-generated Purchase Orders from approved quotes
 - Payments / Follow-ups full UIs
 
+
+## Design Reboot — Showroom Language (July 2026 fork)
+User directive: restrained premium aesthetic (Apple philosophy, not style). Warm off-white canvas,
+near-black ink type, brass accent used ONLY for: primary CTA, focus, active nav, selected state, progress.
+Headings: Fraunces serif; everything else Inter. Priority: Quotation Builder 70% / Purchases 20% / Quotation List 10%.
+
+Done in this session (UI only, zero business-logic changes):
+- Fixed corrupted Inter TTFs in /app/frontend/assets/fonts (were HTML error pages → real fonts from @expo-google-fonts CDN)
+- Recreated missing /app/backend/.env (MONGO_URL, DB_NAME=buildcon_house, JWT_SECRET) and /app/frontend/.env after fork; reinstalled reportlab/openpyxl
+- Shared primitives (ui.tsx): StatusBadge → calm dot+word (statusTone/toneColor), Chip selected → brass tint, PageHeader title → Fraunces serif
+- Builder: BrandRail zinc-dark → warm light rail w/ brass active bars + serif wordmark; RecentQuotationsPanel light;
+  ProductExplorer badges warm (Popular=brass) + ink prices + brass fav heart; LineRow sunken qty/rate cells, Inter tabular,
+  brass focused state; RoomHeaderRow section band w/ brass active bar; RoomChipRow + CustomerBar + VariantChip brass selected;
+  BuilderFooter + MobileControls brass primary CTA, refined totals; QuotationPane serif document number; ProductModal ink price
+- Purchases: serif page title, local STAGE_TONE map (dot+word badges), all Tailwind hexes → Showroom tokens, brass rail markers
+- Quotations list: removed blue number pill, brass New CTA, refined row typography

@@ -2,6 +2,7 @@
 import { Pressable, ScrollView, StyleSheet, Text } from "react-native";
 
 import { colors } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 
 export function CustomerBar() {
@@ -17,7 +18,7 @@ export function CustomerBar() {
             onPress={() => b.setCustomer(c.id)}
             style={[styles.chip, on && styles.chipActive]}
           >
-            <Text style={{ fontSize: 12, fontWeight: "600", color: on ? colors.onBrand : colors.onSurface }}>
+            <Text style={{ fontSize: 12, fontWeight: "600", color: on ? ds.brassDeep : colors.onSurface }}>
               {c.company || c.name}
             </Text>
           </Pressable>
@@ -29,5 +30,5 @@ export function CustomerBar() {
 
 const styles = StyleSheet.create({
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border },
-  chipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  chipActive: { backgroundColor: ds.brassTint, borderColor: ds.brassLine },
 });

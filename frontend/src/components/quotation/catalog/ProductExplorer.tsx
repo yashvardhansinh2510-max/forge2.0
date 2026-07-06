@@ -11,6 +11,7 @@ import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from
 import { EmptyState } from "@/src/components/ui";
 import { ProductImage } from "@/src/components/ProductImage";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { VariantSwatchStrip } from "../shared/VariantChip";
 import type { Product, ProductVariant } from "../helpers/types";
@@ -157,17 +158,17 @@ function ProductGridCardImpl({ product, favourite, onToggleFav, onQuickAdd, onOp
               key={bg.label}
               style={[
                 styles.badge,
-                bg.tone === "popular" && { backgroundColor: "#FEF3C7" },
-                bg.tone === "frequent" && { backgroundColor: "#DBEAFE" },
-                bg.tone === "recent" && { backgroundColor: "#E4E4E7" },
+                bg.tone === "popular" && { backgroundColor: ds.brassTint },
+                bg.tone === "frequent" && { backgroundColor: ds.sunken },
+                bg.tone === "recent" && { backgroundColor: ds.sunken },
               ]}
             >
               <Text
                 style={[
                   styles.badgeText,
-                  bg.tone === "popular" && { color: "#92400E" },
-                  bg.tone === "frequent" && { color: "#1E40AF" },
-                  bg.tone === "recent" && { color: "#3F3F46" },
+                  bg.tone === "popular" && { color: ds.brassDeep },
+                  bg.tone === "frequent" && { color: ds.inkMid },
+                  bg.tone === "recent" && { color: ds.inkMid },
                 ]}
               >
                 {bg.label}
@@ -181,7 +182,7 @@ function ProductGridCardImpl({ product, favourite, onToggleFav, onQuickAdd, onOp
           style={styles.favBtn}
           testID={`fav-${product.sku}`}
         >
-          <Feather name="heart" size={14} color={favourite ? "#E11D48" : colors.onSurfaceMuted} />
+          <Feather name="heart" size={14} color={favourite ? ds.brass : colors.onSurfaceMuted} />
         </Pressable>
       </View>
 
@@ -271,7 +272,7 @@ const styles = StyleSheet.create({
   cardName: { fontSize: 13, fontWeight: "600", color: colors.onSurface, lineHeight: 17 },
   cardSku: { fontSize: 11, color: colors.onSurfaceMuted, fontVariant: ["tabular-nums"] },
   priceRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  price: { fontSize: 14, fontWeight: "700", color: "#DC2626", fontVariant: ["tabular-nums"] },
+  price: { fontSize: 14, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"], letterSpacing: -0.1 },
   mrp: { fontSize: 10, color: colors.onSurfaceMuted, textDecorationLine: "line-through", fontVariant: ["tabular-nums"] },
   addBtn: {
     flexDirection: "row", alignItems: "center", gap: 4,

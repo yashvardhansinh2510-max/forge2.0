@@ -27,9 +27,9 @@ import {
   money,
   radius,
   spacing,
-  statusMeta,
   type,
 } from "@/src/theme/tokens";
+import { color as ds, font as dsFont, statusTone, toneColor } from "@/src/design/tokens";
 
 type FeatherName = keyof typeof Feather.glyphMap;
 
@@ -267,19 +267,22 @@ export function Badge({
 }
 
 export function StatusBadge({ status }: { status: string }) {
-  const m = statusMeta[status] || { label: status, bg: colors.surfaceTertiary, fg: colors.onSurfaceSecondary, border: colors.border };
+  const meta = statusTone[status] || { label: status, tone: "neutral" as const };
+  const t = toneColor[meta.tone];
   return (
     <View style={{
-      backgroundColor: m.bg,
-      paddingHorizontal: 9,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: t.tint,
+      paddingHorizontal: 10,
       paddingVertical: 4,
       borderRadius: radius.pill,
       alignSelf: "flex-start",
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: m.border || "transparent",
     }}>
-      <Text style={{ color: m.fg, fontSize: 11, fontFamily: type.titleMd.fontFamily, fontWeight: "600" }}>
-        {m.label}
+      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: t.dot }} />
+      <Text style={{ color: t.fg, fontSize: 11, fontFamily: type.titleMd.fontFamily, fontWeight: "600", letterSpacing: 0.2 }}>
+        {meta.label}
       </Text>
     </View>
   );
@@ -300,8 +303,8 @@ export function Chip({
         paddingHorizontal: 14,
         borderRadius: radius.pill,
         borderWidth: 1,
-        borderColor: active ? colors.brand : colors.border,
-        backgroundColor: active ? colors.brand : colors.surfaceSecondary,
+        borderColor: active ? ds.brassLine : colors.border,
+        backgroundColor: active ? ds.brassTint : colors.surfaceSecondary,
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",
@@ -310,9 +313,9 @@ export function Chip({
         opacity: pressed ? 0.85 : 1,
       })}
     >
-      {icon ? <Feather name={icon} size={13} color={active ? colors.onBrand : colors.onSurfaceSecondary} /> : null}
+      {icon ? <Feather name={icon} size={13} color={active ? ds.brassDeep : colors.onSurfaceSecondary} /> : null}
       <Text style={{
-        color: active ? colors.onBrand : colors.onSurface,
+        color: active ? ds.brassDeep : colors.onSurface,
         fontSize: 13,
         fontFamily: type.bodyStrong.fontFamily,
         fontWeight: active ? "600" : "500",
@@ -321,14 +324,14 @@ export function Chip({
       </Text>
       {typeof count === "number" ? (
         <View style={{
-          backgroundColor: active ? "rgba(255,255,255,0.22)" : colors.surfaceTertiary,
+          backgroundColor: active ? "rgba(140,115,81,0.16)" : colors.surfaceTertiary,
           paddingHorizontal: 6,
           paddingVertical: 1,
           borderRadius: radius.pill,
           marginLeft: 2,
         }}>
           <Text style={{
-            color: active ? colors.onBrand : colors.onSurfaceSecondary,
+            color: active ? ds.brassDeep : colors.onSurfaceSecondary,
             fontSize: 11,
             fontFamily: type.titleMd.fontFamily,
             fontWeight: "600",
@@ -1152,7 +1155,16 @@ export function PageHeader({
         {back ? <IconButton icon="chevron-left" onPress={back} size={36} tone="surface" accessibilityLabel="Back" /> : null}
         <View style={{ flex: 1, minWidth: 0 }}>
           {overline ? <Text style={[type.overline, { marginBottom: 4 }]}>{overline}</Text> : null}
-          <Text numberOfLines={1} style={dense ? type.titleLg : type.displayMd}>{title}</Text>
+          <Text
+            numberOfLines={1}
+            style={
+              dense
+                ? type.titleLg
+                : { fontFamily: dsFont.display, fontSize: 28, lineHeight: 36, letterSpacing: -0.3, color: colors.onSurface }
+            }
+          >
+            {title}
+          </Text>
           {subtitle ? <Text numberOfLines={2} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
         </View>
         {actions ? <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>{actions}</View> : null}

@@ -2,7 +2,8 @@
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { colors, money, radius, type } from "@/src/theme/tokens";
+import { colors, font, money, radius, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { grabCursor } from "../shared/grabCursor";
@@ -27,7 +28,7 @@ export function RoomHeaderRow({
   };
 
   return (
-    <View style={[styles.wrap, isActiveRoom && { borderColor: colors.brand }, isActive && { opacity: 0.7 }]}>
+    <View style={[styles.wrap, isActiveRoom && styles.wrapActive, isActive && { opacity: 0.7 }]}>
       <Pressable
         onLongPress={drag}
         delayLongPress={160}
@@ -55,7 +56,7 @@ export function RoomHeaderRow({
         />
       ) : (
         <Pressable onPress={() => b.setActiveRoom(roomName)} style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ fontSize: 14, fontWeight: "700", color: colors.onSurface }} numberOfLines={1}>{roomName}</Text>
+          <Text style={styles.roomName} numberOfLines={1}>{roomName}</Text>
           <Text style={type.caption} numberOfLines={1}>{itemCount} items · {money(subtotal)}</Text>
         </Pressable>
       )}
@@ -67,7 +68,7 @@ export function RoomHeaderRow({
           else { b.setInlineRenameRoom(roomName); b.setInlineRenameValue(roomName); }
         }}
       >
-        <Feather name={isRenaming ? "check" : "edit-2"} size={14} color={isRenaming ? colors.brand : colors.onSurfaceMuted} />
+        <Feather name={isRenaming ? "check" : "edit-2"} size={14} color={isRenaming ? ds.brass : colors.onSurfaceMuted} />
       </Pressable>
       <Pressable testID={`room-dup-${roomName}`} hitSlop={8} onPress={() => b.duplicateRoom(roomName)}>
         <Feather name="copy" size={14} color={colors.onSurfaceMuted} />
@@ -81,16 +82,19 @@ export function RoomHeaderRow({
 
 const styles = StyleSheet.create({
   wrap: {
-    flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: radius.md,
-    backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
+    flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 10, paddingHorizontal: 10,
+    borderRadius: radius.sm, backgroundColor: colors.surfaceSubtle,
+    borderLeftWidth: 3, borderLeftColor: "transparent", marginTop: 6,
   },
+  wrapActive: { borderLeftColor: ds.brass, backgroundColor: ds.brassTint },
   dragHandle: {
     width: 20, alignItems: "center", justifyContent: "center", alignSelf: "stretch",
     marginRight: -2, marginLeft: -4,
   },
+  roomName: { fontSize: 13, fontFamily: font.semibold, fontWeight: "600", color: colors.onSurface, letterSpacing: -0.1 },
   inlineInput: {
-    flex: 1, fontSize: 14, fontWeight: "700", color: colors.onSurface,
+    flex: 1, fontSize: 14, fontFamily: font.semibold, fontWeight: "600", color: colors.onSurface,
     paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6,
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.brand,
+    backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: ds.brassLine,
   },
 });
