@@ -1144,6 +1144,8 @@ export function PageHeader({
         backgroundColor: colors.surface,
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: colors.border,
+        position: "relative",
+        zIndex: 20,
       }}
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
