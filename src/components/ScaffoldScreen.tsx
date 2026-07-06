@@ -1,45 +1,89 @@
-// Scaffold factory — production-ready empty screens for modules that will ship next.
+// ScaffoldScreen — premium "coming next iteration" surface for modules whose
+// UI hasn't shipped yet. Composed from the shared DS (HeroBanner + Card + Badge).
+// Every scaffold screen looks identical to the rest of the app.
 import { Feather } from "@expo/vector-icons";
-import { StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AdminPage } from "@/src/components/AdminPage";
-import { Card } from "@/src/components/ui";
-import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { Badge, HeroBanner, PageHeader } from "@/src/components/ui";
+import { colors, icon as iconSize, radius, spacing, type } from "@/src/theme/tokens";
 
 export function ScaffoldScreen({
-  title, subtitle, icon, features,
+  title, subtitle, icon, features, overline,
 }: {
-  title: string; subtitle: string; icon: keyof typeof Feather.glyphMap;
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Feather.glyphMap;
   features: string[];
+  overline?: string;
 }) {
   return (
-    <AdminPage title={title} subtitle={subtitle}>
-      <Card style={styles.hero}>
-        <View style={styles.iconWrap}>
-          <Feather name={icon} size={26} color={colors.brand} />
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+      <PageHeader title={title} subtitle={subtitle} overline={overline || "IN PROGRESS"} />
+      <ScrollView
+        contentContainerStyle={{
+          padding: spacing.xl,
+          gap: spacing.lg,
+          paddingBottom: spacing.xxxl,
+        }}
+        showsVerticalScrollIndicator={false}
+      >
+        <HeroBanner
+          overline="COMING IN THE NEXT ITERATION"
+          title={`${title} — under construction`}
+          subtitle="Data models, RBAC and API contracts are already in place. The UI ships as part of the Phase 4 workflow polish."
+          icon={icon}
+        />
+
+        <View style={styles.card}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: spacing.md }}>
+            <Text style={type.overline}>What&apos;s planned</Text>
+            <Badge label={`${features.length} milestones`} tone="brand" size="sm" />
+          </View>
+          <View style={{ gap: spacing.sm }}>
+            {features.map((f, i) => (
+              <View key={i} style={styles.featRow}>
+                <View style={styles.featIcon}>
+                  <Feather name="check" size={iconSize.sm} color={colors.success} />
+                </View>
+                <Text style={[type.body, { flex: 1 }]}>{f}</Text>
+              </View>
+            ))}
+          </View>
         </View>
-        <Text style={[type.titleLg, { marginTop: spacing.md }]}>Coming in the next iteration</Text>
-        <Text style={[type.bodyMuted, { textAlign: "center", maxWidth: 480, marginTop: 4 }]}>
-          Data models, RBAC and API contracts for {title.toLowerCase()} are already in place. UI polish ships next.
-        </Text>
-        <View style={{ marginTop: spacing.lg, gap: 8, alignSelf: "stretch" }}>
-          {features.map((f) => (
-            <View key={f} style={styles.featRow}>
-              <Feather name="check" size={14} color={colors.success} />
-              <Text style={type.body}>{f}</Text>
-            </View>
-          ))}
-        </View>
-      </Card>
-    </AdminPage>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  hero: { alignItems: "center", padding: spacing.xxl },
-  iconWrap: {
-    width: 60, height: 60, borderRadius: radius.lg, backgroundColor: colors.brandTint,
-    alignItems: "center", justifyContent: "center",
+  card: {
+    padding: spacing.xl,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
-  featRow: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, backgroundColor: colors.surfaceTertiary, borderRadius: radius.md },
+  featRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  featIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: radius.sm,
+    backgroundColor: colors.successBg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.successBorder,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
 });
