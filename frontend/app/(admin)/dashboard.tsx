@@ -1,247 +1,374 @@
-// BuildCon House · Admin Dashboard
-// KPI grid + activity feed + top products — built entirely from DS primitives.
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Today — the workday home.
+// Answers one question: "What is the single most important thing right now?"
+// A ranked queue (powered by the follow-up engine), the business in one quiet
+// column, and nothing else.
+// ─────────────────────────────────────────────────────────────────────────────
 import { Feather } from "@expo/vector-icons";
+import dayjs from "dayjs";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Linking, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
-import { AdminPage } from "@/src/components/AdminPage";
-import { ProductImage } from "@/src/components/ProductImage";
-import {
-  Avatar,
-  Card,
-  EmptyState,
-  KpiCard,
-  ListRow,
-  Skeleton,
-  StatusBadge,
-} from "@/src/components/ui";
 import { api } from "@/src/api/client";
+import { toast } from "@/src/components/Toast";
+import {
+  Button, FadeIn, Hairline, IconButton, Money, Section, Skeleton, StatusWord, Txt,
+} from "@/src/design/components";
+import { useBp } from "@/src/design/responsive";
+import { color, layout, space } from "@/src/design/tokens";
 import { useAuth } from "@/src/state/auth";
-import { colors, money, moneyShort, radius, roleLabels, spacing, type } from "@/src/theme/tokens";
 
-type Stats = {
-  revenue_month: number;
-  open_pipeline: number;
-  pending_approval: number;
-  quotes_this_month: number;
-  customers: number;
-  products: number;
-  followups_due: number;
-  recent_activity: { id: string; title: string; status: string; amount: number; at: string }[];
-  top_products: { product_id: string; name: string; sku: string; image?: string | null; qty: number; revenue: number }[];
+type Mission = {
+  due_count: number; revenue_at_risk: number; revenue_at_risk_short: string;
+  overdue_payments: number; quotations_expiring_today: number; critical_count: number;
+  estimated_minutes: number; greeting_name: string;
 };
+type Fu = {
+  id: string; customer_name: string; reason: string; next_action?: string | null;
+  value?: number | null; priority_level: string; status: string;
+  suggested_channel?: string | null; customer_phone?: string | null;
+};
+type DashStats = { revenue_month: number; open_pipeline: number; pending_approval: number; quotes_this_month: number };
+type PayStats = { total_outstanding: number; collected_this_month: number; active_orders: number; fully_paid: number };
+type RecentQ = { id: string; number: string; customer_name: string; grand_total: number; status: string; updated_at: string };
 
-export default function Dashboard() {
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const { staff } = useAuth();
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+// ── Queue row — hover reveals actions on desktop; touch gets the suggested
+// channel + done, always visible. One contextual action, not an icon pile.
+function QueueRow({
+  fu, rank, alwaysShow, onDone, onCall, onWhatsApp, onOpen,
+}: {
+  fu: Fu; rank: number; alwaysShow: boolean;
+  onDone: () => void; onCall: () => void; onWhatsApp: () => void; onOpen: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const preferCall = (fu.suggested_channel || "").toLowerCase() === "call";
+  return (
+    <Pressable
+      onPress={onOpen}
+      onHoverIn={() => setHover(true)}
+      onHoverOut={() => setHover(false)}
+      style={[
+        {
+          flexDirection: "row", alignItems: "center", gap: space.x3,
+          paddingVertical: 14, minHeight: 60,
+          marginHorizontal: -space.x3, paddingHorizontal: space.x3, borderRadius: 10,
+          backgroundColor: hover ? color.hoverWash : "transparent",
+        },
+        Platform.OS === "web" ? ({ cursor: "pointer" } as any) : null,
+      ]}
+    >
+      <Txt v="num" style={{ width: 18, textAlign: "center" }}>{rank}</Txt>
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <Txt v="rowTitle" numberOfLines={1}>{fu.customer_name}</Txt>
+        <Txt v="sub" numberOfLines={1}>{fu.next_action || fu.reason}</Txt>
+      </View>
+      {fu.value ? <Money value={fu.value} size="sm" tone="mid" compact /> : null}
+      {alwaysShow ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+          <IconButton
+            icon={preferCall ? "phone" : "message-circle"}
+            size={34} iconSize={16}
+            onPress={preferCall ? onCall : onWhatsApp}
+            label={preferCall ? "Call" : "WhatsApp"}
+          />
+          <IconButton icon="check" size={34} iconSize={17} tone="ink" onPress={onDone} label="Mark done" />
+        </View>
+      ) : (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 2, opacity: hover ? 1 : 0 }}>
+          <IconButton icon="phone" size={32} iconSize={15} onPress={onCall} label="Call" />
+          <IconButton icon="message-circle" size={32} iconSize={15} onPress={onWhatsApp} label="WhatsApp" />
+          <IconButton icon="check" size={32} iconSize={16} tone="ink" onPress={onDone} label="Mark done" />
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+// ── A business stat — label, number, whisper. Never a tile. ─────────────────
+function Stat({ label, value, note, noteTone = "soft", compactValue }: {
+  label: string; value: number; note?: string; noteTone?: "soft" | "risk" | "ok"; compactValue?: boolean;
+}) {
+  return (
+    <View style={{ gap: 3 }}>
+      <Txt v="caption" tone="soft">{label}</Txt>
+      <Money value={value} size="lg" compact={compactValue} />
+      {note ? <Txt v="caption" tone={noteTone === "risk" ? "risk" : noteTone === "ok" ? "ok" : "soft"}>{note}</Txt> : null}
+    </View>
+  );
+}
+
+export default function Today() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 900;
+  const { staff } = useAuth();
+  const { isPhone, isDesktop, gutter } = useBp();
 
-  const load = useCallback(async () => {
-    try {
-      const s = await api.get<Stats>("/dashboard/stats");
-      setStats(s);
-    } catch {
-      /* handled via empty state */
-    }
+  const [mission, setMission] = useState<Mission | null>(null);
+  const [queue, setQueue] = useState<Fu[] | null>(null);
+  const [stats, setStats] = useState<DashStats | null>(null);
+  const [pay, setPay] = useState<PayStats | null>(null);
+  const [recent, setRecent] = useState<RecentQ[] | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    try { await api.post("/followups/reconcile"); } catch { /* soft */ }
+    const [m, fus, st, ps, rq] = await Promise.allSettled([
+      api.get<Mission>("/followups/mission"),
+      api.get<Fu[]>("/followups?limit=12"),
+      api.get<DashStats>("/dashboard/stats"),
+      api.get<PayStats>("/payments/stats"),
+      api.get<RecentQ[]>("/quotations/recent?limit=5"),
+    ]);
+    if (m.status === "fulfilled") setMission(m.value);
+    if (fus.status === "fulfilled") setQueue((Array.isArray(fus.value) ? fus.value : []).filter((f) => f.status === "open").slice(0, 6));
+    else setQueue([]);
+    if (st.status === "fulfilled") setStats(st.value);
+    if (ps.status === "fulfilled") setPay(ps.value);
+    if (rq.status === "fulfilled") setRecent(rq.value);
+    else setRecent([]);
+    setRefreshing(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
+  const name = mission?.greeting_name || staff?.full_name?.split(" ")[0] || "there";
+  const due = mission?.due_count ?? 0;
 
-  const now = new Date();
-  const hour = now.getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const sentence = useMemo(() => {
+    if (!mission) return "";
+    if (due === 0) return "Nothing is waiting on you. Enjoy the quiet.";
+    const parts = [
+      `${due} follow-up${due === 1 ? "" : "s"} need${due === 1 ? "s" : ""} you`,
+      `₹${mission.revenue_at_risk_short} at stake`,
+    ];
+    if (mission.estimated_minutes > 0) parts.push(`about ${mission.estimated_minutes} minutes`);
+    return parts.join(" · ") + ".";
+  }, [mission, due]);
 
-  const kpis = stats ? [
-    { label: "Revenue (month)", value: moneyShort(stats.revenue_month), sub: money(stats.revenue_month), icon: "trending-up" as const, tone: "success" as const },
-    { label: "Open pipeline",   value: moneyShort(stats.open_pipeline), sub: money(stats.open_pipeline), icon: "layers" as const,      tone: "brand" as const },
-    { label: "Quotes this month", value: String(stats.quotes_this_month), icon: "file-text" as const, tone: "neutral" as const },
-    { label: "Pending approval",  value: String(stats.pending_approval),  icon: "clock" as const,     tone: "warning" as const },
-  ] : [];
+  // ── Queue actions ──────────────────────────────────────────────────────────
+  const complete = async (fu: Fu) => {
+    setQueue((q) => (q ? q.filter((x) => x.id !== fu.id) : q));
+    try {
+      await api.post(`/followups/${fu.id}/complete`);
+      toast.success(`${fu.customer_name} — marked done`);
+      api.get<Mission>("/followups/mission").then(setMission).catch(() => {});
+    } catch (e: any) {
+      toast.error(e?.message || "Could not complete");
+      load();
+    }
+  };
+  const call = async (fu: Fu) => {
+    try {
+      const r = await api.post<{ phone?: string | null }>(`/followups/${fu.id}/contact`, { channel: "call" });
+      const phone = r?.phone || fu.customer_phone;
+      if (phone) Linking.openURL(`tel:${phone.replace(/\s+/g, "")}`);
+      else toast.error("No phone number on file");
+    } catch (e: any) { toast.error(e?.message || "Could not start call"); }
+  };
+  const whatsapp = async (fu: Fu) => {
+    try {
+      const r = await api.post<{ wa_url?: string | null }>(`/followups/${fu.id}/contact`, { channel: "whatsapp" });
+      if (r?.wa_url) Linking.openURL(r.wa_url);
+      else toast.error("No WhatsApp number on file");
+    } catch (e: any) { toast.error(e?.message || "Could not open WhatsApp"); }
+  };
+
+  const loading = queue === null;
+
+  // ── The business column ────────────────────────────────────────────────────
+  const business = (
+    <View style={{ gap: space.x6 }}>
+      <Section eyebrow="The business" />
+      <View style={isPhone ? { flexDirection: "row", flexWrap: "wrap", gap: space.x6, rowGap: space.x5 } : { gap: space.x5 }}>
+        <View style={isPhone ? { width: "46%" } : undefined}>
+          <Stat label="Collected this month" value={pay?.collected_this_month ?? 0} compactValue note="payments received" />
+        </View>
+        <View style={isPhone ? { width: "46%" } : undefined}>
+          <Stat
+            label="Outstanding"
+            value={pay?.total_outstanding ?? 0}
+            compactValue
+            note={mission && mission.overdue_payments > 0
+              ? `${mission.overdue_payments} order${mission.overdue_payments === 1 ? "" : "s"} overdue`
+              : `across ${pay?.active_orders ?? 0} orders`}
+            noteTone={mission && mission.overdue_payments > 0 ? "risk" : "soft"}
+          />
+        </View>
+        <View style={isPhone ? { width: "46%" } : undefined}>
+          <Stat label="Open pipeline" value={stats?.open_pipeline ?? 0} compactValue note={`${stats?.quotes_this_month ?? 0} quotations this month`} />
+        </View>
+        <View style={isPhone ? { width: "46%" } : undefined}>
+          <Stat label="Won this month" value={stats?.revenue_month ?? 0} compactValue noteTone="ok" />
+        </View>
+      </View>
+
+      {stats && stats.pending_approval > 0 ? (
+        <Pressable
+          onPress={() => router.push("/(admin)/quotations" as any)}
+          style={({ hovered }: any) => [
+            {
+              flexDirection: "row", alignItems: "center", gap: 8,
+              paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10,
+              backgroundColor: hovered ? color.brassTint : "transparent",
+              borderWidth: 1, borderColor: color.brassLine,
+            },
+            Platform.OS === "web" ? ({ cursor: "pointer" } as any) : null,
+          ]}
+        >
+          <Feather name="pen-tool" size={14} color={color.brassDeep} />
+          <Txt v="sub" tone="brass" style={{ flex: 1 }}>
+            {stats.pending_approval} quotation{stats.pending_approval === 1 ? "" : "s"} waiting for approval
+          </Txt>
+          <Feather name="arrow-right" size={14} color={color.brassDeep} />
+        </Pressable>
+      ) : null}
+
+      <View style={{ gap: space.x2 }}>
+        <Section eyebrow="Pipeline" right={
+          <Pressable onPress={() => router.push("/(admin)/quotations" as any)} hitSlop={layout.hitSlop}>
+            <Txt v="caption" tone="soft">View all</Txt>
+          </Pressable>
+        } />
+        {recent === null ? (
+          <View style={{ gap: 12, paddingTop: 8 }}>
+            <Skeleton h={16} /><Skeleton h={16} w="80%" /><Skeleton h={16} w="90%" />
+          </View>
+        ) : recent.length === 0 ? (
+          <Txt v="sub" tone="soft" style={{ paddingVertical: 8 }}>No quotations yet.</Txt>
+        ) : recent.map((q2, i) => (
+          <Pressable
+            key={q2.id}
+            onPress={() => router.push(`/(admin)/quotations/${q2.id}` as any)}
+            style={({ hovered }: any) => [
+              {
+                paddingVertical: 10, gap: 3,
+                marginHorizontal: -space.x3, paddingHorizontal: space.x3, borderRadius: 10,
+                backgroundColor: hovered ? color.hoverWash : "transparent",
+                borderTopWidth: i === 0 ? 0 : layout.hairline, borderTopColor: color.line,
+              },
+              Platform.OS === "web" ? ({ cursor: "pointer" } as any) : null,
+            ]}
+          >
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Txt v="sub" tone="soft">{q2.number}</Txt>
+              <Money value={q2.grand_total} size="sm" compact />
+            </View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Txt v="rowTitle" numberOfLines={1} style={{ flex: 1, marginRight: 8, fontSize: 14 }}>{q2.customer_name}</Txt>
+              <StatusWord status={q2.status} />
+            </View>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+
+  // ── Up next ───────────────────────────────────────────────────────────────
+  const upNext = (
+    <View style={{ gap: space.x2 }}>
+      <Section
+        eyebrow="Up next"
+        right={due > 0 ? (
+          <Pressable onPress={() => router.push("/(admin)/followups" as any)} hitSlop={layout.hitSlop}>
+            <Txt v="caption" tone="soft">All follow-ups</Txt>
+          </Pressable>
+        ) : undefined}
+      />
+      {loading ? (
+        <View style={{ gap: 18, paddingTop: 12 }}>
+          {[0, 1, 2, 3].map((i) => (
+            <View key={i} style={{ flexDirection: "row", gap: 12, alignItems: "center" }}>
+              <Skeleton w={18} h={14} />
+              <View style={{ flex: 1, gap: 6 }}><Skeleton h={14} w="55%" /><Skeleton h={11} w="85%" /></View>
+              <Skeleton w={56} h={14} />
+            </View>
+          ))}
+        </View>
+      ) : queue.length === 0 ? (
+        <View style={{ paddingVertical: space.x8, alignItems: "center", gap: 8 }}>
+          <Feather name="coffee" size={20} color={color.inkFaint} />
+          <Txt v="bodyMid">All clear. No follow-ups waiting.</Txt>
+          <Txt v="sub" tone="soft">New tasks appear here as quotations age, payments come due, and customers go quiet.</Txt>
+        </View>
+      ) : (
+        <View>
+          {queue.map((fu, i) => (
+            <View key={fu.id}>
+              {i > 0 ? <Hairline /> : null}
+              <QueueRow
+                fu={fu}
+                rank={i + 1}
+                alwaysShow={!isDesktop}
+                onDone={() => complete(fu)}
+                onCall={() => call(fu)}
+                onWhatsApp={() => whatsapp(fu)}
+                onOpen={() => router.push("/(admin)/followups" as any)}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
 
   return (
-    <AdminPage
-      title={`${greeting}, ${(staff?.full_name || "").split(" ")[0]}`}
-      subtitle={`${roleLabels[staff?.role || ""] || ""} · ${new Date().toLocaleDateString("en-IN", { weekday: "long", month: "long", day: "numeric" })}`}
-      right={
-        <Pressable
-          testID="new-quotation-cta"
-          onPress={() => router.push("/(admin)/quotations/new" as any)}
-          style={({ pressed }) => [styles.cta, { opacity: pressed ? 0.88 : 1 }]}
-        >
-          <Feather name="plus" size={16} color={colors.onBrand} />
-          <Text style={styles.ctaText}>New Quotation</Text>
-        </Pressable>
-      }
+    <ScrollView
+      style={{ flex: 1, backgroundColor: color.canvas }}
+      contentContainerStyle={{ paddingBottom: space.x16 }}
+      showsVerticalScrollIndicator={false}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={color.inkSoft} />}
     >
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
-        contentContainerStyle={{ gap: spacing.lg }}
-      >
-        {/* KPI grid */}
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.md }}>
-          {stats ? kpis.map((k) => (
-            <View key={k.label} style={{ flexBasis: isTablet ? "23.5%" : "47.5%", flexGrow: 1, minWidth: isTablet ? 160 : 140 }}>
-              <KpiCard label={k.label} value={k.value} sub={k.sub} icon={k.icon} tone={k.tone} />
-            </View>
-          )) : Array.from({ length: 4 }).map((_, i) => (
-            <View key={i} style={{ flexBasis: isTablet ? "23.5%" : "47.5%", flexGrow: 1, minWidth: isTablet ? 160 : 140, padding: spacing.lg, borderRadius: radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, gap: 10 }}>
-              <Skeleton w={110} h={12} />
-              <Skeleton w={150} h={26} />
-            </View>
-          ))}
-        </View>
-
-        {/* Content split */}
-        <View style={{ flexDirection: isTablet ? "row" : "column", gap: spacing.lg }}>
-          <Card style={{ flex: isTablet ? 1.4 : undefined, padding: 0 }} variant="flat">
-            <View style={styles.cardHeader}>
-              <View>
-                <Text style={type.titleMd}>Recent activity</Text>
-                <Text style={[type.caption, { marginTop: 2 }]}>Latest quotations across your team</Text>
-              </View>
-              <Pressable onPress={() => router.push("/(admin)/quotations" as any)} testID="view-all-quotations" hitSlop={8}>
-                <Text style={styles.viewAll}>View all</Text>
-              </Pressable>
-            </View>
-            {!stats ? (
-              <View style={{ padding: spacing.lg, gap: 12 }}>
-                {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} h={44} />)}
-              </View>
-            ) : stats.recent_activity.length === 0 ? (
-              <EmptyState icon="inbox" title="No recent activity" subtitle="Quotations will show up here once created." />
+      <View style={{ width: "100%", maxWidth: 1080, alignSelf: "center", paddingHorizontal: gutter }}>
+        {/* ── Hero ── */}
+        <FadeIn>
+          <View style={{ paddingTop: isPhone ? space.x6 : space.x12, paddingBottom: isPhone ? space.x6 : space.x10, gap: 10 }}>
+            <Txt v="eyebrow">{dayjs().format("dddd, D MMMM")}</Txt>
+            <Txt v="display" style={isPhone ? { fontSize: 28, lineHeight: 36 } : undefined}>
+              {greeting()}, {name}.
+            </Txt>
+            {mission ? (
+              <Txt v="bodyMid" style={{ fontSize: 15.5 }}>{sentence}</Txt>
             ) : (
-              stats.recent_activity.map((a, idx) => (
-                <ListRow
-                  key={a.id}
-                  testID={`activity-${a.id}`}
-                  isFirst={idx === 0}
-                  onPress={() => router.push(`/(admin)/quotations/${a.id}` as any)}
-                  leading={<Avatar name={a.title} size={36} tone="surface" />}
-                  title={a.title}
-                  subtitle={new Date(a.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-                  meta={money(a.amount)}
-                  right={<View style={{ marginTop: 4 }}><StatusBadge status={a.status} /></View>}
+              <Skeleton w={280} h={15} style={{ marginTop: 4 }} />
+            )}
+            {due > 0 ? (
+              <View style={{ flexDirection: "row", marginTop: space.x2 }}>
+                <Button
+                  label="Start with № 1"
+                  icon="arrow-right"
+                  onPress={() => router.push("/(admin)/followups" as any)}
+                  size={isPhone ? "md" : "lg"}
                 />
-              ))
-            )}
-          </Card>
+              </View>
+            ) : null}
+          </View>
+        </FadeIn>
 
-          <Card style={{ flex: 1, padding: 0 }} variant="flat">
-            <View style={styles.cardHeader}>
-              <View>
-                <Text style={type.titleMd}>Top products</Text>
-                <Text style={[type.caption, { marginTop: 2 }]}>By revenue · this month</Text>
-              </View>
-              <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: colors.brandTint, alignItems: "center", justifyContent: "center" }}>
-                <Feather name="trending-up" size={16} color={colors.brand} />
-              </View>
+        {/* ── Body ── */}
+        <FadeIn delay={60}>
+          {isDesktop ? (
+            <View style={{ flexDirection: "row", gap: space.x12 }}>
+              <View style={{ flex: 1.9, minWidth: 0 }}>{upNext}</View>
+              <View style={{ width: layout.hairline, backgroundColor: color.line }} />
+              <View style={{ flex: 1, minWidth: 0 }}>{business}</View>
             </View>
-            {!stats ? (
-              <View style={{ padding: spacing.lg, gap: 12 }}>
-                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} h={52} />)}
-              </View>
-            ) : stats.top_products.length === 0 ? (
-              <EmptyState icon="package" title="No products quoted yet" />
-            ) : (
-              stats.top_products.map((p, i) => (
-                <View key={p.product_id} style={[styles.productRow, { borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth }]}>
-                  <ProductImage source={p.image} style={styles.thumb} fallbackLabel={p.sku} borderRadius={10} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={{ fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
-                    <Text style={type.caption} numberOfLines={1}>{p.sku} · {p.qty} units</Text>
-                  </View>
-                  <Text style={{
-                    fontSize: 14,
-                    fontFamily: type.titleMd.fontFamily,
-                    fontWeight: "600",
-                    color: colors.onSurface,
-                    fontVariant: ["tabular-nums"],
-                  }}>{moneyShort(p.revenue)}</Text>
-                </View>
-              ))
-            )}
-          </Card>
-        </View>
-
-        {/* Quick stats strip */}
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.md }}>
-          {[
-            { label: "Customers",     value: stats?.customers ?? "—",     icon: "users" as const,   route: "/(admin)/customers" },
-            { label: "Active products", value: stats?.products ?? "—",     icon: "package" as const, route: "/(admin)/catalog" },
-            { label: "Follow-ups due", value: stats?.followups_due ?? "—", icon: "bell" as const,    route: "/(admin)/followups" },
-          ].map((q) => (
-            <Pressable
-              key={q.label}
-              onPress={() => router.push(q.route as any)}
-              style={({ pressed }) => [styles.quickStat, {
-                flex: isTablet ? 1 : undefined,
-                width: isTablet ? undefined : "100%",
-                opacity: pressed ? 0.92 : 1,
-              }]}
-            >
-              <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: colors.brandTint, alignItems: "center", justifyContent: "center" }}>
-                <Feather name={q.icon} size={16} color={colors.brand} />
-              </View>
-              <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={type.captionStrong}>{q.label}</Text>
-                <Text style={{ fontSize: 20, fontFamily: type.titleLg.fontFamily, fontWeight: "700", color: colors.onSurface, marginTop: 2, letterSpacing: -0.2 }}>
-                  {String(q.value)}
-                </Text>
-              </View>
-              <Feather name="chevron-right" size={16} color={colors.onSurfaceMuted} />
-            </Pressable>
-          ))}
-        </View>
-      </ScrollView>
-    </AdminPage>
+          ) : (
+            <View style={{ gap: space.x10 }}>
+              {upNext}
+              <Hairline />
+              {business}
+            </View>
+          )}
+        </FadeIn>
+      </View>
+    </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  cta: {
-    flexDirection: "row", gap: 6, alignItems: "center",
-    backgroundColor: colors.brand,
-    paddingHorizontal: 14, paddingVertical: 10,
-    borderRadius: radius.md,
-  },
-  ctaText: {
-    color: colors.onBrand,
-    fontSize: 13,
-    fontFamily: type.titleMd.fontFamily,
-    fontWeight: "600",
-    letterSpacing: -0.1,
-  },
-  cardHeader: {
-    paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
-    flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start",
-    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-    gap: spacing.md,
-  },
-  viewAll: {
-    color: colors.brand,
-    fontSize: 13,
-    fontFamily: type.titleMd.fontFamily,
-    fontWeight: "600",
-  },
-  productRow: {
-    flexDirection: "row", alignItems: "center", gap: spacing.md,
-    paddingHorizontal: spacing.lg, paddingVertical: 12,
-    borderColor: colors.divider,
-  },
-  thumb: { width: 44, height: 44, borderRadius: 10, backgroundColor: colors.surfaceTertiary },
-  quickStat: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    backgroundColor: colors.surfaceSecondary,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-  },
-});

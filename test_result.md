@@ -102,7 +102,80 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Forge — premium ERP/CRM/POS for sanitaryware distributors. Current phase (1A): Complete the Quotation Builder 2.0 to feel world-class — comprehensive undo/redo, drag-and-drop reordering, product variant chips, and alternate swap. Prior P1 backend polish (VITRA WDP and cross-family SKU whitelist) already shipped in iteration 3."
+user_problem_statement: "BuildCon House — complete product design reboot ('Showroom' design language). Phase 1: design system foundation, navigation shell, command palette, Today (dashboard), authentication. Later phases migrate Quotation Builder, Customers, Catalogue, Purchases, Payments, Follow-ups, Reports, Settings onto the new system. Catalog restoration (2,872 supplier products) is a separate parallel workstream — blocked on user-provided Supabase credentials + supplier source files."
+
+frontend:
+  - task: "Phase 1 · Showroom design reboot — tokens, primitives, shell, command palette, Today, Auth"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/design/tokens.ts, frontend/src/design/components.tsx, frontend/src/design/Screen.tsx, frontend/src/design/CommandPalette.tsx, frontend/src/design/responsive.ts, frontend/app/(admin)/_layout.tsx, frontend/app/(admin)/dashboard.tsx, frontend/app/(auth)/login.tsx, frontend/src/components/Toast.tsx, frontend/src/theme/tokens.ts (values remapped), frontend/src/hooks/use-app-fonts.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            PHASE 1 SHIPPED — first-principles redesign foundation.
+            (1) NEW design system at src/design/: tokens.ts (warm architectural neutrals #F7F5F1 canvas /
+                #1D1B16 ink action / brushed-brass #8C7351 accent used ONLY for guidance; Fraunces serif for
+                display moments; 4pt spacing; 2 shadow levels; motion 90/140/200/260ms), components.tsx
+                (Txt, Money w/ small ₹ + tabular digits, Button 4 variants, IconButton, Field/Input w/ brass
+                focus ring, Row, StatusWord dot+word, Avatar, Surface, Section, EmptyState, Skeleton pulse,
+                KeyCap, Tabs, Sheet bottom/center responsive, Dialog, Menu anchored, FadeIn), Screen.tsx
+                scaffold, responsive.ts (phone <768 / tablet 768-1023 / desktop ≥1024).
+            (2) Command palette (src/design/CommandPalette.tsx): global ⌘K/Ctrl+K on web + sidebar trigger +
+                phone More sheet entry. Actions (New quotation / Add customer / Record payment), Go-to nav,
+                async search of customers + quotations (prefetch, client filter) and products (server ?q=,
+                180ms debounce). Arrow/Enter/Esc keyboard nav, hover-select, footer hints, full-screen on phone.
+            (3) NEW shell app/(admin)/_layout.tsx: desktop 240px sidebar (serif wordmark + ink monogram,
+                search trigger, 8 primary + 3 secondary items, 2.5px brass active bar, user menu w/ sign out);
+                tablet 64px icon rail; phone bottom bar (Today / Quotes / ink FAB=new quotation / Tasks /
+                More sheet with remaining destinations + search + sign out).
+            (4) Today (dashboard.tsx rewrite): date eyebrow + Fraunces greeting + one state sentence
+                ("6 follow-ups need you · ₹14.6L at stake · about 16 minutes.") + single primary Button
+                "Start with № 1". "Up next" ranked queue from followups engine (reconcile on load; complete/
+                call/WhatsApp inline — hover-revealed on desktop, contextual channel + done on touch;
+                optimistic remove + toast). Right column "The business": 4 typographic stats (collected/
+                outstanding/pipeline/won) + brass approval callout + compact Pipeline list from
+                /quotations/recent. Pull-to-refresh. Skeletons. Empty state.
+            (5) Auth (login.tsx rewrite): split-panel with warm brass-faucet photography + gradient +
+                serif tagline; right form (Welcome back., email/password, ink Sign in, inline error,
+                Use-demo-account autofill, Customer portal toggle). Phone: 216px image banner + form,
+                KeyboardAvoidingView.
+            (6) Legacy blend: src/theme/tokens.ts VALUES remapped to the warm palette (keys unchanged) so
+                all unmigrated screens (Payments/Followups/Builder/Quotations/etc.) instantly share the new
+                language. Verified visually — cohesive.
+            (7) Toast restyled: ink pill, bottom, slide+fade.
+            NOTE: backend untouched this session besides re-creating missing /app/backend/.env +
+            /app/frontend/.env (container recycle wiped them + Mongo data; reseeded demo data).
+            Verified visually at 1440/900/390: login, Today, palette (empty + search), hover actions,
+            More sheet, legacy blend on payments/quotations/followups/builder. TypeScript clean for all
+            new files (remaining TS noise is pre-existing legacy fontVariant readonly complaints).
+
+metadata:
+  created_by: "main_agent"
+  version: "3.0"
+  test_sequence: 11
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Phase 1 · Showroom design reboot — tokens, primitives, shell, command palette, Today, Auth"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Phase 1 of the Showroom design reboot is implemented and visually verified by the main agent.
+        Frontend testing NOT yet run — awaiting explicit user permission per protocol.
+        Credentials: owner@forge.app / Forge@2026 (staff), customer@forge.app / Forge@2026 (customer portal).
+        Catalog restoration is BLOCKED on user: needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY and the 4
+        supplier source files; do NOT seed replacement demo catalog data beyond the existing 20 demo products.
+
+
 
 backend:
   - task: "Follow-ups · Sales Command Center — reconciliation engine + priority scoring + full API"

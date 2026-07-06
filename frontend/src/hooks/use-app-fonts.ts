@@ -43,9 +43,17 @@ const INTER_FAMILY: Record<string, any> = {
   "Inter-Bold": require("@/assets/fonts/Inter-Bold.ttf"),
 };
 
+// Fraunces — the single serif voice. Greetings + auth headlines ONLY.
+const FRAUNCES_FAMILY: Record<string, any> = {
+  "Fraunces-Light": require("@expo-google-fonts/fraunces/300Light/Fraunces_300Light.ttf"),
+  "Fraunces-LightItalic": require("@expo-google-fonts/fraunces/300Light_Italic/Fraunces_300Light_Italic.ttf"),
+  "Fraunces-Regular": require("@expo-google-fonts/fraunces/400Regular/Fraunces_400Regular.ttf"),
+};
+
 export const useAppFonts = (): readonly [boolean, Error | null] =>
   useFonts({
     ...INTER_FAMILY,
+    ...FRAUNCES_FAMILY,
     ...(Constants.executionEnvironment === ExecutionEnvironment.StoreClient
       ? iconFontMap()
       : {}),

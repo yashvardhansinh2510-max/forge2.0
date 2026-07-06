@@ -8,52 +8,56 @@ import { Platform } from "react-native";
 // ─────────────────────────────────────────────────────────────────────────────
 // Palette (raw)
 // ─────────────────────────────────────────────────────────────────────────────
+// ⚠️ SHOWROOM REMAP — the "blue" and "gray" keys are retained for backwards
+// compatibility, but their VALUES now belong to the Showroom language
+// (src/design/tokens.ts): warm neutrals, ink action, muted statuses.
+// New code must import from @/src/design/tokens instead of this file.
 const palette = {
-  // Blues — spec-locked
-  blue50:  "#EFF6FF",
-  blue100: "#DBEAFE",
-  blue200: "#BFDBFE",
-  blue500: "#3B82F6",
-  blue600: "#2563EB",   // primary — LOCKED
-  blue700: "#1D4ED8",   // primary pressed
-  blue900: "#1E3A8A",
+  // "blue*" — now INK (the primary action color of the Showroom language)
+  blue50:  "#F1EEE8",
+  blue100: "#E7E2D9",
+  blue200: "#D8D2C6",
+  blue500: "#57534B",
+  blue600: "#1D1B16",   // primary action — ink
+  blue700: "#33302A",   // hover
+  blue900: "#1D1B16",
 
-  // Porcelain neutrals — off-white surfaces
-  gray0:   "#FFFFFF",   // pure white cards — LOCKED
-  gray15:  "#FAFBFC",   // page background — LOCKED (matches spec #FAFBFC)
-  gray25:  "#F7F8FA",   // hover fill / subtle surface
-  gray50:  "#F3F4F6",   // legacy alias
-  gray75:  "#EEF0F3",
-  gray100: "#E5E7EB",   // default border — LOCKED (matches spec #E5E7EB)
-  gray150: "#D1D5DB",
-  gray200: "#C6CCD3",
-  gray400: "#8A95A3",
-  gray500: "#6B7280",
-  gray600: "#4B5563",
-  gray700: "#374151",
-  gray800: "#1F2937",
-  gray900: "#0F172A",
+  // Warm architectural neutrals
+  gray0:   "#FFFFFF",   // cards
+  gray15:  "#F7F5F1",   // page background — warm gallery
+  gray25:  "#F2EFEA",   // hover fill / subtle surface
+  gray50:  "#F0EDE7",
+  gray75:  "#EBE7E0",
+  gray100: "#E8E4DD",   // default hairline
+  gray150: "#D8D3C9",
+  gray200: "#C8C2B6",
+  gray400: "#9B958A",
+  gray500: "#8B8579",
+  gray600: "#6B665D",
+  gray700: "#57534B",
+  gray800: "#2E2B25",
+  gray900: "#1D1B16",
 
-  // Semantic families
-  green50:  "#ECFDF5",
-  green100: "#D1FAE5",
-  green600: "#16A34A",
-  green700: "#15803D",
+  // Semantic families — muted, architectural
+  green50:  "#EAF1EC",
+  green100: "#D6E5DB",
+  green600: "#3E7C55",
+  green700: "#356A49",
 
-  amber50:  "#FFFBEB",
-  amber100: "#FEF3C7",
-  amber600: "#D97706",
-  amber700: "#B45309",
+  amber50:  "#F6EEDF",
+  amber100: "#EFE0C4",
+  amber600: "#A2691F",
+  amber700: "#8F5A1C",
 
-  red50:  "#FEF2F2",
-  red100: "#FEE2E2",
-  red600: "#DC2626",
-  red700: "#B91C1C",
+  red50:  "#F7ECE9",
+  red100: "#F0DAD4",
+  red600: "#AE4A3D",
+  red700: "#9A3E34",
 
-  sky50:  "#F0F9FF",
-  sky100: "#E0F2FE",
-  sky600: "#0284C7",
-  sky700: "#0369A1",
+  sky50:  "#EEF0F1",
+  sky100: "#DEE2E4",
+  sky600: "#4F6B77",
+  sky700: "#425963",
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,13 +94,13 @@ export const colors = {
   borderMuted: "rgba(15, 23, 42, 0.06)",
   divider: palette.gray100,
 
-  // Focus & selection
-  focusRing: "rgba(37, 99, 235, 0.35)",
-  selection: palette.blue100,
+  // Focus & selection — brass guidance (Showroom)
+  focusRing: "rgba(140, 115, 81, 0.42)",
+  selection: "#F1EAE0",
 
   // Overlays & scrims
-  overlay: "rgba(15, 23, 42, 0.48)",
-  overlaySoft: "rgba(15, 23, 42, 0.18)",
+  overlay: "rgba(26, 23, 18, 0.44)",
+  overlaySoft: "rgba(26, 23, 18, 0.16)",
 
   // Semantic — foreground and matching background wash
   success: palette.green700,

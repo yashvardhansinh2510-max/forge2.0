@@ -170,3 +170,35 @@ endpoints only if a screen genuinely needs one (e.g., Today briefing could reuse
 
 Each phase will ship with: problems addressed, IA, user journey, screen hierarchy, interaction
 model, motion spec, components used, mobile adaptation, edge cases — appended to this document.
+
+---
+
+# PHASE 1 — SHIPPED (6 July 2026)
+
+## What exists now
+- src/design/tokens.ts — Showroom tokens (canvas #F7F5F1, ink #1D1B16 action, brass #8C7351 guidance-only,
+  Fraunces display serif, 4pt spacing, 2 shadows, motion 90/140/200/260)
+- src/design/components.tsx — Txt, Money, Button, IconButton, Field/Input, Row, StatusWord, Avatar,
+  Surface, Section, EmptyState, Skeleton, KeyCap, Tabs, Sheet, Dialog, Menu, FadeIn, Hairline
+- src/design/Screen.tsx — page scaffold (gutters 20/28/40, maxWidth 1120)
+- src/design/CommandPalette.tsx — global ⌘K (actions + nav + customers/quotations/products search)
+- src/design/responsive.ts — useBp(): phone <768 / tablet 768–1023 / desktop ≥1024
+- New shell (_layout), Today (dashboard), Auth (login), Toast — all on the new system
+- Legacy src/theme/tokens.ts VALUES remapped to warm palette → unmigrated screens blend automatically
+
+## Rules for later phases (LOCKED)
+1. Modules consume ONLY @/src/design/* — zero local styling.
+2. One filled (ink) button per screen. Brass never on buttons.
+3. No stat appears twice on a screen. No KPI tile grids — typographic stats.
+4. Statuses = StatusWord (dot+word). Money = <Money/> (small ₹, tabular digits).
+5. Fraunces appears ONLY in greetings/auth display moments.
+6. Motion only on state change; use FadeIn once per screen, Sheet/Menu/Dialog for overlays.
+
+## Migration order (user-approved)
+1. Quotation Builder (flagship) → 2. Customers+CRM → 3. Catalogue → 4. Purchases → 5. Payments
+→ 6. Follow-ups → 7. Reports → 8. Settings
+
+## Catalog restoration (parallel workstream — BLOCKED on user)
+Needs: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, then the 4 supplier files (VITRA xlsx, GROHE pdf,
+GEBERIT pdf, HANSGROHE). Then: re-run pipeline, verify counts (Vitra 250 / Grohe 854-864 / Geberit 496 /
+Hansgrohe 1272), implement Supabase catalog snapshot auto-backup/restore on startup.

@@ -1,11 +1,9 @@
-// Lightweight toast — non-blocking success/error feedback.
+// Toast — quiet ink pill, bottom of screen. Non-blocking feedback.
 // Mount <ToastHost /> once at the app root. Trigger via `toast.show(...)`.
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useRef, useState } from "react";
-import { Animated, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-
-import { colors, radius, spacing } from "@/src/theme/tokens";
+import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type ToastKind = "success" | "error" | "info";
 type ToastEvent = { kind: ToastKind; text: string };
@@ -20,47 +18,57 @@ export const toast = {
   error(text: string) { this.show(text, "error"); },
 };
 
+const INK = "#1D1B16";
+const OK = "#7FBF97";
+const RISK = "#E8A198";
+
 export function ToastHost() {
   const [ev, setEv] = useState<ToastEvent | null>(null);
-  const opacity = useRef(new Animated.Value(0)).current;
+  const anim = useRef(new Animated.Value(0)).current;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     const l = (e: ToastEvent) => {
       setEv(e);
-      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+      Animated.timing(anim, { toValue: 1, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
-        Animated.timing(opacity, { toValue: 0, duration: 220, useNativeDriver: true }).start(({ finished }) => {
+        Animated.timing(anim, { toValue: 0, duration: 160, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
           if (finished) setEv(null);
         });
-      }, 2400);
+      }, 2600);
     };
     listeners.push(l);
     return () => { listeners = listeners.filter((x) => x !== l); };
-  }, [opacity]);
+  }, [anim]);
 
   if (!ev) return null;
-  const bg = ev.kind === "success" ? colors.success : ev.kind === "error" ? colors.error : colors.brand;
-  const icon = ev.kind === "success" ? "check-circle" : ev.kind === "error" ? "alert-circle" : "info";
+  const iconColor = ev.kind === "success" ? OK : ev.kind === "error" ? RISK : "rgba(255,255,255,0.75)";
+  const icon = ev.kind === "success" ? "check" : ev.kind === "error" ? "alert-circle" : "info";
 
   return (
-    <SafeAreaView pointerEvents="none" edges={["top"]} style={styles.host}>
-      <Animated.View style={[styles.toast, { backgroundColor: bg, opacity }]}>
-        <Feather name={icon as any} size={16} color="#fff" />
+    <View pointerEvents="none" style={[styles.host, { bottom: Math.max(insets.bottom, 12) + 76 }]}>
+      <Animated.View
+        style={[styles.toast, {
+          opacity: anim,
+          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }],
+        }]}
+      >
+        <Feather name={icon as any} size={15} color={iconColor} />
         <Text style={styles.text} numberOfLines={2}>{ev.text}</Text>
       </Animated.View>
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  host: { position: "absolute", top: 0, left: 0, right: 0, alignItems: "center", zIndex: 9999 },
+  host: { position: "absolute", left: 0, right: 0, alignItems: "center", zIndex: 9999 },
   toast: {
     flexDirection: "row", alignItems: "center", gap: 10,
-    paddingHorizontal: spacing.lg, paddingVertical: 12, borderRadius: radius.pill,
-    marginTop: 8, maxWidth: 480,
-    shadowColor: "#000", shadowOpacity: 0.2, shadowOffset: { width: 0, height: 6 }, shadowRadius: 16, elevation: 6,
+    paddingHorizontal: 18, paddingVertical: 12, borderRadius: 999,
+    backgroundColor: INK, maxWidth: 440,
+    shadowColor: "#26221B", shadowOpacity: 0.24, shadowOffset: { width: 0, height: 10 }, shadowRadius: 28, elevation: 10,
   },
-  text: { color: "#fff", fontSize: 13, fontWeight: "600", flexShrink: 1 },
+  text: { color: "#FFFFFF", fontFamily: "Inter-Medium", fontWeight: "500", fontSize: 13.5, flexShrink: 1 },
 });
