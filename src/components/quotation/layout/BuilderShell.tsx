@@ -19,6 +19,7 @@ import { ProductExplorer } from "../catalog/ProductExplorer";
 import { QuotationPane } from "../panes/QuotationPane";
 import { AssistantSheet } from "../sheets/AssistantSheet";
 import { CustomProductSheet } from "../sheets/CustomProductSheet";
+import { CustomerSwitcherSheet } from "../sheets/CustomerSwitcherSheet";
 import { DescriptionSheet } from "../sheets/DescriptionSheet";
 import { DiscountSheet } from "../sheets/DiscountSheet";
 import { ProductModal } from "../sheets/ProductModal";
@@ -94,6 +95,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       {/* Universal sheets */}
       <ProductModal />
       <CustomProductSheet />
+      <CustomerSwitcherSheet />
       <DiscountSheet />
       <RoomSheet />
       <DescriptionSheet />

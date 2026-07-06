@@ -34,7 +34,7 @@ export type Brand = { id: string; name: string; slug?: string; product_count?: n
 
 export type Category = { id: string; name: string; product_count?: number };
 
-export type Customer = { id: string; name: string; company?: string | null; email: string; phone?: string | null };
+export type Customer = { id: string; name: string; company?: string | null; email?: string | null; phone?: string | null };
 
 // V4 header fields — captured on the topbar so the salesperson never leaves the workspace.
 export type QuotationHeader = {
