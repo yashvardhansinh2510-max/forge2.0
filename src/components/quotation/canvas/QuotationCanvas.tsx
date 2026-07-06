@@ -23,6 +23,7 @@ export function QuotationCanvas() {
           collapsed={item.collapsed}
           drag={drag}
           isActive={isActive}
+          roomDiscount={item.roomDiscount}
         />
       );
     }
@@ -33,6 +34,7 @@ export function QuotationCanvas() {
         isActive={isActive}
         catDiscs={b.s.categoryDiscounts}
         projDisc={b.s.projectDiscount}
+        roomDiscs={b.s.roomDiscounts}
       />
     );
   };
@@ -55,6 +57,8 @@ export function QuotationCanvas() {
       keyExtractor={(row) => row.id}
       onDragEnd={b.onLinesDragEnd}
       renderItem={renderItem}
+      style={{ flex: 1, minHeight: 0 }}
+      containerStyle={{ flex: 1, minHeight: 0, overflow: "hidden" }}
       contentContainerStyle={{ padding: spacing.md, gap: 6, paddingBottom: 32 }}
       activationDistance={10}
       keyboardShouldPersistTaps="handled"

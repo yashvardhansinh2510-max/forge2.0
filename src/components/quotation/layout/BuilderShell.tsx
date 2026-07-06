@@ -62,29 +62,29 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       {w === 0 ? (
         <View style={{ flex: 1, backgroundColor: colors.surface }} />
       ) : threePane ? (
-        <View style={{ flex: 1, flexDirection: "row" }}>
-          <View style={{ width: railW }}>
+        <View style={{ flex: 1, flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
+          <View style={{ width: railW, overflow: "hidden" }}>
             <BrandRail />
           </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
             <ProductExplorer />
           </View>
-          <View style={{ width: quotationW, borderLeftWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+          <View style={{ width: quotationW, minHeight: 0, overflow: "hidden", borderLeftWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
             <QuotationPane />
           </View>
         </View>
       ) : twoPane ? (
-        <View style={{ flex: 1, flexDirection: "row" }}>
-          <View style={{ width: 220 }}>
+        <View style={{ flex: 1, flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
+          <View style={{ width: 220, overflow: "hidden" }}>
             <BrandRail />
           </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
             <QuotationPane />
           </View>
         </View>
       ) : (
-        <View style={{ flex: 1 }}>
-          <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+          <View style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <QuotationPane />
           </View>
           <MobileSummaryBar />

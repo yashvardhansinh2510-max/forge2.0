@@ -95,6 +95,7 @@ export function ProductExplorer() {
         data={b.products}
         key={`grid-${numCols}`}
         numColumns={numCols}
+        style={{ flex: 1, minHeight: 0 }}
         columnWrapperStyle={{ gap: 12 }}
         keyExtractor={(p) => p.id}
         contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 32 }}
@@ -225,7 +226,7 @@ const ProductGridCard = memo(
 );
 
 const styles = StyleSheet.create({
-  panel: { flex: 1, backgroundColor: colors.surface },
+  panel: { flex: 1, minHeight: 0, overflow: "hidden", backgroundColor: colors.surface },
   head: {
     paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
