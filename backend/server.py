@@ -62,6 +62,7 @@ api.include_router(purchase_router)
 api.include_router(purchases_tracker_router)
 api.include_router(payment_router)
 api.include_router(activity_router)
+api.include_router(followup_router)
 
 app.include_router(api)
 

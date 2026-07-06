@@ -599,6 +599,7 @@ class FollowupUpdate(BaseModel):
     assigned_to: Optional[str] = None
     manual_priority_override: Optional[FollowupPriorityLevel] = None
     reason: Optional[str] = None
+    status: Optional[Literal["open", "dismissed"]] = None
 
 
 class FollowupSnoozePayload(BaseModel):

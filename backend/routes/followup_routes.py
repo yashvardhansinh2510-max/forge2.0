@@ -349,6 +349,20 @@ async def update_followup(followup_id: str, body: FollowupUpdate, user: UserPubl
             customer_id=f.get("customer_id"),
             summary=f"Assigned to {patch.get('assigned_to_name') or '—'}",
         )
+    if patch.get("status") == "dismissed":
+        patch["completed_at"] = now_iso()
+        patch["resolution_note"] = "Dismissed — not relevant"
+        await log_event(
+            event_type="followup.dismissed", entity_type="followup", entity_id=followup_id, actor=user,
+            customer_id=f.get("customer_id"),
+            summary=f"Follow-up dismissed — {f.get('reason')}",
+        )
+    if "notes" in patch and patch["notes"] and patch.get("status") != "dismissed" and "assigned_to" not in patch:
+        await log_event(
+            event_type="followup.note_added", entity_type="followup", entity_id=followup_id, actor=user,
+            customer_id=f.get("customer_id"),
+            summary=f"Note added: {patch['notes'][:120]}",
+        )
     patch["updated_at"] = now_iso()
     await db.followups.update_one({"id": followup_id}, {"$set": patch})
     return await db.followups.find_one({"id": followup_id}, {"_id": 0})
