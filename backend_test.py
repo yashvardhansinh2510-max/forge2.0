@@ -9,7 +9,7 @@ import time
 from typing import Optional
 
 # Base URL from frontend/.env
-BASE_URL = "https://bathroom-ops.preview.emergentagent.com/api"
+BASE_URL = "https://forge-stabilize.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 TEST_EMAIL = "sales@forge.app"
