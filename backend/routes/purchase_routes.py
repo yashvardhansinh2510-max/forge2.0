@@ -21,8 +21,8 @@ from auth import get_current_user, require_min_role
 from db import db
 from models import (
     PurchaseAttachment, PurchaseAttachmentCreate, PurchaseOrder, PurchaseOrderItem,
-    PurchaseOrderUpdate, PurchaseReceivePayload, PurchaseStatusEvent, PurchaseStatusPayload,
-    UserPublic,
+    PurchaseOrderUpdate, PurchaseReceivePayload, PurchaseStageEvent, PurchaseStatusEvent,
+    PurchaseStatusPayload, UserPublic,
 )
 from services.activity_log import log_event
 
@@ -335,6 +335,7 @@ async def receive_items(
     items = doc.get("items", [])
     updated_items = []
     changes = []
+    stage_syncs = []
     for it in items:
         new_recv = body.receipts.get(it["id"])
         if new_recv is not None:
@@ -342,6 +343,26 @@ async def receive_items(
             if abs(clamped - float(it.get("qty_received", 0))) > 1e-6:
                 changes.append({"sku": it["sku"], "from": it.get("qty_received", 0), "to": clamped})
                 it = {**it, "qty_received": clamped}
+                # Reverse sync: PO-level receiving reaching full qty on a line
+                # means it has physically arrived — the Material Tracker's
+                # per-item `stage` must reflect that too, or the tracker board
+                # would keep showing "Order in Company" for a fully-received PO.
+                if clamped >= float(it.get("qty", 0)) - 1e-6 and it.get("stage") != "delivered":
+                    prev_stage = it.get("stage") or "order_in_company"
+                    stage_ev = PurchaseStageEvent(
+                        from_stage=prev_stage, to_stage="delivered",
+                        by_user_id=user.id, by_user_name=user.full_name,
+                        note="Auto-synced from PO receiving", action="move",
+                    ).dict()
+                    it = {
+                        **it,
+                        "stage": "delivered",
+                        "last_moved_at": datetime.now(timezone.utc).isoformat(),
+                        "last_moved_by": user.id,
+                        "last_moved_by_name": user.full_name,
+                        "stage_history": (it.get("stage_history") or []) + [stage_ev],
+                    }
+                    stage_syncs.append({"item_id": it["id"], "sku": it["sku"], "from_stage": prev_stage})
         updated_items.append(it)
 
     patch: dict = {
@@ -371,6 +392,14 @@ async def receive_items(
         ),
         payload={"changes": changes, "note": body.note},
     )
+    for sync in stage_syncs:
+        await log_event(
+            event_type="purchase.stage_moved",
+            entity_type="purchase", entity_id=po_id, actor=user,
+            customer_id=doc.get("customer_id"),
+            summary=f"{sync['sku']} · auto-marked Delivered (fully received)",
+            payload={"item_id": sync["item_id"], "from_stage": sync["from_stage"], "to_stage": "delivered", "source": "receive_sync"},
+        )
 
     fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
     return PurchaseOrder(**fresh)

@@ -24,10 +24,15 @@ async def create_customer(
     body: CustomerCreate,
     _: UserPublic = Depends(require_min_role("sales")),
 ):
-    if await db.customers.find_one({"email": body.email.lower()}):
+    if body.email and await db.customers.find_one({"email": body.email.lower()}):
         raise HTTPException(status_code=409, detail="Customer email already exists")
+    if not body.name or not body.name.strip():
+        raise HTTPException(status_code=400, detail="Customer name is required")
     data = body.dict()
-    data["email"] = data["email"].lower()
+    if data.get("email"):
+        data["email"] = data["email"].lower()
+    else:
+        data["email"] = None
     password = data.pop("password", None)
     from models import CustomerPublic as CP
     cust = CP(**data)

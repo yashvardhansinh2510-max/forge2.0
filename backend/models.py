@@ -78,7 +78,7 @@ class TokenResponse(BaseModel):
 class CustomerBase(BaseModel):
     name: str
     company: Optional[str] = None
-    email: EmailStr
+    email: Optional[EmailStr] = None
     phone: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
@@ -236,6 +236,17 @@ class QuotationRevision(BaseModel):
     snapshot: dict
 
 
+class RoomDiscountCfg(BaseModel):
+    """Room-level discount — either a flat % off every line in the room, or a
+    fixed rupee amount off the room's subtotal (allocated proportionally
+    across the room's lines). Sits between product-level overrides and
+    category/project discounts in the precedence chain:
+        Product override > Room discount > Category discount > Project discount
+    """
+    type: Literal["percent", "amount"] = "percent"
+    value: float = 0
+
+
 class Quotation(TimestampedModel):
     number: str                          # human-readable e.g. FQ-2026-0001
     customer_id: str
@@ -251,6 +262,7 @@ class Quotation(TimestampedModel):
     collapsed_rooms: list[str] = []      # ui state — persisted so it survives reloads
     project_discount_pct: float = 0      # applied on top of item net (after item discount)
     category_discounts: dict[str, float] = {}  # {category_id: discount_pct}
+    room_discounts: dict[str, RoomDiscountCfg] = {}  # {room_name: {type, value}}
     # Full UI state blob — active_room, scroll positions, expanded panels,
     # last-opened filter, favourite chips. Written on silent autosave so
     # reopening the quotation puts the salesperson EXACTLY where they left off.
@@ -277,9 +289,11 @@ class QuotationCreate(BaseModel):
     reference_source: Optional[str] = None
     project_discount_pct: float = 0
     category_discounts: dict[str, float] = {}
+    room_discounts: dict[str, RoomDiscountCfg] = {}
 
 
 class QuotationUpdate(BaseModel):
+    customer_id: Optional[str] = None    # change the customer on an existing quotation
     items: Optional[list[QuotationLineItem]] = None
     rooms: Optional[list[str]] = None
     collapsed_rooms: Optional[list[str]] = None
@@ -292,6 +306,7 @@ class QuotationUpdate(BaseModel):
     ui_state: Optional[dict] = None
     project_discount_pct: Optional[float] = None
     category_discounts: Optional[dict[str, float]] = None
+    room_discounts: Optional[dict[str, RoomDiscountCfg]] = None
     reason: Optional[str] = None         # for revision log
     silent: bool = False                 # if true, skip revision snapshot (autosave)
 

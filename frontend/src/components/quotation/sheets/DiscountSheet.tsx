@@ -18,6 +18,8 @@ export function DiscountSheet() {
   const [tempProjPct, setTempProjPct] = useState<string>("0");
   const [tempLinePct, setTempLinePct] = useState<string>("");
   const [tempCatPct, setTempCatPct] = useState<string>("");
+  const [roomType, setRoomType] = useState<"percent" | "amount">("percent");
+  const [tempRoomVal, setTempRoomVal] = useState<string>("");
 
   useEffect(() => {
     if (!cur) return;
@@ -27,6 +29,10 @@ export function DiscountSheet() {
       setTempLinePct(l?.discount_pct != null ? String(l.discount_pct) : "");
     } else if (cur.kind === "category") {
       setTempCatPct(b.s.categoryDiscounts[cur.category_id] != null ? String(b.s.categoryDiscounts[cur.category_id]) : "");
+    } else if (cur.kind === "room") {
+      const rd = b.s.roomDiscounts[cur.room];
+      setRoomType(rd?.type || "percent");
+      setTempRoomVal(rd ? String(rd.value) : "");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cur]);
@@ -40,18 +46,21 @@ export function DiscountSheet() {
       });
     } else if (cur.kind === "category") {
       b.setCategoryDiscount(cur.category_id, tempCatPct === "" ? null : Number(tempCatPct) || 0);
+    } else if (cur.kind === "room") {
+      const val = Number(tempRoomVal) || 0;
+      b.setRoomDiscount(cur.room, tempRoomVal === "" || val <= 0 ? null : { type: roomType, value: val });
     }
     close();
   };
 
   const currentLine = cur?.kind === "line" ? b.s.lines.find((l) => l.id === cur.line_id) : null;
-  const currentLineEff = currentLine ? effectivePct(currentLine, b.s.categoryDiscounts, b.s.projectDiscount) : null;
+  const currentLineEff = currentLine ? effectivePct(currentLine, b.s.roomDiscounts, b.s.categoryDiscounts, b.s.projectDiscount) : null;
 
   return (
     <BottomSheet
       visible={!!cur}
       onClose={close}
-      title={cur?.kind === "line" ? "Item discount" : cur?.kind === "category" ? "Category discount" : "Discounts"}
+      title={cur?.kind === "line" ? "Item discount" : cur?.kind === "category" ? "Category discount" : cur?.kind === "room" ? "Room discount" : "Discounts"}
       testID="discount-sheet"
       footer={
         <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
@@ -72,7 +81,7 @@ export function DiscountSheet() {
               placeholder="0"
               style={styles.bigInput}
             />
-            <Text style={type.caption}>Applied to items that do not have an override.</Text>
+            <Text style={type.caption}>Applied to items that do not have a closer-scoped override.</Text>
           </View>
 
           <View style={{ gap: 8 }}>
@@ -95,10 +104,33 @@ export function DiscountSheet() {
             ))}
           </View>
 
+          <View style={{ gap: 8 }}>
+            <Text style={type.overline}>Room overrides</Text>
+            {b.s.rooms.length === 0 ? (
+              <Text style={type.caption}>Add a room first.</Text>
+            ) : b.s.rooms.map((room) => {
+              const rd = b.s.roomDiscounts[room];
+              return (
+                <Pressable
+                  key={room}
+                  testID={`edit-room-disc-${room}`}
+                  onPress={() => b.setDiscountSheet({ kind: "room", room })}
+                  style={styles.catRow}
+                >
+                  <Text style={{ flex: 1, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{room}</Text>
+                  <Text style={{ fontFamily: "System", fontVariant: ["tabular-nums"], fontSize: 13 }}>
+                    {rd ? (rd.type === "percent" ? `${rd.value}%` : `₹${rd.value.toLocaleString("en-IN")}`) : "Add discount"}
+                  </Text>
+                  <Feather name={rd ? "edit-2" : "plus"} size={14} color={colors.brand} />
+                </Pressable>
+              );
+            })}
+          </View>
+
           <View style={styles.callout}>
             <Text style={type.overline}>How it stacks</Text>
             <Text style={type.caption}>
-              Product override → Category → Project. The first non-null wins per item.
+              Product override → Room → Category → Project. The first closer-scoped discount wins per item.
             </Text>
           </View>
         </View>
@@ -113,7 +145,40 @@ export function DiscountSheet() {
             placeholder="Leave empty to remove"
             style={styles.bigInput}
           />
-          <Text style={type.caption}>Applied to all items in this category, unless the item has its own product-level override.</Text>
+          <Text style={type.caption}>Applied to all items in this category, unless the item or its room has a closer-scoped override.</Text>
+        </View>
+      ) : cur?.kind === "room" ? (
+        <View style={{ gap: spacing.md }}>
+          <Text style={type.body}>{cur.room}</Text>
+          <View style={styles.typeToggle}>
+            <Pressable
+              testID="room-disc-type-percent"
+              onPress={() => setRoomType("percent")}
+              style={[styles.typeBtn, roomType === "percent" && styles.typeBtnActive]}
+            >
+              <Text style={[styles.typeBtnLabel, roomType === "percent" && styles.typeBtnLabelActive]}>Percent %</Text>
+            </Pressable>
+            <Pressable
+              testID="room-disc-type-amount"
+              onPress={() => setRoomType("amount")}
+              style={[styles.typeBtn, roomType === "amount" && styles.typeBtnActive]}
+            >
+              <Text style={[styles.typeBtnLabel, roomType === "amount" && styles.typeBtnLabelActive]}>Flat ₹</Text>
+            </Pressable>
+          </View>
+          <TextInput
+            testID="room-disc-input"
+            value={tempRoomVal}
+            onChangeText={setTempRoomVal}
+            keyboardType="decimal-pad"
+            placeholder={roomType === "percent" ? "e.g. 10" : "e.g. 5000"}
+            style={styles.bigInput}
+          />
+          <Text style={type.caption}>
+            {roomType === "percent"
+              ? "Every item in this room gets this % off, unless it has its own product-level override."
+              : "This flat amount is split proportionally across every item in this room (capped at the room's subtotal)."}
+          </Text>
         </View>
       ) : cur?.kind === "line" && currentLine ? (
         <View style={{ gap: spacing.md }}>
@@ -123,13 +188,13 @@ export function DiscountSheet() {
             value={tempLinePct}
             onChangeText={setTempLinePct}
             keyboardType="decimal-pad"
-            placeholder="Empty → inherit from category / project"
+            placeholder="Empty → inherit from room / category / project"
             style={styles.bigInput}
           />
           {currentLineEff && currentLineEff.source !== "none" && currentLine.discount_pct == null ? (
             <View style={styles.callout}>
               <Text style={type.overline}>Currently inheriting</Text>
-              <Text style={type.body}>{currentLineEff.pct}% from {currentLineEff.source}</Text>
+              <Text style={type.body}>{Math.round(currentLineEff.pct * 100) / 100}% from {currentLineEff.source.replace("_amount", "")}</Text>
             </View>
           ) : null}
         </View>
@@ -148,4 +213,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
   callout: { padding: 12, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary, gap: 4 },
+  typeToggle: { flexDirection: "row", gap: 6, backgroundColor: colors.surfaceTertiary, padding: 3, borderRadius: radius.md },
+  typeBtn: { flex: 1, paddingVertical: 8, alignItems: "center", borderRadius: radius.sm },
+  typeBtnActive: { backgroundColor: colors.surface },
+  typeBtnLabel: { fontSize: 12, fontWeight: "600", color: colors.onSurfaceSecondary },
+  typeBtnLabelActive: { color: colors.onSurface },
 });

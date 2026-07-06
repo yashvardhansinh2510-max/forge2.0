@@ -41,6 +41,7 @@ from models import (
     PurchaseOrder, PurchaseOrderItem, PurchaseStageEvent, PurchaseStatusEvent,
     PURCHASE_STAGES, PurchaseStage, UserPublic, now_iso,
 )
+from routes.purchase_routes import ALLOWED_TRANSITIONS, STATUS_LABELS
 from services.activity_log import log_event
 from services.followup_engine import reconcile_followups
 
@@ -394,6 +395,102 @@ class TransferBody(BaseModel):
     reason: Optional[str] = None
 
 
+def _derive_po_status_from_stages(items: list[dict], current_status: str) -> Optional[str]:
+    """Reconcile the PO-level `status` (purchase_routes.py state machine) with
+    the per-item `stage` (Material Tracker). These are two views of the same
+    physical reality — incoming-from-supplier receiving progress — and MUST
+    never silently diverge (e.g. Kanban shows "Draft" while every line is
+    physically "Delivered"). Returns the target status, or None if no forward
+    sync is warranted (PO is cancelled, or already at/past the target).
+
+    Mapping (supplier → our warehouse):
+        order_in_company / company_billing / in_box  → still "ordered" once
+            procurement has actually started moving it (was draft/awaiting_review)
+        dispatched / in_transit                       → "awaiting_supplier"
+        delivered (some, not all)                     → "partial_received"
+        delivered (all)                                → "fully_received"
+
+    We only ever move status FORWARD relative to ALLOWED_TRANSITIONS reachability
+    from the current status, and we never touch a PO that is "cancelled" or has
+    already progressed to "packed"/"ready_for_dispatch" (post-receiving, dispatch
+    to the customer is a distinct, later concern the Material Tracker doesn't
+    own).
+    """
+    if current_status in ("cancelled", "packed", "ready_for_dispatch"):
+        return None
+    if not items:
+        return None
+    stages = [i.get("stage") or "order_in_company" for i in items]
+
+    if all(s == "delivered" for s in stages):
+        target = "fully_received"
+    elif any(s == "delivered" for s in stages):
+        target = "partial_received"
+    elif any(s in ("dispatched", "in_transit") for s in stages):
+        target = "awaiting_supplier"
+    elif any(s in ("company_billing", "in_box") for s in stages):
+        target = "ordered"
+    else:
+        return None  # every item still order_in_company — nothing to sync yet
+
+    if target == current_status:
+        return None
+
+    # Rank statuses so we never move backwards (e.g. a late single-item
+    # re-move to an earlier stage shouldn't downgrade a PO that's otherwise
+    # fully_received from other items already reconciled).
+    rank = ["draft", "awaiting_review", "ordered", "awaiting_supplier",
+            "partial_received", "fully_received"]
+    try:
+        if rank.index(target) <= rank.index(current_status):
+            return None
+    except ValueError:
+        pass
+    return target
+
+
+async def _sync_po_status_with_stages(po_id: str, user: UserPublic) -> Optional[str]:
+    """Fetch the fresh PO, derive the correct status from item stages, and
+    persist it (+ status_history + qty_received bookkeeping + activity event)
+    if a forward sync is warranted. Returns the new status, or None."""
+    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    if not fresh:
+        return None
+    target = _derive_po_status_from_stages(fresh.get("items", []), fresh.get("status", "draft"))
+    if not target:
+        return None
+
+    now = now_iso()
+    ev = PurchaseStatusEvent(
+        from_status=fresh.get("status"), to_status=target,
+        by_user_id=user.id, by_user_name=user.full_name,
+        note="Auto-synced from Material Tracker stage change",
+    ).dict()
+    set_fields: dict = {"status": target, "updated_at": now}
+    await db.purchase_orders.update_one(
+        {"id": po_id},
+        {"$set": set_fields, "$push": {"status_history": ev}},
+    )
+    # Keep qty_received consistent with /receive bookkeeping for every item
+    # that has physically reached "delivered" — otherwise the receive-progress
+    # math (partial vs full) on the PO-lifecycle side would still read 0.
+    for it2 in fresh.get("items", []):
+        if it2.get("stage") == "delivered" and float(it2.get("qty_received") or 0) < float(it2.get("qty") or 0):
+            await db.purchase_orders.update_one(
+                {"id": po_id, "items.id": it2["id"]},
+                {"$set": {"items.$.qty_received": it2.get("qty")}},
+            )
+
+    await log_event(
+        event_type="purchase.status_changed",
+        entity_type="purchase", entity_id=po_id, actor=user,
+        customer_id=fresh.get("customer_id"),
+        summary=f"Status auto-synced to {STATUS_LABELS.get(target, target)} (Material Tracker)",
+        payload={"from": fresh.get("status"), "to": target, "source": "material_tracker_sync"},
+    )
+    return target
+
+
 async def _apply_stage_change(
     item_id: str, to_stage: str, user: UserPublic, note: Optional[str],
 ) -> dict:
@@ -444,11 +541,21 @@ async def _apply_stage_change(
             "sku": it.get("sku"), "qty": it.get("qty"),
         },
     )
-    if to_stage in ("dispatched", "in_transit", "delivered"):
-        # Dispatch/delivery reminders derive from item stage — event-triggered
-        # refresh right here, not a cron job.
+
+    # Reconcile the PO-level status with the new item-stage reality — this is
+    # THE fix for the two-systems divergence (Kanban `status` vs Tracker
+    # `stage` silently disagreeing). Runs on every move, not just dispatch+.
+    new_status = await _sync_po_status_with_stages(po["id"], user)
+
+    if to_stage in ("dispatched", "in_transit", "delivered") or new_status:
+        # Dispatch/delivery reminders derive from item stage/PO status —
+        # event-triggered refresh right here, not a cron job.
         asyncio.create_task(reconcile_followups())
-    return {"po_id": po["id"], "item_id": item_id, "from_stage": from_stage, "to_stage": to_stage}
+    return {
+        "po_id": po["id"], "item_id": item_id,
+        "from_stage": from_stage, "to_stage": to_stage,
+        "po_status_synced_to": new_status,
+    }
 
 
 @router.post("/items/{item_id}/move")

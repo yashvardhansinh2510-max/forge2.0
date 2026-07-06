@@ -12,7 +12,7 @@ from db import db
 from models import (
     CustomerPublic, PurchaseOrder, PurchaseOrderItem, PurchaseStatusEvent, PurchaseStageEvent,
     Quotation, QuotationCreate, QuotationLineItem, QuotationRevision,
-    QuotationUpdate, UserPublic, now_iso,
+    QuotationUpdate, RoomDiscountCfg, UserPublic, now_iso,
 )
 from pdf_generator import build_quotation_pdf
 from services.activity_log import log_event
@@ -23,12 +23,26 @@ router = APIRouter(prefix="/quotations", tags=["quotations"])
 
 def _effective_discount_pct(
     line: QuotationLineItem,
+    room_discounts: dict[str, "RoomDiscountCfg"],
     category_discounts: dict[str, float],
     project_discount_pct: float,
 ) -> tuple[float, str]:
-    """Return (pct, source) — Product override > Category > Project."""
+    """Return (pct, source) — Product override > Room > Category > Project.
+    Mirrors frontend/src/components/quotation/helpers/pricing.ts effectivePct
+    EXACTLY — these two implementations must never drift, or the builder's
+    live totals would disagree with what the server persists.
+    A room with an "amount" (flat ₹) discount has no single per-line pct —
+    it's resolved by _recalc's second pass — so we return pct=0 with source
+    "room_amount" here to signal "blocked from category/project, pending
+    room-level allocation", exactly like the TS version.
+    """
     if line.discount_pct is not None:
         return float(line.discount_pct), "product"
+    rd = room_discounts.get(line.room) if line.room else None
+    if rd and rd.value > 0:
+        if rd.type == "percent":
+            return float(rd.value), "room"
+        return 0.0, "room_amount"
     if line.category_id and line.category_id in category_discounts:
         return float(category_discounts[line.category_id]), "category"
     if project_discount_pct:
@@ -40,17 +54,41 @@ def _recalc(
     items: list[QuotationLineItem],
     project_discount_pct: float = 0.0,
     category_discounts: dict[str, float] | None = None,
+    room_discounts: dict[str, "RoomDiscountCfg"] | None = None,
 ) -> dict:
     category_discounts = category_discounts or {}
+    room_discounts = room_discounts or {}
     subtotal = 0.0
     discount_total = 0.0
 
+    # Pass 1 — per-line pct (product / room-percent / category / project).
+    rows = []
     for it in items:
         gross = it.qty * it.unit_price
-        pct, _ = _effective_discount_pct(it, category_discounts, project_discount_pct)
+        pct, source = _effective_discount_pct(it, room_discounts, category_discounts, project_discount_pct)
         disc = gross * pct / 100
-        subtotal += gross
-        discount_total += disc
+        rows.append({"gross": gross, "disc": disc, "source": source, "room": it.room})
+
+    # Pass 2 — allocate flat room-amount discounts proportionally across the
+    # affected room's eligible (non-product-overridden) lines.
+    by_room: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        if row["source"] == "room_amount":
+            by_room[row["room"] or ""].append(row)
+    for room, room_rows in by_room.items():
+        cfg = room_discounts.get(room)
+        if not cfg or cfg.type != "amount" or cfg.value <= 0:
+            continue
+        room_gross = sum(r["gross"] for r in room_rows)
+        flat = min(cfg.value, room_gross)
+        if room_gross <= 0 or flat <= 0:
+            continue
+        for row in room_rows:
+            row["disc"] = flat * (row["gross"] / room_gross)
+
+    for row in rows:
+        subtotal += row["gross"]
+        discount_total += row["disc"]
 
     grand_total = subtotal - discount_total
     return {
@@ -138,7 +176,7 @@ async def create_quotation(
             if p:
                 it.category_id = p.get("category_id")
 
-    totals = _recalc(items, body.project_discount_pct or 0, body.category_discounts or {})
+    totals = _recalc(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {})
     quot = Quotation(
         number=await _next_number(),
         customer_id=customer["id"],
@@ -150,6 +188,7 @@ async def create_quotation(
         rooms=body.rooms or [],
         project_discount_pct=body.project_discount_pct or 0,
         category_discounts=body.category_discounts or {},
+        room_discounts=body.room_discounts or {},
         notes=body.notes,
         valid_until=body.valid_until,
         created_by=user.id,
@@ -190,6 +229,19 @@ async def update_quotation(
         raise HTTPException(status_code=404, detail="Quotation not found")
 
     update: dict = {}
+    customer_changed_from: str | None = None
+    if body.customer_id is not None and body.customer_id != doc.get("customer_id"):
+        new_customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+        if not new_customer:
+            raise HTTPException(status_code=404, detail="Customer not found")
+        customer_changed_from = doc.get("customer_name")
+        update["customer_id"] = new_customer["id"]
+        update["customer_name"] = new_customer.get("company") or new_customer["name"]
+        # Refresh the frozen phone snapshot to the new customer's phone unless
+        # this same request is also explicitly setting one.
+        if body.phone_snapshot is None:
+            update["phone_snapshot"] = new_customer.get("phone")
+
     if body.items is not None:
         items_typed = [
             QuotationLineItem(**i.dict()) if not isinstance(i, dict) else QuotationLineItem(**i)
@@ -216,6 +268,8 @@ async def update_quotation(
         update["project_discount_pct"] = float(body.project_discount_pct)
     if body.category_discounts is not None:
         update["category_discounts"] = body.category_discounts
+    if body.room_discounts is not None:
+        update["room_discounts"] = {k: v.dict() for k, v in body.room_discounts.items()}
     if body.status is not None:
         update["status"] = body.status
         if body.status == "approved":
@@ -230,14 +284,18 @@ async def update_quotation(
         update["ui_state"] = body.ui_state
 
     # Recalc totals if anything pricing-related changed
-    if any(k in update for k in ("items", "project_discount_pct", "category_discounts")):
+    if any(k in update for k in ("items", "project_discount_pct", "category_discounts", "room_discounts")):
         items_for_calc = [
             QuotationLineItem(**i) for i in update.get("items", doc.get("items", []))
         ]
+        room_discounts_for_calc = {
+            k: RoomDiscountCfg(**v) for k, v in update.get("room_discounts", doc.get("room_discounts", {}) or {}).items()
+        }
         totals = _recalc(
             items_for_calc,
             update.get("project_discount_pct", doc.get("project_discount_pct", 0)),
             update.get("category_discounts", doc.get("category_discounts", {})),
+            room_discounts_for_calc,
         )
         update.update(totals)
 
@@ -251,7 +309,10 @@ async def update_quotation(
             revision_no=len(revisions) + 1,
             created_by=user.id,
             reason=body.reason,
-            snapshot={k: doc.get(k) for k in ("items", "rooms", "notes", "status", "grand_total", "project_discount_pct", "category_discounts")},
+            snapshot={k: doc.get(k) for k in (
+                "items", "rooms", "notes", "status", "grand_total", "project_discount_pct",
+                "category_discounts", "room_discounts", "customer_id", "customer_name",
+            )},
         )
         update["revisions"] = revisions + [rev.dict()]
 
@@ -300,6 +361,14 @@ async def update_quotation(
             ))
         if "notes" in update:
             events.append(("quotation.saved", "Notes updated", {}))
+        if customer_changed_from is not None:
+            events.append((
+                "quotation.customer_changed",
+                f"Customer changed from {customer_changed_from} to {update.get('customer_name')}",
+                {"from": customer_changed_from, "to": update.get("customer_name"), "to_customer_id": update.get("customer_id")},
+            ))
+        if "room_discounts" in update and update["room_discounts"] != (doc.get("room_discounts") or {}):
+            events.append(("quotation.discount_changed", "Room discount changed", {"room_discounts": update["room_discounts"]}))
         # revision event captured separately below (already appended to revisions)
         events.append(("quotation.revision_created", f"Revision {len(revisions) + 1} saved", {"reason": body.reason}))
 
@@ -346,6 +415,7 @@ async def duplicate_quotation(
         valid_until=src.get("valid_until"),
         project_discount_pct=src.get("project_discount_pct", 0),
         category_discounts=src.get("category_discounts", {}),
+        room_discounts=src.get("room_discounts", {}),
     )
     # Build fresh line items so ids are regenerated by the default_factory.
     body.items = [
@@ -372,28 +442,86 @@ async def quotation_breakdown(quotation_id: str, _: UserPublic = Depends(get_cur
 
     project_pct = doc.get("project_discount_pct", 0)
     cat_discs = doc.get("category_discounts", {}) or {}
-    lines_out = []
+    room_discs_raw = doc.get("room_discounts", {}) or {}
+    room_discs = {k: RoomDiscountCfg(**v) for k, v in room_discs_raw.items()}
+
+    rows = []
     for raw in doc.get("items", []):
         it = QuotationLineItem(**raw)
         gross = it.qty * it.unit_price
-        pct, source = _effective_discount_pct(it, cat_discs, project_pct)
-        disc = gross * pct / 100
+        pct, source = _effective_discount_pct(it, room_discs, cat_discs, project_pct)
+        rows.append({"it": it, "gross": gross, "pct": pct, "source": source, "disc": gross * pct / 100})
+
+    # Second pass — proportional allocation of flat room-amount discounts,
+    # mirrors _recalc exactly so the breakdown always adds up to the totals.
+    by_room: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        if row["source"] == "room_amount":
+            by_room[row["it"].room or ""].append(row)
+    for room, room_rows in by_room.items():
+        cfg = room_discs.get(room)
+        if not cfg or cfg.type != "amount" or cfg.value <= 0:
+            continue
+        room_gross = sum(r["gross"] for r in room_rows)
+        flat = min(cfg.value, room_gross)
+        if room_gross <= 0 or flat <= 0:
+            continue
+        for row in room_rows:
+            row["disc"] = flat * (row["gross"] / room_gross)
+            row["pct"] = round((row["disc"] / row["gross"]) * 100, 4) if row["gross"] else 0
+
+    lines_out = []
+    for row in rows:
+        it, gross, disc = row["it"], row["gross"], row["disc"]
         net = gross - disc
         lines_out.append({
             "line_id": it.id, "product_id": it.product_id, "sku": it.sku, "name": it.name,
-            "qty": it.qty, "unit_price": it.unit_price, "gross": round(gross, 2),
-            "discount_pct": pct, "discount_source": source, "discount_amount": round(disc, 2),
+            "room": it.room, "qty": it.qty, "unit_price": it.unit_price, "gross": round(gross, 2),
+            "discount_pct": round(row["pct"], 2), "discount_source": row["source"].replace("room_amount", "room"),
+            "discount_amount": round(disc, 2),
             "net": round(net, 2),
             "total": round(net, 2),
         })
 
-    totals = _recalc([QuotationLineItem(**i) for i in doc.get("items", [])], project_pct, cat_discs)
+    totals = _recalc([QuotationLineItem(**i) for i in doc.get("items", [])], project_pct, cat_discs, room_discs)
     return {
         "lines": lines_out,
         "totals": totals,
         "project_discount_pct": project_pct,
         "category_discounts": cat_discs,
+        "room_discounts": room_discs_raw,
     }
+
+
+def _enriched_items_for_pdf(doc: dict) -> list[dict]:
+    """Line items with `discount_pct` overridden to the EFFECTIVE resolved
+    pct (product/room/category/project), so the PDF's per-line Disc% column
+    always matches the grand total — instead of only ever showing product-
+    level overrides and leaving inherited discounts blank."""
+    project_pct = doc.get("project_discount_pct", 0)
+    cat_discs = doc.get("category_discounts", {}) or {}
+    room_discs = {k: RoomDiscountCfg(**v) for k, v in (doc.get("room_discounts") or {}).items()}
+    rows = []
+    for raw in doc.get("items", []):
+        it = QuotationLineItem(**raw)
+        gross = it.qty * it.unit_price
+        pct, source = _effective_discount_pct(it, room_discs, cat_discs, project_pct)
+        rows.append({"raw": raw, "gross": gross, "pct": pct, "source": source})
+    by_room: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        if row["source"] == "room_amount":
+            by_room[row["raw"].get("room") or ""].append(row)
+    for room, room_rows in by_room.items():
+        cfg = room_discs.get(room)
+        if not cfg or cfg.type != "amount" or cfg.value <= 0:
+            continue
+        room_gross = sum(r["gross"] for r in room_rows)
+        flat = min(cfg.value, room_gross)
+        if room_gross <= 0 or flat <= 0:
+            continue
+        for row in room_rows:
+            row["pct"] = round(((flat * (row["gross"] / room_gross)) / row["gross"]) * 100, 2) if row["gross"] else 0
+    return [{**row["raw"], "discount_pct": round(row["pct"], 2)} for row in rows]
 
 
 # --- PDF (staff) ---
@@ -403,7 +531,8 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
-    pdf_bytes = build_quotation_pdf(doc, customer)
+    pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
+    pdf_bytes = build_quotation_pdf(pdf_doc, customer)
     await log_event(
         event_type="quotation.pdf_generated",
         entity_type="quotation",
@@ -426,7 +555,8 @@ async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_curre
     doc = await db.quotations.find_one({"id": quotation_id, "customer_id": cust.id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
-    pdf_bytes = build_quotation_pdf(doc, cust.dict())
+    pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
+    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict())
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",

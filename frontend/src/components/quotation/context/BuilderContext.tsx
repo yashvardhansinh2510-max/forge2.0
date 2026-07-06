@@ -25,7 +25,7 @@ import { computeTotals, effectivePct } from "../helpers/pricing";
 import {
   Brand, BuilderRow, BuilderState, Category, Customer, DEFAULT_ROOMS, DescSheetState, DiscountSheetState,
   INITIAL_BUILDER_STATE, Line, PickerTab, Product, ProductVariant, QuotationHeader,
-  RecentQuotation, RoomSheetState, SaveState, SwapSheetState,
+  RecentQuotation, RoomDiscount, RoomSheetState, SaveState, SwapSheetState,
 } from "../helpers/types";
 
 const LOCAL_SNAPSHOT_KEY = "forge.builder.snapshot.v4";
@@ -112,6 +112,8 @@ export type BuilderApi = {
 
   // Mutations — customers/lines
   setCustomer: (id: string) => void;
+  createCustomer: (data: { name: string; phone?: string; project?: string; address?: string }) => Promise<string | null>;
+  customerSwitcherOpen: boolean; setCustomerSwitcherOpen: (v: boolean) => void;
   addFromProduct: (p: Product, variant?: ProductVariant) => void;
   updateLine: (id: string, patch: Partial<Line>, coalesceKey?: string) => void;
   removeLine: (id: string) => void;
@@ -131,6 +133,7 @@ export type BuilderApi = {
   // Discounts / notes
   setProjectDiscount: (n: number) => void;
   setCategoryDiscount: (cid: string, pct: number | null) => void;
+  setRoomDiscount: (room: string, cfg: RoomDiscount | null) => void;
   setNotes: (n: string) => void;
 
   // Swap
@@ -232,6 +235,9 @@ export function BuilderProvider({ onFinalize, children }: {
   // Assistant pane focus
   const [assistantFocus, setAssistantFocus] = useState<AssistantFocus>(null);
   const [assistantOpenMobile, setAssistantOpenMobile] = useState(false);
+
+  // Customer switcher sheet
+  const [customerSwitcherOpen, setCustomerSwitcherOpen] = useState(false);
 
   // ---------- Load reference data ----------
   useEffect(() => {
@@ -340,6 +346,7 @@ export function BuilderProvider({ onFinalize, children }: {
       },
       project_discount_pct: s.projectDiscount,
       category_discounts: s.categoryDiscounts,
+      room_discounts: s.roomDiscounts,
     };
     try {
       setSaveState("saving");
@@ -349,7 +356,6 @@ export function BuilderProvider({ onFinalize, children }: {
         setQuotationNumber(created.number);
       } else {
         const upd: any = { ...payload, silent: true, collapsed_rooms: Object.keys(s.collapsedRooms).filter((k) => s.collapsedRooms[k]) };
-        delete upd.customer_id;
         await api.patch(`/quotations/${quotationId}`, upd);
       }
       setSaveState("saved");
@@ -362,7 +368,7 @@ export function BuilderProvider({ onFinalize, children }: {
 
   useEffect(() => {
     if (!s.customerId) return;
-    if (s.lines.length === 0 && !quotationId && s.projectDiscount === 0 && Object.keys(s.categoryDiscounts).length === 0) return;
+    if (s.lines.length === 0 && !quotationId && s.projectDiscount === 0 && Object.keys(s.categoryDiscounts).length === 0 && Object.keys(s.roomDiscounts).length === 0) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => { persist(); }, 900);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
@@ -421,6 +427,7 @@ export function BuilderProvider({ onFinalize, children }: {
         notes: doc.notes || "",
         projectDiscount: doc.project_discount_pct || 0,
         categoryDiscounts: doc.category_discounts || {},
+        roomDiscounts: doc.room_discounts || {},
       };
       history.replace(restored);
       setQuotationId(doc.id);
@@ -455,8 +462,8 @@ export function BuilderProvider({ onFinalize, children }: {
 
   // ---------- Derived ----------
   const totals = useMemo(
-    () => computeTotals(s.lines, s.projectDiscount, s.categoryDiscounts),
-    [s.lines, s.projectDiscount, s.categoryDiscounts],
+    () => computeTotals(s.lines, s.projectDiscount, s.categoryDiscounts, s.roomDiscounts),
+    [s.lines, s.projectDiscount, s.categoryDiscounts, s.roomDiscounts],
   );
 
   const categoryById: Record<string, string> = useMemo(
@@ -476,11 +483,12 @@ export function BuilderProvider({ onFinalize, children }: {
     for (const room of s.rooms) {
       const roomLines = s.lines.filter((l) => l.room === room);
       const roomSub = roomLines.reduce((sum, l) => {
-        const eff = effectivePct(l, s.categoryDiscounts, s.projectDiscount);
+        const eff = effectivePct(l, s.roomDiscounts, s.categoryDiscounts, s.projectDiscount);
         return sum + l.qty * l.unit_price * (1 - eff.pct / 100);
       }, 0);
       const collapsed = !!s.collapsedRooms[room];
-      rows.push({ kind: "room-header", id: `hdr-${room}`, roomName: room, itemCount: roomLines.length, subtotal: roomSub, collapsed });
+      const roomDiscount = s.roomDiscounts[room] || null;
+      rows.push({ kind: "room-header", id: `hdr-${room}`, roomName: room, itemCount: roomLines.length, subtotal: roomSub, collapsed, roomDiscount });
       if (!collapsed) for (const l of roomLines) rows.push({ kind: "line", id: l.id, line: l });
     }
     return rows;
@@ -491,7 +499,30 @@ export function BuilderProvider({ onFinalize, children }: {
     if (id === history.state.customerId) return;
     Haptics.selectionAsync();
     history.apply((cur) => ({ ...cur, customerId: id }));
-  }, [history]);
+    // Persist the customer change immediately (not the 900ms debounce) so a
+    // switch is never lost and the change is visible in activity/version
+    // history right away — products/rooms/notes are untouched, as required.
+    if (quotationId) {
+      api.patch(`/quotations/${quotationId}`, { customer_id: id, silent: false })
+        .then(() => { setSaveState("saved"); setSavedAt(new Date()); toast.success("Customer updated"); })
+        .catch((e: any) => toast.error(e?.detail || "Could not change customer"));
+    }
+  }, [history, quotationId]);
+
+  const createCustomer = useCallback(async (data: { name: string; phone?: string; project?: string; address?: string }) => {
+    try {
+      const created = await api.post<Customer>("/customers", {
+        name: data.name, phone: data.phone || null, project: data.project || null, address: data.address || null,
+      });
+      setCustomers((cur) => [created, ...cur]);
+      setCustomer(created.id);
+      toast.success(`${created.name} added`);
+      return created.id;
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not create customer");
+      return null;
+    }
+  }, [setCustomer]);
 
   const addFromProduct = useCallback((p: Product, variant?: ProductVariant) => {
     Haptics.selectionAsync();
@@ -626,6 +657,15 @@ export function BuilderProvider({ onFinalize, children }: {
     }),
   [history]);
 
+  const setRoomDiscount = useCallback((room: string, cfg: RoomDiscount | null) =>
+    history.apply((cur) => {
+      const next = { ...cur.roomDiscounts };
+      if (!cfg || cfg.value <= 0) delete next[room];
+      else next[room] = { type: cfg.type, value: cfg.type === "percent" ? Math.max(0, Math.min(100, cfg.value)) : Math.max(0, cfg.value) };
+      return { ...cur, roomDiscounts: next };
+    }),
+  [history]);
+
   const setNotes = useCallback((n: string) =>
     history.apply((cur) => ({ ...cur, notes: n }), { coalesceKey: "notes" }),
   [history]);
@@ -739,9 +779,10 @@ export function BuilderProvider({ onFinalize, children }: {
     recentQuotations, refreshRecentQuotations, restoreQuotation, startNewQuotation,
     totals, usedCategoryIds, flatRows,
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
-    setCustomer, addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,
+    setCustomer, createCustomer, customerSwitcherOpen, setCustomerSwitcherOpen,
+    addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,
     addRoom, renameRoom, duplicateRoom, deleteRoom, toggleCollapse, setActiveRoom, onRoomDragEnd, onLinesDragEnd,
-    setProjectDiscount, setCategoryDiscount, setNotes,
+    setProjectDiscount, setCategoryDiscount, setRoomDiscount, setNotes,
     swapItems, swapLoading, openSwap, commitSwap, closeSwap,
     discountSheet, setDiscountSheet,
     roomSheet, setRoomSheet, roomInput, setRoomInput,

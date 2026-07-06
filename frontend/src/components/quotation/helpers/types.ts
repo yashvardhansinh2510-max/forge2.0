@@ -64,6 +64,12 @@ export type Line = {
 
 export type SaveState = "idle" | "saving" | "saved" | "error";
 
+// Room-level discount — either a flat percentage off every line in the room,
+// or a fixed rupee amount off the room's subtotal (allocated proportionally
+// across its lines for itemised display). Product-level overrides always
+// win over this; this in turn always wins over category/project discounts.
+export type RoomDiscount = { type: "percent" | "amount"; value: number };
+
 // One immutable snapshot of everything the user can undo.
 export type BuilderState = {
   customerId: string | null;
@@ -75,11 +81,12 @@ export type BuilderState = {
   notes: string;
   projectDiscount: number;
   categoryDiscounts: Record<string, number>;
+  roomDiscounts: Record<string, RoomDiscount>;
 };
 
 // Flat row model for the receipt DnD list (mixes room headers + lines).
 export type BuilderRow =
-  | { kind: "room-header"; id: string; roomName: string; itemCount: number; subtotal: number; collapsed: boolean }
+  | { kind: "room-header"; id: string; roomName: string; itemCount: number; subtotal: number; collapsed: boolean; roomDiscount: RoomDiscount | null }
   | { kind: "line"; id: string; line: Line };
 
 // Sheet state descriptors.
@@ -87,7 +94,8 @@ export type DiscountSheetState =
   | null
   | { kind: "project" }
   | { kind: "category"; category_id: string }
-  | { kind: "line"; line_id: string };
+  | { kind: "line"; line_id: string }
+  | { kind: "room"; room: string };
 
 export type RoomSheetState =
   | null
@@ -114,4 +122,5 @@ export const INITIAL_BUILDER_STATE: BuilderState = {
   notes: "",
   projectDiscount: 0,
   categoryDiscounts: {},
+  roomDiscounts: {},
 };

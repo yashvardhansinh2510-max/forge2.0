@@ -9,7 +9,7 @@ import { useBuilder } from "../context/BuilderContext";
 import { grabCursor } from "../shared/grabCursor";
 
 export function RoomHeaderRow({
-  roomName, itemCount, subtotal, collapsed, drag, isActive,
+  roomName, itemCount, subtotal, collapsed, drag, isActive, roomDiscount,
 }: {
   roomName: string;
   itemCount: number;
@@ -17,6 +17,7 @@ export function RoomHeaderRow({
   collapsed: boolean;
   drag: () => void;
   isActive: boolean;
+  roomDiscount?: { type: "percent" | "amount"; value: number } | null;
 }) {
   const b = useBuilder();
   const isActiveRoom = b.s.activeRoom === roomName;
@@ -70,6 +71,19 @@ export function RoomHeaderRow({
       >
         <Feather name={isRenaming ? "check" : "edit-2"} size={14} color={isRenaming ? ds.brass : colors.onSurfaceMuted} />
       </Pressable>
+      <Pressable
+        testID={`room-discount-${roomName}`}
+        hitSlop={8}
+        onPress={() => b.setDiscountSheet({ kind: "room", room: roomName })}
+        style={[styles.discountChip, roomDiscount && styles.discountChipActive]}
+      >
+        <Feather name="percent" size={11} color={roomDiscount ? ds.brass : colors.onSurfaceMuted} />
+        {roomDiscount ? (
+          <Text style={styles.discountChipLabel}>
+            {roomDiscount.type === "percent" ? `${roomDiscount.value}%` : `₹${roomDiscount.value.toLocaleString("en-IN")}`}
+          </Text>
+        ) : null}
+      </Pressable>
       <Pressable testID={`room-dup-${roomName}`} hitSlop={8} onPress={() => b.duplicateRoom(roomName)}>
         <Feather name="copy" size={14} color={colors.onSurfaceMuted} />
       </Pressable>
@@ -97,4 +111,10 @@ const styles = StyleSheet.create({
     paddingVertical: 4, paddingHorizontal: 6, borderRadius: 6,
     backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: ds.brassLine,
   },
+  discountChip: {
+    flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 4,
+    borderRadius: 6, backgroundColor: colors.surfaceSecondary,
+  },
+  discountChipActive: { backgroundColor: ds.brassTint },
+  discountChipLabel: { fontSize: 10.5, fontFamily: font.semibold, fontWeight: "600", color: ds.brass },
 });

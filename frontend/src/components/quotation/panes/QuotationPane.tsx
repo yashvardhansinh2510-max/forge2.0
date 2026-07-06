@@ -52,7 +52,7 @@ export function QuotationPane() {
         <RoomChipRow />
       </View>
 
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <QuotationCanvas />
       </View>
 
@@ -62,7 +62,7 @@ export function QuotationPane() {
 }
 
 const styles = StyleSheet.create({
-  panel: { flex: 1, backgroundColor: colors.surfaceSecondary },
+  panel: { flex: 1, minHeight: 0, overflow: "hidden", backgroundColor: colors.surfaceSecondary },
   head: {
     padding: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary, gap: spacing.sm,

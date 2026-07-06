@@ -14,20 +14,21 @@ import { useBuilder } from "../context/BuilderContext";
 import { effectivePct, sourceBadge } from "../helpers/pricing";
 import { FinishSwatch } from "../shared/VariantChip";
 import { grabCursor } from "../shared/grabCursor";
-import type { Line } from "../helpers/types";
+import type { Line, RoomDiscount } from "../helpers/types";
 
 function LineRowImpl({
-  line, drag, isActive, catDiscs, projDisc,
+  line, drag, isActive, catDiscs, projDisc, roomDiscs,
 }: {
   line: Line;
   drag: () => void;
   isActive: boolean;
   catDiscs: Record<string, number>;
   projDisc: number;
+  roomDiscs?: Record<string, RoomDiscount>;
 }) {
   const b = useBuilder();
   const l = line;
-  const eff = effectivePct(l, catDiscs, projDisc);
+  const eff = effectivePct(l, roomDiscs || {}, catDiscs, projDisc);
   const badge = sourceBadge(eff.source);
   const total = l.qty * l.unit_price * (1 - eff.pct / 100);
   const focused = b.assistantFocus?.kind === "line" && b.assistantFocus.line_id === l.id;

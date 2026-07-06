@@ -141,7 +141,7 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
   const series = product.series || product.collection || null;
 
   // If it's a line, discount + line total
-  const eff = focusedLine ? effectivePct(focusedLine, b.s.categoryDiscounts, b.s.projectDiscount) : null;
+  const eff = focusedLine ? effectivePct(focusedLine, b.s.roomDiscounts, b.s.categoryDiscounts, b.s.projectDiscount) : null;
   const lineTotal = focusedLine ? focusedLine.qty * focusedLine.unit_price * (1 - (eff?.pct ?? 0) / 100) : null;
 
   // Variant change:
