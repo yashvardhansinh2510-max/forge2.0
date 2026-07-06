@@ -1,16 +1,21 @@
 // Customer profile with full activity timeline across quotations, purchases,
-// and future payments. Read-only for now; tapping any timeline entity opens
-// the underlying record.
+// and future payments. DS-aligned rebuild: PageHeader, StatTile, SegmentedControl,
+// unified list row, Avatar. Business logic preserved.
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
-import { Badge, Card, EmptyState, StatusBadge } from "@/src/components/ui";
+import {
+  Avatar, Badge, Button, Card, EmptyState, PageHeader,
+  SegmentedControl, StatTile, StatusBadge,
+} from "@/src/components/ui";
 import { api } from "@/src/api/client";
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, icon as iconSize, money, radius, spacing, type } from "@/src/theme/tokens";
 
 type Customer = {
   id: string; name: string; company?: string | null; email: string;
@@ -25,6 +30,8 @@ type Tab = "overview" | "quotations" | "purchases" | "timeline";
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 900;
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
@@ -56,89 +63,105 @@ export default function CustomerDetail() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
-      <View style={styles.topbar}>
-        <Pressable testID="back-btn" onPress={() => router.back()} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Feather name="chevron-left" size={18} color={colors.onSurface} />
-          <Text style={{ fontSize: 14, fontWeight: "500" }}>Customers</Text>
-        </Pressable>
-      </View>
-
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }}>
-        {/* Header */}
-        <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center" }}>
-          <View style={styles.avatar}>
-            <Text style={{ color: colors.onBrand, fontWeight: "700", fontSize: 22 }}>
-              {(customer.company || customer.name)[0].toUpperCase()}
-            </Text>
+      <PageHeader
+        title={customer.company || customer.name}
+        subtitle={`${customer.email}${customer.city ? ` · ${customer.city}` : ""}`}
+        overline={`CUSTOMER · ${customer.tier.toUpperCase()}`}
+        back={() => router.back()}
+        actions={
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Button
+              icon="edit-2"
+              label="Edit"
+              variant="secondary"
+              size="md"
+              onPress={() => router.push(`/(admin)/customers/${customer.id}/edit` as any)}
+            />
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={type.displayLg}>{customer.company || customer.name}</Text>
-            <View style={{ flexDirection: "row", gap: 6, marginTop: 4, alignItems: "center" }}>
-              <Badge label={customer.tier.toUpperCase()} tone={customer.tier === "vip" ? "success" : customer.tier === "trade" ? "info" : "neutral"} />
-              <Text style={type.caption}>{customer.email}{customer.city ? ` · ${customer.city}` : ""}</Text>
+        }
+      />
+
+      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
+        {/* Identity row */}
+        <Card>
+          <View style={{ flexDirection: "row", gap: spacing.lg, alignItems: "center", flexWrap: "wrap" }}>
+            <Avatar name={customer.company || customer.name} size={64} tone="brand" />
+            <View style={{ flex: 1, minWidth: 240, gap: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
+                <Text style={type.titleLg} numberOfLines={1}>
+                  {customer.company || customer.name}
+                </Text>
+                <Badge
+                  label={customer.tier.toUpperCase()}
+                  tone={customer.tier === "vip" ? "success" : customer.tier === "trade" ? "info" : "neutral"}
+                />
+              </View>
+              <View style={{ gap: 6, marginTop: 4 }}>
+                <Row icon="mail" text={customer.email} />
+                {customer.phone ? <Row icon="phone" text={customer.phone} /> : null}
+                {customer.address ? <Row icon="map-pin" text={customer.address} /> : null}
+              </View>
             </View>
           </View>
-        </View>
+        </Card>
 
         {/* Stats */}
-        <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
-          <StatCard label="Lifetime Revenue" value={money(totalRevenue)} icon="trending-up" />
-          <StatCard label="Quotations" value={String(quotations.length)} icon="file-text" />
-          <StatCard label="Purchase Orders" value={String(purchases.length)} icon="shopping-cart" />
-          <StatCard label="Activity events" value={String(timeline.length)} icon="activity" />
+        <View style={[styles.statsRow, !isDesktop && styles.statsRowMobile]}>
+          <StatTile label="Lifetime Revenue" value={money(totalRevenue)} icon="trending-up" tone="success" sub="Won + ordered" />
+          <StatTile label="Quotations" value={String(quotations.length)} icon="file-text" tone="brand" sub="All statuses" />
+          <StatTile label="Purchase Orders" value={String(purchases.length)} icon="shopping-cart" tone="brand" sub="Across brands" />
+          <StatTile label="Activity" value={String(timeline.length)} icon="activity" tone="neutral" sub="Events logged" />
         </View>
 
         {/* Tabs */}
-        <View style={styles.tabs}>
-          {(["overview", "quotations", "purchases", "timeline"] as const).map((t) => (
-            <Pressable
-              key={t}
-              testID={`tab-${t}`}
-              onPress={() => setTab(t)}
-              style={[styles.tab, tab === t && styles.tabActive]}
-            >
-              <Text style={{ fontSize: 13, fontWeight: tab === t ? "700" : "500", color: tab === t ? colors.onSurface : colors.onSurfaceMuted, textTransform: "capitalize" }}>
-                {t}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <SegmentedControl
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "overview", label: "Overview" },
+            { value: "quotations", label: `Quotations · ${quotations.length}` },
+            { value: "purchases", label: `Purchases · ${purchases.length}` },
+            { value: "timeline", label: "Timeline" },
+          ]}
+          fullWidth={!isDesktop}
+        />
 
         {/* Body */}
         {tab === "overview" ? (
           <>
             <Card>
-              <Text style={type.overline}>Contact</Text>
-              <View style={{ gap: 6, marginTop: 8 }}>
-                <Row icon="mail" text={customer.email} />
-                {customer.phone ? <Row icon="phone" text={customer.phone} /> : null}
-                {customer.address ? <Row icon="map-pin" text={customer.address} /> : null}
-              </View>
-            </Card>
-            <Card>
-              <Text style={type.overline}>Latest activity</Text>
-              <View style={{ marginTop: spacing.md }}>
-                <ActivityTimeline events={timeline.slice(0, 8)} dense emptyLabel="No activity yet" />
-              </View>
+              <Text style={[type.overline, { marginBottom: spacing.md }]}>Latest activity</Text>
+              <ActivityTimeline events={timeline.slice(0, 8)} dense emptyLabel="No activity yet" />
             </Card>
           </>
         ) : tab === "quotations" ? (
           quotations.length === 0 ? (
-            <EmptyState icon="file-text" title="No quotations" />
+            <Card>
+              <EmptyState icon="file-text" title="No quotations yet" subtitle="This customer hasn't received a quotation." />
+            </Card>
           ) : (
-            <Card style={{ padding: 0 }}>
+            <Card padding={0}>
               {quotations.map((q, i) => (
                 <Pressable
                   key={q.id}
                   onPress={() => router.push(`/(admin)/quotations/${q.id}` as any)}
-                  style={[styles.listRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]}
+                  style={({ pressed, hovered }: any) => [
+                    styles.listRow,
+                    {
+                      borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
+                      borderTopColor: colors.divider,
+                      backgroundColor: pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : "transparent",
+                    },
+                  ]}
                 >
-                  <Text style={[type.mono, { width: 110 }]}>{q.number}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: "600" }}>{q.items.length} items</Text>
-                    <Text style={type.caption}>{new Date(q.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</Text>
+                  <Text style={[type.mono, { width: 120 }]} numberOfLines={1}>{q.number}</Text>
+                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                    <Text style={type.titleSm} numberOfLines={1}>{q.items.length} items</Text>
+                    <Text style={type.caption}>{fmtDate(q.created_at)}</Text>
                   </View>
-                  <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "600" }]}>{money(q.grand_total)}</Text>
+                  <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]}>
+                    {money(q.grand_total)}
+                  </Text>
                   <StatusBadge status={q.status} />
                 </Pressable>
               ))}
@@ -146,21 +169,32 @@ export default function CustomerDetail() {
           )
         ) : tab === "purchases" ? (
           purchases.length === 0 ? (
-            <EmptyState icon="shopping-cart" title="No purchase orders" />
+            <Card>
+              <EmptyState icon="shopping-cart" title="No purchase orders" subtitle="Orders will appear here after placement." />
+            </Card>
           ) : (
-            <Card style={{ padding: 0 }}>
+            <Card padding={0}>
               {purchases.map((p, i) => (
                 <Pressable
                   key={p.id}
                   onPress={() => router.push(`/(admin)/purchase-orders/${p.id}` as any)}
-                  style={[styles.listRow, i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]}
+                  style={({ pressed, hovered }: any) => [
+                    styles.listRow,
+                    {
+                      borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
+                      borderTopColor: colors.divider,
+                      backgroundColor: pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : "transparent",
+                    },
+                  ]}
                 >
-                  <Text style={[type.mono, { width: 110 }]}>{p.number}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: "600" }}>{p.brand_name || "—"}</Text>
-                    <Text style={type.caption}>{new Date(p.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</Text>
+                  <Text style={[type.mono, { width: 120 }]} numberOfLines={1}>{p.number}</Text>
+                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                    <Text style={type.titleSm} numberOfLines={1}>{p.brand_name || "—"}</Text>
+                    <Text style={type.caption}>{fmtDate(p.created_at)}</Text>
                   </View>
-                  <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "600" }]}>{money(p.grand_total)}</Text>
+                  <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]}>
+                    {money(p.grand_total)}
+                  </Text>
                   <StatusBadge status={p.status} />
                 </Pressable>
               ))}
@@ -176,51 +210,29 @@ export default function CustomerDetail() {
   );
 }
 
-function StatCard({ label, value, icon }: { label: string; value: string; icon: keyof typeof import("@expo/vector-icons").Feather.glyphMap }) {
+function Row({ icon, text }: { icon: keyof typeof Feather.glyphMap; text: string }) {
   return (
-    <View style={styles.statCard}>
-      <Feather name={icon} size={16} color={colors.onSurfaceMuted} />
-      <Text style={[type.caption, { marginTop: 6 }]}>{label}</Text>
-      <Text style={{ fontSize: 18, fontWeight: "700", color: colors.onSurface, marginTop: 2 }}>{value}</Text>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+      <Feather name={icon} size={iconSize.sm} color={colors.onSurfaceMuted} />
+      <Text style={[type.bodySm, { color: colors.onSurfaceSecondary }]} numberOfLines={1}>{text}</Text>
     </View>
   );
 }
 
-function Row({ icon, text }: { icon: keyof typeof import("@expo/vector-icons").Feather.glyphMap; text: string }) {
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-      <Feather name={icon} size={13} color={colors.onSurfaceMuted} />
-      <Text style={{ fontSize: 13, color: colors.onSurface }}>{text}</Text>
-    </View>
-  );
+function fmtDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  } catch { return "—"; }
 }
 
 const styles = StyleSheet.create({
-  topbar: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: spacing.lg, paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  avatar: {
-    width: 60, height: 60, borderRadius: 999,
-    backgroundColor: colors.brand, alignItems: "center", justifyContent: "center",
-  },
-  statCard: {
-    flexGrow: 1, minWidth: 140,
-    padding: spacing.md, borderRadius: radius.md,
-    backgroundColor: colors.surfaceSecondary,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-  },
-  tabs: {
-    flexDirection: "row", gap: 4,
-    backgroundColor: colors.surfaceTertiary,
-    padding: 4, borderRadius: radius.md, alignSelf: "flex-start",
-  },
-  tab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.sm + 2 },
-  tabActive: { backgroundColor: colors.surfaceSecondary },
+  statsRow: { flexDirection: "row", gap: spacing.md },
+  statsRowMobile: { flexWrap: "wrap" },
   listRow: {
-    flexDirection: "row", alignItems: "center", gap: spacing.md,
-    padding: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
 });

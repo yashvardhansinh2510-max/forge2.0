@@ -123,10 +123,24 @@ export const colors = {
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Spacing — strict 8pt grid with a 4pt exception for tight inline gaps.
+// Spacing — canonical 4pt grid.
+// Approved scale: 4 · 8 · 12 · 16 · 20 · 24 · 32 · 40 · 48
+// Nothing off-grid is allowed. Legacy alphabetic names kept for backwards-compat.
 // ─────────────────────────────────────────────────────────────────────────────
 export const spacing = {
-  xxs: 2,
+  // Canonical numeric scale — prefer these in new code
+  s4: 4,
+  s8: 8,
+  s12: 12,
+  s16: 16,
+  s20: 20,
+  s24: 24,
+  s32: 32,
+  s40: 40,
+  s48: 48,
+
+  // Legacy alphabetic aliases (retained for existing screens; do not use in new code)
+  xxs: 2,     // deprecated — will be removed
   xs: 4,
   sm: 8,
   md: 12,
@@ -134,7 +148,7 @@ export const spacing = {
   xl: 24,
   xxl: 32,
   xxxl: 48,
-  huge: 64,
+  huge: 64,   // deprecated — use s48 or compose
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,7 +164,9 @@ export const radius = {
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Elevation — subtle, layered. Never garish drop-shadows.
+// Elevation — exactly 4 canonical levels + none.
+// e0 = flat surface · e1 = resting card · e2 = sticky toolbar · e3 = sheet · e4 = popover
+// Older names (hairline / low / medium / high / overlay) preserved as aliases.
 // ─────────────────────────────────────────────────────────────────────────────
 export const elevation = {
   none: {
@@ -160,45 +176,45 @@ export const elevation = {
     shadowOffset: { width: 0, height: 0 },
     elevation: 0,
   },
-  // Barely-there border-alternative for flat cards on light backgrounds
+  // e1 — resting card
+  low: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  // e2 — sticky toolbars, floating pills
+  medium: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  // e3 — sheets, modals
+  high: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 8,
+  },
+  // e4 — popovers, dropdowns lifted above sheets
+  overlay: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.16,
+    shadowRadius: 32,
+    shadowOffset: { width: 0, height: 18 },
+    elevation: 12,
+  },
+  // Legacy alias — treat as e1
   hairline: {
     shadowColor: "#0B1220",
     shadowOpacity: 0.04,
     shadowRadius: 2,
     shadowOffset: { width: 0, height: 1 },
     elevation: 1,
-  },
-  // Standard resting card
-  low: {
-    shadowColor: "#0B1220",
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
-  },
-  // Sticky toolbars, floating pills
-  medium: {
-    shadowColor: "#0B1220",
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
-  },
-  // Sheets, modals
-  high: {
-    shadowColor: "#0B1220",
-    shadowOpacity: 0.12,
-    shadowRadius: 28,
-    shadowOffset: { width: 0, height: 14 },
-    elevation: 8,
-  },
-  // Popovers, menus lifted above sheets
-  overlay: {
-    shadowColor: "#0B1220",
-    shadowOpacity: 0.16,
-    shadowRadius: 36,
-    shadowOffset: { width: 0, height: 20 },
-    elevation: 12,
   },
 } as const;
 
@@ -211,7 +227,14 @@ export const shadow = {
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Motion — restrained, deliberate. Never bouncy for enterprise feel.
+// Motion — one animation language for the entire app.
+//   fast   → hover / press feedback / chip toggles           (140ms)
+//   base   → drawer open, dropdown, tooltip                  (220ms)
+//   slow   → modal enter/exit, page transition               (320ms)
+//   spring → interactive drag / swipe (stiff)                 (physics)
+//   softSpring → gentle re-order / list re-flow               (physics)
+// Every drawer, dialog, dropdown, hover, button, and page transition MUST
+// pick one of these presets. No custom durations anywhere else.
 // ─────────────────────────────────────────────────────────────────────────────
 export const motion = {
   instant: { duration: 80 },
@@ -220,6 +243,10 @@ export const motion = {
   slow:    { duration: 320 },
   spring:  { damping: 22, stiffness: 260, mass: 0.9 },
   springSoft: { damping: 18, stiffness: 160, mass: 0.9 },
+  // Easing curves (RN Animated / web transitions)
+  easeStandard: "cubic-bezier(0.2, 0.0, 0.0, 1.0)",
+  easeEmphasized: "cubic-bezier(0.05, 0.7, 0.1, 1.0)",
+  easeDecel: "cubic-bezier(0.0, 0.0, 0.2, 1.0)",
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -283,6 +310,38 @@ export const layout = {
   maxContentWidth: 1280,
   tabBarHeight: 60,
   headerHeight: 56,
+  // Card language — every card in the app uses ONE of these interior padding values.
+  cardPadding: { compact: spacing.md, base: spacing.lg, spacious: spacing.xl },
+  // Sheet language — same header/footer chrome everywhere.
+  sheet: {
+    drawerWidth: 460,       // right-anchored on desktop
+    drawerWidthWide: 560,   // for detail drawers
+    headerHeight: 56,
+    footerHeight: 68,
+    padding: spacing.xl,
+    modalMaxWidth: 520,
+  },
+  // Table language — every table shares row height & header height.
+  table: {
+    headerHeight: 44,
+    rowHeight: 56,
+    rowHeightCompact: 44,
+    cellPaddingX: spacing.lg,
+  },
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Icon scale — one weight, one line-thickness (Feather). Six approved sizes.
+// Use `icon.<name>` everywhere. Never pass a raw number to <Feather size={...} />.
+// ─────────────────────────────────────────────────────────────────────────────
+export const icon = {
+  xs: 12,   // dense inline (badge inner icon)
+  sm: 14,   // captions, list-row hint
+  md: 16,   // body-inline, button 40px
+  lg: 18,   // button 44px, sub-titles
+  xl: 20,   // page-level actions
+  hero: 28, // empty-state, hero cards
+  display: 40, // large hero moments
 } as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

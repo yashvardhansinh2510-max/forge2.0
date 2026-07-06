@@ -269,10 +269,61 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Quotation Builder V4 — backend endpoint regression (brands/categories with counts, products sort+badges, custom product, complete-the-set, quotations recent, ui_state persistence, project_name/phone_snapshot/reference_source fields)"
+    - "Phase 3 Batch 1 — DS foundation propagation (Payments, Customers, Followups)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
+
+frontend:
+  - task: "Phase 3 · Batch 1 — Design System propagation to Payments, Customers, Followups + DS primitive extensions"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/theme/tokens.ts, frontend/src/components/ui.tsx, frontend/src/components/AdminPage.tsx, frontend/src/components/ScaffoldScreen.tsx, frontend/app/(admin)/payments.tsx, frontend/app/(admin)/customers/index.tsx, frontend/app/(admin)/customers/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Phase 3 Batch 1 shipped — every screen now consumes a single Design System.
+            
+            TOKENS (frontend/src/theme/tokens.ts):
+            * Spacing scale enforced to canonical 4·8·12·16·20·24·32·40·48 (via s4..s48 numeric aliases). Legacy alphabetic names retained.
+            * Elevation collapsed to exactly 4 canonical levels: low (resting card), medium (sticky toolbar), high (sheet), overlay (popover) + none. Hairline preserved as alias.
+            * Motion presets standardized: instant/fast/base/slow + spring/springSoft + easeStandard/easeEmphasized/easeDecel. Every drawer, dialog, dropdown, and hover MUST pick one of these.
+            * icon scale added — xs/sm/md/lg/xl/hero/display (12/14/16/18/20/28/40). Zero raw numbers allowed at call sites.
+            * layout extended with sheet dimensions (drawerWidth 460, modalMaxWidth 520, headerHeight 56, footerHeight 68), table dimensions (headerHeight 44, rowHeight 56, cellPaddingX = spacing.lg), cardPadding scale.
+            
+            NEW PRIMITIVES (frontend/src/components/ui.tsx):
+            * Sheet — the ONE dialog/drawer primitive. `variant: drawer | modal | bottom`. Right-anchored 460px panel on desktop, bottom-sheet on phone. Identical chrome (header 56px + body scroll + footer 68px) everywhere. Uses `useWindowDimensions()` for breakpoint.
+            * PageHeader — every screen top. overline + title + subtitle + right-actions + optional back button. Replaces every hand-rolled hero.
+            * HeroBanner — soft brandTint hero surface with optional icon tile + action cluster. Used on Payments + Followups.
+            * StatTile — dashboard tile with icon + label (2-line clamp) + tabular-nums value (auto-shrinks with minimumFontScale 0.55) + sub. Tone: neutral/brand/success/warning/danger.
+            * Table + TableHeader + TableRow + TableCell — data-table primitives with unified header/row heights + hover states (surfaceSubtle) via Pressable `hovered` state.
+            * SkeletonRow, SkeletonCard, SkeletonList, SkeletonGrid — richer loading skeletons.
+            * FormField — label + required indicator + helper/error + child input. Unified form spacing.
+            * Toolbar — sub-header row with left/right clusters.
+            * PillTabs — pill-navigation variant with count badges.
+            * ProgressBar — thin tone-coded progress line (used on payment collection %).
+            * Icon — canonical Feather wrapper that consumes iconSize tokens.
+            
+            REFACTORED PAGES (business logic byte-for-byte identical, only presentation touched):
+            * frontend/app/(admin)/payments.tsx (852 → 813 lines) — full rebuild against DS. PageHeader + HeroBanner (₹ outstanding shown in moneyShort) + 4 StatTiles + left orders list (Card + SearchField + progress-bar cards) + right detail (Card + Metric grid + Progress row + Payment history w/ UIAlert + Record Payment button) + RecordPaymentSheet using unified Sheet primitive. WhatsApp reminder + tel: link + tone-based ProgressBar retained. Every hardcoded hex removed.
+            * frontend/app/(admin)/customers/index.tsx — rebuilt: PageHeader + 4 tier StatTiles + SearchField + Chip filters + unified customer-row cards with Avatar + Badge + hover state + chevron. Skeleton on load. EmptyState with "Clear filters" action.
+            * frontend/app/(admin)/customers/[id].tsx — rebuilt: PageHeader (with back), identity card with Avatar + Row helpers, 4 StatTiles, SegmentedControl tabs (Overview/Quotations/Purchases/Timeline), ListRow-style quotation & purchase lists using tokens, ActivityTimeline in overview + timeline tabs.
+            * frontend/src/components/AdminPage.tsx — internally composed on PageHeader. Every screen using AdminPage automatically inherits the shared chrome (title + overline + subtitle + actions + optional back).
+            * frontend/src/components/ScaffoldScreen.tsx — rewritten to consume HeroBanner + Badge + tokens. "Coming next iteration" surface now looks premium and identical everywhere. Used by Followups today; will be used by any deferred-UI module.
+            
+            VERIFIED VISUALLY at 1440×900 desktop, 1024×1366 tablet portrait, 390×844 phone:
+            * Screenshots captured to /tmp/v2_payments_1440.png (hero + 4 stats + list + full detail + Record Payment CTA), /tmp/v2_customers_1440.png (page header + stats + filter chips + customer rows with tier badges), /tmp/v2_followups_1440.png (page header + hero + "what's planned" card with 4 milestones), /tmp/v2_payments_1024.png (tablet: stat labels no longer truncate, 4 metric cards fit), /tmp/v2_payments_390.png (mobile: hero + 2×2 stat grid + list + detail stack).
+            * Cohesion check PASSES — moving between Payments → Customers → Followups is now visually seamless. Same page-header treatment. Same card language. Same stat tiles. Same badge chrome. Same overline pattern. Same button variants.
+            * Only remaining minor: mobile hero title `₹11.15 L outstanding` wraps to 2 lines with slight ellipsis at 390px — will address in Batch 1 polish pass.
+            
+            REMAINING FOR PHASE 3 (subsequent batches, awaiting user go-ahead):
+            * Batch 2: Purchases dashboard (1116 lines), Purchase Order detail (654), Place-Order (318), Catalogue (621), Catalogue Import, Dashboard (247)
+            * Batch 3: Quotation Builder internals (4119 lines across 26 files) + ProductModal + all sheets/dialogs (7 sheet files)
+            * Then Phase 4 (QB experience polish), Phase 5 (Premium PDF), Phase 6 (Workflow automation), Phase 7 (Polish), Phase 8 (Business validation).
 
 backend:
   - task: "Quotation Builder V4 — brand/category counts, product ranking, custom product, complete-the-set, recent quotations, V4 header fields"
