@@ -4,7 +4,34 @@
 
 **Brand:** BuildCon House · Tagline: *"Let you live better"* · Renamed from Forge in Feb 2026.
 
-## Iteration 4 — Design System V1 (Feb 2026, DELIVERED)
+## Iteration 5 — Follow-ups V2: Sales Command Center Redesign (Feb 2026, DELIVERED)
+
+Built on top of Follow-ups V1 (deterministic Priority Score + Next Best Action + idempotent reconciliation engine — no LLM, no cron, tested 100% previously). This iteration closed a live-screenshot UX audit (`/app/memory/followups_ux_audit_and_redesign.md`) approved by the user.
+
+**Backend (`followup_routes.py`, `quotation_routes.py`, `payment_routes.py`, `purchases_tracker.py`, `models.py`):**
+- Event-triggered reconciliation — `asyncio.create_task(reconcile_followups())` fired after quotation status change, quotation→order confirm, payment recorded, and purchase item stage move to dispatched/in_transit/delivered. Removes the "nobody opened the workspace" freshness lag WITHOUT reintroducing a cron job.
+- No-answer call escalation — 2nd consecutive `no_answer` outcome skips the same-day 4h retry, schedules for tomorrow 09:30, and bumps `priority_score` +10 (capped 100).
+- `GET /followups/stats` — added `overdue_payments_count/amount`, `expiring_quotations_count` (previously blended into one generic "Overdue" number).
+- `GET /followups/{id}` detail `stats` — added `conversion_rate`, `average_order_value`, `preferred_salesperson`, `risk_level` (low/medium/high) — all deterministic, derived from existing quotations/payments.
+- `GET /followups/export?format=xlsx|csv` — styled Excel (openpyxl) or CSV, respects all list filters.
+- `/followups/saved-views` — full CRUD, per-user scoped persisted filter configs. New model `FollowupSavedView`.
+
+**Frontend (`app/(admin)/followups.tsx`):**
+- Auto-selects the #1 priority open card on load (desktop) — Context Panel is never an empty placeholder.
+- Filter panel progressive disclosure — Priority + search always visible, Type/Tier/Owner behind "More filters".
+- KPI strip split into 6 tiles including dedicated "Payments Overdue" (₹) and "Expiring Soon".
+- Card redesign — 4px left-edge priority color bar, bulk-select checkbox, rank chip (#1/#2/#3), dedicated ₹ value chip, promoted Snooze/Assign icon-menu buttons (new local `IconMenuButton`).
+- Bulk Action Bar (Snooze/Assign/Complete/Clear) on multi-select.
+- Context Panel enriched with Conversion Rate, Avg. Order Value, Risk Level badge, Preferred Salesperson.
+- Keyboard Shortcuts help sheet (`?` key / icon) — makes pre-existing shortcuts discoverable.
+- Saved Views sheet (save/apply/delete) and real Export (xlsx/csv download) — no longer stubbed.
+- `PRIORITY_TONE.medium` moved off brand-blue to neutral gray (was diluting brand/action color meaning).
+
+**Bug found + fixed during testing:** `PageHeader` (`ui.tsx`) had no `position:relative`/`zIndex`, so any `Dropdown` menu placed in its `actions` slot rendered behind later ScrollView content — fixed with `zIndex:20` on the header container. This is a shared DS primitive fix, benefits every page using `PageHeader` + `Dropdown` together.
+
+**Testing:** Backend 17/17 new tests pass (event-triggered reconcile verified via polling without manual reconcile call, escalation math exact, export/saved-views verified). Frontend ~95%→100% after the PageHeader z-index fix. Full regression on V1 endpoints/UI clean.
+
+
 
 Full rebuild of the mobile & tablet design language before adding any more features:
 
