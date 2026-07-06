@@ -5,6 +5,7 @@ import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { money, radius, spacing } from "@/src/theme/tokens";
+import { color as ds, statusTone } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 
 export function RecentQuotationsPanel() {
@@ -17,7 +18,7 @@ export function RecentQuotationsPanel() {
       <View style={styles.headRow}>
         <Text style={styles.groupLabel}>Recent Quotations</Text>
         <Pressable hitSlop={6} onPress={b.startNewQuotation} testID="rail-new-quote">
-          <Feather name="plus" size={14} color="#A1A1AA" />
+          <Feather name="plus" size={14} color={ds.inkSoft} />
         </Pressable>
       </View>
       {b.recentQuotations.slice(0, 8).map((q) => {
@@ -38,7 +39,7 @@ export function RecentQuotationsPanel() {
             </View>
             <View style={{ alignItems: "flex-end" }}>
               <Text style={styles.amt}>{money(q.grand_total || 0)}</Text>
-              <Text style={styles.status}>{q.status}</Text>
+              <Text style={styles.status}>{statusTone[q.status]?.label || q.status}</Text>
             </View>
           </Pressable>
         );
@@ -50,13 +51,13 @@ export function RecentQuotationsPanel() {
 const styles = StyleSheet.create({
   wrap: { marginTop: spacing.lg, paddingHorizontal: 4, gap: 3, paddingBottom: 12 },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 4, marginBottom: 4 },
-  groupLabel: { fontSize: 10, fontWeight: "700", color: "#71717A", letterSpacing: 1.2, textTransform: "uppercase" },
+  groupLabel: { fontSize: 10, fontWeight: "600", color: ds.inkSoft, letterSpacing: 1.2, textTransform: "uppercase" },
   row: {
     flexDirection: "row", gap: 8, paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.sm,
   },
-  rowActive: { backgroundColor: "#27272A", borderWidth: 1, borderColor: "#3F3F46" },
-  num: { fontSize: 11.5, fontWeight: "700", color: "#FAFAFA", fontVariant: ["tabular-nums"] },
-  sub: { fontSize: 10.5, color: "#71717A", marginTop: 1 },
-  amt: { fontSize: 11, fontWeight: "700", color: "#FAFAFA", fontVariant: ["tabular-nums"] },
-  status: { fontSize: 9, color: "#71717A", textTransform: "uppercase", letterSpacing: 0.6, marginTop: 1 },
+  rowActive: { backgroundColor: ds.sunken },
+  num: { fontSize: 11.5, fontWeight: "600", color: ds.ink, fontVariant: ["tabular-nums"] },
+  sub: { fontSize: 10.5, color: ds.inkSoft, marginTop: 1 },
+  amt: { fontSize: 11, fontWeight: "600", color: ds.ink, fontVariant: ["tabular-nums"] },
+  status: { fontSize: 9, color: ds.inkSoft, textTransform: "uppercase", letterSpacing: 0.6, marginTop: 1 },
 });

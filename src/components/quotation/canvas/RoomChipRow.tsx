@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import DraggableFlatList, { RenderItemParams, ScaleDecorator } from "react-native-draggable-flatlist";
 
 import { colors } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { grabCursor } from "../shared/grabCursor";
@@ -60,5 +61,5 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 6,
     borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,
   },
-  tabActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  tabActive: { backgroundColor: ds.brassTint, borderColor: ds.brassLine },
 });

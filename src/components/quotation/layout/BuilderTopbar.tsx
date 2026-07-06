@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
 
   iconBtn: {
     padding: 8, borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceTertiary,
   },
   hint: {
     flexDirection: "row", alignItems: "center", gap: 4,

@@ -2,6 +2,7 @@
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { colors, money } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 
 import { finishSwatch } from "../helpers/pricing";
 import type { Product, ProductVariant } from "../helpers/types";
@@ -35,13 +36,13 @@ export function VariantChip({
       onPress={onPress}
       style={({ pressed }) => [
         styles.chip,
-        active && { backgroundColor: colors.brand, borderColor: colors.brand },
+        active && { backgroundColor: ds.brassTint, borderColor: ds.brassLine },
         pressed && { opacity: 0.85 },
       ]}
     >
       <FinishSwatch finish={variant.finish} />
       <Text
-        style={[styles.label, active && { color: colors.onBrand }]}
+        style={[styles.label, active && { color: ds.brassDeep }]}
         numberOfLines={1}
       >
         {label}
@@ -49,7 +50,7 @@ export function VariantChip({
       {delta !== 0 ? (
         <Text style={[
           styles.delta,
-          { color: active ? colors.onBrand : delta > 0 ? colors.onSurfaceMuted : colors.success },
+          { color: active ? ds.brassDeep : delta > 0 ? colors.onSurfaceMuted : colors.success },
         ]}>
           {delta > 0 ? "+" : "−"}{money(Math.abs(delta))}
         </Text>

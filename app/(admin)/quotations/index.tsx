@@ -12,7 +12,8 @@ import {
   Avatar, Chip, EmptyState, SearchField, Skeleton, StatusBadge,
 } from "@/src/components/ui";
 import { api } from "@/src/api/client";
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 
 type Quotation = {
   id: string; number: string; customer_name: string;
@@ -139,10 +140,7 @@ function QuotationRow({ q, onPress }: { q: Quotation; onPress: () => void }) {
     >
       {/* Row 1: number + status */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
-        <View style={styles.numberPill}>
-          <Feather name="file-text" size={11} color={colors.brand} />
-          <Text style={styles.numberText}>{q.number}</Text>
-        </View>
+        <Text style={styles.numberText}>{q.number}</Text>
         <StatusBadge status={q.status} />
       </View>
 
@@ -164,12 +162,12 @@ function QuotationRow({ q, onPress }: { q: Quotation; onPress: () => void }) {
 const styles = StyleSheet.create({
   cta: {
     flexDirection: "row", gap: 6, alignItems: "center",
-    backgroundColor: colors.brand,
+    backgroundColor: ds.brass,
     paddingHorizontal: 14, paddingVertical: 10,
     borderRadius: radius.md,
   },
   ctaText: {
-    color: colors.onBrand, fontSize: 13,
+    color: "#FFFFFF", fontSize: 13,
     fontFamily: type.titleMd.fontFamily,
     fontWeight: "600", letterSpacing: -0.1,
   },
@@ -180,18 +178,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.md,
   },
-  numberPill: {
-    flexDirection: "row", alignItems: "center", gap: 5,
-    paddingHorizontal: 8, paddingVertical: 3,
-    borderRadius: radius.sm,
-    backgroundColor: colors.brandTint,
-  },
   numberText: {
-    fontSize: 11,
-    fontFamily: type.titleMd.fontFamily,
-    fontWeight: "600",
-    color: colors.brand,
-    letterSpacing: 0.1,
+    fontSize: 12,
+    fontFamily: font.medium,
+    fontWeight: "500",
+    color: colors.onSurfaceSecondary,
+    letterSpacing: 0.2,
     fontVariant: ["tabular-nums"],
   },
   customer: {
@@ -203,8 +195,8 @@ const styles = StyleSheet.create({
   },
   total: {
     fontSize: 16,
-    fontFamily: type.titleMd.fontFamily,
-    fontWeight: "700",
+    fontFamily: font.medium,
+    fontWeight: "500",
     color: colors.onSurface,
     fontVariant: ["tabular-nums"],
     letterSpacing: -0.2,

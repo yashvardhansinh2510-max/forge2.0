@@ -7,7 +7,8 @@ import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-na
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { Badge } from "@/src/components/ui";
-import { colors, money, radius, type } from "@/src/theme/tokens";
+import { colors, font, money, radius, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { effectivePct, sourceBadge } from "../helpers/pricing";
@@ -41,7 +42,7 @@ function LineRowImpl({
       onPress={focus}
       style={[
         styles.row,
-        focused && { borderColor: colors.brand, backgroundColor: colors.surface },
+        focused && { borderColor: ds.brassLine, backgroundColor: ds.brassTint },
         isActive && { opacity: 0.75, transform: [{ scale: 0.99 }] },
       ]}
     >
@@ -130,13 +131,13 @@ const styles = StyleSheet.create({
     marginRight: -2, marginLeft: -4,
   },
   thumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
-  name: { fontSize: 13, fontWeight: "600", color: colors.onSurface, flex: 1 },
+  name: { fontSize: 13, fontFamily: font.semibold, fontWeight: "600", color: colors.onSurface, flex: 1, letterSpacing: -0.1 },
   mini: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3, minWidth: 60,
-    backgroundColor: colors.surface,
+    borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, minWidth: 60,
+    backgroundColor: colors.surfaceTertiary,
   },
-  miniLabel: { fontSize: 9, color: colors.onSurfaceMuted, fontWeight: "700", letterSpacing: 0.5 },
-  miniVal: { fontSize: 13, fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), color: colors.onSurface, padding: 0, minWidth: 40 },
-  icon: { width: 28, height: 28, borderRadius: 6, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
-  total: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), fontSize: 13, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  miniLabel: { fontSize: 9, fontFamily: font.semibold, color: colors.onSurfaceMuted, fontWeight: "600", letterSpacing: 0.8 },
+  miniVal: { fontSize: 13, fontFamily: font.medium, fontWeight: "500", color: colors.onSurface, padding: 0, minWidth: 40, fontVariant: ["tabular-nums"] },
+  icon: { width: 28, height: 28, borderRadius: 7, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary },
+  total: { fontFamily: font.semibold, fontSize: 13, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"], letterSpacing: -0.1 },
 });

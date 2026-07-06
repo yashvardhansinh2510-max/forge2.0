@@ -2,7 +2,8 @@
 import { Feather } from "@expo/vector-icons";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 
@@ -25,7 +26,7 @@ export function MobileSummaryBar() {
     <View style={styles.bar}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={type.caption}>{b.s.lines.length} items · {b.saveLabel}</Text>
-        <Text style={{ fontSize: 18, fontWeight: "700", fontVariant: ["tabular-nums"] }}>{money(b.totals.grand)}</Text>
+        <Text style={{ fontSize: 19, fontFamily: font.regular, letterSpacing: -0.3, color: colors.onSurface, fontVariant: ["tabular-nums"] }}>{money(b.totals.grand)}</Text>
       </View>
       <Pressable
         testID="mobile-add-first"
@@ -44,8 +45,8 @@ export function MobileSummaryBar() {
           { opacity: !b.s.customerId || b.s.lines.length === 0 ? 0.4 : pressed ? 0.9 : 1 },
         ]}
       >
-        <Feather name="check" size={16} color={colors.onBrand} />
-        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.onBrand }}>Finish</Text>
+        <Feather name="check" size={16} color="#FFFFFF" />
+        <Text style={{ fontSize: 13, fontFamily: font.semibold, fontWeight: "600", color: "#FFFFFF" }}>Finish</Text>
       </Pressable>
     </View>
   );
@@ -75,6 +76,6 @@ const styles = StyleSheet.create({
   primary: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md,
-    backgroundColor: colors.brand,
+    backgroundColor: ds.brass,
   },
 });

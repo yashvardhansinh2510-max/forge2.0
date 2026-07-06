@@ -18,6 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api, ApiError } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, shadow, spacing, type } from "@/src/theme/tokens";
+import { color as ds, font as dsFont } from "@/src/design/tokens";
 
 // -----------------------------------------------------------------------------
 // Types
@@ -68,6 +69,16 @@ const VIEW_META: Record<ViewMode, { label: string; icon: keyof typeof Feather.gl
   stock:            { label: "Stock",           icon: "package",   sub: "All stock items" },
   customers:        { label: "Customers",       icon: "users",     sub: "Grouped by customer" },
   dispatch_record:  { label: "Dispatch Record", icon: "truck",     sub: "Dispatched history" },
+};
+
+// Stage tone — one calm vocabulary; overrides whatever the backend sends.
+const STAGE_TONE: Record<Stage, { bg: string; fg: string }> = {
+  order_in_company: { bg: ds.sunken,    fg: ds.inkMid },
+  company_billing:  { bg: ds.warnTint,  fg: ds.warn },
+  in_box:           { bg: ds.sunken,    fg: ds.inkMid },
+  dispatched:       { bg: ds.brassTint, fg: ds.brassDeep },
+  in_transit:       { bg: ds.brassTint, fg: ds.brassDeep },
+  delivered:        { bg: ds.okTint,    fg: ds.ok },
 };
 
 // -----------------------------------------------------------------------------
@@ -294,8 +305,8 @@ export default function PurchasesScreen() {
                       onPress={() => { setView(v); setStage(""); }}
                       style={[styles.railItem, active && styles.railItemActive]}
                     >
-                      <Feather name={meta.icon} size={14} color={active ? colors.brand : colors.onSurfaceMuted} />
-                      <Text style={[styles.railItemText, active && { color: colors.brand, fontWeight: "700" }]}>{meta.label}</Text>
+                      <Feather name={meta.icon} size={14} color={active ? ds.brass : colors.onSurfaceMuted} />
+                      <Text style={[styles.railItemText, active && { color: colors.onSurface, fontWeight: "600" }]}>{meta.label}</Text>
                       {badge != null ? (
                         <View style={styles.railBadge}>
                           <Text style={styles.railBadgeText}>{badge}</Text>
@@ -349,7 +360,7 @@ export default function PurchasesScreen() {
                     style={[styles.brandItem, stage === s.key && styles.brandItemActive]}
                   >
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
-                      <View style={[styles.stageDot, { backgroundColor: s.tone.fg }]} />
+                      <View style={[styles.stageDot, { backgroundColor: STAGE_TONE[s.key]?.fg || s.tone.fg }]} />
                       <Text style={[styles.brandLabel, stage === s.key && { color: colors.brand, fontWeight: "700" }]} numberOfLines={1}>
                         {s.label}
                       </Text>
@@ -538,7 +549,7 @@ function ItemRow(props: {
     );
   }
   return (
-    <View style={[styles.tr, row.blocked && { backgroundColor: "#FEF2F2" }]}>
+    <View style={[styles.tr, row.blocked && { backgroundColor: ds.riskTint }]}>
       <View style={{ width: 30 }}>
         <BulkChk checked={checked} onToggle={onToggle} />
       </View>
@@ -613,7 +624,7 @@ function BlockedCard({ row, onOpenMove, onTransfer }: { row: Item; onOpenMove: (
         <Text style={styles.mono}>{row.sku} · {row.brand_name}</Text>
       </View>
       <View style={styles.orderInPill}>
-        <Text style={{ color: "#9A3412", fontWeight: "600", fontSize: 12 }}>{row.stage_label} · {row.qty} unit{row.qty === 1 ? "" : "s"}</Text>
+        <Text style={{ color: ds.warn, fontWeight: "600", fontSize: 12 }}>{row.stage_label} · {row.qty} unit{row.qty === 1 ? "" : "s"}</Text>
       </View>
       <View style={styles.agePill}>
         <Feather name="alert-triangle" size={11} color={colors.error} />
@@ -633,9 +644,11 @@ function BlockedCard({ row, onOpenMove, onTransfer }: { row: Item; onOpenMove: (
 }
 
 function StageBadge({ stage, tone, label }: { stage: Stage; tone: { bg: string; fg: string }; label: string }) {
+  const t = STAGE_TONE[stage] || tone;
   return (
-    <View style={[styles.stageBadge, { backgroundColor: tone.bg }]}>
-      <Text style={{ color: tone.fg, fontSize: 11, fontWeight: "700" }} numberOfLines={1}>{label}</Text>
+    <View style={[styles.stageBadge, { backgroundColor: t.bg }]}>
+      <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: t.fg, marginRight: 5 }} />
+      <Text style={{ color: t.fg, fontSize: 11, fontWeight: "600" }} numberOfLines={1}>{label}</Text>
     </View>
   );
 }
@@ -673,7 +686,7 @@ function MoveMenu({ visible, stages, onClose, onPick, title, currentStage }: {
                   s.key === currentStage && { opacity: 0.4 },
                 ]}
               >
-                <View style={[styles.stageDot, { backgroundColor: s.tone.fg }]} />
+                <View style={[styles.stageDot, { backgroundColor: STAGE_TONE[s.key]?.fg || s.tone.fg }]} />
                 <Text style={{ fontSize: 13, color: colors.onSurface, flex: 1 }}>{s.label}</Text>
                 {s.key === currentStage ? <Text style={{ fontSize: 11, color: colors.onSurfaceMuted }}>current</Text> : null}
               </Pressable>
@@ -909,7 +922,7 @@ const styles = StyleSheet.create({
     fontSize: 10, fontWeight: "700", letterSpacing: 1.4, textTransform: "uppercase",
     color: colors.onSurfaceMuted, marginBottom: 4,
   },
-  pageTitle: { fontSize: 28, fontWeight: "700", color: "#111827", letterSpacing: -0.5 },
+  pageTitle: { fontFamily: dsFont.display, fontSize: 30, lineHeight: 38, color: colors.onSurface, letterSpacing: -0.3 },
 
   // Top action bar
   headerRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.md },
@@ -946,8 +959,9 @@ const styles = StyleSheet.create({
   railItem: {
     flexDirection: "row", alignItems: "center", gap: 8,
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.sm,
+    borderLeftWidth: 3, borderLeftColor: "transparent",
   },
-  railItemActive: { backgroundColor: "#EEF2FF" },
+  railItemActive: { backgroundColor: ds.sunken, borderLeftColor: ds.brass },
   railItemText: { fontSize: 13, color: colors.onSurface, flex: 1 },
   railBadge: {
     backgroundColor: colors.error, borderRadius: 999, paddingHorizontal: 6, minWidth: 20,
@@ -959,7 +973,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.sm, gap: 8,
   },
-  brandItemActive: { backgroundColor: "#EEF2FF" },
+  brandItemActive: { backgroundColor: ds.sunken },
   brandLabel: { fontSize: 13, color: colors.onSurface, flex: 1 },
   brandCount: { fontSize: 12, color: colors.onSurfaceMuted, fontWeight: "600" },
   stageDot: { width: 8, height: 8, borderRadius: 4 },
@@ -967,7 +981,7 @@ const styles = StyleSheet.create({
   // Blocked box
   blockedBox: {
     padding: spacing.md, borderRadius: radius.md,
-    backgroundColor: "#FFF7ED", borderWidth: 1, borderColor: "#FED7AA",
+    backgroundColor: ds.riskTint, borderWidth: 1, borderColor: "rgba(174,74,61,0.22)",
   },
   blockedHeader: { flexDirection: "row", alignItems: "center", gap: 6 },
   blockedTitle: {
@@ -983,11 +997,11 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
   orderInPill: {
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "#FFEDD5",
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: ds.warnTint,
   },
   agePill: {
     flexDirection: "row", alignItems: "center", gap: 4,
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: "#FEE2E2",
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: ds.riskTint,
   },
 
   // Table
@@ -998,7 +1012,7 @@ const styles = StyleSheet.create({
   tHead: {
     flexDirection: "row", alignItems: "center", gap: 8,
     paddingHorizontal: spacing.md, paddingVertical: 10,
-    backgroundColor: "#F8FAFC", borderBottomWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surfaceSubtle, borderBottomWidth: 1, borderColor: colors.border,
   },
   th: {
     fontSize: 11, fontWeight: "700", color: colors.onSurfaceMuted,
@@ -1016,10 +1030,10 @@ const styles = StyleSheet.create({
     width: 44, height: 44, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
-  mono: { fontSize: 11, color: colors.onSurfaceMuted, fontFamily: Platform.OS === "web" ? "monospace" : "Menlo" },
+  mono: { fontSize: 11, color: colors.onSurfaceMuted, fontVariant: ["tabular-nums"] },
 
   stageBadge: {
-    alignSelf: "flex-start",
+    alignSelf: "flex-start", flexDirection: "row", alignItems: "center",
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
   },
 
@@ -1079,18 +1093,18 @@ const styles = StyleSheet.create({
     padding: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
   transferPrimary: {
-    height: 40, borderRadius: 8, backgroundColor: "#0F1115", alignItems: "center", justifyContent: "center",
+    height: 40, borderRadius: 8, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center",
   },
   transferFoot: {
     flexDirection: "row", gap: 6, alignItems: "center", marginTop: 12,
-    backgroundColor: "#F0F9FF", padding: 8, borderRadius: 8,
-    borderWidth: 1, borderColor: "#BAE6FD",
+    backgroundColor: colors.surfaceTertiary, padding: 8, borderRadius: 8,
+    borderWidth: 1, borderColor: colors.border,
   },
   custPick: {
     flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
-  custPickOn: { backgroundColor: "#EEF2FF" },
+  custPickOn: { backgroundColor: ds.sunken },
 
   // Form primitives
   fieldLabel: {

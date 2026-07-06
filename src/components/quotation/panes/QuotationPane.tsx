@@ -8,6 +8,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import { StatusBadge } from "@/src/components/ui";
 import { colors, spacing, type } from "@/src/theme/tokens";
+import { font as dsFont } from "@/src/design/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { RoomChipRow } from "../canvas/RoomChipRow";
@@ -25,7 +26,7 @@ export function QuotationPane() {
       <View style={styles.head}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={type.titleMd} numberOfLines={1}>
+            <Text style={styles.docNumber} numberOfLines={1}>
               {b.quotationNumber || "New Quotation"}
             </Text>
             <View style={{ flexDirection: "row", gap: 6, alignItems: "center", marginTop: 2 }}>
@@ -66,5 +67,6 @@ const styles = StyleSheet.create({
     padding: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary, gap: spacing.sm,
   },
+  docNumber: { fontFamily: dsFont.display, fontSize: 22, lineHeight: 28, letterSpacing: -0.2, color: colors.onSurface },
   customerLine: { fontSize: 12, fontWeight: "600", color: colors.onSurfaceSecondary, marginTop: 4 },
 });

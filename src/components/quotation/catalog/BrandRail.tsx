@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { color as ds, font as dsFont } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { RecentQuotationsPanel } from "../panes/RecentQuotationsPanel";
 
@@ -37,7 +38,7 @@ export function BrandRail() {
     <View style={styles.panel}>
       <View style={styles.head}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <View style={styles.brandTile}><Feather name="home" size={13} color="#fff" /></View>
+          <View style={styles.brandTile}><Text style={styles.brandTileText}>B</Text></View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.brand} numberOfLines={1}>BuildCon House</Text>
             <Text style={styles.brandSub} numberOfLines={1}>Let you live better</Text>
@@ -176,51 +177,55 @@ export function BrandRail() {
 }
 
 const styles = StyleSheet.create({
-  panel: { flex: 1, backgroundColor: colors.surfaceInverse },
-  head: { padding: spacing.md, gap: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: "#27272A" },
-  brand: { fontSize: 14, fontWeight: "700", color: "#FAFAFA", letterSpacing: -0.2 },
-  brandSub: { fontSize: 10, color: "#A1A1AA", marginTop: 1 },
+  panel: { flex: 1, backgroundColor: ds.canvas, borderRightWidth: StyleSheet.hairlineWidth, borderColor: ds.line },
+  head: { padding: spacing.md, gap: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: ds.line },
+  brand: { fontFamily: dsFont.serif, fontSize: 15, color: ds.ink, letterSpacing: -0.2 },
+  brandSub: { fontSize: 10, color: ds.inkSoft, marginTop: 1 },
   brandTile: {
     width: 26, height: 26, borderRadius: 8,
-    backgroundColor: colors.brand,
+    backgroundColor: ds.ink,
     alignItems: "center", justifyContent: "center",
   },
-  tabs: { flexDirection: "row", backgroundColor: "#27272A", borderRadius: radius.md, padding: 3, gap: 3 },
+  brandTileText: { fontFamily: dsFont.serif, fontSize: 14, color: "#FFFFFF" },
+  tabs: { flexDirection: "row", backgroundColor: ds.sunken, borderRadius: radius.md, padding: 3, gap: 3 },
   tab: { flex: 1, paddingVertical: 6, alignItems: "center", justifyContent: "center", borderRadius: radius.sm },
-  tabActive: { backgroundColor: "#3F3F46" },
-  tabLabel: { fontSize: 12, fontWeight: "600", color: "#A1A1AA" },
-  tabLabelActive: { color: "#FAFAFA" },
+  tabActive: { backgroundColor: ds.surface, shadowColor: "#26221B", shadowOpacity: 0.06, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 1 },
+  tabLabel: { fontSize: 12, fontWeight: "600", color: ds.inkSoft },
+  tabLabelActive: { color: ds.ink },
   searchWrap: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    borderRadius: radius.md, backgroundColor: "#27272A", paddingHorizontal: 10,
+    borderRadius: radius.md, backgroundColor: ds.surface, paddingHorizontal: 10,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: ds.line,
   },
-  searchInput: { flex: 1, fontSize: 13, paddingVertical: 8, color: "#FAFAFA" },
+  searchInput: { flex: 1, fontSize: 13, paddingVertical: 8, color: ds.ink },
 
   item: {
     flexDirection: "row", alignItems: "center", gap: 10,
     paddingHorizontal: 8, paddingVertical: 8, borderRadius: radius.sm, marginVertical: 1,
+    borderLeftWidth: 3, borderLeftColor: "transparent",
   },
-  itemActive: { backgroundColor: "#27272A" },
+  itemActive: { backgroundColor: ds.sunken, borderLeftColor: ds.brass },
   itemIcon: {
-    width: 22, height: 22, borderRadius: 6, backgroundColor: "#27272A",
+    width: 22, height: 22, borderRadius: 6, backgroundColor: ds.sunken,
     alignItems: "center", justifyContent: "center",
   },
   brandBadge: {
-    width: 22, height: 22, borderRadius: 6, backgroundColor: "#FAFAFA",
+    width: 22, height: 22, borderRadius: 6, backgroundColor: ds.surface,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: ds.line,
     alignItems: "center", justifyContent: "center",
   },
-  brandBadgeText: { fontSize: 9, fontWeight: "800", color: "#111", letterSpacing: 0.3 },
-  itemLabel: { flex: 1, fontSize: 13, color: "#D4D4D8", fontWeight: "500" },
-  itemLabelActive: { color: "#FAFAFA", fontWeight: "600" },
-  itemCount: { fontSize: 11, color: "#71717A", fontVariant: ["tabular-nums"] },
+  brandBadgeText: { fontSize: 9, fontWeight: "700", color: ds.inkMid, letterSpacing: 0.3 },
+  itemLabel: { flex: 1, fontSize: 13, color: ds.inkMid, fontWeight: "500" },
+  itemLabelActive: { color: ds.ink, fontWeight: "600" },
+  itemCount: { fontSize: 11, color: ds.inkSoft, fontVariant: ["tabular-nums"] },
 
   quickActionsWrap: { marginTop: spacing.lg, gap: 4, paddingHorizontal: 4 },
-  groupLabel: { fontSize: 10, fontWeight: "700", color: "#71717A", letterSpacing: 1.2, textTransform: "uppercase", paddingHorizontal: 4, marginBottom: 4 },
+  groupLabel: { fontSize: 10, fontWeight: "600", color: ds.inkSoft, letterSpacing: 1.2, textTransform: "uppercase", paddingHorizontal: 4, marginBottom: 4 },
   quickAction: {
     flexDirection: "row", alignItems: "center", gap: 8,
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.sm,
-    backgroundColor: "#27272A",
+    backgroundColor: ds.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: ds.line,
   },
-  quickActionLabel: { flex: 1, fontSize: 12, color: "#FAFAFA", fontWeight: "500" },
-  kbHint: { fontSize: 10, color: "#71717A", fontWeight: "700" },
+  quickActionLabel: { flex: 1, fontSize: 12, color: ds.ink, fontWeight: "500" },
+  kbHint: { fontSize: 10, color: ds.inkSoft, fontWeight: "600" },
 });
