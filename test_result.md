@@ -269,13 +269,78 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Phase 3 Batch 1 — DS foundation propagation (Payments, Customers, Followups)"
+    - "Phase 3 · DS V2 — locked design system + Payments migration"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 frontend:
-  - task: "Phase 3 · Batch 1 — Design System propagation to Payments, Customers, Followups + DS primitive extensions"
+  - task: "Phase 3 · Design System V2 — locked tokens, complete primitive set, Payments migrated"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/theme/tokens.ts, frontend/src/components/ds.tsx, frontend/src/components/ui.tsx, frontend/app/(admin)/payments.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Phase 3 · Design System V2 shipped. Full iteration focused on the DS itself; only ONE page (Payments = #1 in migration order) rebuilt as proof.
+
+            === TOKENS LOCKED (frontend/src/theme/tokens.ts) ===
+            * Blue #2563EB (primary — LOCKED)
+            * Background #FAFBFC (page — LOCKED via new palette.gray15)
+            * Cards pure #FFFFFF (LOCKED via colors.surfaceSecondary = palette.gray0)
+            * Border #E5E7EB (LOCKED via palette.gray100)
+            * Radius: canonical 12 for cards (radius.md); 8/16/24 scale kept
+            * Elevation: EXACTLY 4 subtle levels + none — very restrained shadow opacities (0.04/0.06/0.10/0.14) matching Apple/Linear/Stripe
+            * Motion: press 80 · hover 120 · modal 180 · drawer 220 · page 220 · card-hover scale 1.01. Every drawer/dialog/dropdown/hover/button/page-transition MUST pick one.
+            * Icon scale: xs/sm/md/lg/xl/hero/display (12/14/16/18/20/28/40)
+            * All existing screen imports keep working (backwards-compatible aliases).
+
+            === NEW PRIMITIVE FILE (frontend/src/components/ds.tsx) ===
+            Single source of truth. Re-exports all existing primitives from ui.tsx (Alert, Avatar, Badge, BrandMark, Button, Card, Chip, Divider, EmptyState, ErrorState, FormField, HeroBanner, Icon, IconButton, KpiCard, ListRow, LoadingState, Modal, PageHeader, PillTabs, PriceTag, ProgressBar, ScreenTitle, SearchField, SectionHeader, SegmentedControl, Sheet, Skeleton, SkeletonCard, SkeletonGrid, SkeletonList, SkeletonRow, StatTile, StatusBadge, Table, TableCell, TableHeader, TableRow, Tabs, TextField, Toolbar) PLUS these V2 additions:
+
+              * HoverCard — the ONE hoverable card wrapper (scale 1.01 on hover, low elevation, border-color transition — locked to motion.hover 120ms)
+              * HeroCard — premium hero surface (white card, icon tile, overline, big title, subtitle, action cluster)
+              * Panel — section container (rounded card + overline/title/subtitle + right actions + body slot)
+              * FilterBar — labelled horizontal chip row with count badges (used on every list page)
+              * BrandCard — Catalogue brand tile (logo/initials + name + count)
+              * ProductCard — Catalogue product tile (image + brand overline + name + SKU + price/MRP/discount + favourite heart + optional badge)
+              * QuotationCard — Quotations list row (number/rev/customer/items/rooms/updated + total + status pill)
+              * CustomerCard — Customers list row (avatar + name + email/city/phone + tier badge + lifetime value)
+              * PurchaseCard — Purchases Kanban card (number + status pill + brand + customer + total + item count + due-in-X-days chip)
+              * RoomCard — QB room summary card (name + items + total, active/inactive state)
+              * ActivityRow — single timeline event (icon tile + title + subtitle + timestamp), works as list item or standalone
+              * Dropdown — anchored menu button (label/icon + list of options + tone support + hover states)
+              * Accordion — collapsible section with animated chevron (uses motion.hover for rotation)
+              * Stepper — multi-step form indicator (active/complete/pending states, active step has 2px brand border)
+              * ConfirmDialog — center modal for destructive confirmations (composed on shared Sheet primitive; tone-coded icon + title + description + Cancel/Confirm)
+
+            All primitives consume ONLY tokens — no hardcoded hex, spacing, radius, or motion durations.
+
+            === PAYMENTS MIGRATED (frontend/app/(admin)/payments.tsx) ===
+            Rebuilt against `@/src/components/ds`. Duplicate local styling deleted:
+              * Removed hand-rolled OrderCard (now uses HoverCard + Badge + ProgressBar)
+              * Removed hand-rolled MetricCard (now uses StatTile dense variant)
+              * Removed hand-rolled PaymentRow (now uses ActivityRow)
+              * Removed local Card variant styling (now uses Panel with title/overline)
+              * Local styles limited to numericInput + textInput (form inputs — will be lifted to DS in next iteration if needed)
+            Business logic byte-for-byte identical (loadStats, loadOrders debounce 220ms, loadDetail, savePayment, sendWhatsAppReminder, callCustomer).
+
+            === VERIFICATION ===
+            Screenshots at 1440×900 and 390×844:
+              * /tmp/dsv2_payments_1440.png — clean white cards on #FAFBFC, HeroCard white with brand icon tile, StatTile row, Panel-wrapped orders list, Panel-wrapped payment history with ActivityRow
+              * /tmp/dsv2_payments_390.png — mobile HeroCard scales cleanly, 2×2 stat grid, same DS everywhere
+              * /tmp/dsv2_customers.png — same DS chrome (PageHeader + StatTile row + FilterBar chips + CustomerCard rows)
+              * /tmp/dsv2_followups.png — ScaffoldScreen using PageHeader + HeroCard + Panel + checkmark rows
+            The cohesion is now visibly present — moving between Payments → Customers → Followups feels like ONE application. Same overline typography, same page-header treatment, same card language, same shadow strength, same badge chrome, same primary blue #2563EB.
+
+            === REMAINING PAGES (per user's migration order) ===
+            To migrate to the DS in subsequent iterations (order-locked): #2 Purchases, #3 Quotation Builder, #4 Catalogue, #5 Customers (already 90% DS-aligned in Batch 1), #6 Customer Detail (already 90% DS-aligned), #7 Dashboard, #8 Notifications, #9 Follow-ups (scaffold already DS-aligned), #10 Reports, #11 Settings, #12 Authentication.
+            
+            Each subsequent migration will DELETE local styling and consume ONLY primitives from `@/src/components/ds`.
     implemented: true
     working: "NA"
     file: "frontend/src/theme/tokens.ts, frontend/src/components/ui.tsx, frontend/src/components/AdminPage.tsx, frontend/src/components/ScaffoldScreen.tsx, frontend/app/(admin)/payments.tsx, frontend/app/(admin)/customers/index.tsx, frontend/app/(admin)/customers/[id].tsx"
