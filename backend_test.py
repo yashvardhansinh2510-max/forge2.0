@@ -9,7 +9,7 @@ import time
 from typing import Optional
 
 # Base URL from frontend/.env
-BASE_URL = "https://2d317119-68f7-4f47-bd7e-218c6c92423e.preview.emergentagent.com/api"
+BASE_URL = "https://followups-hub.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 TEST_EMAIL = "sales@forge.app"
