@@ -25,7 +25,7 @@ import {
 } from "@/src/components/ds";
 import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
-import { colors, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, elevation, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
 
 type FeatherName = keyof typeof Feather.glyphMap;
 
@@ -83,6 +83,8 @@ type RuleInfo = { rule_type: string; label: string; category: string; descriptio
 type Stats = {
   today_tasks: number; today_critical: number;
   overdue: number; overdue_critical: number;
+  overdue_payments_count: number; overdue_payments_amount: number; overdue_payments_amount_short: string;
+  expiring_quotations_count: number;
   tomorrow: number; this_week: number;
   waiting_for_customer: number;
   completed_today: number; completed_trend: number;
@@ -109,7 +111,11 @@ type Detail = {
     id: string; name: string; company?: string | null; phone?: string | null;
     email?: string | null; city?: string | null; address?: string | null; tier: string;
   };
-  stats: { lifetime_revenue: number; outstanding_total: number; pending_quotations: number; pending_orders: number };
+  stats: {
+    lifetime_revenue: number; outstanding_total: number; pending_quotations: number; pending_orders: number;
+    conversion_rate: number; average_order_value: number; preferred_salesperson?: string | null;
+    risk_level: "low" | "medium" | "high";
+  };
   quotations: { id: string; number: string; status: string; grand_total: number; valid_until?: string | null; updated_at: string }[];
   payments: { id: string; amount: number; mode: string; paid_at?: string | null }[];
   purchases: { id: string; number: string; status: string; grand_total: number; updated_at: string }[];
@@ -118,6 +124,7 @@ type Detail = {
 
 type Assignee = { id: string; full_name: string; role: string };
 type CustomerLite = { id: string; name: string; company?: string | null; phone?: string | null; tier: string };
+type SavedView = { id: string; name: string; filters: Record<string, any> };
 
 type KpiFilter = Bucket | "waiting" | "all";
 
@@ -138,7 +145,9 @@ const SECTION_ORDER: Bucket[] = ["overdue", "today", "tomorrow", "this_week", "l
 const PRIORITY_TONE: Record<PriorityLevel, { bg: string; fg: string; border: string }> = {
   critical: { bg: colors.errorBg, fg: colors.error, border: colors.errorBorder },
   high: { bg: colors.warningBg, fg: colors.warning, border: colors.warningBorder },
-  medium: { bg: colors.infoBg, fg: colors.info, border: colors.infoBorder },
+  // Deliberately NEUTRAL (not brand blue) — see UX audit: blue was overloaded
+  // as brand + action + "medium priority" simultaneously, diluting meaning.
+  medium: { bg: "#EEF0F3", fg: colors.onSurfaceSecondary, border: colors.borderStrong },
   low: { bg: colors.surfaceTertiary, fg: colors.onSurfaceMuted, border: colors.border },
 };
 
@@ -244,6 +253,12 @@ export default function FollowupsScreen() {
   const [noteFor, setNoteFor] = useState<Followup | null>(null);
   const [customSnoozeFor, setCustomSnoozeFor] = useState<Followup | null>(null);
 
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [savedViewsSheet, setSavedViewsSheet] = useState(false);
+  const [shortcutHelp, setShortcutHelp] = useState(false);
+
   // ── Data loading ──────────────────────────────────────────────────────────
   const loadList = useCallback(async () => {
     try { setRawItems(await api.get<Followup[]>("/followups")); }
@@ -264,20 +279,35 @@ export default function FollowupsScreen() {
   const bootstrap = useCallback(async () => {
     try { await api.post("/followups/reconcile"); } catch { /* best-effort */ }
     try {
-      const [s, m, i, list, a, c] = await Promise.all([
+      const [s, m, i, list, a, c, sv] = await Promise.all([
         api.get<Stats>("/followups/stats"),
         api.get<Mission>("/followups/mission"),
         api.get<Insights>("/followups/insights"),
         api.get<Followup[]>("/followups"),
         api.get<Assignee[]>("/followups/config/assignees"),
         api.get<CustomerLite[]>("/customers"),
+        api.get<SavedView[]>("/followups/saved-views").catch(() => []),
       ]);
-      setStats(s); setMission(m); setInsights(i); setRawItems(list); setAssignees(a); setCustomers(c);
-    } catch (e: any) { toast.error(e?.detail || "Could not load the workspace"); }
+      setStats(s); setMission(m); setInsights(i); setRawItems(list); setAssignees(a); setCustomers(c); setSavedViews(sv);
+      return list;
+    } catch (e: any) { toast.error(e?.detail || "Could not load the workspace"); return []; }
   }, []);
 
   useEffect(() => {
-    (async () => { setLoading(true); await bootstrap(); setLoading(false); })();
+    (async () => {
+      setLoading(true);
+      const list = await bootstrap();
+      setLoading(false);
+      // Auto-select the #1 priority open card so the Context Panel is never
+      // an empty "Select a follow-up" placeholder on first load (desktop only
+      // — mobile keeps the sheet closed until the user taps a card).
+      if (isDesktop) {
+        const top = [...list]
+          .filter((f) => f.status === "open")
+          .sort((a, b) => b.priority_score - a.priority_score)[0];
+        if (top) { setSelectedId(top.id); loadDetail(top.id); }
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -439,6 +469,18 @@ export default function FollowupsScreen() {
     [rawItems],
   );
 
+  // Rank badge (repeats the Mission's "#1/#2/#3" framing inside the main
+  // list itself — closes the "who do I call first" 5-second-scan gap).
+  const rankMap = useMemo(() => {
+    const top3 = [...rawItems]
+      .filter((f) => f.status === "open" && (f.bucket === "overdue" || f.bucket === "today"))
+      .sort((a, b) => b.priority_score - a.priority_score)
+      .slice(0, 3);
+    const m = new Map<string, number>();
+    top3.forEach((f, i) => m.set(f.id, i + 1));
+    return m;
+  }, [rawItems]);
+
   const toggleKpi = (v: KpiFilter) => setKpiFilter((cur) => (cur === v ? "all" : v));
   const toggleSection = (b: Bucket) => setCollapsed((prev) => {
     const n = new Set(prev);
@@ -447,6 +489,93 @@ export default function FollowupsScreen() {
   });
 
   const ownerLabel = ownerFilter === "all" ? "Owner: All" : ownerFilter === "mine" ? "Owner: Mine" : `Owner: ${assignees.find((a) => a.id === ownerFilter)?.full_name || "—"}`;
+  const activeFilterCount = [priorityFilter !== "all", categoryFilter !== "all", tierFilter !== "all", ownerFilter !== "all"].filter(Boolean).length;
+
+  // ── Bulk selection ───────────────────────────────────────────────────────
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const bulkSnooze = useCallback(async (preset: "1h" | "tomorrow" | "next_week") => {
+    const ids = Array.from(selectedIds);
+    await Promise.all(ids.map((id) => api.post(`/followups/${id}/snooze`, { preset }).catch(() => null)));
+    setRawItems((prev) => prev.map((f) => (selectedIds.has(f.id) ? { ...f, status: "snoozed", bucket: "snoozed" } : f)));
+    toast.success(`Snoozed ${ids.length} follow-up${ids.length === 1 ? "" : "s"}`);
+    clearSelection();
+    refreshStatsQuiet();
+  }, [selectedIds, clearSelection, refreshStatsQuiet]);
+
+  const bulkComplete = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    await Promise.all(ids.map((id) => api.post(`/followups/${id}/complete`, {}).catch(() => null)));
+    setRawItems((prev) => prev.map((f) => (selectedIds.has(f.id) ? { ...f, status: "done", bucket: "completed", completed_at: new Date().toISOString() } : f)));
+    toast.success(`Completed ${ids.length} follow-up${ids.length === 1 ? "" : "s"}`);
+    clearSelection();
+    refreshStatsQuiet();
+  }, [selectedIds, clearSelection, refreshStatsQuiet]);
+
+  const bulkAssign = useCallback(async (userId: string) => {
+    const ids = Array.from(selectedIds);
+    const u = assignees.find((a) => a.id === userId);
+    await Promise.all(ids.map((id) => api.patch(`/followups/${id}`, { assigned_to: userId }).catch(() => null)));
+    setRawItems((prev) => prev.map((f) => (selectedIds.has(f.id) ? { ...f, assigned_to: userId, assigned_to_name: u?.full_name } : f)));
+    toast.success(`Assigned ${ids.length} follow-up${ids.length === 1 ? "" : "s"} to ${u?.full_name || "—"}`);
+    clearSelection();
+  }, [selectedIds, assignees, clearSelection]);
+
+  // ── Saved Views ──────────────────────────────────────────────────────────
+  const applySavedView = useCallback((v: SavedView) => {
+    const flt = v.filters || {};
+    setQ(flt.q || "");
+    setKpiFilter(flt.kpiFilter || "all");
+    setPriorityFilter(flt.priorityFilter || "all");
+    setCategoryFilter(flt.categoryFilter || "all");
+    setTierFilter(flt.tierFilter || "all");
+    setOwnerFilter(flt.ownerFilter || "all");
+    setSavedViewsSheet(false);
+    toast.success(`Applied "${v.name}"`);
+  }, []);
+
+  const saveCurrentView = useCallback(async (name: string) => {
+    const filters = { q, kpiFilter, priorityFilter, categoryFilter, tierFilter, ownerFilter };
+    try {
+      const v = await api.post<SavedView>("/followups/saved-views", { name, filters });
+      setSavedViews((prev) => [v, ...prev]);
+      toast.success("View saved");
+    } catch (e: any) { toast.error(e?.detail || "Could not save view"); }
+  }, [q, kpiFilter, priorityFilter, categoryFilter, tierFilter, ownerFilter]);
+
+  const deleteSavedView = useCallback(async (id: string) => {
+    setSavedViews((prev) => prev.filter((v) => v.id !== id));
+    try { await api.delete(`/followups/saved-views/${id}`); } catch { /* best-effort */ }
+  }, []);
+
+  // ── Export ───────────────────────────────────────────────────────────────
+  const doExport = useCallback(async (format: "xlsx" | "csv") => {
+    const qs = new URLSearchParams({ format });
+    if (kpiFilter !== "all" && kpiFilter !== "waiting" && kpiFilter !== "completed") qs.set("bucket", kpiFilter);
+    if (priorityFilter !== "all") qs.set("priority", priorityFilter);
+    if (categoryFilter !== "all") qs.set("category", categoryFilter);
+    if (tierFilter !== "all") qs.set("customer_tier", tierFilter);
+    if (ownerFilter === "mine" && staff?.id) qs.set("assigned_to", staff.id);
+    else if (ownerFilter !== "all") qs.set("assigned_to", ownerFilter);
+    if (q.trim()) qs.set("q", q.trim());
+    try {
+      const url = await api.authenticatedUrl(`/followups/export?${qs.toString()}`);
+      if (Platform.OS === "web") {
+        // @ts-ignore — web only
+        window.open(url, "_blank");
+      } else {
+        await Linking.openURL(url);
+      }
+      toast.success("Export ready");
+    } catch { toast.error("Could not export"); }
+  }, [kpiFilter, priorityFilter, categoryFilter, tierFilter, ownerFilter, q, staff]);
 
   // ── Keyboard shortcuts (web only) ───────────────────────────────────────
   useEffect(() => {
@@ -471,6 +600,7 @@ export default function FollowupsScreen() {
           el?.focus();
           break;
         }
+        case "?": setShortcutHelp((v) => !v); break;
         case "Escape":
           setSelectedId(null); setDetail(null); setMobileSheet(false);
           setCallOutcomeFor(null); setNoteFor(null); setCustomSnoozeFor(null);
@@ -495,7 +625,13 @@ export default function FollowupsScreen() {
           <>
             <IconButton icon="rotate-cw" onPress={onRefresh} tone="surface" accessibilityLabel="Refresh" size={38} />
             <Button label="Automation Rules" icon="zap" variant="secondary" size="md" onPress={() => setRulesSheet(true)} />
-            <Button label="Export" icon="download" variant="secondary" size="md" onPress={() => toast.success("Export is coming soon")} />
+            <Dropdown
+              label="Export" icon="download" variant="secondary"
+              items={[
+                { label: "Export as Excel (.xlsx)", icon: "file-text", onPress: () => doExport("xlsx") },
+                { label: "Export as CSV", icon: "file", onPress: () => doExport("csv") },
+              ]}
+            />
             <Button label="New Follow-up" icon="plus" variant="primary" size="md" onPress={() => setNewSheet(true)} testID="new-followup-btn" />
           </>
         }
@@ -513,30 +649,39 @@ export default function FollowupsScreen() {
           <StatTile label="Today's Tasks" value={stats ? stats.today_tasks : "—"} icon="sun" tone="brand"
             sub={stats?.today_critical ? `${stats.today_critical} critical` : "On track"}
             onPress={() => toggleKpi("today")} style={kpiFilter === "today" ? activeTileStyle : undefined} />
-          <StatTile label="Overdue" value={stats ? stats.overdue : "—"} icon="alert-circle" tone="danger"
+          <StatTile label="Overdue Tasks" value={stats ? stats.overdue : "—"} icon="alert-circle" tone="danger"
             sub={stats?.overdue_critical ? `${stats.overdue_critical} critical` : "None overdue"}
             onPress={() => toggleKpi("overdue")} style={kpiFilter === "overdue" ? activeTileStyle : undefined} />
-          <StatTile label="Tomorrow" value={stats ? stats.tomorrow : "—"} icon="sunrise" tone="neutral"
-            onPress={() => toggleKpi("tomorrow")} style={kpiFilter === "tomorrow" ? activeTileStyle : undefined} />
-          <StatTile label="This Week" value={stats ? stats.this_week : "—"} icon="calendar" tone="neutral"
-            onPress={() => toggleKpi("this_week")} style={kpiFilter === "this_week" ? activeTileStyle : undefined} />
-          <StatTile label="Waiting For Customer" value={stats ? stats.waiting_for_customer : "—"} icon="clock" tone="warning"
+          <StatTile label="Payments Overdue" value={stats ? stats.overdue_payments_count : "—"} icon="credit-card" tone="danger"
+            sub={stats?.overdue_payments_count ? `₹${stats.overdue_payments_amount_short} at stake` : "None overdue"}
+            onPress={() => toggleKpi("overdue")} />
+          <StatTile label="Expiring Soon" value={stats ? stats.expiring_quotations_count : "—"} icon="clock" tone="warning"
+            sub="Quotations lapsing" onPress={() => setCategoryFilter("quotation")} />
+          <StatTile label="Waiting For Customer" value={stats ? stats.waiting_for_customer : "—"} icon="watch" tone="warning"
             sub="Ball's in their court" onPress={() => toggleKpi("waiting")} style={kpiFilter === "waiting" ? activeTileStyle : undefined} />
           <StatTile label="Completed Today" value={stats ? stats.completed_today : "—"} icon="check-circle" tone="success"
             sub={stats ? `${stats.completed_trend >= 0 ? "+" : ""}${stats.completed_trend} vs yesterday` : undefined}
             onPress={() => toggleKpi("completed")} style={kpiFilter === "completed" ? activeTileStyle : undefined} />
         </View>
 
-        {/* Smart search + filters */}
+        {/* Smart search + filters — Priority chips always visible; the rest
+            collapse behind "More filters" to keep the list within reach
+            (UX audit: filters previously pushed the first card ~200px down). */}
         <Panel padding={spacing.md}>
           <View style={{ gap: spacing.md }}>
-            <SearchField
-              testID="followups-search"
-              value={q}
-              onChangeText={setQ}
-              onClear={() => setQ("")}
-              placeholder="Search customer, phone, quotation #, project, brand, city, architect…"
-            />
+            <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
+              <View style={{ flex: 1 }}>
+                <SearchField
+                  testID="followups-search"
+                  value={q}
+                  onChangeText={setQ}
+                  onClear={() => setQ("")}
+                  placeholder="Search customer, phone, quotation #, project…"
+                />
+              </View>
+              <IconButton icon="bookmark" onPress={() => setSavedViewsSheet(true)} tone="surface" accessibilityLabel="Saved views" size={40} />
+              <IconButton icon="help-circle" onPress={() => setShortcutHelp(true)} tone="surface" accessibilityLabel="Keyboard shortcuts" size={40} />
+            </View>
             <FilterBar
               label="PRIORITY"
               value={priorityFilter}
@@ -549,39 +694,62 @@ export default function FollowupsScreen() {
                 { value: "low", label: "Low", count: priorityCounts.low || undefined },
               ]}
             />
-            <FilterBar label="TYPE" value={categoryFilter} onChange={setCategoryFilter} options={CATEGORY_OPTIONS} />
-            <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center", flexWrap: "wrap" }}>
-              <SegmentedControl
-                size="sm"
-                value={tierFilter}
-                onChange={setTierFilter as any}
-                options={[
-                  { value: "all", label: "All customers" },
-                  { value: "retail", label: "Retail" },
-                  { value: "trade", label: "Trade" },
-                  { value: "vip", label: "VIP" },
-                ]}
+            <Pressable onPress={() => setFiltersExpanded((v) => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>
+              <Feather name={filtersExpanded ? "chevron-up" : "sliders"} size={13} color={colors.onSurfaceSecondary} />
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary }}>
+                {filtersExpanded ? "Hide filters" : "More filters"}{activeFilterCount ? ` (${activeFilterCount})` : ""}
+              </Text>
+            </Pressable>
+            {filtersExpanded ? (
+              <>
+                <FilterBar label="TYPE" value={categoryFilter} onChange={setCategoryFilter} options={CATEGORY_OPTIONS} />
+                <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center", flexWrap: "wrap" }}>
+                  <SegmentedControl
+                    size="sm"
+                    value={tierFilter}
+                    onChange={setTierFilter as any}
+                    options={[
+                      { value: "all", label: "All customers" },
+                      { value: "retail", label: "Retail" },
+                      { value: "trade", label: "Trade" },
+                      { value: "vip", label: "VIP" },
+                    ]}
+                  />
+                  <Dropdown
+                    label={ownerLabel}
+                    icon="user"
+                    variant="secondary"
+                    items={[
+                      { label: "All owners", icon: "users", onPress: () => setOwnerFilter("all") },
+                      { label: "Mine", icon: "user-check", onPress: () => setOwnerFilter("mine") },
+                      ...assignees.map((a) => ({ label: a.full_name, icon: "user" as FeatherName, onPress: () => setOwnerFilter(a.id) })),
+                    ]}
+                  />
+                </View>
+              </>
+            ) : null}
+            {kpiFilter !== "all" || activeFilterCount > 0 ? (
+              <Chip
+                label="Clear filters ✕"
+                active
+                onPress={() => { setKpiFilter("all"); setPriorityFilter("all"); setCategoryFilter("all"); setTierFilter("all"); setOwnerFilter("all"); }}
               />
-              <Dropdown
-                label={ownerLabel}
-                icon="user"
-                variant="secondary"
-                items={[
-                  { label: "All owners", icon: "users", onPress: () => setOwnerFilter("all") },
-                  { label: "Mine", icon: "user-check", onPress: () => setOwnerFilter("mine") },
-                  ...assignees.map((a) => ({ label: a.full_name, icon: "user" as FeatherName, onPress: () => setOwnerFilter(a.id) })),
-                ]}
-              />
-              {kpiFilter !== "all" || priorityFilter !== "all" || categoryFilter !== "all" || tierFilter !== "all" || ownerFilter !== "all" ? (
-                <Chip
-                  label="Clear filters ✕"
-                  active
-                  onPress={() => { setKpiFilter("all"); setPriorityFilter("all"); setCategoryFilter("all"); setTierFilter("all"); setOwnerFilter("all"); }}
-                />
-              ) : null}
-            </View>
+            ) : null}
           </View>
         </Panel>
+
+        {/* Bulk action bar — appears once ≥1 card is selected. Unlocks the
+            "manage 300+ customers without feeling overwhelmed" requirement. */}
+        {selectedIds.size > 0 ? (
+          <BulkActionBar
+            count={selectedIds.size}
+            assignees={assignees}
+            onClear={clearSelection}
+            onSnooze={bulkSnooze}
+            onComplete={bulkComplete}
+            onAssign={bulkAssign}
+          />
+        ) : null}
 
         {/* Main layout — Inbox (left) · Context + Insights (right) */}
         <View style={{ flexDirection: isDesktop ? "row" : "column", gap: spacing.lg, alignItems: "flex-start" }}>
@@ -612,6 +780,9 @@ export default function FollowupsScreen() {
                   onToggle={() => toggleSection(sec.bucket)}
                   selectedId={selectedId}
                   assignees={assignees}
+                  rankMap={rankMap}
+                  selectedIds={selectedIds}
+                  onToggleSelect={toggleSelect}
                   onSelect={selectCard}
                   onCall={(f) => contact(f, "call")}
                   onWhatsApp={(f) => contact(f, "whatsapp")}
@@ -678,7 +849,124 @@ export default function FollowupsScreen() {
       <AutomationRulesSheet visible={rulesSheet} onClose={() => setRulesSheet(false)} rules={stats?.rules || []} />
       <NoteSheet visible={!!noteFor} f={noteFor} onClose={() => setNoteFor(null)} onSave={saveNote} />
       <CustomSnoozeSheet visible={!!customSnoozeFor} f={customSnoozeFor} onClose={() => setCustomSnoozeFor(null)} onSave={customSnooze} />
+      <SavedViewsSheet
+        visible={savedViewsSheet} onClose={() => setSavedViewsSheet(false)} views={savedViews}
+        onApply={applySavedView} onSave={saveCurrentView} onDelete={deleteSavedView}
+      />
+      <ShortcutHelpSheet visible={shortcutHelp} onClose={() => setShortcutHelp(false)} />
     </SafeAreaView>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BulkActionBar — appears once ≥1 card is selected. Superhuman-style batch
+// processing so a salesperson can clear dozens of stale cards in one pass.
+// ─────────────────────────────────────────────────────────────────────────────
+function BulkActionBar({ count, assignees, onClear, onSnooze, onComplete, onAssign }: {
+  count: number; assignees: Assignee[]; onClear: () => void;
+  onSnooze: (preset: "1h" | "tomorrow" | "next_week") => void;
+  onComplete: () => void; onAssign: (userId: string) => void;
+}) {
+  return (
+    <View style={[styles.bulkBar, elevation.medium]}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flex: 1 }}>
+        <Badge label={String(count)} tone="brand" size="sm" />
+        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.onSurface }}>selected</Text>
+      </View>
+      <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: "wrap" }}>
+        <Dropdown
+          label="Snooze" icon="clock" variant="secondary"
+          items={[
+            { label: "1 hour", icon: "clock", onPress: () => onSnooze("1h") },
+            { label: "Tomorrow", icon: "sunrise", onPress: () => onSnooze("tomorrow") },
+            { label: "Next week", icon: "calendar", onPress: () => onSnooze("next_week") },
+          ]}
+        />
+        <Dropdown
+          label="Assign" icon="user-plus" variant="secondary"
+          items={assignees.map((a) => ({ label: a.full_name, icon: "user" as FeatherName, onPress: () => onAssign(a.id) }))}
+        />
+        <Button label="Complete" icon="check" variant="primary" size="sm" onPress={onComplete} />
+        <IconButton icon="x" onPress={onClear} tone="surface" size={34} accessibilityLabel="Clear selection" />
+      </View>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SavedViewsSheet — persisted filter configurations (Export/Saved Views are
+// no longer stubbed per product decision).
+// ─────────────────────────────────────────────────────────────────────────────
+function SavedViewsSheet({ visible, onClose, views, onApply, onSave, onDelete }: {
+  visible: boolean; onClose: () => void; views: SavedView[];
+  onApply: (v: SavedView) => void; onSave: (name: string) => void; onDelete: (id: string) => void;
+}) {
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  useEffect(() => { if (visible) { setNaming(false); setName(""); } }, [visible]);
+  return (
+    <Sheet visible={visible} onClose={onClose} variant="drawer" title="Saved Views" subtitle="Persist your filter combinations so you can jump straight back to them.">
+      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.md }}>
+        {views.length === 0 ? (
+          <EmptyState icon="bookmark" title="No saved views yet" subtitle="Set up your filters above, then save them here for one-tap access." />
+        ) : (
+          views.map((v) => (
+            <View key={v.id} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+              <Pressable onPress={() => onApply(v)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.md, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }}>
+                <Feather name="bookmark" size={14} color={colors.brand} />
+                <Text style={type.bodySm}>{v.name}</Text>
+              </Pressable>
+              <IconButton icon="trash-2" onPress={() => onDelete(v.id)} tone="danger" size={36} accessibilityLabel="Delete view" />
+            </View>
+          ))
+        )}
+        <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.divider, marginVertical: spacing.sm }} />
+        {naming ? (
+          <View style={{ gap: spacing.sm }}>
+            <FormField label="View name">
+              <TextInput value={name} onChangeText={setName} placeholder="e.g. My VIP overdue payments" placeholderTextColor={colors.onSurfaceMuted} style={styles.textInput} autoFocus />
+            </FormField>
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Button label="Cancel" variant="secondary" size="md" onPress={() => setNaming(false)} />
+              <Button label="Save View" icon="check" variant="primary" size="md" onPress={() => { if (name.trim()) { onSave(name.trim()); setNaming(false); setName(""); } }} />
+            </View>
+          </View>
+        ) : (
+          <Button label="Save current filters as a view" icon="plus" variant="secondary" size="md" onPress={() => setNaming(true)} />
+        )}
+      </ScrollView>
+    </Sheet>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ShortcutHelpSheet — makes the (already implemented) keyboard shortcuts
+// discoverable. Triggered by the "?" key or the header help icon.
+// ─────────────────────────────────────────────────────────────────────────────
+const SHORTCUTS: { keys: string; label: string }[] = [
+  { keys: "C", label: "Call the selected follow-up" },
+  { keys: "W", label: "WhatsApp the selected follow-up" },
+  { keys: "E", label: "Email the selected follow-up" },
+  { keys: "Space", label: "Mark selected follow-up complete" },
+  { keys: "S", label: "Snooze selected follow-up 1 hour" },
+  { keys: "/", label: "Focus search" },
+  { keys: "Esc", label: "Deselect / close panels" },
+  { keys: "?", label: "Toggle this shortcut list" },
+];
+function ShortcutHelpSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  return (
+    <Sheet visible={visible} onClose={onClose} variant="modal" title="Keyboard Shortcuts" subtitle="Select a card, then use these — web only." width={420}>
+      <View style={{ padding: spacing.xl, gap: spacing.sm }}>
+        {SHORTCUTS.map((s) => (
+          <View key={s.keys} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={type.bodySm}>{s.label}</Text>
+            <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+              <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurface, fontFamily: Platform.select({ web: "monospace", default: undefined }) }}>{s.keys}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </Sheet>
   );
 }
 
@@ -763,11 +1051,11 @@ function InsightRow({ icon, label, value }: { icon: FeatherName; label: string; 
 // InboxSection — collapsible bucket group
 // ─────────────────────────────────────────────────────────────────────────────
 function InboxSection({
-  bucket, items, collapsed, onToggle, selectedId, assignees,
+  bucket, items, collapsed, onToggle, selectedId, assignees, rankMap, selectedIds, onToggleSelect,
   onSelect, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onAssign, onNote, onDismiss,
 }: {
   bucket: Bucket; items: Followup[]; collapsed: boolean; onToggle: () => void; selectedId: string | null;
-  assignees: Assignee[];
+  assignees: Assignee[]; rankMap: Map<string, number>; selectedIds: Set<string>; onToggleSelect: (id: string) => void;
   onSelect: (f: Followup) => void;
   onCall: (f: Followup) => void; onWhatsApp: (f: Followup) => void; onEmail: (f: Followup) => void;
   onComplete: (f: Followup) => void; onSnooze: (f: Followup, preset: "15m" | "1h" | "tomorrow" | "next_week") => void;
@@ -792,6 +1080,9 @@ function InboxSection({
               f={f}
               active={f.id === selectedId}
               assignees={assignees}
+              rank={rankMap.get(f.id)}
+              checked={selectedIds.has(f.id)}
+              onToggleSelect={() => onToggleSelect(f.id)}
               onPress={() => onSelect(f)}
               onCall={() => onCall(f)}
               onWhatsApp={() => onWhatsApp(f)}
@@ -826,18 +1117,63 @@ function ScoreBadge({ score, level }: { score: number; level: PriorityLevel }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IconMenuButton — icon-only trigger + small overlay menu (promoted Snooze /
+// Assign — closes the "top actions buried 2 clicks deep" audit finding).
+// ─────────────────────────────────────────────────────────────────────────────
+function IconMenuButton({ icon, tone = "surface", accessibilityLabel, items, testID }: {
+  icon: FeatherName; tone?: "surface" | "brandLight"; accessibilityLabel?: string;
+  items: { label: string; icon?: FeatherName; onPress: () => void; tone?: "default" | "danger" }[];
+  testID?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={{ position: "relative" }}>
+      <IconButton icon={icon} onPress={() => setOpen((v) => !v)} size={34} tone={tone} accessibilityLabel={accessibilityLabel} testID={testID} />
+      {open ? (
+        <>
+          <Pressable onPress={() => setOpen(false)} style={StyleSheet.absoluteFillObject as any} />
+          <View style={[{
+            position: "absolute", top: 38, left: 0, minWidth: 190,
+            borderRadius: radius.md, backgroundColor: colors.surfaceSecondary,
+            borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+            paddingVertical: 4, zIndex: 100,
+          }, elevation.overlay]}>
+            {items.map((it, i) => (
+              <Pressable
+                key={i}
+                onPress={() => { setOpen(false); it.onPress(); }}
+                style={({ pressed, hovered }: any) => ({
+                  flexDirection: "row", alignItems: "center", gap: spacing.sm,
+                  paddingVertical: 10, paddingHorizontal: spacing.md,
+                  backgroundColor: pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : "transparent",
+                })}
+              >
+                {it.icon ? <Feather name={it.icon} size={14} color={it.tone === "danger" ? colors.error : colors.onSurfaceSecondary} /> : null}
+                <Text style={{ fontSize: 13, fontWeight: "500", color: it.tone === "danger" ? colors.error : colors.onSurface }}>{it.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      ) : null}
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // FollowupCard — the inbox row. Swipe right=Complete, left=Snooze (mobile).
-// Long-press = quick Assign.
+// Long-press = quick Assign. Left-edge color bar = instant priority scan.
 // ─────────────────────────────────────────────────────────────────────────────
 function FollowupCard({
-  f, active, assignees, onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onAssign, onNote, onDismiss,
+  f, active, assignees, rank, checked, onToggleSelect,
+  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onAssign, onNote, onDismiss,
 }: {
-  f: Followup; active: boolean; assignees: Assignee[];
+  f: Followup; active: boolean; assignees: Assignee[]; rank?: number; checked: boolean; onToggleSelect: () => void;
   onPress: () => void; onCall: () => void; onWhatsApp: () => void; onEmail: () => void;
   onComplete: () => void; onSnooze: (p: "15m" | "1h" | "tomorrow" | "next_week") => void;
   onCustomSnooze: () => void; onAssign: (userId: string) => void; onNote: () => void; onDismiss: () => void;
 }) {
   const level = f.manual_priority_override || f.priority_level;
+  const tone = PRIORITY_TONE[level];
   const isResolved = f.status === "done" || f.status === "dismissed";
   const overdueDue = f.bucket === "overdue";
   const swipeRef = useRef<Swipeable>(null);
@@ -846,13 +1182,26 @@ function FollowupCard({
     <HoverCard onPress={onPress} padding={spacing.md} testID={`followup-${f.id}`} style={{
       borderColor: active ? colors.brand : colors.border,
       backgroundColor: active ? colors.brandTint : colors.surfaceSecondary,
+      borderLeftWidth: 4,
+      borderLeftColor: isResolved ? colors.border : tone.fg,
+      ...(active ? elevation.medium : {}),
     }}>
       <View style={{ gap: spacing.sm }}>
         {/* Header row */}
         <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
+          {!isResolved ? (
+            <Pressable onPress={onToggleSelect} hitSlop={8} style={{ paddingTop: 2 }} accessibilityLabel="Select">
+              <Feather name={checked ? "check-square" : "square"} size={18} color={checked ? colors.brand : colors.onSurfaceMuted} />
+            </Pressable>
+          ) : null}
           <Avatar name={f.customer_name} size={38} tone="brand" />
           <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {rank ? (
+                <View style={styles.rankChip}>
+                  <Text style={styles.rankChipText}>#{rank}</Text>
+                </View>
+              ) : null}
               <Text style={type.titleSm} numberOfLines={1}>{f.customer_name}</Text>
               {f.is_automated ? <Badge label="Auto" tone="info" size="sm" icon="zap" /> : null}
             </View>
@@ -864,6 +1213,15 @@ function FollowupCard({
             <Badge label={f.status === "dismissed" ? "Dismissed" : (f.completed_outcome || "Done")} tone={f.status === "dismissed" ? "neutral" : "success"} size="sm" />
           )}
         </View>
+
+        {/* Revenue — dedicated visual chip (was buried in prose; audit gap) */}
+        {f.value > 0 ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 3 }}>
+            <Feather name="trending-up" size={11} color={colors.onSurfaceSecondary} />
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurface }}>₹{moneyShort(f.value)}</Text>
+            <Text style={type.caption}>at stake</Text>
+          </View>
+        ) : null}
 
         {/* Reason + explainability */}
         <View style={{ gap: 2 }}>
@@ -902,22 +1260,31 @@ function FollowupCard({
           <Text style={type.caption}>Assigned to {f.assigned_to_name}</Text>
         ) : null}
 
-        {/* Actions */}
+        {/* Actions — Call/WhatsApp/Snooze/Assign/Complete are 1-click; the
+            rest (Email, custom snooze, note, dismiss) live in the overflow. */}
         {!isResolved ? (
           <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
             <IconButton icon="phone" onPress={onCall} size={34} tone="brandLight" accessibilityLabel="Call" testID={`call-${f.id}`} />
             <IconButton icon="message-circle" onPress={onWhatsApp} size={34} tone="surface" accessibilityLabel="WhatsApp" testID={`wa-${f.id}`} />
-            <IconButton icon="check" onPress={onComplete} size={34} tone="surface" accessibilityLabel="Mark complete" testID={`complete-${f.id}`} />
-            <Dropdown
-              label="Actions" icon="more-horizontal" variant="secondary"
+            <IconMenuButton
+              icon="clock" accessibilityLabel="Snooze" testID={`snooze-${f.id}`}
               items={[
-                { label: "Email", icon: "mail", onPress: onEmail },
                 { label: "Snooze 15 min", icon: "clock", onPress: () => onSnooze("15m") },
                 { label: "Snooze 1 hour", icon: "clock", onPress: () => onSnooze("1h") },
                 { label: "Snooze till tomorrow", icon: "sunrise", onPress: () => onSnooze("tomorrow") },
                 { label: "Snooze next week", icon: "calendar", onPress: () => onSnooze("next_week") },
                 { label: "Custom snooze…", icon: "edit-2", onPress: onCustomSnooze },
-                ...assignees.map((a) => ({ label: `Assign to ${a.full_name}`, icon: "user" as FeatherName, onPress: () => onAssign(a.id) })),
+              ]}
+            />
+            <IconMenuButton
+              icon="user-plus" accessibilityLabel="Assign" testID={`assign-${f.id}`}
+              items={assignees.map((a) => ({ label: `Assign to ${a.full_name}`, icon: "user" as FeatherName, onPress: () => onAssign(a.id) }))}
+            />
+            <IconButton icon="check" onPress={onComplete} size={34} tone="surface" accessibilityLabel="Mark complete" testID={`complete-${f.id}`} />
+            <Dropdown
+              label="More" icon="more-horizontal" variant="secondary"
+              items={[
+                { label: "Email", icon: "mail", onPress: onEmail },
                 { label: "Add note", icon: "edit-3", onPress: onNote },
                 { label: "Dismiss", icon: "x-circle", tone: "danger" as const, onPress: onDismiss },
               ]}
@@ -993,15 +1360,27 @@ function ContextPanel({ detail, loading, embedded }: { detail: Detail | null; lo
             {customer.email ? <Badge label={customer.email} tone="neutral" size="sm" icon="mail" /> : null}
             {customer.city ? <Badge label={customer.city} tone="neutral" size="sm" icon="map-pin" /> : null}
             <Badge label={(customer.tier || "retail").toUpperCase()} tone={customer.tier === "vip" ? "success" : customer.tier === "trade" ? "info" : "neutral"} size="sm" />
+            <Badge
+              label={`${stats.risk_level.toUpperCase()} RISK`}
+              tone={stats.risk_level === "high" ? "error" : stats.risk_level === "medium" ? "warning" : "success"}
+              size="sm" icon="shield"
+            />
           </View>
           {customer.address ? <Text style={type.caption}>{customer.address}</Text> : null}
-          {followup.assigned_to_name ? <Text style={type.caption}>Salesperson: {followup.assigned_to_name}</Text> : null}
+          {(followup.assigned_to_name || stats.preferred_salesperson) ? (
+            <Text style={type.caption}>
+              Salesperson: {followup.assigned_to_name || "—"}
+              {stats.preferred_salesperson && stats.preferred_salesperson !== followup.assigned_to_name ? ` · Usually served by ${stats.preferred_salesperson}` : ""}
+            </Text>
+          ) : null}
         </View>
       </Panel>
 
       <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
         <StatTile dense label="Lifetime Revenue" value={moneyShort(stats.lifetime_revenue)} icon="trending-up" tone="brand" />
         <StatTile dense label="Outstanding" value={moneyShort(stats.outstanding_total)} icon="alert-circle" tone={stats.outstanding_total > 0 ? "danger" : "success"} />
+        <StatTile dense label="Conversion Rate" value={`${stats.conversion_rate}%`} icon="percent" tone="neutral" />
+        <StatTile dense label="Avg. Order Value" value={moneyShort(stats.average_order_value)} icon="bar-chart-2" tone="neutral" />
         <StatTile dense label="Pending Quotations" value={String(stats.pending_quotations)} icon="file-text" tone="neutral" />
         <StatTile dense label="Pending Orders" value={String(stats.pending_orders)} icon="package" tone="neutral" />
       </View>
@@ -1320,5 +1699,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, paddingVertical: 10, fontSize: 14, backgroundColor: colors.surfaceSecondary,
     color: colors.onSurface, fontFamily: type.body.fontFamily, minHeight: 90, textAlignVertical: "top",
     ...(Platform.OS === "web" ? { outlineStyle: "none" } as any : {}),
+  },
+  rankChip: {
+    minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5,
+    backgroundColor: colors.onSurface, alignItems: "center", justifyContent: "center",
+  },
+  rankChipText: { fontSize: 10, fontWeight: "800", color: colors.onSurfaceInverse },
+  bulkBar: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.brandBorder,
+    padding: spacing.md,
   },
 });

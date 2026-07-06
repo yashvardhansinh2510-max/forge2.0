@@ -22,6 +22,7 @@ Endpoints:
 The tracker does NOT concern itself with taxes — Forge uses final prices only.
 """
 from __future__ import annotations
+import asyncio
 import io
 from datetime import datetime, timezone
 from typing import Optional
@@ -41,6 +42,7 @@ from models import (
     PURCHASE_STAGES, PurchaseStage, UserPublic, now_iso,
 )
 from services.activity_log import log_event
+from services.followup_engine import reconcile_followups
 
 router = APIRouter(prefix="/purchases", tags=["purchases"])
 
@@ -442,6 +444,10 @@ async def _apply_stage_change(
             "sku": it.get("sku"), "qty": it.get("qty"),
         },
     )
+    if to_stage in ("dispatched", "in_transit", "delivered"):
+        # Dispatch/delivery reminders derive from item stage — event-triggered
+        # refresh right here, not a cron job.
+        asyncio.create_task(reconcile_followups())
     return {"po_id": po["id"], "item_id": item_id, "from_stage": from_stage, "to_stage": to_stage}
 
 

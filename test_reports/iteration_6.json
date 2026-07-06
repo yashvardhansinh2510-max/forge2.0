@@ -1,0 +1,57 @@
+{
+  "summary": "Follow-ups V2 (Sales Command Center) tested end-to-end: backend (event-triggered reconciliation, no-answer escalation, stats/detail new fields, export, saved views, full regression) and frontend (auto-select on load, KPI strip, filters, card design, bulk actions, snooze/assign menus, context panel, keyboard shortcuts, saved views lifecycle, export). Backend: 17/17 new tests pass, no regressions in Follow-ups endpoints. Frontend: nearly everything works correctly and matches the audit spec — one real bug found: the 2nd item in the header 'Export' dropdown ('Export as CSV') is not clickable due to a z-index/stacking issue.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "N/A — pre-existing, unrelated files",
+        "issue": "backend/tests/test_forge_backend.py::test_create_quotation_totals fails (KeyError 'tax_total' — field no longer exists on Quotation model) and backend/tests/test_quotation_v2.py has 6 failures from a fragile `pytest.qid` shared-module-state pattern plus a discount-calc expectation mismatch. These are stale/pre-existing test debt in the Quotation Builder test suite, NOT caused by this Follow-ups V2 session and out of scope for this review — flagging for main agent awareness only."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Dropdown (src/components/ds.tsx ~line 803-833), used by the header 'Export' Dropdown in followups.tsx",
+        "issue": "When a Dropdown has 2+ items and is opened near the top of the page (e.g. the header 'Export' button), only the FIRST item ('Export as Excel (.xlsx)') is visually contained inside the menu's bordered/background box and is clickable. The SECOND item ('Export as CSV') exists in the DOM with correct layout coordinates (confirmed via getBoundingClientRect) but is painted BEHIND later page content (the Today's Mission hero card) — document.elementFromPoint() at the CSV item's exact coordinates returns the Mission Hero div, not the menu item. A force-click on 'Export as CSV' fires no network request and shows no toast — the action silently does nothing. Root cause: the absolutely-positioned menu overlay sets `zIndex: 100` (ds.tsx ~line 810) but this only elevates it within its own local stacking context; without the ancestor chain (PageHeader wrapper) also establishing an elevated stacking context, a later DOM sibling (the ScrollView content below, which is not repositioned/z-indexed) still paints on top for pixels that fall within the ScrollView's area. Excel export (1st item) works fine (verified toast 'Export ready').",
+        "testID": "export dropdown (Dropdown label=\"Export\" in followups.tsx header actions)",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_followups_v2.py",
+    "/app/test_reports/pytest/pytest_followups_v2.xml",
+    "/tmp/followups_loaded.png",
+    "/tmp/more_filters.png",
+    "/tmp/bulk_bar2.png",
+    "/tmp/after_bulk_complete.png",
+    "/tmp/export_menu_full2.png (shows the CSV item visually cut off)",
+    "/tmp/shortcuts_sheet.png",
+    "/tmp/after_apply.png (saved view applied)"
+  ],
+  "action_items": [
+    "Fix the Export dropdown so 'Export as CSV' is clickable — likely needs the Dropdown's absolutely-positioned menu (or the PageHeader actions row) to establish a proper elevated stacking context (e.g. give the outer header row/PageHeader wrapper a zIndex + position, or portal the menu to a top-level overlay) so it reliably paints above ALL subsequent page content, not just content within its own local stacking context. Since this is a shared ds.tsx primitive, verify other multi-item Dropdowns near the top of long scrollable pages aren't silently affected the same way.",
+    "Pre-existing (not this session): backend/tests/test_forge_backend.py & test_quotation_v2.py have stale assertions (tax_total field, discount math, pytest.qid cross-test hack) unrelated to Follow-ups — recommend a separate cleanup pass, out of scope here."
+  ],
+  "critical_code_review_comments": [
+    "followup_routes.py / followup_engine.py: clean, deterministic, no LLM anywhere — confirmed via code read. reconcile_followups() dedupe-by-source_key + auto-resolve logic is correct and idempotent.",
+    "Event triggers are correctly placed at the 4 required mutation points (quotation PATCH status, place-order/confirm, POST /payments, purchase item stage move to dispatched/in_transit/delivered) using `asyncio.create_task(reconcile_followups())` — genuinely event-triggered, not cron, per product constraint.",
+    "No invalid Badge tone='danger' usages found anywhere in followups.tsx (risk badge correctly uses tone='error'/'warning'/'success'; StatTile correctly uses its own tone type which DOES support 'danger'). The previously-fixed bug class does not recur.",
+    "GET /followups/export and /followups/saved-views are correctly declared BEFORE GET /followups/{followup_id} in the router, avoiding the route-collision the review explicitly worried about — verified functionally (export never 404s as 'Follow-up not found')."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_followups_v2.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (17/17 new Follow-ups V2 tests pass; all explicitly-requested regression endpoints re-verified passing)",
+    "frontend": "~95% — every reviewed flow works except the Export-dropdown CSV item click bug"
+  },
+  "seed_data_creation": "Test-created quotations/payments/purchase items prefixed 'TEST_' via backend tests (test_reconcile_status_change, test_reconcile_order_flow) and a few manual UI-created follow-ups/saved-views (TEST_ prefixed), all either auto-resolved, completed, or deleted by the tests/session — no lingering pollution expected beyond normal automated-followup lifecycle rows.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login sales@forge.app / Forge@2026 at https://followups-hub.preview.emergentagent.com/followups (desktop 1920x1080 — mobile viewport did not visually reduce in this browser tool session, so mobile-specific bottom-sheet/swipe/FAB behavior was NOT re-verified this round; rely on prior iteration reports for that, or retest mobile explicitly). All 4 event-triggered reconciliation paths were exercised via a single flow: create quotation -> PATCH status=sent (fires reconcile) -> place-order/confirm (fires reconcile, creates PO) -> POST /payments partial amount (fires reconcile, creates payment_partial followup) -> POST /purchases/items/{id}/move stage=dispatched (fires reconcile, creates purchase_dispatched followup) — none of these called POST /followups/reconcile manually, proving the event triggers work standalone. No-answer escalation verified: 1st no_answer -> due_at +4h, unchanged score; 2nd no_answer -> due_at time is exactly 09:30 (UTC, per implementation — not IST-converted, worth a look if IST-exact time matters product-wise) and priority_score += 10 capped at 100. The ONE real bug to fix: Export dropdown's 2nd item (CSV) is behind other content and unclickable — see ui_bugs above with exact root-cause hypothesis and repro (elementFromPoint at the item's own bounding box coordinates resolves to the Mission Hero card, not the menu item)."
+}

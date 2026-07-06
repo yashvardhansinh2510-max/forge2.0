@@ -9,24 +9,33 @@ No new business logic is duplicated — this module is orchestration + reads.
 """
 from __future__ import annotations
 
+import csv
+import io
 import re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 from auth import get_current_user
 from db import db
 from models import (
     Followup, FollowupCallOutcomePayload, FollowupCompletePayload,
-    FollowupContactPayload, FollowupCreate, FollowupSnoozePayload,
-    FollowupUpdate, UserPublic, now_iso,
+    FollowupContactPayload, FollowupCreate, FollowupSavedView,
+    FollowupSavedViewCreate, FollowupSnoozePayload, FollowupUpdate,
+    UserPublic, now_iso,
 )
 from services.activity_log import log_event, timeline_for
 from services.followup_engine import (
-    RULE_DEFINITIONS, build_whatsapp_message, compute_bucket, ist_day_bounds_utc,
-    money_short, parse_iso, reason_factors_for, reconcile_followups, score_followup,
+    RULE_DEFINITIONS, age_days, build_whatsapp_message, compute_bucket,
+    ist_day_bounds_utc, money_short, parse_iso, reason_factors_for,
+    reconcile_followups, score_followup,
 )
 
 router = APIRouter(prefix="/followups", tags=["followups"])
@@ -106,6 +115,16 @@ async def stats(_: UserPublic = Depends(get_current_user)):
         1 for d in docs if d.get("status") == "open" and d.get("rule_type") in ("quotation_inactive", "payment_partial")
     )
 
+    # Split "overdue" into payment-specific vs generic — fixes the "which
+    # payment is overdue" 5-second-scan gap identified in the UX audit.
+    overdue_payments_count = sum(1 for d in docs if d.get("status") == "open" and d.get("rule_type") == "payment_overdue")
+    overdue_payments_amount = sum(
+        d.get("value", 0) for d in docs if d.get("status") == "open" and d.get("rule_type") == "payment_overdue"
+    )
+    expiring_quotations_count = sum(
+        1 for d in docs if d.get("status") == "open" and d.get("rule_type") == "quotation_expiring"
+    )
+
     start, _end = ist_day_bounds_utc(0)
     y_start, y_end = ist_day_bounds_utc(-1)
     completed_today = sum(1 for d in docs if d.get("completed_at") and d["completed_at"] >= start.isoformat())
@@ -117,6 +136,10 @@ async def stats(_: UserPublic = Depends(get_current_user)):
     return {
         "today_tasks": counts["today"], "today_critical": today_critical,
         "overdue": counts["overdue"], "overdue_critical": overdue_critical,
+        "overdue_payments_count": overdue_payments_count,
+        "overdue_payments_amount": round(overdue_payments_amount, 2),
+        "overdue_payments_amount_short": money_short(overdue_payments_amount),
+        "expiring_quotations_count": expiring_quotations_count,
         "tomorrow": counts["tomorrow"],
         "this_week": counts["this_week"],
         "waiting_for_customer": waiting_for_customer,
@@ -185,6 +208,102 @@ async def insights(_: UserPublic = Depends(get_current_user)):
         "quotations_approved": quotations_approved,
         "response_rate": min(100, response_rate),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Export — CSV / Excel of the current filtered list. Saved Views — persisted
+# filter configurations per user. Both literal-path routes; MUST precede /{id}.
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/export")
+async def export_followups(
+    format: str = Query("xlsx", regex="^(xlsx|csv)$"),
+    bucket: Optional[str] = None,
+    priority: Optional[str] = None,
+    category: Optional[str] = None,
+    customer_tier: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    q: Optional[str] = None,
+    _: UserPublic = Depends(get_current_user),
+):
+    rows = await list_followups(
+        bucket=bucket, priority=priority, category=category, channel=None,
+        customer_tier=customer_tier, assigned_to=assigned_to, q=q, limit=3000, _=_,
+    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+
+    if format == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Customer", "Phone", "Type", "Reason", "Next Action", "Value", "Priority", "Score", "Due", "Status", "Assigned To"])
+        for d in rows:
+            writer.writerow([
+                d.get("customer_name"), d.get("customer_phone"), d.get("category"), d.get("reason"),
+                d.get("next_action"), d.get("value"), d.get("effective_priority_level") or d.get("priority_level"),
+                d.get("priority_score"), d.get("due_at"), d.get("status"), d.get("assigned_to_name"),
+            ])
+        mem = io.BytesIO(buf.getvalue().encode("utf-8"))
+        return StreamingResponse(mem, media_type="text/csv", headers={
+            "Content-Disposition": f'attachment; filename="followups-{stamp}.csv"',
+        })
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Follow-ups"
+    ws["A1"] = "BuildCon House — Follow-ups Export"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:K1")
+    ws["A2"] = f"{len(rows)} follow-ups · Exported {datetime.now(timezone.utc).strftime('%d %b %Y · %H:%M UTC')}"
+    ws["A2"].font = Font(color="6B7280", size=10)
+    ws.merge_cells("A2:K2")
+
+    headers = ["Customer", "Phone", "Type", "Reason", "Next Action", "Value (₹)", "Priority", "Score", "Due", "Status", "Assigned To"]
+    header_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+    for col, h in enumerate(headers, start=1):
+        cell = ws.cell(row=4, column=col, value=h)
+        cell.font = Font(bold=True, color="374151", size=11)
+        cell.fill = header_fill
+
+    for i, d in enumerate(rows, start=5):
+        ws.cell(row=i, column=1, value=d.get("customer_name"))
+        ws.cell(row=i, column=2, value=d.get("customer_phone"))
+        ws.cell(row=i, column=3, value=d.get("category"))
+        ws.cell(row=i, column=4, value=d.get("reason"))
+        ws.cell(row=i, column=5, value=d.get("next_action"))
+        ws.cell(row=i, column=6, value=d.get("value"))
+        ws.cell(row=i, column=7, value=(d.get("effective_priority_level") or d.get("priority_level")))
+        ws.cell(row=i, column=8, value=d.get("priority_score"))
+        ws.cell(row=i, column=9, value=d.get("due_at"))
+        ws.cell(row=i, column=10, value=d.get("status"))
+        ws.cell(row=i, column=11, value=d.get("assigned_to_name"))
+
+    for i, w in enumerate([22, 16, 12, 44, 22, 12, 10, 8, 22, 12, 18], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A5"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={
+        "Content-Disposition": f'attachment; filename="followups-{stamp}.xlsx"',
+    })
+
+
+@router.get("/saved-views")
+async def list_saved_views(user: UserPublic = Depends(get_current_user)):
+    return await db.followup_saved_views.find({"user_id": user.id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+
+
+@router.post("/saved-views", response_model=FollowupSavedView)
+async def create_saved_view(body: FollowupSavedViewCreate, user: UserPublic = Depends(get_current_user)):
+    v = FollowupSavedView(user_id=user.id, name=body.name, filters=body.filters)
+    await db.followup_saved_views.insert_one(v.dict())
+    return v
+
+
+@router.delete("/saved-views/{view_id}")
+async def delete_saved_view(view_id: str, user: UserPublic = Depends(get_current_user)):
+    await db.followup_saved_views.delete_one({"id": view_id, "user_id": user.id})
+    return {"ok": True}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -266,6 +385,32 @@ async def get_detail(followup_id: str, _: UserPublic = Depends(get_current_user)
     ).sort("updated_at", -1).to_list(10)
     timeline = await timeline_for(customer_id=f["customer_id"], limit=60)
 
+    # ── Premium context additions (Follow-ups V2) — all derived from data
+    # already loaded above, no new integration or LLM call needed. ──────────
+    order_count = sum(1 for q in all_q if q.get("status") in ORDER_STATUSES)
+    conversion_rate = round(100 * order_count / len(all_q)) if all_q else 0
+    average_order_value = round(lifetime_revenue / order_count, 2) if order_count else 0.0
+    creator_counts = Counter(q.get("created_by_name") for q in all_q if q.get("created_by_name"))
+    preferred_salesperson = creator_counts.most_common(1)[0][0] if creator_counts else None
+
+    last_touch_dt = None
+    touches = [parse_iso(q.get("updated_at")) for q in all_q]
+    touches = [t for t in touches if t]
+    if touches:
+        last_touch_dt = max(touches)
+    days_silent = age_days(last_touch_dt) if last_touch_dt else 0
+    has_overdue_payment = any(
+        q.get("status") in ORDER_STATUSES and (q.get("grand_total", 0) - paid_map.get(q["id"], 0.0)) > 1
+        and age_days(parse_iso(q.get("updated_at"))) >= 5
+        for q in all_q
+    )
+    if has_overdue_payment:
+        risk_level = "high"
+    elif outstanding_total > 0 or days_silent >= 14:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
     return {
         "followup": f,
         "customer": customer,
@@ -274,6 +419,10 @@ async def get_detail(followup_id: str, _: UserPublic = Depends(get_current_user)
             "outstanding_total": round(outstanding_total, 2),
             "pending_quotations": len(pending_quotations),
             "pending_orders": len(pending_orders),
+            "conversion_rate": conversion_rate,
+            "average_order_value": average_order_value,
+            "preferred_salesperson": preferred_salesperson,
+            "risk_level": risk_level,
         },
         "quotations": [
             {"id": q["id"], "number": q["number"], "status": q["status"], "grand_total": q.get("grand_total", 0),
@@ -480,8 +629,19 @@ async def log_call(followup_id: str, body: FollowupCallOutcomePayload, user: Use
         await db.followups.insert_one(nf.dict())
         next_created = nf.id
     elif body.outcome == "no_answer":
-        patch["contact_attempts"] = (f.get("contact_attempts") or 0) + 1
-        patch["due_at"] = (now_dt + timedelta(hours=4)).isoformat()
+        attempts = (f.get("contact_attempts") or 0) + 1
+        patch["contact_attempts"] = attempts
+        if attempts >= 2:
+            # Escalate — stop same-day retries after the 2nd miss; push to
+            # tomorrow morning and bump urgency so it doesn't get buried.
+            next_due = (now_dt + timedelta(days=1)).replace(hour=9, minute=30, second=0, microsecond=0)
+            bumped_score = min(100, (f.get("priority_score") or 0) + 10)
+            bumped_level = "critical" if bumped_score >= 80 else "high" if bumped_score >= 60 else f.get("priority_level", "medium")
+            patch["due_at"] = next_due.isoformat()
+            patch["priority_score"] = bumped_score
+            patch["priority_level"] = bumped_level
+        else:
+            patch["due_at"] = (now_dt + timedelta(hours=4)).isoformat()
     elif body.outcome == "rejected":
         patch.update({
             "status": "dismissed", "completed_at": now_iso(),

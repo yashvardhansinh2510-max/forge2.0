@@ -1,4 +1,5 @@
 """Quotation Builder API — v2 with multi-level discounts, autosave, duplicate."""
+import asyncio
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -15,6 +16,7 @@ from models import (
 )
 from pdf_generator import build_quotation_pdf
 from services.activity_log import log_event
+from services.followup_engine import reconcile_followups
 
 router = APIRouter(prefix="/quotations", tags=["quotations"])
 
@@ -309,6 +311,10 @@ async def update_quotation(
             )
 
     fresh = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    if "status" in update:
+        # Event-triggered (not cron) reconciliation — a status change is
+        # exactly the moment quotation-stage follow-ups should refresh/close.
+        asyncio.create_task(reconcile_followups())
     return Quotation(**fresh)
 
 
@@ -661,6 +667,11 @@ async def place_order_confirm(
         summary="Status changed to ordered",
         payload={"from": doc.get("status"), "to": "ordered"},
     )
+
+    # Order created + POs generated — the exact moment quotation reminders
+    # should auto-close and dispatch reminders can start (event-triggered,
+    # not a cron job).
+    asyncio.create_task(reconcile_followups())
 
     return {
         "quotation_id": quotation_id,

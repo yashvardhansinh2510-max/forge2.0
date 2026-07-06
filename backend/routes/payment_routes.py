@@ -8,6 +8,7 @@ There are NO taxes anywhere in Forge — the quotation's grand_total is the
 final price the customer pays, and payments accumulate against it directly.
 """
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote_plus
@@ -18,6 +19,7 @@ from auth import get_current_user, require_min_role
 from db import db
 from models import Payment, PaymentCreate, UserPublic
 from services.activity_log import log_event
+from services.followup_engine import reconcile_followups
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
@@ -309,6 +311,9 @@ async def create_payment(
             "fully_paid": fully_paid,
         },
     )
+    # A payment landing is exactly when payment_overdue/payment_partial
+    # reminders should refresh or auto-close — event-triggered, not a cron job.
+    asyncio.create_task(reconcile_followups())
     return payment
 
 

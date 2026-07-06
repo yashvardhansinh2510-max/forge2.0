@@ -622,6 +622,18 @@ class FollowupContactPayload(BaseModel):
     channel: FollowupChannel
 
 
+class FollowupSavedView(TimestampedModel):
+    """A persisted filter configuration for the Follow-ups workspace."""
+    user_id: str
+    name: str
+    filters: dict = {}          # {kpiFilter, priorityFilter, categoryFilter, tierFilter, ownerFilter, q}
+
+
+class FollowupSavedViewCreate(BaseModel):
+    name: str
+    filters: dict = {}
+
+
 class Notification(TimestampedModel):
     user_id: str
     kind: Literal["info", "success", "warning", "error"] = "info"

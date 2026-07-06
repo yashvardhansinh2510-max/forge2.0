@@ -1196,3 +1196,86 @@ agent_communication:
         
         ACTION ITEMS FOR MAIN AGENT:
         • Summarize and finish - all backend tests passed with no issues
+
+
+backend:
+  - task: "Follow-ups V2 — event-triggered reconciliation, no-answer escalation, split overdue KPIs, context panel enrichment, export, saved views"
+    implemented: true
+    working: "NA"
+    file: "followup_routes.py, quotation_routes.py, payment_routes.py, purchases_tracker.py, followup_engine.py, models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Implemented per user-approved UX audit (see /app/memory/followups_ux_audit_and_redesign.md):
+            1. Event-triggered reconciliation (asyncio.create_task(reconcile_followups()), NOT a cron job) fired after:
+               quotation status PATCH (quotation_routes.py update_quotation), quotation->order confirm (place_order_confirm),
+               payment creation (payment_routes.py create_payment), purchase item stage move to dispatched/in_transit/delivered
+               (purchases_tracker.py _apply_stage_change).
+            2. No-answer call outcome escalation: after 2nd consecutive no_answer, stop same-day 4h retries — schedule next day
+               09:30 and bump priority_score by +10 (followup_routes.py log_call).
+            3. GET /followups/stats now returns overdue_payments_count, overdue_payments_amount, overdue_payments_amount_short,
+               expiring_quotations_count (previously blended into one generic "overdue" number — audit finding).
+            4. GET /followups/{id} detail "stats" now includes conversion_rate, average_order_value, preferred_salesperson,
+               risk_level (low/medium/high) — all deterministically derived from existing quotations/payments, no new integration.
+            5. NEW GET /followups/export?format=xlsx|csv (styled Excel via openpyxl, or CSV) honoring the same filters as the list.
+            6. NEW /followups/saved-views (GET list / POST create / DELETE) — persists a user's filter combination.
+               New model FollowupSavedView + FollowupSavedViewCreate in models.py, new collection followup_saved_views.
+            Backend restarted cleanly, route ordering verified (/export and /saved-views precede /{followup_id}).
+            NEEDS TESTING: all 6 items above, plus regression on existing Follow-ups endpoints.
+
+frontend:
+  - task: "Follow-ups V2 — UX redesign (auto-select, collapsible filters, bulk actions, promoted Assign/Snooze, priority color bar, rank chips, revenue chip, context panel enrichment, keyboard shortcut help, saved views UI, real export)"
+    implemented: true
+    working: "NA"
+    file: "app/(admin)/followups.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Full V2 redesign per user-approved audit. Key changes in followups.tsx:
+            1. Auto-select #1 priority open card on load (desktop) — context panel never empty on first load.
+            2. Filter panel: Priority chips + search always visible; Type/Tier/Owner collapse behind "More filters" toggle.
+            3. KPI strip split: "Overdue Tasks" vs dedicated "Payments Overdue" (₹ amount) vs new "Expiring Soon" tile.
+            4. PRIORITY_TONE: "medium" no longer uses brand blue (was diluting brand/action meaning) — now neutral gray.
+            5. FollowupCard: 4px left-edge priority color bar, checkbox for bulk-select, rank chip (#1/#2/#3) mirroring
+               Mission's ranking, dedicated ₹-value chip (was buried in prose), promoted Snooze + Assign icon-menu buttons
+               (previously buried in one 9-item "Actions" dropdown) — new local IconMenuButton component.
+            6. Bulk selection: checkbox per card + BulkActionBar (bulk Snooze/Assign/Complete/Clear) once ≥1 selected.
+            7. Context panel: added Conversion Rate, Avg. Order Value, Risk Level badge, Preferred Salesperson.
+            8. Keyboard shortcut legend (Sheet, triggered by "?" key or new help-circle icon button) — shortcuts (c/w/e/space/s/Esc/"/")
+               already existed but were undiscoverable.
+            9. Saved Views: new SavedViewsSheet (list/apply/delete + "Save current filters as a view") wired to
+               /followups/saved-views. No longer stubbed per user's explicit request.
+            10. Export: real doExport() using api.authenticatedUrl + window.open/Linking.openURL, wired to
+                /followups/export?format=xlsx|csv via a Dropdown (Excel / CSV). No longer stubbed.
+            Verified via screenshot: page loads with card auto-selected, KPI strip shows all 6 tiles, bulk bar appears on
+            selection, Saved Views sheet and Shortcut Help sheet both open correctly with no console errors after a
+            Badge tone="danger" bug (invalid tone, fixed to "error") was caught and corrected.
+            NEEDS TESTING: full interaction pass including mobile (Swipeable, bottom Sheet, FAB unchanged structurally
+            but should be regression-checked), export download, saved view persistence across refresh.
+
+
+test_plan:
+  current_focus:
+    - "Follow-ups V2 — event-triggered reconciliation, no-answer escalation, split overdue KPIs, context panel enrichment, export, saved views"
+    - "Follow-ups V2 — UX redesign (auto-select, collapsible filters, bulk actions, promoted Assign/Snooze, priority color bar, rank chips, revenue chip, context panel enrichment, keyboard shortcut help, saved views UI, real export)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Follow-ups V2 implementation complete (backend + frontend), grounded in a live-screenshot UX audit
+        (/app/memory/followups_ux_audit_and_redesign.md) approved by the user. Please run a full backend + frontend
+        pass — see the two new task entries above for the complete list of what changed. Pay special attention to:
+        event-triggered reconcile actually firing (not just the manual POST /followups/reconcile), the no-answer
+        escalation math, export file downloads (xlsx + csv), saved-views CRUD + persistence, and the bulk action bar
+        on the frontend. Credentials: sales@forge.app / Forge@2026 (see /app/memory/test_credentials.md).
