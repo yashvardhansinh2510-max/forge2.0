@@ -43,6 +43,15 @@ const EVENT_META: Record<string, { icon: keyof typeof import("@expo/vector-icons
   "purchase.dispatched":          { icon: "send",           tone: colors.success },
   "customer.created":             { icon: "user-plus",      tone: colors.info },
   "customer.updated":             { icon: "edit-2",         tone: colors.onSurfaceMuted },
+  "followup.created":             { icon: "flag",           tone: colors.info },
+  "followup.contacted":           { icon: "send",           tone: colors.info },
+  "followup.call_logged":         { icon: "phone",          tone: colors.success },
+  "followup.completed":           { icon: "check-circle",   tone: colors.success },
+  "followup.snoozed":             { icon: "clock",          tone: colors.warning },
+  "followup.assigned":            { icon: "user-check",     tone: colors.info },
+  "followup.dismissed":           { icon: "x-circle",       tone: colors.onSurfaceMuted },
+  "followup.note_added":          { icon: "edit-3",         tone: colors.onSurfaceMuted },
+  "followup.auto_resolved":       { icon: "zap",            tone: colors.onSurfaceMuted },
 };
 
 function fmtTime(iso: string): string {
