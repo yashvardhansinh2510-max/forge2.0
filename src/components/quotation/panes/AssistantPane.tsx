@@ -28,6 +28,7 @@ import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { effectivePct } from "../helpers/pricing";
+import { productImageList } from "../helpers/media";
 import { VariantChip } from "../shared/VariantChip";
 import type { Line, Product, ProductVariant } from "../helpers/types";
 
@@ -159,6 +160,7 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
         name: displayName,
         unit_price: v.price ?? product.price,
         finish,
+        image: v.image ?? productImageList(product)[0] ?? focusedLine.image,
       });
     }
   };
@@ -180,7 +182,7 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
         {/* --- Image --- */}
         <View style={styles.hero}>
           <ProductImage
-            source={product.images}
+            source={activeVariant?.image ? [activeVariant.image, ...productImageList(product)] : productImageList(product)}
             style={{ width: "100%", aspectRatio: 1, borderRadius: radius.md }}
             fallbackLabel={product.sku}
           />
@@ -383,7 +385,7 @@ function SuggestionRow({
 }) {
   return (
     <View style={styles.suggestion}>
-      <ProductImage source={product.images} style={styles.suggestionThumb} fallbackLabel={product.sku} />
+      <ProductImage source={productImageList(product)} style={styles.suggestionThumb} fallbackLabel={product.sku} />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={{ fontSize: 12, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{product.name}</Text>
         <Text style={type.caption} numberOfLines={1}>{product.sku}{product.finish ? ` · ${product.finish}` : ""}</Text>

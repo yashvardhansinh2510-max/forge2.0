@@ -4,12 +4,20 @@
 export type ProductVariant = {
   sku: string; finish?: string | null; size?: string | null; color?: string | null;
   mrp: number; price: number; stock?: number;
+  // Populated dynamically by the backend from family-sibling products —
+  // lets a finish/colour chip switch the main image, not just the price.
+  id?: string | null; image?: string | null;
 };
 
 export type Product = {
   id: string; name: string; sku: string; price: number; mrp: number;
   finish?: string | null; images: string[]; category_id: string; brand_id: string;
   variants?: ProductVariant[];
+  // Real media pipeline fields (Supabase-backed) — `images` above is kept in
+  // sync with these server-side, but components should prefer
+  // `productImageList()` which reads all three consistently.
+  hero_image_url?: string | null;
+  gallery?: { url: string; role?: string; source_type?: string; quality?: string }[] | null;
   // Optional metadata used by the Assistant (family, brand name, series, stock).
   family_key?: string | null;
   brand_name?: string | null;

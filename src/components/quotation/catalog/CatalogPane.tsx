@@ -1,9 +1,10 @@
 // The left/mobile Catalog Pane — search box, tabs, virtualised list.
 import { Feather } from "@expo/vector-icons";
-import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { EmptyState } from "@/src/components/ui";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { PickerCard } from "./PickerCard";
@@ -81,6 +82,15 @@ export function CatalogPane({
         initialNumToRender={12}
         maxToRenderPerBatch={12}
         windowSize={7}
+        onEndReached={() => { if (b.pickerTab === "search") b.loadMoreProducts(); }}
+        onEndReachedThreshold={0.6}
+        ListFooterComponent={
+          b.pickerTab === "search" && b.productLoadingMore ? (
+            <View style={{ paddingVertical: 16, alignItems: "center" }}>
+              <ActivityIndicator size="small" color={ds.brass} />
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           <EmptyState
             icon={b.pickerTab === "search" ? "search" : b.pickerTab === "recent" ? "clock" : "star"}

@@ -9,6 +9,7 @@ import { ProductImage } from "@/src/components/ProductImage";
 import { colors, money, radius, type } from "@/src/theme/tokens";
 
 import { VariantSwatchStrip } from "../shared/VariantChip";
+import { productImageList } from "../helpers/media";
 import type { Product, ProductVariant } from "../helpers/types";
 
 type Props = {
@@ -36,7 +37,7 @@ function PickerCardImpl({ product, onQuickAdd, onLongPress, onOpenDetails }: Pro
           { backgroundColor: pressed ? colors.surfaceTertiary : colors.surfaceSecondary },
         ]}
       >
-        <ProductImage source={product.images} style={styles.thumb} fallbackLabel={product.sku} />
+        <ProductImage source={productImageList(product)} style={styles.thumb} fallbackLabel={product.sku} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.name} numberOfLines={1}>{product.name}</Text>
           <Text style={type.caption} numberOfLines={1}>
