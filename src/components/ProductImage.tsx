@@ -65,20 +65,29 @@ export function ProductImage({
     return arr.filter((s): s is string => typeof s === "string" && s.length > 0);
   }, [source]);
 
+  const sanitizedCandidates: string[] = useMemo(() => {
+    const seen = new Set<string>();
+    return candidates
+      .map((uri) => ({ uri, score: imageQualityScore(uri) }))
+      .filter(({ uri, score }) => score < 8 && !seen.has(uri) && seen.add(uri))
+      .sort((a, b) => a.score - b.score)
+      .map(({ uri }) => uri);
+  }, [candidates]);
+
   // Track the current candidate index. On error we advance; once we run out
   // of candidates we render the fallback glyph.
   const [idx, setIdx] = useState(0);
   const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(candidates.length === 0);
+  const [failed, setFailed] = useState(sanitizedCandidates.length === 0);
 
   // Reset when the candidate list changes (e.g. product swap).
   useEffect(() => {
     setIdx(0);
     setLoaded(false);
-    setFailed(candidates.length === 0);
-  }, [candidates.join("|")]);
+    setFailed(sanitizedCandidates.length === 0);
+  }, [sanitizedCandidates.join("|")]);
 
-  const current = candidates[idx];
+  const current = sanitizedCandidates[idx];
   const finalRadius = typeof borderRadius === "number" ? borderRadius : radius.md;
 
   return (
@@ -104,7 +113,7 @@ export function ProductImage({
             onLoad={() => setLoaded(true)}
             onError={() => {
               // Advance to next candidate, or give up.
-              if (idx + 1 < candidates.length) {
+              if (idx + 1 < sanitizedCandidates.length) {
                 setIdx(idx + 1);
                 setLoaded(false);
               } else {
@@ -134,7 +143,24 @@ function Skeleton() {
     loop.start();
     return () => loop.stop();
   }, [opacity]);
+
   return <Animated.View style={[StyleSheet.absoluteFill, styles.skeleton, { opacity }]} />;
+}
+
+function imageQualityScore(uri: string): number {
+  const lower = uri.toLowerCase();
+  let score = 0;
+
+  // Supplier/import screenshots occasionally contain huge preview captures or
+  // QR/test imagery. They technically load, but make catalog cards feel broken.
+  // Keep real product photos first, push suspicious captures behind fallbacks,
+  // and drop obvious non-product assets from the candidate list.
+  if (lower.includes("screenshot") || lower.includes("screen-shot") || lower.includes("screen_capture")) score += 10;
+  if (lower.includes("whatsapp") || lower.includes("qr") || lower.includes("mahjong") || lower.includes("game")) score += 10;
+  if (lower.includes("test") || lower.includes("sample")) score += 4;
+  if (lower.includes("hero") || lower.includes("product") || lower.includes("catalog") || lower.includes("sanitary") || lower.includes("bath")) score -= 2;
+  if (lower.startsWith("data:image/")) score -= 1;
+  return score;
 }
 
 // -----------------------------------------------------------------------------
