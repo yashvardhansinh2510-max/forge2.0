@@ -2822,6 +2822,38 @@ agent_communication:
 
 
 frontend:
+  - task: "Phase 5 Mobile Experience — Tasks/Follow-ups mobile flow polish"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/followups.tsx, frontend/app/(admin)/_layout.tsx, frontend/src/components/ui.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Implemented the first Phase 5 mobile experience value-add focused on the broken Task/Follow-ups flow.
+            Changes are frontend-only: compact mobile Follow-ups header, brass icon-only New task action, shorter mobile copy,
+            mobile-specific mission card that no longer truncates awkwardly, horizontal KPI strip, touch-friendly More Filters row,
+            keyboard-safe New Follow-up bottom sheet, context sheet bottom padding, and removed mobile quick-contact floating buttons
+            on phones to prevent overlap with the bottom nav. Also changed the mobile shell central FAB from black to BuildCon House brass
+            and allowed shared StatTile style overrides so mobile KPI/context tiles can fit consistently. No backend/catalog/auth changes.
+            Manual mobile screenshot check at 390x844 passed: /followups renders compact action, bottom navigation and 6 task cards.
+            Existing repo-wide TypeScript issues remain outside this patch (app/_layout segment comparison, ds Modal export); filtered check
+            shows no new followups/_layout/ui errors.
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Please verify Phase 5 mobile Tasks/Follow-ups. Use owner@forge.app / Forge@2026. Check 390x844 phone first:
+        login, go to /followups, confirm compact header, brass + action, brass bottom FAB, bottom nav is usable, KPI row scrolls horizontally,
+        filters and task cards scroll without overlap, New Follow-up opens as a keyboard-safe bottom sheet. Also spot-check tablet/desktop that
+        Follow-ups still loads and desktop actions remain visible.
+
+
+
+frontend:
   - task: "Product image candidate sanitization for Phase 1 polish"
     implemented: true
     working: "NA"
