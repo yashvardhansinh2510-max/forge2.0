@@ -1,0 +1,201 @@
+{
+  "total_products": 2966,
+  "total_media": 2970,
+  "total_brands": 5,
+  "total_categories": 26,
+  "same_brand_duplicate_skus": [],
+  "cross_brand_sku_collisions": [
+    {
+      "sku": "24400000",
+      "products": [
+        {
+          "id": "7cb68c98-f004-44a5-9019-d024a4804db1",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Allure Brilliant Single-lever basin mixer 1/2\u201c L-Size chrome w/knurling"
+        },
+        {
+          "id": "02d00ceb-84fa-4d5d-907a-090d4d07a4c7",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG Unica Shower bar Pulsify 65 cm with push slider and shower hose Chrome"
+        }
+      ]
+    },
+    {
+      "sku": "48651000",
+      "products": [
+        {
+          "id": "f6684d66-9ece-418d-b987-bb033f5b8774",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Acc: knurled stick set 2  (2x) for 5-hole bath combination"
+        },
+        {
+          "id": "fdd7de64-b6c7-401f-b098-c0cc649d4e83",
+          "brand_id": "347979fb-8ea5-45d9-91a1-89eef0d0b34c",
+          "name": "AX AXOR One Hand shower 75 1jet EcoSmart Chrome"
+        }
+      ]
+    },
+    {
+      "sku": "26888000",
+      "products": [
+        {
+          "id": "aab2ba90-ac18-4221-b8c8-fd76260a1a7d",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Rainshower F-Series 15\u201d Multispray Ceiling Shower"
+        },
+        {
+          "id": "6123a5eb-a380-43a9-9f6d-2bf0da3cd7e5",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG FixFit Porter S shower holder chrome"
+        }
+      ]
+    },
+    {
+      "sku": "26887000",
+      "products": [
+        {
+          "id": "55dfd6e1-ab25-4f8a-8279-0c79cdd73702",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Rainshower F-Series 15\u201d Headshower"
+        },
+        {
+          "id": "5722ef20-6879-4afd-8bb8-729b5657449b",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG FixFit Porter E shower holder chrome"
+        }
+      ]
+    },
+    {
+      "sku": "26856000",
+      "products": [
+        {
+          "id": "f66d3cff-66c4-41fb-b492-e4666f06e40c",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Rainshower Allure 230 Headshower Set, 286mm"
+        },
+        {
+          "id": "12de74d2-6514-4a1b-a6e1-ef2ebd49b585",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG Rainfinity 100 1j Porter Set 1600 chr"
+        }
+      ]
+    },
+    {
+      "sku": "27477000",
+      "products": [
+        {
+          "id": "7894adb7-2670-42c8-a4c9-3c956baec8c6",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Rainshower Cosmopolitan 310 Headshower"
+        },
+        {
+          "id": "ed7f30ba-08d0-406a-975f-c6fcd3a2cdd2",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG Raindance Air ov.shower 240mm ceiling"
+        }
+      ]
+    },
+    {
+      "sku": "26456000",
+      "products": [
+        {
+          "id": "2afa2e70-606b-4427-afc8-6aaf9766b13a",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Euphoria 260 Headshower 6, 6L"
+        },
+        {
+          "id": "639c8d2e-95e6-406b-a117-f18155b9519d",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG FixFit S wall outlet DN15 chr.NRV metal connection"
+        },
+        {
+          "id": "811a1b0f-1b20-401b-9f36-e8134b63bbf2",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG FixFit Porter 300 Schlauchanschl.chr"
+        }
+      ]
+    },
+    {
+      "sku": "26455000",
+      "products": [
+        {
+          "id": "44a3830b-4ec5-436a-9f47-82f5f6d5b0a8",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Euphoria 260 Headshower"
+        },
+        {
+          "id": "03907bd4-3ad3-4a46-b87f-6b922755659a",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG FixFit Square wall outlet DN15 ch.NRV"
+        }
+      ]
+    },
+    {
+      "sku": "26866000",
+      "products": [
+        {
+          "id": "d5d301d3-8731-4ae7-b565-d2846944f452",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Sena Stick handshower 6,6l"
+        },
+        {
+          "id": "1e6659a6-592d-4f68-95ca-7c75966c1cc0",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG Rainfinity HS 1jet chrome"
+        }
+      ]
+    },
+    {
+      "sku": "26443000",
+      "products": [
+        {
+          "id": "227bcf3c-68c9-4dab-92da-cc74f214d984",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Rainshower SmartControl 360 Duo Thermostatic Shower System"
+        },
+        {
+          "id": "a95635e0-cf95-4820-be95-a4cb2ea3d545",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG HG Raindance Rainfall 150 Stream DN15"
+        }
+      ]
+    },
+    {
+      "sku": "26250000",
+      "products": [
+        {
+          "id": "fd09e3ec-512b-42f9-a885-19bf56a301eb",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Rainshower SmartControl 360 Duo Thermostatic Shower System"
+        },
+        {
+          "id": "73f719a3-fb3a-4cc6-ad7d-cf86ac028e15",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG RD E 300 1jet SH ceiling chrom"
+        }
+      ]
+    },
+    {
+      "sku": "27704000",
+      "products": [
+        {
+          "id": "9efcf4b7-e382-4b88-ab9b-f2c49940313f",
+          "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+          "name": "Euphoria Cube Wall Union"
+        },
+        {
+          "id": "4e049e87-6a05-4de3-b49e-a8faf53dd7c3",
+          "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+          "name": "HG Wall bar Unica Reno 720mm chrome"
+        }
+      ]
+    }
+  ],
+  "invalid_brand_refs": [],
+  "invalid_category_refs": [],
+  "orphaned_media": [],
+  "media_brand_mismatches": [],
+  "missing_images": 8,
+  "unexpected_modifications": [],
+  "ok": true
+}

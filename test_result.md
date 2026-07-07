@@ -2154,3 +2154,31 @@ agent_communication:
         files remain: Thermostat, WBM, TBM, Single_lever, Spout.
         No automated regression tests run this turn — user explicitly asked to hold off; all
         verification was direct DB integrity scans + image reachability spot-checks.
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Catalog Integrity Guard built per explicit user requirement (permanent safeguard after 2
+        real bugs in batches 1-2): catalog_pipeline/integrity_guard.py (scan_catalog — same-brand
+        dupe SKUs hard-fail, cross-brand collisions informational, invalid brand/category refs,
+        orphaned media, media/brand mismatches, missing images, and baseline-diff for "unexpected
+        modifications"), scripts/catalog_verify.py (reusable `catalog:verify` CLI, exit 0/1), and
+        run_hansgrohe_batch.py now snapshots+scans BEFORE and AFTER every import, refusing to
+        report SUCCESS if the guard trips.
+        Batch 3/3 (Thermostat, WBM, TBM, Single_lever, Spout — 635 rows) run through this guarded
+        pipeline end-to-end: pre-scan PASS, import, post-scan PASS with `unexpected_modifications:
+        []`, `batch_result: "SUCCESS"`. Hansgrohe/AXOR recovery is now COMPLETE (all 14 original
+        files + 1 extra processed).
+        FINAL STATE: 2,966 products (exceeds original ~2,872 target) — Hansgrohe 908, AXOR 448,
+        Grohe 864, Vitra 250, Geberit 496. 26 categories, 2,970 media docs. Standalone
+        catalog:verify run: PASS (clean) — 0 same-brand dupes, 0 orphaned media, 0 invalid refs,
+        12 legitimate cross-brand SKU coincidences.
+        NEWLY DISCOVERED (pre-existing, unrelated to today's Hansgrohe work): 400 of Geberit's 496
+        products have the literal name "Article No." — a PDF-extraction bug in
+        catalog_pipeline/adapters/geberit.py (header label leaks onto the SKU's text line for
+        certain multi-column variant-grid tables). MRP/category/series/family_key are all correct,
+        only `name` is wrong. Root cause identified, fix is small, NOT applied yet — flagged to
+        user for a decision since it's outside this session's stated scope.
+        No automated regression tests run this turn — user explicitly asked to hold off; all
+        verification was direct DB integrity scans, catalog:verify, and API/image spot-checks.
+

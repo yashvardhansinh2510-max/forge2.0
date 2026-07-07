@@ -9,7 +9,12 @@
     "kitchen",
     "rail",
     "showerhose",
-    "showers_hansgrohe"
+    "showers_hansgrohe",
+    "thermostat",
+    "wbm",
+    "tbm",
+    "single_lever",
+    "spout"
   ],
   "batches": [
     {
@@ -38,6 +43,21 @@
       ],
       "stats": {
         "imported": 449,
+        "updated": 2,
+        "skipped": 0
+      }
+    },
+    {
+      "at": "2026-07-07T04:30:52Z",
+      "files": [
+        "Thermostat.xlsx",
+        "WBM.xlsx",
+        "TBM.xlsx",
+        "Single_lever.xlsx",
+        "Spout.xlsx"
+      ],
+      "stats": {
+        "imported": 542,
         "updated": 2,
         "skipped": 0
       }

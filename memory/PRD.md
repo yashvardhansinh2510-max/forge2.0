@@ -262,6 +262,44 @@ Result: 449 imported, 2 updated, 8 true duplicate SKUs correctly rejected, 1 mis
 **Current totals: 2,424 products** — Grohe 864, Geberit 496, Vitra 250, Hansgrohe 615, AXOR 199.
 **Remaining files (batch 3):** Thermostat, WBM, TBM, Single_lever, Spout.
 
+## Catalog Integrity Guard (permanent safeguard, 2026-07-07)
+
+Built per explicit user requirement after 2 real bugs surfaced during batches 1-2. New
+`catalog_pipeline/integrity_guard.py` (`scan_catalog()`) — checks same-brand duplicate SKUs
+(hard fail), cross-brand SKU collisions (informational, expected), invalid brand/category refs,
+orphaned media, media/product brand mismatches, missing-image count, and — when given a
+baseline snapshot dir — diffs every product against it to catch "unexpected modifications"
+(the exact bug class found twice this session). New `scripts/catalog_verify.py` — the reusable
+`catalog:verify` CLI, exit code 0/1, run before every deploy and after every import.
+`scripts/run_hansgrohe_batch.py` now: snapshots + scans BEFORE importing (aborts if the catalog
+was already broken), snapshots + scans AFTER importing (diffs vs the pre-batch snapshot), and
+refuses to report `SUCCESS` if anything unexpected changed — `batch_result` field is explicitly
+`"FAILED — INTEGRITY VIOLATION..."` when the guard trips, never silently green.
+
+## Hansgrohe/AXOR recovery — Batch 3 of 3, COMPLETE (2026-07-07)
+
+Final 5 files (Thermostat, WBM, TBM, Single_lever, Spout — 635 rows). Ran through the new
+guarded pipeline end-to-end: pre-scan PASS -> import -> post-scan PASS, `unexpected_modifications:
+[]`, `batch_result: "SUCCESS"`. 542 imported, 2 updated (legitimate), 12 true duplicates
+rejected, 0 missing images this batch. **All 14 original files + the 1 extra (rail) now
+processed — recovery complete.**
+
+**FINAL CATALOG STATE: 2,966 products** (exceeds the original ~2,872 target) — Hansgrohe 908,
+AXOR 448, Grohe 864, Vitra 250, Geberit 496. 26 categories, 2,970 media docs, 12 legitimate
+cross-brand SKU coincidences (all correctly modeled as separate products), 0 same-brand
+duplicates, 0 orphaned media, 0 invalid refs. `catalog:verify` standalone run: **PASS (clean)**.
+
+**Newly found (unrelated to Hansgrohe/Axor work) — pre-existing Geberit data-quality defect**:
+400 of Geberit's 496 products have the literal name `"Article No."` — a PDF-extraction bug in
+`catalog_pipeline/adapters/geberit.py` (a table-header label leaks onto the same text line as
+the SKU for certain multi-column PDF tables, e.g. colour/finish variant grids, and the adapter
+uses that leftover text as the name instead of falling back to search for a real description
+line). MRP, category, series, and family_key are all correct on these rows — only `name` is
+wrong. Root cause identified, fix is small and contained (treat known header labels as "empty"
+so the existing fallback-search-backward logic kicks in) but NOT yet applied — flagged to user
+for a go/no-go decision before touching it, since it's outside the scope of what was asked this
+session (Hansgrohe recovery + integrity guard).
+
 User directive: restrained premium aesthetic (Apple philosophy, not style). Warm off-white canvas,
 near-black ink type, brass accent used ONLY for: primary CTA, focus, active nav, selected state, progress.
 Headings: Fraunces serif; everything else Inter. Priority: Quotation Builder 70% / Purchases 20% / Quotation List 10%.

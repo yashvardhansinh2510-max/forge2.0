@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -25,8 +26,10 @@ from catalog_pipeline.adapters.hansgrohe import HansgroheAdapter  # noqa: E402
 from catalog_pipeline.certifier import validate  # noqa: E402
 from catalog_pipeline.base import MISSING  # noqa: E402
 from catalog_pipeline.orchestrator import import_accepted  # noqa: E402
+from catalog_pipeline.integrity_guard import scan_catalog  # noqa: E402
 from db import db  # noqa: E402
 from models import CatalogImportJob  # noqa: E402
+from backup_db import backup as backup_db  # noqa: E402
 
 MANIFEST_PATH = Path("/app/memory/hansgrohe_import_manifest.json")
 
@@ -80,6 +83,22 @@ async def main(batch: list[dict]) -> None:
 
     to_process = [f for f in batch if _norm(f["filename"]) not in already_done]
     already_skipped = [f["filename"] for f in batch if _norm(f["filename"]) in already_done]
+
+    # --- Catalog Integrity Guard: step 1 — pre-import baseline ---
+    # Never import on top of an already-broken catalog: if the guard finds a
+    # pre-existing problem, abort before touching anything (this batch didn't
+    # cause it, but proceeding would make root-causing much harder).
+    pre_report = await scan_catalog()
+    if not pre_report.ok:
+        print("ABORTING — catalog integrity check FAILED before this batch even started.")
+        print(json.dumps(pre_report.to_public(), indent=2))
+        raise SystemExit(1)
+    print(f"Pre-import integrity check: PASS ({pre_report.total_products} products)")
+
+    pre_snapshot_dir = await backup_db(
+        ["products", "product_media", "brands", "categories"]
+    )
+    print(f"Pre-import snapshot: {pre_snapshot_dir}")
 
     adapter = HansgroheAdapter()
     all_rows = []
@@ -165,7 +184,21 @@ async def main(batch: list[dict]) -> None:
     })
     _save_manifest(manifest)
 
+    # --- Catalog Integrity Guard: step 3 — post-import reconciliation ---
+    # Diff every product against the PRE-import snapshot. Any product that
+    # existed before this batch and silently changed brand/name is exactly
+    # the bug class this guard exists to catch (never again ship a batch
+    # that quietly corrupted an unrelated brand's product).
+    post_report = await scan_catalog(baseline_snapshot_dir=pre_snapshot_dir)
+    integrity_ok = post_report.ok
+    post_snapshot_dir = await backup_db(
+        ["products", "product_media", "brands", "categories", "customers",
+         "quotations", "purchase_orders", "payments", "followups", "users",
+         "activity", "suppliers"]
+    )
+
     report = {
+        "batch_result": "SUCCESS" if integrity_ok else "FAILED — INTEGRITY VIOLATION, MANUAL REVIEW REQUIRED",
         "files_processed": [f["filename"] for f in to_process],
         "already_done_skipped": already_skipped,
         "categories_created": sorted(cats_after - cats_before),
@@ -177,15 +210,23 @@ async def main(batch: list[dict]) -> None:
         "errors": errors,
         "runtime_s": round(time.time() - t0, 1),
         "remaining_files": [f for f in ALL_14_FILES if _norm(f) not in set(manifest["processed_files"])],
+        "pre_import_snapshot": str(pre_snapshot_dir),
+        "post_import_snapshot": str(post_snapshot_dir),
+        "integrity_guard": post_report.to_public(),
     }
     print("\n" + "=" * 70)
-    print("BATCH REPORT")
+    print(f"BATCH REPORT — {report['batch_result']}")
     print("=" * 70)
     print(json.dumps(report, indent=2))
 
     Path("/app/memory/hansgrohe_batch_report_latest.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8",
     )
+
+    if not integrity_ok:
+        print("\n!!! INTEGRITY GUARD FAILED — see unexpected_modifications above. !!!")
+        print(f"Use the pre-import snapshot at {pre_snapshot_dir} to restore any affected product.")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
