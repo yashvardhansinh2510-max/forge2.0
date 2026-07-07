@@ -8,12 +8,14 @@
 // UI state, filter selection).
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
+import { Image } from "expo-image";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds, font as dsFont } from "@/src/design/tokens";
+import { supplierLogoFor } from "@/src/design/BrandLogo";
 import { useBuilder } from "../context/BuilderContext";
 import { RecentQuotationsPanel } from "../panes/RecentQuotationsPanel";
 import type { Category } from "../helpers/types";
@@ -134,7 +136,11 @@ export function BrandRail({ collapsed = false, onToggleCollapsed }: { collapsed?
                 testID={`rail-brand-${br.name}`}
               >
                 <View style={styles.brandBadge}>
-                  <Text style={styles.brandBadgeText}>{(br.name || "?").slice(0, 2).toUpperCase()}</Text>
+                  {supplierLogoFor(br.name) ? (
+                    <Image source={supplierLogoFor(br.name)} style={styles.brandBadgeLogo} contentFit="cover" />
+                  ) : (
+                    <Text style={styles.brandBadgeText}>{(br.name || "?").slice(0, 2).toUpperCase()}</Text>
+                  )}
                 </View>
                 {!collapsed ? (
                   <>
@@ -248,8 +254,9 @@ const styles = StyleSheet.create({
   brandBadge: {
     width: 22, height: 22, borderRadius: 6, backgroundColor: ds.surface,
     borderWidth: StyleSheet.hairlineWidth, borderColor: ds.line,
-    alignItems: "center", justifyContent: "center",
+    alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
+  brandBadgeLogo: { width: "100%", height: "100%" },
   brandBadgeText: { fontSize: 9, fontWeight: "700", color: ds.inkMid, letterSpacing: 0.3 },
   itemLabel: { flex: 1, fontSize: 13, color: ds.inkMid, fontWeight: "500" },
   itemLabelActive: { color: ds.ink, fontWeight: "600" },
