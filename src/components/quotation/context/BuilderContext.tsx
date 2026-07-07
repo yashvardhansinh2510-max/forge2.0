@@ -192,7 +192,6 @@ export function BuilderProvider({ onFinalize, children }: {
   const [productLoading, setProductLoading] = useState(false);
   const [productHasMore, setProductHasMore] = useState(false);
   const [productLoadingMore, setProductLoadingMore] = useState(false);
-  const productFetchGen = useRef(0);
   const [recent, setRecent] = useState<Product[]>([]);
   const [frequent, setFrequent] = useState<Product[]>([]);
   const [pickerTab, setPickerTab] = useState<PickerTab>("search");
@@ -315,9 +314,12 @@ export function BuilderProvider({ onFinalize, children }: {
   // ---------- Product explorer fetch (page 1 on filter/search/sort change) ----------
   const PRODUCT_PAGE_SIZE = 60;
   useEffect(() => {
-    const gen = ++productFetchGen.current;
+    let cancelled = false;
+    setProductLoading(true);
     const t = setTimeout(async () => {
-      setProductLoading(true);
+      // Safety net — never let the grid spin forever even if something
+      // upstream (network, backend) genuinely stalls. 12s is generous.
+      const safety = setTimeout(() => { if (!cancelled) setProductLoading(false); }, 12000);
       try {
         const params = new URLSearchParams();
         params.set("limit", String(PRODUCT_PAGE_SIZE));
@@ -327,50 +329,53 @@ export function BuilderProvider({ onFinalize, children }: {
         if (selectedBrandId) params.set("brand_id", selectedBrandId);
         if (selectedCategoryId) params.set("category_id", selectedCategoryId);
         const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`);
-        if (gen !== productFetchGen.current) return; // a newer filter change already superseded this
+        if (cancelled) return;
         const items = res.items || [];
         setProducts(items);
         setProductTotal(res.total || 0);
         setProductHasMore(items.length < (res.total || 0));
       } catch (e) {
-        console.warn("Product search failed", e);
+        if (!cancelled) { setProducts([]); setProductTotal(0); setProductHasMore(false); console.warn("Product search failed", e); }
       } finally {
-        if (gen === productFetchGen.current) setProductLoading(false);
+        clearTimeout(safety);
+        if (!cancelled) setProductLoading(false);
       }
     }, 180);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [q, selectedBrandId, selectedCategoryId, sortKey]);
 
   // ---------- Infinite scroll — fetch the next page and append ----------
+  const loadingMoreRef = useRef(false);
   const loadMoreProducts = useCallback(() => {
-    if (productLoadingMore || productLoading || !productHasMore) return;
-    const gen = productFetchGen.current;
+    if (loadingMoreRef.current || productLoading || !productHasMore) return;
+    loadingMoreRef.current = true;
     setProductLoadingMore(true);
+    const skipAt = products.length;
     (async () => {
       try {
         const params = new URLSearchParams();
         params.set("limit", String(PRODUCT_PAGE_SIZE));
-        params.set("skip", String(products.length));
+        params.set("skip", String(skipAt));
         params.set("sort", sortKey);
         if (q) params.set("q", q);
         if (selectedBrandId) params.set("brand_id", selectedBrandId);
         if (selectedCategoryId) params.set("category_id", selectedCategoryId);
         const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`);
-        if (gen !== productFetchGen.current) return; // filters changed mid-flight — discard
         const items = res.items || [];
         setProducts((cur) => {
           const seen = new Set(cur.map((p) => p.id));
           return [...cur, ...items.filter((p) => !seen.has(p.id))];
         });
         setProductTotal(res.total || 0);
-        setProductHasMore(products.length + items.length < (res.total || 0));
+        setProductHasMore(skipAt + items.length < (res.total || 0));
       } catch (e) {
         console.warn("Load more products failed", e);
       } finally {
+        loadingMoreRef.current = false;
         setProductLoadingMore(false);
       }
     })();
-  }, [productLoadingMore, productLoading, productHasMore, products.length, q, selectedBrandId, selectedCategoryId, sortKey]);
+  }, [productLoading, productHasMore, products.length, q, selectedBrandId, selectedCategoryId, sortKey]);
 
   // ---------- Autosave ----------
   const persist = useCallback(async () => {
