@@ -2470,6 +2470,46 @@ backend:
     priority: "high"
     needs_retesting: true
 
+  - task: "Phase 1 UI Polish Backend Smoke Test — Environment recovery + API health verification"
+    implemented: false
+    working: false
+    file: "backend/.env, frontend/.env, backend/db.py, backend/server.py"
+    stuck_count: 0
+    priority: "critical"
+    needs_retesting: true
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: |
+            CRITICAL BLOCKER FOUND — Backend completely down due to missing environment files.
+            
+            DIAGNOSIS COMPLETE:
+            • Container recycle wiped /app/backend/.env and /app/frontend/.env
+            • Backend crash-looping with KeyError: 'MONGO_URL' (cannot start without this env var)
+            • MongoDB running locally but buildcon_house database is EMPTY (0 collections, no data)
+            • All public API endpoints return 502 Bad Gateway (backend not responding to ingress)
+            • Supervisor shows backend as "RUNNING" but stderr logs show continuous crash-loop
+            
+            ENDPOINTS TESTED (all failed):
+            ❌ GET /api/health - 502 Bad Gateway
+            ❌ POST /api/auth/login - 502 Bad Gateway
+            ❌ GET /api/catalog/brands - 502 Bad Gateway
+            ❌ GET /api/products?limit=20 - 502 Bad Gateway
+            ❌ GET /api/quotations - 502 Bad Gateway
+            
+            RECOVERY PATH IDENTIFIED:
+            /app/scripts/setup-env exists and can recreate both .env files, but requires:
+            1. MONGO_URL (MongoDB Atlas connection string or local mongodb://localhost:27017)
+            2. DB_NAME (forge or buildcon_house)
+            3. JWT_SECRET (auto-generated or provided)
+            4. SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY
+            
+            Per review request instructions: "Do not modify code or database; just verify backend 
+            status and report blockers" — I have NOT created .env files or modified anything.
+            
+            BLOCKED: Cannot test Quotation Builder APIs without backend recovery.
+            Main agent must provide credentials and run setup-env script to restore service.
+
 frontend:
   - task: "Quotation Builder — product grid stuck at 'Loading products...' with 0 items (infinite-scroll fetch never resolving UI state)"
     implemented: true
@@ -2854,12 +2894,12 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "7.0"
-  test_sequence: 15
-  run_ui: true
+  test_sequence: 16
+  run_ui: false
 
 test_plan:
   current_focus:
-    - "Final Production Polish Sprint Phase 1 — Quotation Builder flagship refinement"
+    - "Phase 1 UI Polish Backend Smoke Test — Environment recovery + API health verification"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2872,3 +2912,67 @@ agent_communication:
         brand→category accordion, 3 product cards per row, product grid loads/scrolls/infinite-scrolls; tablet shows 2 columns where
         product picker/grid is available; mobile product picker/quotation builder has 1-column product list and no overlap/clipping.
         Verify variant finish changes update hero image/gallery/thumbnails in ProductModal and line/Assistant image when switching variants.
+    - agent: "testing"
+      message: |
+        ❌ CRITICAL BLOCKER — Backend Completely Down, Cannot Test Quotation Builder
+        
+        SITUATION:
+        User requested Phase 1 UI polish backend smoke test to verify API health needed by Quotation Builder.
+        However, the backend is COMPLETELY DOWN and cannot serve any requests. All API endpoints return 502 Bad Gateway.
+        
+        ROOT CAUSE CONFIRMED:
+        Container recycle wiped critical environment files. Backend crash-looping on startup with:
+        • KeyError: 'MONGO_URL' in /app/backend/db.py line 9
+        • Backend supervisor shows "RUNNING" but it's actually crash-looping (restarting every few seconds)
+        • Last successful startup was 17 minutes ago, then crashed immediately
+        
+        MISSING FILES (CRITICAL):
+        ❌ /app/backend/.env - DOES NOT EXIST (required for MONGO_URL, JWT_SECRET, Supabase keys)
+        ❌ /app/frontend/.env - DOES NOT EXIST (required for EXPO_PUBLIC_BACKEND_URL)
+        
+        DATABASE STATE:
+        • MongoDB service is RUNNING locally (port 27017)
+        • buildcon_house database is EMPTY (0 collections)
+        • Only system databases exist (admin, config, local)
+        • No product catalog data, no users, no quotations
+        
+        API ENDPOINTS TESTED (all failed):
+        ❌ GET /api/health - 502 Bad Gateway (HTML error page from Cloudflare)
+        ❌ POST /api/auth/login (owner@forge.app / Forge@2026) - 502 Bad Gateway
+        ❌ GET /api/catalog/brands - 502 Bad Gateway
+        ❌ GET /api/products?limit=20 - 502 Bad Gateway
+        ❌ GET /api/quotations - 502 Bad Gateway
+        
+        WHAT'S AVAILABLE:
+        ✅ /app/scripts/setup-env - Script exists to recreate .env files
+        ✅ /app/memory/test_credentials.md - Auth credentials documented
+        ✅ MongoDB service running
+        ✅ Supervisor services configured
+        
+        WHAT'S NEEDED TO RECOVER:
+        Per /app/scripts/setup-env, the following credentials are required:
+        1. MONGO_URL (MongoDB Atlas connection string OR use local: mongodb://localhost:27017)
+        2. DB_NAME (database name, default: forge or buildcon_house)
+        3. JWT_SECRET (can be auto-generated)
+        4. SUPABASE_URL (project URL)
+        5. SUPABASE_SERVICE_ROLE_KEY (Supabase service role key)
+        6. SUPABASE_ANON_KEY (Supabase anon key)
+        
+        IMPACT:
+        • CANNOT test any backend APIs
+        • CANNOT test Quotation Builder (requires backend for product catalog, auth, quotation CRUD)
+        • CANNOT verify Phase 1 UI polish (frontend needs backend data)
+        • CANNOT test auth login flow
+        • CANNOT access product catalog
+        • This is a SHOWSTOPPER - entire app is non-functional
+        
+        RECOMMENDATION:
+        Main agent must provide the required credentials and run:
+        1. Provide credentials via environment variables or interactive prompts
+        2. Run: /app/scripts/setup-env (or setup-env --from-env if creds in shell env)
+        3. Restart backend: sudo supervisorctl restart backend
+        4. Verify backend starts: curl http://localhost:8001/api/health
+        5. Seed database if empty: python /app/backend/seed.py (if it exists)
+        6. Then call testing agent again to verify APIs
+        
+        TESTING STATUS: BLOCKED - Cannot proceed without backend recovery
