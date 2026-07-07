@@ -178,6 +178,57 @@ agent_communication:
 
 
 backend:
+  - task: "Persistence & Disaster Recovery — session stabilization + /api/health/system + backup/restore scripts"
+    implemented: true
+    working: "NA"
+    file: "backend/.env, backend/.env.example, frontend/.env, frontend/.env.example, backend/routes/misc_routes.py, backend/scripts/backup_db.py, backend/scripts/restore_db.py, memory/test_credentials.md"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            User reported the recurring architecture problem: local Mongo + missing .env wipe on every
+            session reset, losing the imported catalog (previously 1610 products across Vitra/Grohe/
+            Geberit) and Supabase image config. Verified live: backend WAS crash-looping on this exact
+            session (KeyError: MONGO_URL — /app/backend/.env and /app/frontend/.env did not exist;
+            reportlab/openpyxl/etc were also missing from the venv). Local Mongo was completely empty
+            (no buildcon_house db at all) — confirms the catalog is currently lost from this session's
+            local DB, no dump/backup file found anywhere on disk.
+            IMMEDIATE FIX (done, no new creds needed): recreated backend/.env (local Mongo for now,
+            fresh JWT_SECRET, MEDIA_STORAGE_DRIVER=supabase w/ empty keys) and frontend/.env
+            (EXPO_PACKAGER_PROXY_URL/HOSTNAME + empty EXPO_PUBLIC_BACKEND_URL for same-origin), pip
+            installed full requirements.txt, restarted backend+expo. Backend now boots clean, seed.py
+            auto-seeded demo data (20 products/4 customers/8 quotations/8 users) since DB was empty.
+            NEW: backend/.env.example + frontend/.env.example committed (safe templates, no secrets) —
+            existing scripts/setup-env already writes real .env from these on any new session.
+            NEW: GET /api/health/system (no auth, never returns secret values) — reports mongo
+            connected + is_local flag, supabase configured/connected, live counts for products/
+            customers/quotations/purchase_orders/payments/followups/users/brands/categories/activity,
+            secrets_loaded booleans per required var, and a `warnings` array that explicitly calls out
+            "Mongo is local/ephemeral", "Supabase not configured", "catalog looks like demo-seed data"
+            — exactly the checklist from the user's architecture doc.
+            NEW: backend/scripts/backup_db.py (JSON snapshot of 10 core collections to backend/backups/
+            <timestamp>/ + manifest.json + latest.json pointer) and restore_db.py (idempotent
+            upsert-by-id restore from any snapshot dir or the latest one, --dry-run supported). Verified
+            live: backup produced 10 files with correct counts, restore --dry-run matched exactly.
+            backend/backups/ added to .gitignore (data, not code — will be redirected to a persistent
+            Supabase bucket once Supabase creds are supplied, so backups themselves survive resets).
+            Populated /app/memory/test_credentials.md (was missing) with owner@forge.app / Forge@2026
+            and customer@forge.app / Forge@2026.
+            STILL BLOCKED ON USER (cannot proceed without these — see agent_communication):
+            (1) MongoDB Atlas connection string (to replace local Mongo permanently),
+            (2) Supabase SUPABASE_URL/SERVICE_ROLE_KEY/ANON_KEY (project URL already known from
+                scripts/setup-env default: https://vburaxruvbnbahegtbya.supabase.co — need to confirm
+                access is still valid or provision a new project),
+            (3) original supplier source files (or a real backup) to re-import the lost 1610-product
+                catalog — nothing recoverable was found on disk this session.
+            Please regression-test: GET /api/health/system shape + values, and full smoke pass on
+            existing endpoints (auth login, quotations, payments, customers, followups, catalog) since
+            the Python venv was fully reinstalled this session.
+
+backend:
   - task: "Follow-ups · Sales Command Center — reconciliation engine + priority scoring + full API"
     implemented: true
     working: true
@@ -413,7 +464,7 @@ backend:
           comment: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Fix applied: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin)."
         - working: true
           agent: "testing"
-          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://forge-stabilize.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
+          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://persist-arch.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
 
 frontend:
   - task: "Quotation Builder 2.0 Phase 1A — undo/redo, DnD, variants, alternates"
@@ -1252,9 +1303,9 @@ agent_communication:
     - agent: "main"
       message: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause suspected: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Applied fix: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin). Please verify: (1) Login with owner@forge.app / Forge@2026 succeeds, (2) Dashboard loads, (3) Navigate to catalog screen, (4) Verify products list loads (may be empty), (5) Confirm request URLs are same-origin (preview URL) not localhost:8001, (6) Check browser console for 'Failed to fetch' errors."
     - agent: "testing"
-      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://forge-stabilize.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
+      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://persist-arch.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
     - agent: "main"
-      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://forge-stabilize.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
+      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://persist-arch.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
     - agent: "testing"
       message: |
         Quotation Builder V4 Backend Regression Testing COMPLETE — ALL 63 TESTS PASSED (100% success rate).
@@ -1955,3 +2006,45 @@ agent_communication:
         2. If user wants the customer switcher search results fixed, create a new task for that
         3. Consider adding manual test instructions for product addition since Playwright can't automate it
 
+
+metadata:
+  created_by: "main_agent"
+  version: "5.0"
+  test_sequence: 13
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Persistence & Disaster Recovery — session stabilization + /api/health/system + backup/restore scripts"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        NEW SESSION — user shared their "Production Architecture" doc describing exactly the recurring
+        failure mode this app has hit multiple times before (see the STABILIZATION SPRINT block above from
+        a prior fork): local Mongo + missing .env files get wiped on every session/container reset, losing
+        the imported product catalog and any Supabase config.
+        Verified this was happening RIGHT NOW at session start: backend was crash-looping (KeyError:
+        MONGO_URL), both .env files were missing, and local Mongo was completely empty — the previously
+        imported ~1610-product catalog (Vitra/Grohe/Geberit) is NOT recoverable from this container; no
+        dump/backup file exists anywhere on disk.
+        Fixed the immediate outage (recreated both .env from the existing scripts/setup-env template,
+        reinstalled the full backend venv, restarted services — app is healthy again, seed.py auto-seeded
+        demo data: 20 products/4 customers/8 quotations/8 users). Added the durable pieces that don't need
+        new credentials: backend/.env.example + frontend/.env.example (committed, no secrets),
+        GET /api/health/system (mongo/supabase reachability + is_local warning + live counts + secrets-loaded
+        booleans — never leaks values), backend/scripts/backup_db.py + restore_db.py (JSON snapshot
+        backup/restore, idempotent upsert, verified live end-to-end), and populated the previously-missing
+        /app/memory/test_credentials.md.
+        Everything further (migrating to MongoDB Atlas as the permanent DB, wiring real Supabase Storage
+        keys, and re-importing or restoring the lost catalog) is BLOCKED on the user providing: (1) an
+        Atlas connection string, (2) Supabase SUPABASE_URL/SERVICE_ROLE_KEY/ANON_KEY, (3) either the
+        original supplier source files or a real backup to restore the lost 1610 products. Asked the user
+        for these via ask_human before proceeding further — this is a foundational/infra change and per
+        protocol must be confirmed + credentialed before continuing.
+        Please regression-test backend now: focus on GET /api/health/system (shape + accurate counts +
+        warnings array) and a full smoke pass on auth/quotations/customers/payments/followups/catalog
+        endpoints since the Python venv was fully reinstalled this session (dependency drift risk).

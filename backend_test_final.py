@@ -9,7 +9,7 @@ import json
 import time
 from datetime import datetime
 
-BASE_URL = "https://1ff42f1d-a1fd-4e27-bf04-5be85fd46f80.preview.emergentagent.com/api"
+BASE_URL = "https://persist-arch.preview.emergentagent.com/api"
 PRIMARY_EMAIL = "owner@forge.app"
 PRIMARY_PASSWORD = "Forge@2026"
 SALES_EMAIL = "sales@forge.app"

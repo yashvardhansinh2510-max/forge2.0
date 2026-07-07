@@ -86,3 +86,6 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# DB backups (contain data snapshots - not code)
+backend/backups/
