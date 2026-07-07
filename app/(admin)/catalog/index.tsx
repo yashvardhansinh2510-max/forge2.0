@@ -21,6 +21,8 @@ import { Chip, EmptyState, IconButton, PriceTag, ScreenTitle, SegmentedControl, 
 import { api } from "@/src/api/client";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { supplierLogoFor } from "@/src/design/BrandLogo";
+import { Image as ExpoImage } from "expo-image";
 
 type Brand = { id: string; name: string; slug?: string };
 type Category = { id: string; name: string; slug?: string };
@@ -99,6 +101,8 @@ export default function Catalog() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [subcategories, setSubcategories] = useState<string[]>([]);
   const [seriesList, setSeriesList] = useState<string[]>([]);
+  const [brandCounts, setBrandCounts] = useState<Record<string, number>>({});
+  const [categoriesForBrand, setCategoriesForBrand] = useState<Category[] | null>(null);
   const [families, setFamilies] = useState<Family[] | null>(null);
   const [products, setProducts] = useState<Product[] | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -124,11 +128,22 @@ export default function Catalog() {
     })();
   }, []);
 
-  // Hierarchy → derive subcategory & series options
+  // Hierarchy → derive brand counts, brand-scoped categories, subcategory & series options
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get<{ tree: any[] }>(`/catalog/hierarchy`);
+        const bc: Record<string, number> = {};
+        for (const b of res.tree) bc[b.brand.id] = b.product_count;
+        setBrandCounts(bc);
+
+        if (brandId) {
+          const bNode = res.tree.find((b) => b.brand.id === brandId);
+          setCategoriesForBrand(bNode ? bNode.categories.map((c: any) => c.category) : []);
+        } else {
+          setCategoriesForBrand(null);
+        }
+
         const subs = new Set<string>();
         const ser = new Set<string>();
         for (const b of res.tree) {
@@ -252,14 +267,40 @@ export default function Catalog() {
             </Pressable>
           </View>
 
-          {/* Category strip with icons */}
+          {/* Brand strip — same tap-to-filter pattern + real logos as the Quotation Builder */}
           <ScrollView
             horizontal showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ gap: 8, paddingRight: gridPadding, paddingVertical: 2 }}
             style={{ marginHorizontal: -gridPadding, paddingHorizontal: gridPadding }}
           >
-            <CategoryPill label="All" icon="grid" active={!cat} onPress={() => { setCat(null); setSubcat(null); setSeries(null); }} testID="cat-all" />
-            {categories.map((c) => (
+            <BrandPill
+              label="All brands"
+              count={brands.reduce((sum, b) => sum + (brandCounts[b.id] || 0), 0)}
+              active={!brandId}
+              onPress={() => { setBrandId(null); setCat(null); setSubcat(null); setSeries(null); }}
+              testID="brand-pill-all"
+            />
+            {brands.map((b) => (
+              <BrandPill
+                key={b.id}
+                label={b.name}
+                logo={supplierLogoFor(b.name)}
+                count={brandCounts[b.id]}
+                active={brandId === b.id}
+                onPress={() => { setBrandId(brandId === b.id ? null : b.id); setCat(null); setSubcat(null); setSeries(null); }}
+                testID={`brand-pill-${b.id}`}
+              />
+            ))}
+          </ScrollView>
+
+          {/* Category strip with icons — scoped to the selected brand once one is active */}
+          <ScrollView
+            horizontal showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8, paddingRight: gridPadding, paddingVertical: 2 }}
+            style={{ marginHorizontal: -gridPadding, paddingHorizontal: gridPadding }}
+          >
+            <CategoryPill label="All categories" icon="grid" active={!cat} onPress={() => { setCat(null); setSubcat(null); setSeries(null); }} testID="cat-all" />
+            {(categoriesForBrand ?? categories).map((c) => (
               <CategoryPill
                 key={c.id}
                 label={c.name}
@@ -274,18 +315,15 @@ export default function Catalog() {
           {/* Mode toggle + active filter summary row */}
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <View style={{ flex: 1, flexShrink: 1 }}>
-              {(brandId || subcat || series) ? (
+              {(subcat || series) ? (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingRight: 8 }}>
-                  {brandId ? <ActiveChip label={brandById[brandId] || "Brand"} onClose={() => setBrandId(null)} /> : null}
                   {subcat ? <ActiveChip label={subcat} onClose={() => { setSubcat(null); setSeries(null); }} /> : null}
                   {series ? <ActiveChip label={series} onClose={() => setSeries(null)} /> : null}
                   <Pressable onPress={resetFilters} style={styles.clearAll}>
                     <Text style={styles.clearAllText}>Clear</Text>
                   </Pressable>
                 </ScrollView>
-              ) : (
-                <Text style={type.caption} numberOfLines={1}>Vitra · Grohe · Geberit · Hansgrohe · Axor</Text>
-              )}
+              ) : null}
             </View>
             <SegmentedControl<ViewMode>
               testID="mode-toggle"
@@ -349,6 +387,39 @@ export default function Catalog() {
         onReset={resetFilters}
       />
     </View>
+  );
+}
+
+// ---------- Brand pill (logo + label + count) ----------
+function BrandPill({
+  label, logo, count, active, onPress, testID,
+}: {
+  label: string; logo?: any; count?: number;
+  active?: boolean; onPress?: () => void; testID?: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      testID={testID}
+      style={{
+        flexDirection: "row", alignItems: "center", gap: 8,
+        paddingHorizontal: 12, paddingLeft: logo ? 6 : 12, height: 40, borderRadius: 999,
+        borderWidth: 1, borderColor: active ? colors.brand : colors.border,
+        backgroundColor: active ? colors.brand : colors.surfaceSecondary,
+      }}
+    >
+      {logo ? (
+        <View style={styles.brandPillLogoWrap}>
+          <ExpoImage source={logo} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+        </View>
+      ) : null}
+      <Text style={{ color: active ? colors.onBrand : colors.onSurface, fontSize: 13, fontWeight: active ? "700" : "500" }}>{label}</Text>
+      {count != null ? (
+        <Text style={{ color: active ? colors.onBrand : colors.onSurfaceMuted, fontSize: 11, opacity: 0.85 }}>
+          {count.toLocaleString("en-IN")}
+        </Text>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -530,12 +601,6 @@ function FiltersSheet({
       }
     >
       <View style={{ gap: spacing.xl }}>
-        <FilterSection title="Brand">
-          <Chip label="All brands" active={!brandId} onPress={() => setBrandId(null)} testID="brand-all" />
-          {brands.map((b) => (
-            <Chip key={b.id} label={b.name} active={brandId === b.id} onPress={() => setBrandId(brandId === b.id ? null : b.id)} testID={`brand-${b.id}`} />
-          ))}
-        </FilterSection>
         {subcategories.length > 0 ? (
           <FilterSection title="Subcategory">
             <Chip label="Any" active={!subcat} onPress={() => { setSubcat(null); setSeries(null); }} testID="subcat-all" />
@@ -585,6 +650,10 @@ const styles = StyleSheet.create({
   filterDotText: { color: colors.onBrand, fontSize: 9, fontWeight: "800" },
   clearAll: { paddingHorizontal: 10, height: 26, borderRadius: 999, alignItems: "center", justifyContent: "center" },
   clearAllText: { fontSize: 11, fontWeight: "600", color: colors.onSurfaceMuted, textDecorationLine: "underline" },
+  brandPillLogoWrap: {
+    width: 28, height: 28, borderRadius: 14, overflow: "hidden",
+    backgroundColor: "#fff", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
 
   card: {
     backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, overflow: "hidden",

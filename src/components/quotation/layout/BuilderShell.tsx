@@ -27,7 +27,6 @@ import { ProductPickerSheet } from "../sheets/ProductPickerSheet";
 import { RoomSheet } from "../sheets/RoomSheet";
 import { SwapSheet } from "../sheets/SwapSheet";
 import { BuilderTopbar } from "./BuilderTopbar";
-import { MobileSummaryBar } from "./MobileControls";
 
 const THREE_PANE = 1180;
 const TWO_PANE = 820;
@@ -86,10 +85,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
         </View>
       ) : (
         <View style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <View style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-            <QuotationPane />
-          </View>
-          <MobileSummaryBar />
+          <QuotationPane />
         </View>
       )}
 

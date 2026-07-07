@@ -30,7 +30,7 @@ type Item = {
 const NAV: { label: string; icon: FeatherName; href: string; kw?: string }[] = [
   { label: "Today", icon: "sunrise", href: "/(admin)/dashboard", kw: "dashboard home" },
   { label: "Quotations", icon: "file-text", href: "/(admin)/quotations", kw: "quotes pipeline" },
-  { label: "Catalogue", icon: "package", href: "/(admin)/catalog", kw: "products catalog" },
+  { label: "Catalog", icon: "package", href: "/(admin)/catalog", kw: "products catalog" },
   { label: "Customers", icon: "users", href: "/(admin)/customers", kw: "crm accounts" },
   { label: "Purchases", icon: "shopping-cart", href: "/(admin)/purchases", kw: "material orders" },
   { label: "Payments", icon: "credit-card", href: "/(admin)/payments", kw: "collections outstanding" },

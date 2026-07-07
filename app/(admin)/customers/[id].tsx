@@ -186,17 +186,45 @@ export default function CustomerDetail() {
         </View>
 
         {/* Tabs */}
-        <SegmentedControl
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "overview", label: "Overview" },
-            { value: "quotations", label: `Quotations · ${quotations.length}` },
-            { value: "purchases", label: `Purchase Workspace · ${workspace?.summary.total_items ?? purchases.length}` },
-            { value: "timeline", label: "Timeline" },
-          ]}
-          fullWidth={!isDesktop}
-        />
+        {isDesktop ? (
+          <SegmentedControl
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: "overview", label: "Overview" },
+              { value: "quotations", label: `Quotations · ${quotations.length}` },
+              { value: "purchases", label: `Purchases · ${workspace?.summary.total_items ?? purchases.length}` },
+              { value: "timeline", label: "Timeline" },
+            ]}
+            fullWidth
+          />
+        ) : (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+            {[
+              { value: "overview" as const, label: "Overview", icon: "grid" as keyof typeof Feather.glyphMap },
+              { value: "quotations" as const, label: `Quotations · ${quotations.length}`, icon: "file-text" as keyof typeof Feather.glyphMap },
+              { value: "purchases" as const, label: `Purchases · ${workspace?.summary.total_items ?? purchases.length}`, icon: "shopping-cart" as keyof typeof Feather.glyphMap },
+              { value: "timeline" as const, label: "Timeline", icon: "activity" as keyof typeof Feather.glyphMap },
+            ].map((t) => (
+              <Pressable
+                key={t.value}
+                testID={`customer-tab-${t.value}`}
+                onPress={() => setTab(t.value)}
+                style={{
+                  flexDirection: "row", alignItems: "center", gap: 6,
+                  paddingHorizontal: 14, height: 38, borderRadius: 999,
+                  backgroundColor: tab === t.value ? colors.brand : colors.surfaceSecondary,
+                  borderWidth: 1, borderColor: tab === t.value ? colors.brand : colors.border,
+                }}
+              >
+                <Feather name={t.icon} size={13} color={tab === t.value ? colors.onBrand : colors.onSurfaceSecondary} />
+                <Text style={{ fontSize: 12.5, fontWeight: tab === t.value ? "700" : "500", color: tab === t.value ? colors.onBrand : colors.onSurface }} numberOfLines={1}>
+                  {t.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
 
         {/* Body */}
         {tab === "overview" ? (

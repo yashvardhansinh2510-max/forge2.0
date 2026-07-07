@@ -1,9 +1,12 @@
 // QuotationCanvas — the DnD flat list that mixes room headers + lines.
-import { View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import DraggableFlatList, { RenderItemParams } from "react-native-draggable-flatlist";
 
 import { EmptyState } from "@/src/components/ui";
-import { spacing } from "@/src/theme/tokens";
+import { font, radius, spacing } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
+import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 
 import { useBuilder } from "../context/BuilderContext";
 import type { BuilderRow } from "../helpers/types";
@@ -12,6 +15,7 @@ import { RoomHeaderRow } from "./RoomHeaderRow";
 
 export function QuotationCanvas() {
   const b = useBuilder();
+  const { isPhone } = useBreakpoint();
 
   const renderItem = ({ item, drag, isActive }: RenderItemParams<BuilderRow>) => {
     if (item.kind === "room-header") {
@@ -45,8 +49,18 @@ export function QuotationCanvas() {
         <EmptyState
           icon="file-plus"
           title="Add your first product"
-          subtitle="Search on the left and tap to add. Everything totals live."
+          subtitle={isPhone ? "Tap Browse catalog to search and add products. Everything totals live." : "Search on the left and tap to add. Everything totals live."}
         />
+        {isPhone ? (
+          <Pressable
+            testID="empty-browse-catalog"
+            onPress={() => b.setPickerSheetOpen(true)}
+            style={styles.browseBtn}
+          >
+            <Feather name="search" size={15} color={ds.canvas} />
+            <Text style={styles.browseBtnText}>Browse catalog</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
@@ -66,3 +80,12 @@ export function QuotationCanvas() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  browseBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    marginTop: spacing.lg, marginHorizontal: spacing.xl,
+    backgroundColor: ds.brass, paddingVertical: 12, borderRadius: radius.md,
+  },
+  browseBtnText: { color: ds.canvas, fontSize: 14, fontFamily: font.semibold, fontWeight: "600" },
+});

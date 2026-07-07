@@ -514,12 +514,15 @@ export function SegmentedControl<T extends string>({
             }}
           >
             {o.icon ? <Feather name={o.icon} size={13} color={on ? colors.onSurface : colors.onSurfaceMuted} /> : null}
-            <Text style={{
-              fontSize: size === "sm" ? 12 : 13,
-              fontFamily: type.titleMd.fontFamily,
-              fontWeight: on ? "600" : "500",
-              color: on ? colors.onSurface : colors.onSurfaceMuted,
-            }}>
+            <Text
+              numberOfLines={1}
+              style={{
+                fontSize: size === "sm" ? 12 : 13,
+                fontFamily: type.titleMd.fontFamily,
+                fontWeight: on ? "600" : "500",
+                color: on ? colors.onSurface : colors.onSurfaceMuted,
+              }}
+            >
               {o.label}
             </Text>
           </Pressable>

@@ -23,7 +23,7 @@ type NavItem = { href: string; label: string; icon: FeatherName; match: string; 
 const PRIMARY: NavItem[] = [
   { href: "/(admin)/dashboard", label: "Today", icon: "sunrise", match: "dashboard" },
   { href: "/(admin)/quotations", label: "Quotations", icon: "file-text", match: "quotations" },
-  { href: "/(admin)/catalog", label: "Catalogue", icon: "package", match: "catalog" },
+  { href: "/(admin)/catalog", label: "Catalog", icon: "package", match: "catalog" },
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
@@ -210,14 +210,14 @@ function Rail() {
 
 // ── Phone bottom bar + More sheet ───────────────────────────────────────────
 const PHONE_TABS: NavItem[] = [
-  { href: "/(admin)/dashboard", label: "Today", icon: "sunrise", match: "dashboard" },
+  { href: "/(admin)/dashboard", label: "Today", icon: "home", match: "dashboard" },
   { href: "/(admin)/quotations", label: "Quotes", icon: "file-text", match: "quotations" },
 ];
 const PHONE_TABS_RIGHT: NavItem[] = [
-  { href: "/(admin)/followups", label: "Tasks", icon: "phone-call", match: "followups" },
+  { href: "/(admin)/followups", label: "Tasks", icon: "check-square", match: "followups" },
 ];
 const MORE_ITEMS: NavItem[] = [
-  { href: "/(admin)/catalog", label: "Catalogue", icon: "package", match: "catalog" },
+  { href: "/(admin)/catalog", label: "Catalog", icon: "package", match: "catalog" },
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
@@ -240,8 +240,10 @@ function PhoneBar() {
     const on = isActive(item.match);
     return (
       <Pressable testID={`bottom-nav-${item.match}`} onPress={() => router.push(item.href as any)} style={styles.tab}>
-        <Feather name={item.icon} size={21} color={on ? color.ink : color.inkFaint} />
-        <Text style={[styles.tabLabel, { color: on ? color.ink : color.inkFaint }]}>{item.label}</Text>
+        <View style={[styles.tabIconWrap, on && styles.tabIconWrapActive]}>
+          <Feather name={item.icon} size={19} color={on ? color.brass : color.inkFaint} />
+        </View>
+        <Text style={[styles.tabLabel, on && styles.tabLabelActive]}>{item.label}</Text>
       </Pressable>
     );
   };
@@ -257,17 +259,20 @@ function PhoneBar() {
             onPress={() => router.push("/(admin)/quotations/new" as any)}
             style={({ pressed }) => [styles.fab, { transform: [{ scale: pressed ? 0.94 : 1 }] }]}
           >
-            <Feather name="plus" size={24} color={color.onAction} />
+            <Feather name="plus" size={22} color={color.onAction} />
           </Pressable>
         </View>
         {PHONE_TABS_RIGHT.map((t) => <Tab key={t.href} item={t} />)}
         <Pressable testID="bottom-nav-more" onPress={() => setMoreOpen(true)} style={styles.tab}>
-          <Feather name="grid" size={21} color={moreActive ? color.ink : color.inkFaint} />
-          <Text style={[styles.tabLabel, { color: moreActive ? color.ink : color.inkFaint }]}>More</Text>
+          <View style={[styles.tabIconWrap, moreActive && styles.tabIconWrapActive]}>
+            <Feather name="menu" size={19} color={moreActive ? color.brass : color.inkFaint} />
+          </View>
+          <Text style={[styles.tabLabel, moreActive && styles.tabLabelActive]}>More</Text>
         </Pressable>
       </View>
 
       <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title="More">
+
         <Pressable
           onPress={() => { setMoreOpen(false); setTimeout(palette.open, 250); }}
           style={styles.moreRow}
@@ -380,8 +385,13 @@ const styles = StyleSheet.create({
     height: layout.bottomBar, flexDirection: "row", alignItems: "center",
     paddingHorizontal: space.x2,
   },
-  tab: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6, gap: 2 },
-  tabLabel: { fontFamily: font.medium, fontWeight: "500", fontSize: 10 },
+  tab: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6, gap: 3 },
+  tabIconWrap: {
+    width: 40, height: 26, borderRadius: radius.md, alignItems: "center", justifyContent: "center",
+  },
+  tabIconWrapActive: { backgroundColor: color.brassTint },
+  tabLabel: { fontFamily: font.medium, fontWeight: "500", fontSize: 10.5, color: color.inkFaint, letterSpacing: 0.1 },
+  tabLabelActive: { color: color.ink, fontWeight: "600" },
   fabSlot: { width: 68, alignItems: "center", justifyContent: "center" },
   fab: {
     width: 52, height: 52, borderRadius: 26, backgroundColor: color.brass,
