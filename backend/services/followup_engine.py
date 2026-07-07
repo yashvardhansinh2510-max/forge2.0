@@ -50,6 +50,8 @@ RULE_DEFINITIONS = [
      "description": f"All items delivered within the last {DELIVERED_RECENCY_DAYS} days."},
     {"rule_type": "customer_inactive", "label": "Customer inactive", "category": "sales",
      "description": f"No quotation activity for {CUSTOMER_INACTIVE_DAYS}+ days."},
+    {"rule_type": "shortage_reorder", "label": "Awaiting reorder", "category": "purchase",
+     "description": "A transfer left this customer's original order under-fulfilled — recommend a reorder PO."},
 ]
 
 
@@ -374,6 +376,38 @@ async def reconcile_followups() -> dict:
                     next_action_reason="Delivery complete — the ideal moment to check satisfaction and ask for referrals.",
                     channel="call", tags=tags, days_since_contact=days_since_contact,
                 )
+
+    # ---- Shortage-reorder rule (transfer left a customer under-fulfilled) ------
+    quotations_by_id = {q["id"]: q for q in quotations}
+    shortages = await db.purchase_shortages.find({"status": "awaiting_reorder"}, {"_id": 0}).to_list(2000)
+    for s in shortages:
+        cust = customers.get(s.get("customer_id"))
+        if not cust:
+            continue
+        tier = cust.get("tier", "retail")
+        sq = quotations_by_id.get(s.get("quotation_id"))
+        unit_price = 0.0
+        if sq:
+            line = next((l for l in sq.get("items", []) if l.get("id") == s.get("quotation_line_id")), None)
+            if line:
+                unit_price = float(line.get("unit_price") or 0)
+        value = round(unit_price * float(s.get("shortage_qty") or 0), 2)
+        last_contact = contact_map.get(cust["id"]) or parse_iso(s.get("updated_at"))
+        days_since_contact = age_days(last_contact)
+        shortage_qty = s.get("shortage_qty") or 0
+        upsert(
+            f"shortage_reorder:{s['id']}", "shortage_reorder", "purchase", cust,
+            quotation=sq, value=value, due_at=now_iso(),
+            urgency_bullet=f"{shortage_qty:g} unit(s) awaiting reorder", urgency_pts=22,
+            reason=(
+                f"{shortage_qty:g} × {s.get('name')} still owed after transferring stock to "
+                f"{s.get('transferred_to_customer_name') or 'another customer'} — reorder to fulfil "
+                f"{cust.get('company') or cust.get('name')}."
+            ),
+            next_action="Create purchase order",
+            next_action_reason="Stock was reallocated to another customer — this order is now short.",
+            channel="call", tags=[tier.upper(), "SHORTAGE"], days_since_contact=days_since_contact,
+        )
 
     # ---- Customer-inactivity rule -----------------------------------------------
     quotations_by_customer: dict[str, list[dict]] = {}

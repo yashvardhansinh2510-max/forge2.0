@@ -15,6 +15,7 @@ import {
   SegmentedControl, StatTile, StatusBadge,
 } from "@/src/components/ui";
 import { api } from "@/src/api/client";
+import { toast } from "@/src/components/Toast";
 import { colors, icon as iconSize, money, radius, spacing, type } from "@/src/theme/tokens";
 import {
   HistorySheet, MovableItem, MoveStageSheet, STAGE_TONE, TransferSheet,
@@ -33,12 +34,18 @@ type WorkspaceProduct = {
   brand_name?: string | null; supplier_name?: string | null; stage: string; stage_label: string;
   qty: number; unit_cost: number; blocked: boolean; age_days: number; customer_id: string; customer_name: string;
 };
+type WorkspaceShortage = {
+  id: string; sku: string; name: string; image?: string | null;
+  committed_qty: number; allocated_qty: number; shortage_qty: number;
+  reason: string; transferred_to_customer_name?: string | null; status: string;
+};
 type Workspace = {
   customer: Customer;
   summary: {
     total_items: number; total_value: number; outstanding_value: number; outstanding_count: number;
-    open_pos: number; blocked_count: number; delivered_count: number;
+    open_pos: number; blocked_count: number; delivered_count: number; shortage_count: number;
   };
+  shortages: WorkspaceShortage[];
   products: WorkspaceProduct[];
   brands: { id: string | null; name: string; count: number }[];
   stages: { key: string; label: string; count: number }[];
@@ -89,6 +96,28 @@ export default function CustomerDetail() {
     stage: p.stage as any, customer_id: p.customer_id, customer_name: p.customer_name,
     po_number: p.po_number, brand_name: p.brand_name, supplier_name: p.supplier_name,
   }), []);
+
+  const [shortageBusy, setShortageBusy] = useState<string | null>(null);
+  const createPoForShortage = async (s: WorkspaceShortage) => {
+    setShortageBusy(s.id);
+    try {
+      const r = await api.post<{ po_number: string }>(`/purchases/shortages/${s.id}/create-po`);
+      toast.success(`Reorder PO ${r.po_number} created`);
+      await load();
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not create PO");
+    } finally { setShortageBusy(null); }
+  };
+  const dismissShortage = async (s: WorkspaceShortage) => {
+    setShortageBusy(s.id);
+    try {
+      await api.post(`/purchases/shortages/${s.id}/dismiss`, {});
+      toast.success("Shortage dismissed");
+      await load();
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not dismiss");
+    } finally { setShortageBusy(null); }
+  };
 
   const visibleProducts = useMemo(() => {
     if (!workspace) return [];
@@ -217,6 +246,51 @@ export default function CustomerDetail() {
             </Card>
           ) : (
             <View style={{ gap: spacing.lg }}>
+              {/* Shortage / reorder alerts — raised automatically when a transfer left this
+                  customer under-fulfilled against their original order. */}
+              {workspace.shortages.length > 0 ? (
+                <View style={{ gap: spacing.sm }}>
+                  {workspace.shortages.map((s) => (
+                    <Card key={s.id} style={{ backgroundColor: "#FBEAEA", borderColor: "#EFC2C2" }}>
+                      <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "flex-start" }}>
+                        <Feather name="alert-triangle" size={16} color={colors.error} style={{ marginTop: 2 }} />
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                          <Text style={{ fontSize: 13, fontWeight: "700", color: "#8A2C2C" }}>
+                            Product transferred · {s.name}
+                          </Text>
+                          <Text style={{ fontSize: 12.5, color: "#8A2C2C", marginTop: 2 }}>
+                            {s.reason}
+                          </Text>
+                          <View style={styles.awaitingReorderPill}>
+                            <Text style={{ fontSize: 10.5, fontWeight: "700", color: "#8A2C2C" }}>
+                              STATUS: AWAITING REORDER
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={{ gap: 6 }}>
+                          <Button
+                            label="Create PO"
+                            size="sm"
+                            icon="plus"
+                            loading={shortageBusy === s.id}
+                            onPress={() => createPoForShortage(s)}
+                            testID={`shortage-create-po-${s.id}`}
+                          />
+                          <Button
+                            label="Dismiss"
+                            size="sm"
+                            variant="ghost"
+                            loading={shortageBusy === s.id}
+                            onPress={() => dismissShortage(s)}
+                            testID={`shortage-dismiss-${s.id}`}
+                          />
+                        </View>
+                      </View>
+                    </Card>
+                  ))}
+                </View>
+              ) : null}
+
               {/* Expected delivery banner */}
               {workspace.expected_delivery.next_at ? (
                 <Card style={{ backgroundColor: "#FBF0DD", borderColor: "#E7C77A" }}>
@@ -478,5 +552,10 @@ const styles = StyleSheet.create({
   filterChip: {
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  awaitingReorderPill: {
+    alignSelf: "flex-start", marginTop: 6,
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+    backgroundColor: "#F5D5D5",
   },
 });

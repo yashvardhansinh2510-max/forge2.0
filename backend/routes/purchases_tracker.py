@@ -38,10 +38,11 @@ from pydantic import BaseModel, Field
 from auth import get_current_user, require_min_role
 from db import db
 from models import (
-    PurchaseOrder, PurchaseOrderItem, PurchaseStageEvent, PurchaseStatusEvent,
-    PURCHASE_STAGES, PurchaseStage, UserPublic, now_iso,
+    PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
+    PURCHASE_STAGES, PurchaseStage, Quotation, QuotationLineItem, UserPublic, now_iso,
 )
 from routes.purchase_routes import ALLOWED_TRANSITIONS, STATUS_LABELS
+from routes.quotation_routes import _next_number as _next_quotation_number
 from services.activity_log import log_event, timeline_for
 from services.followup_engine import reconcile_followups
 
@@ -374,6 +375,10 @@ async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_curre
 
     activity = await timeline_for(customer_id=customer_id, limit=15)
 
+    shortages = await db.purchase_shortages.find(
+        {"customer_id": customer_id, "status": "awaiting_reorder"}, {"_id": 0},
+    ).sort("created_at", -1).to_list(100)
+
     open_pos = [p for p in pos if p.get("status") != "cancelled"]
     expected = sorted(
         [
@@ -396,7 +401,9 @@ async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_curre
             "open_pos": len(open_pos),
             "blocked_count": len(blocked_rows),
             "delivered_count": len(delivered_rows),
+            "shortage_count": len(shortages),
         },
+        "shortages": shortages,
         "products": rows,
         "brands": sorted(brand_map.values(), key=lambda x: -x["count"]),
         "stages": stages,
@@ -804,6 +811,113 @@ async def _next_po_number() -> str:
     return f"{prefix}{n:04d}"
 
 
+async def _selling_price_for(item: dict, po: dict) -> float:
+    """Best-effort customer-facing unit price for an auto-generated order.
+
+    Preference order: (1) the ORIGINAL quotation line this item traces back
+    to — the fairest number, since it's literally what the customer already
+    agreed to pay for this exact SKU; (2) the product's current catalogue
+    price; (3) the PO's unit_cost as an honest last resort (better than 0).
+    """
+    quotation_id = po.get("quotation_id")
+    line_id = item.get("quotation_line_id")
+    if quotation_id and line_id:
+        q = await db.quotations.find_one({"id": quotation_id}, {"_id": 0, "items": 1})
+        if q:
+            line = next((l for l in q.get("items", []) if l.get("id") == line_id), None)
+            if line and line.get("unit_price") is not None:
+                return float(line["unit_price"])
+    prod = await db.products.find_one({"id": item.get("product_id")}, {"_id": 0, "price": 1})
+    if prod and prod.get("price"):
+        return float(prod["price"])
+    return float(item.get("unit_cost") or 0)
+
+
+async def _reconcile_shortage_for_line(
+    *, quotation_id: Optional[str], quotation_line_id: Optional[str],
+    customer_id: str, customer_name: str, product_id: str, sku: str, name: str,
+    image: Optional[str], dest_customer_id: str, dest_customer_name: str,
+    transferred_qty: float, user: UserPublic,
+) -> Optional[dict]:
+    """Recompute the shortage for ONE customer's ONE original commitment after
+    a transfer moved units away from them. Purely additive — never blocks the
+    transfer, only opens/updates/auto-resolves a `purchase_shortages` record.
+    """
+    if not quotation_id or not quotation_line_id:
+        return None  # this item was never tied to a customer commitment — nothing to protect
+
+    q = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    if not q:
+        return None
+    line = next((l for l in q.get("items", []) if l.get("id") == quotation_line_id), None)
+    if not line:
+        return None
+    committed_qty = float(line.get("qty") or 0)
+    if committed_qty <= 0:
+        return None
+
+    # Allocated = everything still sitting under this customer's name across
+    # every PO that traces back to this exact quotation line.
+    pipeline = [
+        {"$match": {"items.quotation_line_id": quotation_line_id}},
+        {"$unwind": "$items"},
+        {"$match": {"items.quotation_line_id": quotation_line_id, "items.customer_id": customer_id}},
+        {"$group": {"_id": None, "total": {"$sum": "$items.qty"}}},
+    ]
+    rows = await db.purchase_orders.aggregate(pipeline).to_list(1)
+    allocated_qty = float(rows[0]["total"]) if rows else 0.0
+    shortage_qty = round(committed_qty - allocated_qty, 4)
+
+    existing = await db.purchase_shortages.find_one(
+        {"quotation_line_id": quotation_line_id, "customer_id": customer_id, "status": "awaiting_reorder"},
+        {"_id": 0},
+    )
+    now = now_iso()
+
+    if shortage_qty > 1e-6:
+        reason = (
+            f"{transferred_qty:g} unit(s) of {name} transferred to {dest_customer_name} — "
+            f"{shortage_qty:g} of the original {committed_qty:g} still need to be reordered."
+        )
+        fields = {
+            "customer_id": customer_id, "customer_name": customer_name,
+            "quotation_id": quotation_id, "quotation_number": q.get("number"),
+            "quotation_line_id": quotation_line_id,
+            "product_id": product_id, "sku": sku, "name": name, "image": image,
+            "committed_qty": committed_qty, "allocated_qty": allocated_qty, "shortage_qty": shortage_qty,
+            "status": "awaiting_reorder", "reason": reason,
+            "transferred_to_customer_id": dest_customer_id, "transferred_to_customer_name": dest_customer_name,
+            "updated_at": now,
+        }
+        if existing:
+            await db.purchase_shortages.update_one({"id": existing["id"]}, {"$set": fields})
+            shortage_id = existing["id"]
+        else:
+            doc = PurchaseShortage(**fields)
+            await db.purchase_shortages.insert_one(doc.dict())
+            shortage_id = doc.id
+        await log_event(
+            event_type="purchase.shortage_flagged",
+            entity_type="purchase", entity_id=shortage_id, actor=user,
+            customer_id=customer_id, quotation_id=quotation_id,
+            summary=f"⚠ Awaiting reorder — {shortage_qty:g} × {name}",
+            payload={**fields, "id": shortage_id},
+        )
+        return {"id": shortage_id, **fields}
+
+    # No shortage (or resolved itself) — close out any previously-open record.
+    if existing:
+        await db.purchase_shortages.update_one(
+            {"id": existing["id"]},
+            {"$set": {
+                "status": "resolved", "resolved_at": now,
+                "resolved_by": user.id, "resolved_by_name": user.full_name,
+                "allocated_qty": allocated_qty, "shortage_qty": 0, "updated_at": now,
+            }},
+        )
+    return None
+
+
 @router.post("/items/{item_id}/transfer")
 async def transfer_item(
     item_id: str,
@@ -846,6 +960,35 @@ async def transfer_item(
     now = now_iso()
     stage = it.get("stage") or "order_in_company"
 
+    # Auto-generate the "order" this transfer represents for the destination
+    # customer BEFORE building the PO — Payments/Follow-ups only ever look at
+    # Quotations with status ordered/won, so this one insert is what makes
+    # "Customer B appears in Payments automatically" true with ZERO changes
+    # to the Payments module itself.
+    unit_price = await _selling_price_for(it, po)
+    auto_line = QuotationLineItem(
+        product_id=it["product_id"], sku=it["sku"], name=it["name"],
+        image=it.get("image"), category_id=it.get("category_id"), room=it.get("room"),
+        qty=float(body.qty), unit_price=unit_price,
+    )
+    auto_quotation_number = await _next_quotation_number()
+    auto_quotation = Quotation(
+        number=auto_quotation_number,
+        customer_id=body.new_customer_id,
+        customer_name=new_cust.get("company") or new_cust.get("name"),
+        status="ordered",
+        items=[auto_line],
+        subtotal=round(auto_line.net, 2),
+        grand_total=round(auto_line.net, 2),
+        notes=(
+            f"Auto-created by transfer — {body.qty:g} × {it['name']} from "
+            f"{po.get('customer_name')} ({po.get('number')})"
+            + (f" — {body.reason}" if body.reason else "")
+        ),
+        created_by=user.id, created_by_name=user.full_name,
+        source="transfer",
+    )
+
     # Build the destination item — same shape, fresh id, transfer bookkeeping.
     dest_item_id = str(uuid4())
     dest_item = PurchaseOrderItem(
@@ -853,7 +996,7 @@ async def transfer_item(
         product_id=it["product_id"], sku=it["sku"], name=it["name"],
         image=it.get("image"), category_id=it.get("category_id"), room=it.get("room"),
         qty=float(body.qty), unit_cost=float(it.get("unit_cost") or 0),
-        quotation_line_id=None,     # detach — new customer owns this line now
+        quotation_line_id=auto_line.id,     # now owned by the auto-generated order, not the old one
         stage=stage,
         customer_id=body.new_customer_id,
         customer_name=new_cust.get("company") or new_cust.get("name"),
@@ -878,8 +1021,8 @@ async def transfer_item(
     number = await _next_po_number()
     dest_po = PurchaseOrder(
         number=number,
-        quotation_id=None,
-        quotation_number=None,
+        quotation_id=auto_quotation.id,
+        quotation_number=auto_quotation.number,
         customer_id=body.new_customer_id,
         customer_name=new_cust.get("company") or new_cust.get("name"),
         brand_id=it.get("brand_id") or po.get("brand_id"),
@@ -905,6 +1048,23 @@ async def transfer_item(
         ],
     )
     await db.purchase_orders.insert_one(dest_po.dict())
+    auto_quotation.source_purchase_order_id = dest_po.id
+    auto_quotation.source_item_id = dest_item_id
+    await db.quotations.insert_one(auto_quotation.dict())
+    await log_event(
+        event_type="quotation.auto_created_from_transfer",
+        entity_type="quotation", entity_id=auto_quotation.id, actor=user,
+        customer_id=body.new_customer_id, quotation_id=auto_quotation.id,
+        summary=(
+            f"Order {auto_quotation.number} auto-created — ₹{auto_quotation.grand_total:,.0f} due "
+            f"from a {body.qty:g}-unit transfer"
+        ),
+        payload={
+            "quotation_id": auto_quotation.id, "quotation_number": auto_quotation.number,
+            "grand_total": auto_quotation.grand_total, "dest_po_id": dest_po.id,
+            "dest_po_number": dest_po.number, "src_po_number": po.get("number"),
+        },
+    )
 
     # Update source — reduce qty or drop the item if 0.
     remaining = round(cur_qty - float(body.qty), 4)
@@ -978,6 +1138,24 @@ async def transfer_item(
         },
     )
 
+    # ---- Shortage tracking for the ORIGINAL customer -------------------------
+    # If this item traced back to a real quotation commitment, check whether
+    # that commitment is now under-fulfilled and raise/refresh the alert.
+    shortage = await _reconcile_shortage_for_line(
+        quotation_id=po.get("quotation_id"),
+        quotation_line_id=it.get("quotation_line_id"),
+        customer_id=src_customer_id, customer_name=po.get("customer_name"),
+        product_id=it["product_id"], sku=it["sku"], name=it["name"], image=it.get("image"),
+        dest_customer_id=body.new_customer_id,
+        dest_customer_name=new_cust.get("company") or new_cust.get("name"),
+        transferred_qty=float(body.qty), user=user,
+    )
+
+    # Payment/Follow-up automation must reflect this transfer immediately —
+    # the new order needs its own reminder timeline, and a shortage (if any)
+    # needs to surface as a "recommend reorder" card. Event-triggered, no cron.
+    asyncio.create_task(reconcile_followups())
+
     return {
         "source": {
             "po_id": po["id"], "po_number": po.get("number"),
@@ -989,8 +1167,125 @@ async def transfer_item(
             "item_id": dest_item_id, "qty": float(body.qty),
             "customer_id": body.new_customer_id,
             "customer_name": new_cust.get("company") or new_cust.get("name"),
+            "order": {
+                "quotation_id": auto_quotation.id, "quotation_number": auto_quotation.number,
+                "grand_total": auto_quotation.grand_total, "unit_price": unit_price,
+            },
         },
+        "shortage": shortage,
     }
+
+
+# =============================================================================
+# Shortages — "Awaiting Reorder" alerts opened by the transfer workflow above.
+# =============================================================================
+class ShortageDismissBody(BaseModel):
+    note: Optional[str] = None
+
+
+@router.get("/shortages")
+async def list_shortages(
+    customer_id: Optional[str] = None,
+    status_filter: str = Query("awaiting_reorder", alias="status"),
+    limit: int = Query(200, ge=1, le=1000),
+    _: UserPublic = Depends(get_current_user),
+):
+    query: dict = {}
+    if status_filter and status_filter != "all":
+        query["status"] = status_filter
+    if customer_id:
+        query["customer_id"] = customer_id
+    docs = await db.purchase_shortages.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    return {"count": len(docs), "items": docs}
+
+
+@router.post("/shortages/{shortage_id}/create-po")
+async def create_po_for_shortage(
+    shortage_id: str,
+    user: UserPublic = Depends(require_min_role("purchase")),
+):
+    """One click on the "Create Purchase Order" recommendation — opens a new
+    draft PO for exactly the missing quantity, for the same customer, at the
+    first stage. Never runs automatically; a human always presses this."""
+    s = await db.purchase_shortages.find_one({"id": shortage_id}, {"_id": 0})
+    if not s:
+        raise HTTPException(status_code=404, detail="Shortage not found")
+    if s.get("status") != "awaiting_reorder":
+        raise HTTPException(status_code=400, detail="Shortage is not open")
+
+    now = now_iso()
+    item = PurchaseOrderItem(
+        product_id=s["product_id"], sku=s["sku"], name=s["name"], image=s.get("image"),
+        qty=float(s["shortage_qty"]), unit_cost=0,
+        quotation_line_id=s.get("quotation_line_id"),
+        stage="order_in_company",
+        customer_id=s["customer_id"], customer_name=s["customer_name"],
+        last_moved_at=now, last_moved_by=user.id, last_moved_by_name=user.full_name,
+        stage_history=[
+            PurchaseStageEvent(
+                from_stage=None, to_stage="order_in_company",
+                by_user_id=user.id, by_user_name=user.full_name,
+                note="Reorder for shortage created by a customer transfer", action="create",
+            )
+        ],
+    )
+    number = await _next_po_number()
+    new_po = PurchaseOrder(
+        number=number,
+        quotation_id=s.get("quotation_id"), quotation_number=s.get("quotation_number"),
+        customer_id=s["customer_id"], customer_name=s["customer_name"],
+        status="draft", items=[item],
+        internal_notes=f"Reorder — {s.get('reason')}",
+        subtotal=0, grand_total=0,
+        created_by=user.id, created_by_name=user.full_name,
+        status_history=[
+            PurchaseStatusEvent(
+                from_status=None, to_status="draft",
+                by_user_id=user.id, by_user_name=user.full_name,
+                note="Created from a shortage recommendation",
+            ).dict()
+        ],
+    )
+    await db.purchase_orders.insert_one(new_po.dict())
+    await db.purchase_shortages.update_one(
+        {"id": shortage_id},
+        {"$set": {
+            "status": "reordered", "resolved_po_id": new_po.id, "resolved_po_number": new_po.number,
+            "resolved_at": now, "resolved_by": user.id, "resolved_by_name": user.full_name,
+            "updated_at": now,
+        }},
+    )
+    await log_event(
+        event_type="purchase.shortage_reordered",
+        entity_type="purchase", entity_id=new_po.id, actor=user,
+        customer_id=s["customer_id"], quotation_id=s.get("quotation_id"),
+        summary=f"Reorder PO {new_po.number} created for {s['shortage_qty']:g} × {s['name']}",
+        payload={"shortage_id": shortage_id, "po_id": new_po.id, "po_number": new_po.number},
+    )
+    asyncio.create_task(reconcile_followups())
+    return {"po_id": new_po.id, "po_number": new_po.number, "shortage_id": shortage_id}
+
+
+@router.post("/shortages/{shortage_id}/dismiss")
+async def dismiss_shortage(
+    shortage_id: str,
+    body: ShortageDismissBody,
+    user: UserPublic = Depends(require_min_role("purchase")),
+):
+    s = await db.purchase_shortages.find_one({"id": shortage_id}, {"_id": 0})
+    if not s:
+        raise HTTPException(status_code=404, detail="Shortage not found")
+    now = now_iso()
+    await db.purchase_shortages.update_one(
+        {"id": shortage_id},
+        {"$set": {
+            "status": "dismissed", "resolved_at": now,
+            "resolved_by": user.id, "resolved_by_name": user.full_name,
+            "reason": body.note or s.get("reason"), "updated_at": now,
+        }},
+    )
+    asyncio.create_task(reconcile_followups())
+    return {"ok": True}
 
 
 # =============================================================================
