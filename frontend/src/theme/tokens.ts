@@ -13,14 +13,14 @@ import { Platform } from "react-native";
 // (src/design/tokens.ts): warm neutrals, ink action, muted statuses.
 // New code must import from @/src/design/tokens instead of this file.
 const palette = {
-  // "blue*" — now INK (the primary action color of the Showroom language)
-  blue50:  "#F1EEE8",
-  blue100: "#E7E2D9",
-  blue200: "#D8D2C6",
-  blue500: "#57534B",
-  blue600: "#1D1B16",   // primary action — ink
-  blue700: "#33302A",   // hover
-  blue900: "#1D1B16",
+  // Brass is the only accent and every primary CTA uses it.
+  blue50:  "#F1EAE0",
+  blue100: "#E6D8C2",
+  blue200: "#D9CCB8",
+  blue500: "#8C7351",
+  blue600: "#8C7351",   // primary action — brushed brass
+  blue700: "#6E5A3F",   // hover
+  blue900: "#6E5A3F",
 
   // Warm architectural neutrals
   gray0:   "#FFFFFF",   // cards
@@ -79,14 +79,14 @@ export const colors = {
   onSurfaceSubtle: palette.gray400,    // placeholders, disabled
   onSurfaceInverse: palette.gray0,     // text on dark
 
-  // Brand — LOCKED to #2563EB
+  // Brand — BuildCon House brass (single accent)
   brand: palette.blue600,
   brandHover: palette.blue700,
-  brandTint: palette.blue50,           // faint blue background wash
+  brandTint: palette.blue50,
   brandTintStrong: palette.blue100,
   brandBorder: palette.blue200,
   onBrand: palette.gray0,
-  brandSecondary: palette.gray900,     // neutral dark for "secondary CTA"
+  brandSecondary: palette.gray900,     // neutral secondary CTA
 
   // Borders & dividers — LOCKED to #E5E7EB
   border: palette.gray100,             // #E5E7EB — default hairline

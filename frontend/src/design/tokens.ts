@@ -53,9 +53,9 @@ export const color = {
   inkSoft: pal.ink3,
   inkFaint: pal.ink4,
 
-  // The primary action is ink — confident, architectural.
-  action: pal.ink,
-  actionHover: pal.inkHover,
+  // The primary action is brass; ink remains text/chrome.
+  action: pal.brass,
+  actionHover: pal.brassDeep,
   onAction: pal.white,
 
   // Brass — guidance & emphasis. Active nav bar, focus ring, selected marks.

@@ -799,7 +799,7 @@ export function BuilderProvider({ onFinalize, children }: {
 
   // Web-only: cmd/ctrl+K focuses search
   useEffect(() => {
-    if (Platform.OS !== "web") return;
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();

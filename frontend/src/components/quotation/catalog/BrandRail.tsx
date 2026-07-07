@@ -18,7 +18,7 @@ import { useBuilder } from "../context/BuilderContext";
 import { RecentQuotationsPanel } from "../panes/RecentQuotationsPanel";
 import type { Category } from "../helpers/types";
 
-export function BrandRail() {
+export function BrandRail({ collapsed = false, onToggleCollapsed }: { collapsed?: boolean; onToggleCollapsed?: () => void }) {
   const b = useBuilder();
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -68,42 +68,58 @@ export function BrandRail() {
 
   return (
     <View style={styles.panel}>
-      <View style={styles.head}>
-        <View style={styles.searchWrap}>
-          <Feather name="search" size={13} color={colors.onSurfaceMuted} />
-          <TextInput
-            value={q}
-            onChangeText={setQ}
-            placeholder="Search brands"
-            placeholderTextColor={colors.onSurfaceMuted}
-            style={styles.searchInput}
-            testID="rail-search"
-          />
-          {q ? (
-            <Pressable hitSlop={6} onPress={() => setQ("")}>
-              <Feather name="x" size={12} color={colors.onSurfaceMuted} />
-            </Pressable>
-          ) : null}
-        </View>
+      <View style={[styles.head, collapsed && styles.headCollapsed]}>
+        <Pressable
+          onPress={onToggleCollapsed}
+          style={[styles.collapseBtn, collapsed && { alignSelf: "center" }]}
+          hitSlop={8}
+          testID="rail-collapse-toggle"
+          accessibilityLabel={collapsed ? "Expand brand rail" : "Collapse brand rail"}
+        >
+          <Feather name={collapsed ? "chevrons-right" : "chevrons-left"} size={14} color={ds.brassDeep} />
+          {!collapsed ? <Text style={styles.collapseLabel}>Brands</Text> : null}
+        </Pressable>
+        {!collapsed ? (
+          <View style={styles.searchWrap}>
+            <Feather name="search" size={13} color={colors.onSurfaceMuted} />
+            <TextInput
+              value={q}
+              onChangeText={setQ}
+              placeholder="Search brands"
+              placeholderTextColor={colors.onSurfaceMuted}
+              style={styles.searchInput}
+              testID="rail-search"
+            />
+            {q ? (
+              <Pressable hitSlop={6} onPress={() => setQ("")}>
+                <Feather name="x" size={12} color={colors.onSurfaceMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
       </View>
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingVertical: 6, paddingHorizontal: 8 }}
+        contentContainerStyle={{ paddingVertical: 6, paddingHorizontal: collapsed ? 6 : 8 }}
         showsVerticalScrollIndicator={false}
       >
         <Pressable
           onPress={onTapAll}
-          style={[styles.item, !b.selectedBrandId && styles.itemActive]}
+          style={[styles.item, collapsed && styles.itemCollapsed, !b.selectedBrandId && styles.itemActive]}
           testID="rail-brand-all"
         >
           <View style={styles.itemIcon}>
             <Feather name="grid" size={13} color={colors.onSurfaceSecondary} />
           </View>
-          <Text style={[styles.itemLabel, !b.selectedBrandId && styles.itemLabelActive]} numberOfLines={1}>
-            All brands
-          </Text>
-          <Text style={styles.itemCount}>{b.brands.reduce((s, br) => s + (br.product_count || 0), 0)}</Text>
+          {!collapsed ? (
+            <>
+              <Text style={[styles.itemLabel, !b.selectedBrandId && styles.itemLabelActive]} numberOfLines={1}>
+                All brands
+              </Text>
+              <Text style={styles.itemCount}>{b.brands.reduce((s, br) => s + (br.product_count || 0), 0)}</Text>
+            </>
+          ) : null}
         </Pressable>
 
         {filteredBrands.map((br) => {
@@ -114,25 +130,29 @@ export function BrandRail() {
             <View key={br.id}>
               <Pressable
                 onPress={() => onTapBrand(br.id)}
-                style={[styles.item, on && styles.itemActive]}
+                style={[styles.item, collapsed && styles.itemCollapsed, on && styles.itemActive]}
                 testID={`rail-brand-${br.name}`}
               >
                 <View style={styles.brandBadge}>
                   <Text style={styles.brandBadgeText}>{(br.name || "?").slice(0, 2).toUpperCase()}</Text>
                 </View>
-                <Text style={[styles.itemLabel, on && styles.itemLabelActive]} numberOfLines={1}>
-                  {br.name}
-                </Text>
-                <Text style={styles.itemCount}>{br.product_count || 0}</Text>
-                <Feather
-                  name="chevron-right"
-                  size={13}
-                  color={colors.onSurfaceMuted}
-                  style={{ transform: [{ rotate: isOpen ? "90deg" : "0deg" }] }}
-                />
+                {!collapsed ? (
+                  <>
+                    <Text style={[styles.itemLabel, on && styles.itemLabelActive]} numberOfLines={1}>
+                      {br.name}
+                    </Text>
+                    <Text style={styles.itemCount}>{br.product_count || 0}</Text>
+                    <Feather
+                      name="chevron-right"
+                      size={13}
+                      color={colors.onSurfaceMuted}
+                      style={{ transform: [{ rotate: isOpen ? "90deg" : "0deg" }] }}
+                    />
+                  </>
+                ) : null}
               </Pressable>
 
-              {isOpen ? (
+              {!collapsed && isOpen ? (
                 loadingBrandId === br.id ? (
                   <View style={{ paddingVertical: 10, alignItems: "center" }}>
                     <ActivityIndicator size="small" color={ds.brass} />
@@ -172,22 +192,26 @@ export function BrandRail() {
           );
         })}
 
-        {/* Quick action row */}
-        <View style={styles.quickActionsWrap}>
-          <Text style={styles.groupLabel}>Quick actions</Text>
-          <Pressable style={styles.quickAction} onPress={() => b.setCustomProductSheetOpen(true)} testID="rail-custom-product">
-            <Feather name="plus" size={14} color={colors.onSurface} />
-            <Text style={styles.quickActionLabel}>Custom product</Text>
-          </Pressable>
-          <Pressable style={styles.quickAction} onPress={() => b.searchRef.current?.focus()} testID="rail-focus-search">
-            <Feather name="search" size={14} color={colors.onSurface} />
-            <Text style={styles.quickActionLabel}>Search catalog</Text>
-            <Text style={styles.kbHint}>⌘K</Text>
-          </Pressable>
-        </View>
+        {!collapsed ? (
+          <>
+            {/* Quick action row */}
+            <View style={styles.quickActionsWrap}>
+              <Text style={styles.groupLabel}>Quick actions</Text>
+              <Pressable style={styles.quickAction} onPress={() => b.setCustomProductSheetOpen(true)} testID="rail-custom-product">
+                <Feather name="plus" size={14} color={colors.onSurface} />
+                <Text style={styles.quickActionLabel}>Custom product</Text>
+              </Pressable>
+              <Pressable style={styles.quickAction} onPress={() => b.searchRef.current?.focus()} testID="rail-focus-search">
+                <Feather name="search" size={14} color={colors.onSurface} />
+                <Text style={styles.quickActionLabel}>Search catalog</Text>
+                <Text style={styles.kbHint}>⌘K</Text>
+              </Pressable>
+            </View>
 
-        {/* Recent quotations */}
-        <RecentQuotationsPanel />
+            {/* Recent quotations */}
+            <RecentQuotationsPanel />
+          </>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -196,6 +220,13 @@ export function BrandRail() {
 const styles = StyleSheet.create({
   panel: { flex: 1, backgroundColor: ds.canvas, borderRightWidth: StyleSheet.hairlineWidth, borderColor: ds.line },
   head: { padding: spacing.md, gap: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: ds.line },
+  headCollapsed: { paddingHorizontal: 6, paddingVertical: spacing.md, alignItems: "center" },
+  collapseBtn: {
+    flexDirection: "row", alignItems: "center", gap: 8, minHeight: 32,
+    paddingHorizontal: 8, borderRadius: radius.sm, backgroundColor: ds.brassTint,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: ds.brassLine,
+  },
+  collapseLabel: { fontSize: 11, fontWeight: "700", color: ds.brassDeep, letterSpacing: 0.8, textTransform: "uppercase" },
   searchWrap: {
     flexDirection: "row", alignItems: "center", gap: 6,
     borderRadius: radius.md, backgroundColor: ds.surface, paddingHorizontal: 10,
@@ -208,6 +239,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 8, borderRadius: radius.sm, marginVertical: 1,
     borderLeftWidth: 3, borderLeftColor: "transparent",
   },
+  itemCollapsed: { justifyContent: "center", paddingHorizontal: 0, minHeight: 40 },
   itemActive: { backgroundColor: ds.sunken, borderLeftColor: ds.brass },
   itemIcon: {
     width: 22, height: 22, borderRadius: 6, backgroundColor: ds.sunken,

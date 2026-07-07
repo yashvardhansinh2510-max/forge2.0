@@ -64,12 +64,11 @@ export function ProductModal() {
     return selectedVariant?.price ?? product?.price ?? 0;
   }, [priceOverride, selectedVariant, product]);
 
-  if (!product) return null;
-
   // Variant-aware gallery — when a finish/colour is selected AND that
   // sibling product has its own real photo, it takes priority; the base
   // product's gallery always follows as fallback/additional angles.
   const heroImages = useMemo(() => {
+    if (!product) return [];
     const base = productImageList(product);
     if (selectedVariant?.image && !base.includes(selectedVariant.image)) {
       return [selectedVariant.image, ...base];
@@ -80,7 +79,13 @@ export function ProductModal() {
     return base;
   }, [product, selectedVariant]);
 
+  useEffect(() => {
+    setActiveImageIdx(0);
+  }, [heroImages.join("|")]);
+
   const activeImage = heroImages[Math.min(activeImageIdx, Math.max(0, heroImages.length - 1))];
+
+  if (!product) return null;
 
   const commit = (closeAfter: boolean) => {
     const v: ProductVariant | undefined = selectedVariant ?? undefined;
@@ -120,7 +125,7 @@ export function ProductModal() {
               {/* Left: gallery + price */}
               <View style={styles.left}>
                 <Pressable onPress={() => setZoomOpen(true)} disabled={!activeImage} testID="pm-hero-zoom">
-                  <ProductImage source={activeImage ? [activeImage] : []} style={styles.hero} fallbackLabel={product.sku} />
+                  <ProductImage source={activeImage ? [activeImage] : []} style={styles.hero} fallbackLabel={selectedVariant?.sku || product.sku} key={selectedVariant?.sku || product.sku} />
                   {activeImage ? (
                     <View style={styles.zoomHint}>
                       <Feather name="maximize-2" size={11} color="#fff" />
@@ -131,7 +136,7 @@ export function ProductModal() {
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }}>
                     {heroImages.slice(0, 8).map((url, i) => (
                       <Pressable key={`${url}-${i}`} onPress={() => setActiveImageIdx(i)} style={[styles.thumb, i === activeImageIdx && styles.thumbActive]}>
-                        <ProductImage source={[url]} style={{ width: "100%", height: "100%" }} fallbackLabel={product.sku} />
+                        <ProductImage source={[url]} style={{ width: "100%", height: "100%" }} fallbackLabel={selectedVariant?.sku || product.sku} disableSkeleton />
                       </Pressable>
                     ))}
                   </ScrollView>

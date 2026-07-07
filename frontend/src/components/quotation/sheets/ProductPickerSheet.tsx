@@ -6,18 +6,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { colors, spacing, type } from "@/src/theme/tokens";
 
-import { CatalogPane } from "../catalog/CatalogPane";
+import { ProductExplorer } from "../catalog/ProductExplorer";
 import { useBuilder } from "../context/BuilderContext";
-import type { Product } from "../helpers/types";
 
 export function ProductPickerSheet() {
   const b = useBuilder();
-
-  const onLongPress = (p: Product) => {
-    // Full details = open Assistant sheet inside the picker for this product.
-    b.setAssistantFocus({ kind: "product", product_id: p.id, product: p });
-    b.setAssistantOpenMobile(true);
-  };
 
   return (
     <Modal
@@ -35,7 +28,7 @@ export function ProductPickerSheet() {
           <View style={{ width: 22 }} />
         </View>
         <View style={{ flex: 1 }}>
-          <CatalogPane onOpenDetails={onLongPress} compactHeader />
+          <ProductExplorer />
         </View>
       </SafeAreaView>
     </Modal>

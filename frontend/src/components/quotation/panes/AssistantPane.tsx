@@ -150,18 +150,21 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
   // - Otherwise (product-only focus), just refocus the assistant on that variant's sku.
   const onPickVariant = (v: ProductVariant) => {
     Haptics.selectionAsync();
-    if (focusedLine) {
+  if (focusedLine) {
       const finish = v.finish ?? v.color ?? v.size ?? product.finish ?? null;
       const displayName = (v.finish || v.color || v.size)
         ? `${product.name} · ${v.finish || v.color || v.size}`
         : product.name;
       b.updateLine(focusedLine.id, {
+        product_id: v.id ?? focusedLine.product_id,
         sku: v.sku,
         name: displayName,
         unit_price: v.price ?? product.price,
         finish,
         image: v.image ?? productImageList(product)[0] ?? focusedLine.image,
       });
+    } else if (v.id) {
+      b.setAssistantFocus({ kind: "product", product_id: v.id, product });
     }
   };
 
@@ -184,7 +187,8 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
           <ProductImage
             source={activeVariant?.image ? [activeVariant.image, ...productImageList(product)] : productImageList(product)}
             style={{ width: "100%", aspectRatio: 1, borderRadius: radius.md }}
-            fallbackLabel={product.sku}
+            fallbackLabel={activeVariant?.sku || product.sku}
+            key={activeSku}
           />
         </View>
 

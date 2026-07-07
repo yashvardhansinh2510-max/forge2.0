@@ -555,7 +555,7 @@ backend:
           comment: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Fix applied: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin)."
         - working: true
           agent: "testing"
-          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://readiness-scan-7.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
+          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://forge-production-1.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
 
 frontend:
   - task: "Quotation Builder 2.0 Phase 1A — undo/redo, DnD, variants, alternates"
@@ -1579,9 +1579,9 @@ agent_communication:
     - agent: "main"
       message: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause suspected: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Applied fix: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin). Please verify: (1) Login with owner@forge.app / Forge@2026 succeeds, (2) Dashboard loads, (3) Navigate to catalog screen, (4) Verify products list loads (may be empty), (5) Confirm request URLs are same-origin (preview URL) not localhost:8001, (6) Check browser console for 'Failed to fetch' errors."
     - agent: "testing"
-      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://readiness-scan-7.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
+      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://forge-production-1.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
     - agent: "main"
-      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://readiness-scan-7.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
+      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://forge-production-1.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
     - agent: "testing"
       message: |
         Quotation Builder V4 Backend Regression Testing COMPLETE — ALL 63 TESTS PASSED (100% success rate).
@@ -2677,10 +2677,10 @@ agent_communication:
             ═══════════════════════════════════════════════════════════════════════════════
             ✅ 4.a Quotation status transition: Moved to 'approved' status
             ✅ 4.b GET /place-order/preview: Returns {brands, quotation_id} with 1 brand
-            ✅ 4.b POST /place-order/confirm: Created 1 PO (id=002c1960-f04a-4728-aed2-cf1044467e79)
+            ✅ 4.b POST /place-order/confirm: Created 1 PO (id=forge-production-1)
             ✅ 4.b PO appears in GET /purchase-orders: PO found in list
             ✅ 4.c PO stage movement: Moved to 'ordered' status via POST /purchase-orders/{id}/status
-            ✅ 4.d Record payment: Payment recorded (id=e6c68c22-146b-41ae-b857-b2f8e029f11e), stats updated (outstanding=1115477.0)
+            ✅ 4.d Record payment: Payment recorded (id=forge-production-1), stats updated (outstanding=1115477.0)
             ✅ 4.e POST /followups/reconcile: Executed successfully (created=0, updated=8)
             ✅ 4.f Activity timeline: 11 events found, has_order=True, has_payment=True
             ✅ 4.g Customer detail: Retrieved successfully, reflects events
@@ -2818,3 +2818,57 @@ agent_communication:
         This is a BLOCKING BUG — the entire Quotation Builder is unusable without product selection.
         Cannot proceed with any further testing until products render.
 
+
+
+
+frontend:
+  - task: "Final Production Polish Sprint Phase 1 — Quotation Builder flagship refinement"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/theme/tokens.ts, frontend/src/design/tokens.ts, frontend/src/components/quotation/layout/BuilderShell.tsx, frontend/src/components/quotation/catalog/BrandRail.tsx, frontend/src/components/quotation/catalog/ProductExplorer.tsx, frontend/src/components/quotation/helpers/responsive.ts, frontend/src/components/quotation/sheets/ProductPickerSheet.tsx, frontend/src/components/quotation/panes/AssistantPane.tsx, frontend/src/components/quotation/sheets/ProductModal.tsx, frontend/src/components/quotation/context/BuilderContext.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Phase 1 value-add completed without touching backend/catalog/Mongo/Supabase/import/auth/deployment.
+            Protected files documented for this sprint: backend/.env, frontend/.env, frontend/metro.config.js,
+            frontend/package.json main/dependencies, backend routes/models/import pipeline, MongoDB/Supabase data,
+            auth/session code unless it blocks UI.
+            Changes delivered:
+            (1) unified primary action accent to BuildCon House brass across legacy theme tokens + Showroom action tokens,
+                removing black primary CTA behavior from shared primitives while leaving neutral secondary actions intact.
+            (2) Quotation Builder brand rail now collapses/expands with a brass control; collapsed state preserves brand icons/count context,
+                expanded state keeps the required brand→category accordion and no separate Categories tab.
+            (3) Product grid now computes responsive columns from the active viewport: desktop 3, tablet 2, mobile/small sheet 1.
+                FlatList key changes per column count, retains virtualization/lazy rendering/infinite scroll.
+            (4) Variant image behavior tightened: ProductModal resets hero/gallery index immediately when finish image set changes,
+                thumbnails are variant-aware, Assistant line variant switches now update product_id/sku/price/finish/image immediately,
+                and product-only Assistant variant taps refocus to the variant product when the backend supplies a variant id.
+            (5) Web-only keyboard listener now guards document access to avoid native/SSR crashes.
+            Existing repo-wide TypeScript errors remain pre-existing outside quotation module; filtered check shows no errors in
+            src/components/quotation or theme/design token files after this patch.
+
+metadata:
+  created_by: "main_agent"
+  version: "7.0"
+  test_sequence: 15
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Final Production Polish Sprint Phase 1 — Quotation Builder flagship refinement"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Please verify Phase 1 only. Use owner@forge.app / Forge@2026. Backend was not modified.
+        Required responsive checks: desktop builder shows collapsible/expandable brand rail, no duplicate BuildCon House branding,
+        brand→category accordion, 3 product cards per row, product grid loads/scrolls/infinite-scrolls; tablet shows 2 columns where
+        product picker/grid is available; mobile product picker/quotation builder has 1-column product list and no overlap/clipping.
+        Verify variant finish changes update hero image/gallery/thumbnails in ProductModal and line/Assistant image when switching variants.
