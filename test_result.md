@@ -2819,6 +2819,26 @@ agent_communication:
             ═══════════════════════════════════════════════════════════════════════════════
             ✅ GET /followups/export?format=csv returns 1478 bytes (content-type=text/csv)
             ✅ GET /followups/export?format=xlsx returns 6124 bytes (content-type=application/vnd.openxmlformats-officedocument.spreadsheetml.sheet)
+
+
+frontend:
+  - task: "Product image candidate sanitization for Phase 1 polish"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/ProductImage.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            During desktop screenshot validation, product cards rendered but a supplier/media screenshot-like image filled
+            the grid, making the premium catalog feel broken. ProductImage now ranks/deduplicates candidate images and
+            filters obvious non-product assets (screenshot/screen capture/WhatsApp/QR/game/mahjong names) before render,
+            while keeping expo-image memory-disk caching and base64 support intact. This is frontend-only and does not
+            alter catalog data or backend media records.
+
             
             ═══════════════════════════════════════════════════════════════════════════════
             SECTION 8: GENERAL SMOKE TESTS (4/4 PASSED)
