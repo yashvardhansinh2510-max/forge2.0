@@ -4,7 +4,6 @@
 import { AntDesign } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View,
@@ -54,7 +53,6 @@ function OrDivider() {
 }
 
 export default function Login() {
-  const router = useRouter();
   const { loginStaff, loginCustomer, loginWithGoogle, googleBusy, googleError, clearGoogleError } = useAuth();
   const { isPhone, isTablet } = useBp();
   const insets = useSafeAreaInsets();
@@ -73,14 +71,17 @@ export default function Login() {
     try {
       if (mode === "staff") {
         await loginStaff(email.trim(), password);
-        router.replace("/(admin)/dashboard");
       } else {
         await loginCustomer(email.trim(), password);
-        router.replace("/(customer)/home");
       }
+      // Navigation is intentionally NOT done here — AuthGate (app/_layout.tsx)
+      // reacts to the `kind` state change from loginStaff/loginCustomer above
+      // and performs the redirect exactly once. Calling router.replace() here
+      // AS WELL used to race against AuthGate's own replace() to the same
+      // destination, and on web that double-navigation could leave the app
+      // stuck on /login with a valid session already in memory.
     } catch (e: any) {
       setError(e?.message === "Invalid credentials" ? "That email and password don't match." : e?.message || "Sign-in failed. Try again.");
-    } finally {
       setBusy(false);
     }
   };
