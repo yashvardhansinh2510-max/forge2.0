@@ -80,6 +80,11 @@ async def _startup():
     await seed_if_empty()
     await resync_catalog_if_needed()
     try:
+        await db.user_sessions.create_index("id", unique=True)
+        await db.user_sessions.create_index([("user_type", 1), ("user_id", 1)])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("user_sessions index creation skipped: %s", e)
+    try:
         await reconcile_followups()
     except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load
         logger.warning("Initial follow-up reconciliation skipped: %s", e)

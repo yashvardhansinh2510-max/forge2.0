@@ -1,16 +1,79 @@
 // BuildCon House · Settings
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { Avatar, Card } from "@/src/components/ui";
+import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
 import { brand, colors, radius, roleLabels, spacing, type } from "@/src/theme/tokens";
+
+type SessionInfo = {
+  id: string; device_label?: string | null; login_method: string;
+  created_at: string; last_seen_at: string; current: boolean;
+};
 
 export default function Settings() {
   const { staff, logout } = useAuth();
   const router = useRouter();
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [revoking, setRevoking] = useState(false);
+
+  const loadSessions = useCallback(async () => {
+    try {
+      const list = await api.get<SessionInfo[]>("/auth/sessions");
+      setSessions(list);
+    } catch {
+      setSessions([]);
+    } finally {
+      setSessionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  const doLogoutAll = async () => {
+    setRevoking(true);
+    try {
+      await api.post("/auth/sessions/logout-all");
+      await logout();
+      router.replace("/(auth)/login");
+    } catch {
+      setRevoking(false);
+    }
+  };
+
+  const confirmLogoutAll = () => {
+    if (Platform.OS === "web") {
+      // eslint-disable-next-line no-alert
+      if (window.confirm("Sign out of every device where you're logged in?")) doLogoutAll();
+      return;
+    }
+    Alert.alert("Log out everywhere?", "You'll be signed out on every device, including this one.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out everywhere", style: "destructive", onPress: doLogoutAll },
+    ]);
+  };
+
+  const revokeOne = async (id: string) => {
+    try {
+      await api.delete(`/auth/sessions/${id}`);
+      setSessions((cur) => cur.filter((s) => s.id !== id));
+    } catch { /* best-effort */ }
+  };
+
+  const timeAgo = (iso: string) => {
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  };
 
   const sections = [
     { title: "Profile", items: [
@@ -62,6 +125,48 @@ export default function Settings() {
           ))}
         </Card>
       ))}
+
+      {/* Security — active sessions / trusted devices */}
+      <Card style={{ padding: 0 }} variant="flat">
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.md, paddingBottom: 8 }}>
+          <Text style={type.overline}>Security · Active sessions</Text>
+          {sessionsLoading ? <ActivityIndicator size="small" color={colors.onSurfaceMuted} /> : null}
+        </View>
+        {!sessionsLoading && sessions.length === 0 ? (
+          <Text style={[type.bodyMuted, { padding: spacing.md, paddingTop: 0 }]}>No active sessions found.</Text>
+        ) : sessions.map((s, i) => (
+          <View
+            key={s.id}
+            style={[styles.row, i === 0 ? null : { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.divider }]}
+          >
+            <View style={styles.itemIcon}>
+              <Feather name={s.login_method === "google" ? "smartphone" : "monitor"} size={14} color={colors.onSurfaceMuted} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 13.5, fontWeight: "600", color: colors.onSurface }}>
+                {s.device_label || "Unknown device"} {s.current ? "· This device" : ""}
+              </Text>
+              <Text style={type.caption}>
+                {s.login_method === "google" ? "Google" : "Password"} · Active {timeAgo(s.last_seen_at)}
+              </Text>
+            </View>
+            {!s.current ? (
+              <Pressable testID={`revoke-session-${s.id}`} hitSlop={8} onPress={() => revokeOne(s.id)}>
+                <Feather name="x-circle" size={16} color={colors.onSurfaceMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+        ))}
+        <Pressable
+          testID="logout-all-devices"
+          onPress={confirmLogoutAll}
+          disabled={revoking}
+          style={({ pressed }) => [styles.logoutAllRow, { opacity: pressed || revoking ? 0.7 : 1 }]}
+        >
+          <Feather name="shield-off" size={14} color={colors.error} />
+          <Text style={styles.logoutAllLabel}>{revoking ? "Signing out everywhere…" : "Log out of all devices"}</Text>
+        </Pressable>
+      </Card>
 
       <Pressable
         testID="settings-logout"

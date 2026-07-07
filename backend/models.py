@@ -49,6 +49,7 @@ class UserBase(BaseModel):
     role: Role
     phone: Optional[str] = None
     active: bool = True
+    avatar_url: Optional[str] = None
 
 
 class UserCreate(UserBase):
@@ -85,6 +86,7 @@ class CustomerBase(BaseModel):
     gstin: Optional[str] = None
     tier: Literal["retail", "trade", "vip"] = "retail"
     notes: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 
 class CustomerCreate(CustomerBase):
@@ -108,6 +110,34 @@ class CustomerTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     customer: CustomerPublic
+
+
+class GoogleSessionPayload(BaseModel):
+    session_id: str
+
+
+class UserSession(BaseModel):
+    """One device/browser login — lets a user see & revoke their active
+    sessions ('remember trusted devices' / 'logout from all devices')."""
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    user_type: Literal["staff", "customer"]
+    user_id: str
+    login_method: Literal["password", "google"] = "password"
+    device_label: Optional[str] = None
+    user_agent: Optional[str] = None
+    ip: Optional[str] = None
+    created_at: str = Field(default_factory=now_iso)
+    last_seen_at: str = Field(default_factory=now_iso)
+    revoked: bool = False
+
+
+class SessionInfo(BaseModel):
+    id: str
+    device_label: Optional[str] = None
+    login_method: str
+    created_at: str
+    last_seen_at: str
+    current: bool = False
 
 
 # ---------- Catalog ----------
