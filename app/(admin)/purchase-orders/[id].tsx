@@ -21,6 +21,9 @@ import { Badge, Button, Card, IconButton } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { api } from "@/src/api/client";
 import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens";
+import {
+  HistorySheet, MovableItem, MoveStageSheet, TransferSheet,
+} from "@/src/components/purchases/MovementEngine";
 
 type PoStatus =
   | "draft" | "awaiting_review" | "ordered" | "awaiting_supplier"
@@ -36,6 +39,7 @@ type PoItem = {
   qty: number;
   qty_received: number;
   unit_cost: number;
+  stage?: string;
 };
 
 type StatusEvent = {
@@ -100,6 +104,19 @@ const STATUS_TONE: Record<PoStatus, string> = {
   cancelled: colors.error,
 };
 
+const STAGE_LABELS: Record<string, string> = {
+  order_in_company: "Order in Company", company_billing: "Company Billing", in_box: "In Box",
+  dispatched: "Dispatched", in_transit: "In Transit", delivered: "Delivered",
+};
+const STAGE_TONE: Record<string, { bg: string; fg: string }> = {
+  order_in_company: { bg: colors.surfaceTertiary, fg: colors.onSurfaceMuted },
+  company_billing: { bg: "#FEF3E2", fg: colors.warning },
+  in_box: { bg: colors.surfaceTertiary, fg: colors.onSurfaceMuted },
+  dispatched: { bg: "#FBF0DD", fg: "#8A6116" },
+  in_transit: { bg: "#FBF0DD", fg: "#8A6116" },
+  delivered: { bg: "#E8F5EA", fg: colors.success },
+};
+
 export default function PurchaseOrderDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -114,6 +131,16 @@ export default function PurchaseOrderDetail() {
   const [notesDraft, setNotesDraft] = useState("");
   const [notesEditing, setNotesEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [moveItem, setMoveItem] = useState<PoItem | null>(null);
+  const [transferItem, setTransferItem] = useState<PoItem | null>(null);
+  const [historyItemId, setHistoryItemId] = useState<string | null>(null);
+
+  const toMovable = useCallback((it: PoItem): MovableItem => ({
+    item_id: it.id, sku: it.sku, name: it.name, image: it.image, qty: it.qty,
+    stage: (it.stage as any) || "order_in_company",
+    customer_id: po?.customer_id, customer_name: po?.customer_name,
+    po_number: po?.number, brand_name: po?.brand_name, supplier_name: po?.supplier_name,
+  }), [po]);
 
   const load = useCallback(async () => {
     const [d, cfg, tl] = await Promise.all([
@@ -277,26 +304,49 @@ export default function PurchaseOrderDetail() {
             {po.items.map((it, i) => {
               const full = it.qty_received >= it.qty - 1e-6 && it.qty > 0;
               const partial = it.qty_received > 0 && !full;
+              const stage = it.stage || "order_in_company";
               return (
-                <View key={it.id} style={[styles.itemRow, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]}>
-                  <Text style={[type.mono, { width: 40 }]}>{String(i + 1).padStart(2, "0")}</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 13, fontWeight: "600" }} numberOfLines={2}>{it.name}</Text>
-                    <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
-                  </View>
-                  <Text style={[type.mono, { width: 70, textAlign: "right" }]}>{it.qty}</Text>
-                  <View style={{ width: 90, alignItems: "flex-end" }}>
-                    <Text style={[type.mono, { fontWeight: "600", color: full ? colors.success : partial ? colors.warning : colors.onSurfaceMuted }]}>
-                      {it.qty_received}
+                <View key={it.id} style={{ borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+                  <View style={styles.itemRow}>
+                    <Text style={[type.mono, { width: 40 }]}>{String(i + 1).padStart(2, "0")}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: "600" }} numberOfLines={2}>{it.name}</Text>
+                      <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
+                    </View>
+                    <Text style={[type.mono, { width: 70, textAlign: "right" }]}>{it.qty}</Text>
+                    <View style={{ width: 90, alignItems: "flex-end" }}>
+                      <Text style={[type.mono, { fontWeight: "600", color: full ? colors.success : partial ? colors.warning : colors.onSurfaceMuted }]}>
+                        {it.qty_received}
+                      </Text>
+                      {partial ? (
+                        <Text style={[type.caption, { fontSize: 10 }]}>{Math.round((it.qty_received / it.qty) * 100)}%</Text>
+                      ) : null}
+                    </View>
+                    <Text style={[type.mono, { width: 90, textAlign: "right" }]}>{money(it.unit_cost)}</Text>
+                    <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]}>
+                      {money(it.qty * it.unit_cost)}
                     </Text>
-                    {partial ? (
-                      <Text style={[type.caption, { fontSize: 10 }]}>{Math.round((it.qty_received / it.qty) * 100)}%</Text>
-                    ) : null}
                   </View>
-                  <Text style={[type.mono, { width: 90, textAlign: "right" }]}>{money(it.unit_cost)}</Text>
-                  <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]}>
-                    {money(it.qty * it.unit_cost)}
-                  </Text>
+                  <View style={styles.itemActionsRow}>
+                    <View style={[styles.stagePill, { backgroundColor: STAGE_TONE[stage]?.bg || colors.surfaceTertiary }]}>
+                      <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: STAGE_TONE[stage]?.fg || colors.onSurfaceMuted, marginRight: 5 }} />
+                      <Text style={{ fontSize: 11, fontWeight: "600", color: STAGE_TONE[stage]?.fg || colors.onSurfaceMuted }}>
+                        {STAGE_LABELS[stage] || stage}
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 6, marginLeft: "auto" }}>
+                      <Pressable testID={`po-item-history-${it.id}`} onPress={() => setHistoryItemId(it.id)} style={styles.itemActionBtn} hitSlop={6}>
+                        <Feather name="clock" size={12} color={colors.onSurface} />
+                      </Pressable>
+                      <Pressable testID={`po-item-move-${it.id}`} onPress={() => setMoveItem(it)} style={styles.itemActionBtn} hitSlop={6}>
+                        <Text style={{ fontSize: 11, fontWeight: "600", color: colors.onSurface }}>Move</Text>
+                        <Feather name="chevron-down" size={10} color={colors.onSurfaceMuted} />
+                      </Pressable>
+                      <Pressable testID={`po-item-transfer-${it.id}`} onPress={() => setTransferItem(it)} style={styles.itemActionBtn} hitSlop={6}>
+                        <Feather name="repeat" size={12} color={colors.onSurface} />
+                      </Pressable>
+                    </View>
+                  </View>
                 </View>
               );
             })}
@@ -422,6 +472,23 @@ export default function PurchaseOrderDetail() {
         items={po.items}
         busy={busy}
         onConfirm={receiveItems}
+      />
+      <MoveStageSheet
+        visible={!!moveItem}
+        item={moveItem ? toMovable(moveItem) : null}
+        onClose={() => setMoveItem(null)}
+        onMoved={async () => { await load(); }}
+      />
+      <TransferSheet
+        visible={!!transferItem}
+        item={transferItem ? toMovable(transferItem) : null}
+        onClose={() => setTransferItem(null)}
+        onSuccess={async () => { await load(); }}
+      />
+      <HistorySheet
+        visible={!!historyItemId}
+        itemId={historyItemId}
+        onClose={() => setHistoryItemId(null)}
       />
     </SafeAreaView>
   );
@@ -606,7 +673,20 @@ const styles = StyleSheet.create({
     flexDirection: "row", padding: spacing.md, backgroundColor: colors.surfaceTertiary,
     borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md, alignItems: "center",
   },
-  itemRow: { flexDirection: "row", padding: spacing.md, alignItems: "center", gap: 8 },
+  itemRow: { flexDirection: "row", padding: spacing.md, alignItems: "center", gap: 8, flexWrap: "wrap" },
+  itemActionsRow: {
+    flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6,
+    paddingHorizontal: spacing.md, paddingBottom: spacing.sm, marginTop: -4,
+  },
+  stagePill: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+  },
+  itemActionBtn: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 8, paddingVertical: 5, borderRadius: radius.sm,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
   itemsFooter: {
     flexDirection: "row", padding: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
