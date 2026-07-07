@@ -310,7 +310,7 @@ export default function PaymentsScreen() {
                 {/* Metrics */}
                 <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
                   <StatTile dense label="MRP" value={money(detail.mrp)}
-                    sub="Catalogue price" tone="neutral" />
+                    sub="Catalog price" tone="neutral" />
                   <StatTile dense label="Discounted" value={money(detail.discounted_rate)}
                     sub={detail.mrp > detail.discounted_rate ? `Save ${moneyShort(detail.mrp - detail.discounted_rate)}` : "No discount"}
                     tone="brand" />

@@ -3907,3 +3907,78 @@ agent_communication:
         folder — already brass everywhere, no black buttons found. Milestones 1.2+
         (Purchases, Payments, Customers, Follow-ups, Dashboard, remaining pages) not
         started.
+
+frontend:
+  - task: "Phase 1 Mobile Polish — Bottom nav, Quotation builder mobile, Follow-ups, Catalog, Customer detail (390x844 viewport)"
+    implemented: true
+    working: false
+    file: "frontend/app/(admin)/_layout.tsx, frontend/app/(admin)/quotations/new.tsx, frontend/app/(admin)/followups.tsx, frontend/app/(admin)/catalog/index.tsx, frontend/app/(admin)/customers/[id].tsx"
+    stuck_count: 1
+    priority: "critical"
+    needs_retesting: true
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: |
+            CRITICAL BLOCKER — Mobile testing completely blocked by authentication failure (2026-07-07).
+            
+            User requested mobile viewport (390x844) testing of 5 specific mobile-only bug fixes:
+            1. Bottom nav bar — verify 5 items (Today/Quotes/FAB/Tasks/More) with correct icons, active state pill
+            2. Quotation builder mobile — verify single footer (no duplicates), empty state, product addition
+            3. Follow-ups page — verify content loads within 3-5 seconds (not blank/placeholder rows)
+            4. Catalog page — verify brand strip with real logos (Geberit/Grohe/Hansgrohe/Vitra/Axor), filtering, "Catalog" not "Catalogue"
+            5. Customer detail page — verify 4 tabs (Overview/Quotations/Purchases/Timeline) render without overlap/clipping
+            
+            **CANNOT TEST ANY OF THESE** due to complete authentication system failure.
+            
+            ❌ AUTHENTICATION SYSTEM COMPLETELY BROKEN:
+            • Backend API works perfectly: POST /api/auth/login returns 200 OK with valid JWT token
+            • Frontend login form accepts credentials (owner@forge.app / Forge@2026)
+            • BUT: After clicking "Sign in", page stays stuck on /login indefinitely
+            • No redirect to dashboard occurs
+            • Token injection attempts also failed (tried localStorage, sessionStorage, IndexedDB)
+            • All authenticated pages return 401 errors
+            
+            ROOT CAUSE (Code Review):
+            • login.tsx line 75-76: After loginStaff() succeeds, calls router.replace("/(admin)/dashboard")
+            • auth.tsx line 154-156: loginStaff() sets token and updates state
+            • _layout.tsx line 29-42: AuthGate component watches auth state and redirects
+            • RACE CONDITION: router.replace() doesn't complete before AuthGate redirects back to /login
+            • This is the SAME bug reported multiple times in test_result.md history (previous stuck_count entries)
+            
+            EVIDENCE:
+            • Screenshots show login page after token injection and after manual login attempt
+            • Console logs show 401 errors for all API calls: /api/followups, /api/dashboard/stats, /api/customers
+            • Backend logs show no login attempts reaching the server
+            
+            IMPACT:
+            • CANNOT access any authenticated pages
+            • CANNOT test any of the 5 mobile-specific features
+            • This is a SHOWSTOPPER that blocks 100% of the requested mobile testing
+            
+            RECOMMENDATION:
+            1. Fix the authentication/routing race condition FIRST (highest priority)
+            2. Debug why router.replace() in login.tsx doesn't work after successful loginStaff()
+            3. Check if AuthGate in _layout.tsx is redirecting back to login before auth state fully updates
+            4. Consider using websearch to find solutions for Expo Router + auth redirect issues
+            5. This is a RECURRING issue (increment stuck_count)
+            6. Once login works, call testing agent again to verify the 5 mobile-specific features
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        MOBILE TESTING BLOCKED — Authentication system completely broken, cannot access any authenticated pages.
+        
+        Attempted to test 5 mobile-specific bug fixes (bottom nav, quotation builder, follow-ups, catalog, customer detail)
+        at 390x844 viewport as requested by user. Backend API works (returns valid JWT), but frontend login flow is
+        completely broken — page stays stuck on /login after clicking "Sign in", no redirect occurs.
+        
+        This is the SAME authentication bug that has blocked testing multiple times in this project's history
+        (see test_result.md lines 359-842, 724-842). Root cause: race condition between router.replace() in login.tsx
+        and AuthGate redirects in _layout.tsx.
+        
+        CRITICAL: Main agent must fix authentication FIRST before any mobile testing can proceed. All 5 requested
+        mobile features are currently untestable due to this blocking bug.
+        
+        Recommend using websearch to find solutions for Expo Router + auth redirect race conditions.
+

@@ -1,17 +1,25 @@
 // Builder footer — notes, discount bar, totals grid, finalize CTA.
+//
+// Desktop/tablet: everything shown at all times (unchanged from V4).
+// Phone: a single sticky compact bar (item count + grand total + Add +
+// Finish) is shown by default — tapping it expands the same note/discount/
+// breakdown content inline above it. This replaces what used to be TWO
+// separate, redundant footers stacked on top of each other (this component's
+// full desktop layout PLUS a second MobileSummaryBar) — which is what made
+// the phone builder feel completely broken/cluttered.
+import { useState } from "react";
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
+import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 
 import { useBuilder } from "../context/BuilderContext";
 
-export function BuilderFooter() {
-  const b = useBuilder();
-
+function NotesAndDiscount({ b }: { b: ReturnType<typeof useBuilder> }) {
   return (
-    <View style={styles.wrap}>
+    <>
       <View style={styles.notes}>
         <Feather name="edit-3" size={13} color={colors.onSurfaceMuted} />
         <TextInput
@@ -43,17 +51,72 @@ export function BuilderFooter() {
       <View style={styles.totals}>
         <Row label="Subtotal" value={money(b.totals.subtotal)} />
         <Row label="Discount" value={`− ${money(b.totals.discount)}`} valueColor={colors.error} />
-        <View style={[styles.tRow, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border, paddingTop: 8, marginTop: 4 }]}>
-          <Text style={{ fontSize: 13, fontFamily: font.medium, fontWeight: "500", color: colors.onSurfaceSecondary }}>Grand total</Text>
-          <Text style={{ fontSize: 22, fontFamily: font.regular, letterSpacing: -0.4, color: colors.onSurface, fontVariant: ["tabular-nums"] }}>{money(b.totals.grand)}</Text>
-        </View>
+      </View>
+    </>
+  );
+}
+
+export function BuilderFooter() {
+  const b = useBuilder();
+  const { isPhone } = useBreakpoint();
+  const [expanded, setExpanded] = useState(false);
+
+  const canFinish = !!b.s.customerId && b.s.lines.length > 0;
+
+  if (isPhone) {
+    return (
+      <View style={styles.phoneWrap}>
+        {expanded ? (
+          <View style={styles.phoneExpanded}>
+            <NotesAndDiscount b={b} />
+          </View>
+        ) : null}
+
+        <Pressable testID="mobile-footer-toggle" onPress={() => setExpanded((v) => !v)} style={styles.phoneBar}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Text style={type.caption} numberOfLines={1}>{b.s.lines.length} items · {b.saveLabel}</Text>
+              <Feather name={expanded ? "chevron-down" : "chevron-up"} size={13} color={colors.onSurfaceMuted} />
+            </View>
+            <Text style={styles.phoneTotal} numberOfLines={1}>{money(b.totals.grand)}</Text>
+          </View>
+          <Pressable
+            testID="mobile-add-first"
+            onPress={(e: any) => { e?.stopPropagation?.(); b.setPickerSheetOpen(true); }}
+            style={styles.secondary}
+            hitSlop={6}
+          >
+            <Feather name="plus" size={16} color={colors.onSurface} />
+            <Text style={styles.secondaryText}>Add</Text>
+          </Pressable>
+          <Pressable
+            testID="mobile-finalize"
+            onPress={(e: any) => { e?.stopPropagation?.(); if (canFinish) b.finalize(); }}
+            disabled={!canFinish}
+            style={({ pressed }) => [styles.primary, { opacity: !canFinish ? 0.4 : pressed ? 0.9 : 1 }]}
+            hitSlop={6}
+          >
+            <Feather name="check" size={16} color={ds.canvas} />
+            <Text style={styles.saveBtnTextSm}>Finish</Text>
+          </Pressable>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.wrap}>
+      <NotesAndDiscount b={b} />
+      <View style={[styles.tRow, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border, paddingTop: 8, marginTop: -4 }]}>
+        <Text style={{ fontSize: 13, fontFamily: font.medium, fontWeight: "500", color: colors.onSurfaceSecondary }}>Grand total</Text>
+        <Text style={{ fontSize: 22, fontFamily: font.regular, letterSpacing: -0.4, color: colors.onSurface, fontVariant: ["tabular-nums"] }}>{money(b.totals.grand)}</Text>
       </View>
 
       <Pressable
         testID="save-quotation-btn"
         onPress={b.finalize}
-        disabled={!b.s.customerId || b.s.lines.length === 0}
-        style={({ pressed }) => [styles.saveBtn, { opacity: !b.s.customerId || b.s.lines.length === 0 ? 0.4 : pressed ? 0.9 : 1 }]}
+        disabled={!canFinish}
+        style={({ pressed }) => [styles.saveBtn, { opacity: !canFinish ? 0.4 : pressed ? 0.9 : 1 }]}
       >
         <Feather name="check" size={16} color={colors.onBrand} />
         <Text style={styles.saveBtnText}>Finish & review</Text>
@@ -92,4 +155,25 @@ const styles = StyleSheet.create({
     flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8,
   },
   saveBtnText: { color: ds.canvas, fontSize: 15, fontFamily: font.semibold, fontWeight: "600", letterSpacing: -0.1 },
+
+  // ---- Phone-only compact/expandable footer ----
+  phoneWrap: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface },
+  phoneExpanded: {
+    padding: spacing.md, gap: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  phoneBar: { flexDirection: "row", alignItems: "center", gap: 8, padding: spacing.md },
+  phoneTotal: { fontSize: 19, fontFamily: font.regular, letterSpacing: -0.3, color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  secondary: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
+  },
+  secondaryText: { fontSize: 13, fontWeight: "600", color: colors.onSurface },
+  primary: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md,
+    backgroundColor: ds.brass,
+  },
+  saveBtnTextSm: { color: ds.canvas, fontSize: 13, fontFamily: font.semibold, fontWeight: "600" },
 });
