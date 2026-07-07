@@ -66,6 +66,12 @@ type Item = {
 
 type ItemsResp = { sla_days: number; count: number; blocked_count: number; items: Item[] };
 
+type Shortage = {
+  id: string; customer_id: string; customer_name: string; sku: string; name: string; image?: string | null;
+  committed_qty: number; allocated_qty: number; shortage_qty: number; reason: string;
+  transferred_to_customer_name?: string | null;
+};
+
 type ViewMode = "today" | "stock" | "customers" | "dispatch_record";
 
 const VIEW_ORDER: ViewMode[] = ["today", "stock", "customers", "dispatch_record"];
@@ -132,6 +138,15 @@ export default function PurchasesScreen() {
   const [showSettings, setShowSettings] = useState(false);
   const [rowMoveTarget, setRowMoveTarget] = useState<Item | null>(null);
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
+  const [shortages, setShortages] = useState<Shortage[]>([]);
+  const [showShortages, setShowShortages] = useState(false);
+
+  const loadShortages = useCallback(async () => {
+    try {
+      const r = await api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder");
+      setShortages(r.items || []);
+    } catch { /* soft-fail — non-critical banner */ }
+  }, []);
 
   const toMovable = useCallback((r: Item): MovableItem => ({
     item_id: r.item_id, sku: r.sku, name: r.name, image: r.image, qty: r.qty,
@@ -177,6 +192,7 @@ export default function PurchasesScreen() {
   }, [view, brand, q, stage]);
 
   useEffect(() => { loadFacets(); }, [loadFacets]);
+  useEffect(() => { loadShortages(); }, [loadShortages]);
   useEffect(() => {
     const t = setTimeout(loadItems, 220);
     return () => clearTimeout(t);
@@ -268,6 +284,19 @@ export default function PurchasesScreen() {
               <Feather name="download" size={14} color={colors.success} />
               <Text style={{ color: colors.onSurface, fontWeight: "600", fontSize: 13 }}>Export .xlsx</Text>
             </Pressable>
+
+            {shortages.length > 0 ? (
+              <Pressable
+                testID="shortages-btn"
+                onPress={() => setShowShortages(true)}
+                style={({ pressed }) => [styles.iconAction, { backgroundColor: "#FBEAEA", borderColor: "#EFC2C2" }, pressed && { opacity: 0.85 }]}
+              >
+                <Feather name="alert-triangle" size={14} color={colors.error} />
+                <Text style={{ color: colors.error, fontWeight: "700", fontSize: 13 }}>
+                  {shortages.length} Awaiting Reorder
+                </Text>
+              </Pressable>
+            ) : null}
 
             <Pressable
               testID="move-material-btn"
@@ -502,12 +531,18 @@ export default function PurchasesScreen() {
         visible={!!transferItem}
         item={transferItem ? toMovable(transferItem) : null}
         onClose={() => setTransferItem(null)}
-        onSuccess={async () => { await Promise.all([loadItems(), loadFacets()]); }}
+        onSuccess={async () => { await Promise.all([loadItems(), loadFacets(), loadShortages()]); }}
       />
       <HistorySheet
         visible={!!historyItemId}
         itemId={historyItemId}
         onClose={() => setHistoryItemId(null)}
+      />
+      <ShortagesModal
+        visible={showShortages}
+        shortages={shortages}
+        onClose={() => setShowShortages(false)}
+        onChanged={async () => { await Promise.all([loadShortages(), loadItems(), loadFacets()]); }}
       />
       <SettingsModal
         visible={showSettings}
@@ -772,6 +807,81 @@ function SettingsModal({ visible, currentSla, onClose, onSaved }: {
   );
 }
 
+function ShortagesModal({ visible, shortages, onClose, onChanged }: {
+  visible: boolean; shortages: Shortage[]; onClose: () => void; onChanged: () => void | Promise<void>;
+}) {
+  const router = useRouter();
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const createPo = async (s: Shortage) => {
+    setBusyId(s.id);
+    try {
+      const r = await api.post<{ po_number: string }>(`/purchases/shortages/${s.id}/create-po`);
+      toast.success(`Reorder PO ${r.po_number} created for ${s.customer_name}`);
+      await onChanged();
+    } catch (e: any) { toast.error(e?.detail || "Could not create PO"); }
+    finally { setBusyId(null); }
+  };
+  const dismiss = async (s: Shortage) => {
+    setBusyId(s.id);
+    try {
+      await api.post(`/purchases/shortages/${s.id}/dismiss`, {});
+      toast.success("Dismissed");
+      await onChanged();
+    } catch (e: any) { toast.error(e?.detail || "Could not dismiss"); }
+    finally { setBusyId(null); }
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={[styles.settingsCard, { width: 520, maxWidth: "100%" }]} onPress={() => {}}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={type.titleMd}>Awaiting Reorder</Text>
+            <Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={16} color={colors.onSurfaceMuted} /></Pressable>
+          </View>
+          <Text style={[type.caption, { marginTop: 2, marginBottom: 10 }]}>
+            Opened automatically when a transfer left a customer's original order short.
+          </Text>
+          <ScrollView style={{ maxHeight: 420 }}>
+            {shortages.length === 0 ? (
+              <Text style={type.caption}>Nothing outstanding — nice.</Text>
+            ) : shortages.map((s) => (
+              <View key={s.id} style={styles.shortageRow}>
+                <Pressable
+                  style={{ flex: 1, minWidth: 0 }}
+                  onPress={() => { onClose(); router.push(`/(admin)/customers/${s.customer_id}` as any); }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: colors.onSurface }} numberOfLines={1}>{s.customer_name}</Text>
+                  <Text style={{ fontSize: 12, color: colors.onSurfaceMuted }} numberOfLines={2}>{s.reason}</Text>
+                </Pressable>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  <Pressable
+                    testID={`shortage-po-${s.id}`}
+                    disabled={busyId === s.id}
+                    onPress={() => createPo(s)}
+                    style={[styles.transferPrimary, { paddingHorizontal: 10, opacity: busyId === s.id ? 0.6 : 1 }]}
+                  >
+                    <Text style={{ color: colors.onBrand, fontWeight: "700", fontSize: 12 }}>Create PO</Text>
+                  </Pressable>
+                  <Pressable
+                    testID={`shortage-dismiss-${s.id}`}
+                    disabled={busyId === s.id}
+                    onPress={() => dismiss(s)}
+                    style={[styles.cancelBtn, { paddingHorizontal: 10 }]}
+                  >
+                    <Text style={{ color: colors.onSurface, fontWeight: "600", fontSize: 12 }}>Dismiss</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 // -----------------------------------------------------------------------------
 // Styles
 // -----------------------------------------------------------------------------
@@ -985,5 +1095,9 @@ const styles = StyleSheet.create({
     width: 340, padding: spacing.lg, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
     ...shadow.strong,
+  },
+  shortageRow: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
   },
 });

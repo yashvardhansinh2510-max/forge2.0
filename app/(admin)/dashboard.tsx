@@ -32,6 +32,7 @@ type Fu = {
 type DashStats = { revenue_month: number; open_pipeline: number; pending_approval: number; quotes_this_month: number };
 type PayStats = { total_outstanding: number; collected_this_month: number; active_orders: number; fully_paid: number };
 type RecentQ = { id: string; number: string; customer_name: string; grand_total: number; status: string; updated_at: string };
+type Shortage = { id: string; customer_id: string; customer_name: string; name: string; shortage_qty: number };
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -115,17 +116,19 @@ export default function Today() {
   const [stats, setStats] = useState<DashStats | null>(null);
   const [pay, setPay] = useState<PayStats | null>(null);
   const [recent, setRecent] = useState<RecentQ[] | null>(null);
+  const [shortages, setShortages] = useState<Shortage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try { await api.post("/followups/reconcile"); } catch { /* soft */ }
-    const [m, fus, st, ps, rq] = await Promise.allSettled([
+    const [m, fus, st, ps, rq, sh] = await Promise.allSettled([
       api.get<Mission>("/followups/mission"),
       api.get<Fu[]>("/followups?limit=12"),
       api.get<DashStats>("/dashboard/stats"),
       api.get<PayStats>("/payments/stats"),
       api.get<RecentQ[]>("/quotations/recent?limit=5"),
+      api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder"),
     ]);
     if (m.status === "fulfilled") setMission(m.value);
     if (fus.status === "fulfilled") setQueue((Array.isArray(fus.value) ? fus.value : []).filter((f) => f.status === "open").slice(0, 6));
@@ -134,6 +137,7 @@ export default function Today() {
     if (ps.status === "fulfilled") setPay(ps.value);
     if (rq.status === "fulfilled") setRecent(rq.value);
     else setRecent([]);
+    if (sh.status === "fulfilled") setShortages(sh.value.items || []);
     setRefreshing(false);
   }, []);
 
@@ -228,6 +232,27 @@ export default function Today() {
             {stats.pending_approval} quotation{stats.pending_approval === 1 ? "" : "s"} waiting for approval
           </Txt>
           <Feather name="arrow-right" size={14} color={color.brassDeep} />
+        </Pressable>
+      ) : null}
+
+      {shortages.length > 0 ? (
+        <Pressable
+          onPress={() => router.push("/(admin)/purchases" as any)}
+          style={({ hovered }: any) => [
+            {
+              flexDirection: "row", alignItems: "center", gap: 8,
+              paddingVertical: 10, paddingHorizontal: 12, borderRadius: 10,
+              backgroundColor: hovered ? color.riskTint : "transparent",
+              borderWidth: 1, borderColor: color.risk,
+            },
+            Platform.OS === "web" ? ({ cursor: "pointer" } as any) : null,
+          ]}
+        >
+          <Feather name="alert-triangle" size={14} color={color.risk} />
+          <Txt v="sub" tone="risk" style={{ flex: 1 }}>
+            {shortages.length} customer{shortages.length === 1 ? "" : "s"} awaiting reorder after a transfer
+          </Txt>
+          <Feather name="arrow-right" size={14} color={color.risk} />
         </Pressable>
       ) : null}
 
