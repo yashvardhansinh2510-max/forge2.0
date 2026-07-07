@@ -121,6 +121,30 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
         await db.brands.insert_one(b.dict())
         brand_doc = b.dict()
 
+    # Per-row brand override: AXOR ships inside Hansgrohe supplier files but is
+    # a genuinely separate premium brand — never merge the two. Any row whose
+    # `collection` is exactly "AXOR" gets imported under the AXOR brand
+    # instead of the job's default supplier brand. Cached by name so we only
+    # hit the DB once per distinct brand within this job.
+    brand_cache: dict[str, dict] = {supplier: brand_doc}
+
+    async def _resolve_brand(row: dict) -> dict:
+        override = str(row.get("collection") or "").strip()
+        # Canonical name "Axor" (matches the brand already seeded in the DB) —
+        # never the raw supplier-file casing, so we never accidentally create
+        # a case-variant duplicate brand doc (e.g. "AXOR" vs "Axor").
+        name = "Axor" if override.upper() == "AXOR" else supplier
+        if name in brand_cache:
+            return brand_cache[name]
+        doc = await db.brands.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}, {"_id": 0})
+        if not doc:
+            from models import Brand
+            b = Brand(name=name, slug=name.lower(), country=None)
+            await db.brands.insert_one(b.dict())
+            doc = b.dict()
+        brand_cache[name] = doc
+        return doc
+
     cats = await db.categories.find({}, {"_id": 0}).to_list(80)
     cat_by_name = {c["name"].lower(): c for c in cats}
     # Autocreate categories that don't exist yet (only for allowed labels)
@@ -211,7 +235,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
 
         payload = {
             "name": str(r.get("name") or "Untitled")[:200],
-            "brand_id": brand_doc["id"],
+            "brand_id": (await _resolve_brand(r))["id"],
             "category_id": cat["id"],
             "subcategory": subcategory,
             "series": series,
@@ -245,14 +269,21 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
         payload["tags"] = [t for t in payload["tags"] if t]
 
         sku = r.get("sku") or ""
+        row_brand = await _resolve_brand(r)
         if sku and sku != MISSING:
-            existing = await db.products.find_one({"sku": sku}, {"_id": 0})
+            # CRITICAL: scope the existing-product lookup by (sku, brand_id).
+            # SKU is only guaranteed unique *within* a manufacturer — different
+            # suppliers can and do reuse the same short numeric article code
+            # (e.g. an 8-digit Hansgrohe/AXOR code coincidentally matching a
+            # Grohe SKU). A global `{"sku": sku}` lookup would silently
+            # overwrite a completely unrelated brand's product. Never again.
+            existing = await db.products.find_one({"sku": sku, "brand_id": row_brand["id"]}, {"_id": 0})
             if existing:
                 await db.products.update_one({"sku": sku}, {"$set": payload})
                 await _upload_supplier_images(
                     resolved_images, image_meta, image_quality,
                     product_id=existing["id"], family_key=family_key,
-                    brand_id=brand_doc["id"], brand_slug=brand_doc.get("slug") or supplier.lower(),
+                    brand_id=row_brand["id"], brand_slug=row_brand.get("slug") or supplier.lower(),
                 )
                 updated += 1
                 continue
@@ -266,7 +297,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
         await _upload_supplier_images(
             resolved_images, image_meta, image_quality,
             product_id=p.id, family_key=family_key,
-            brand_id=brand_doc["id"], brand_slug=brand_doc.get("slug") or supplier.lower(),
+            brand_id=row_brand["id"], brand_slug=row_brand.get("slug") or supplier.lower(),
         )
         imported += 1
 

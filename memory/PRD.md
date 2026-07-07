@@ -209,6 +209,45 @@ category/brand filters return correctly-scoped counts. Backup taken immediately 
 
 **Total ledger (for when Hansgrohe/AXOR resurface):** 2,872 products = Vitra 250 + Grohe 854
 + Geberit 496 (per original tally) + Hansgrohe 826 + AXOR 446. Current live count: 1,610.
+
+## Hansgrohe/AXOR recovery — Batch 1 of 3 (2026-07-07)
+
+User re-uploaded 5 of the 14 original Hansgrohe files (3hole, BM, Ceramic, handshower, HFAV —
+via customer-assets.emergentagent.com, since only 5 can attach per message). Delivered per the
+user's "Forge Catalog Recovery" master prompt:
+- **AXOR kept as a genuinely separate brand** (was previously folded into Hansgrohe by business
+  rule) — `catalog_pipeline/orchestrator.py::import_accepted` now resolves brand PER ROW
+  (`collection == "AXOR"` -> Axor brand; else the job's supplier brand), case-insensitive lookup
+  to avoid duplicate brand docs.
+- **Categories = supplier filename verbatim** (not invented) — `hansgrohe.py::FILE_TO_CATEGORY`
+  now maps confirmed filenames to readable labels (BM, Ceramic, Three Hole Mixers, Hand Showers)
+  and falls back to the literal stem for anything unconfirmed (HFAV).
+- New `backend/scripts/run_hansgrohe_batch.py` — batch-aware importer that tracks progress in
+  `/app/memory/hansgrohe_import_manifest.json` so future batches (2 of 3, 3 of 3) never
+  reprocess a completed file and always report accurate "remaining files".
+- Result: **364 new products** (261 Hansgrohe + 103 AXOR), 17 categories, 0 missing images,
+  0 true duplicate SKUs.
+
+**CRITICAL BUG FOUND + FIXED DURING THIS BATCH**: `import_accepted`'s existing-product lookup
+was global on `sku` alone (`{"sku": sku}`), not scoped by brand. 3 Hansgrohe/AXOR article
+numbers coincidentally collided with pre-existing Grohe SKUs (cross-manufacturer numeric code
+collision), which caused those 3 Grohe products to be **silently overwritten** with
+Hansgrohe/AXOR data. Detected by diffing every product against the pre-batch Supabase-backed
+JSON snapshot (brand_id mismatches). Fixed:
+- `import_accepted` now looks up `{"sku": sku, "brand_id": row_brand["id"]}` — SKU uniqueness is
+  scoped per-brand, matching how real-world manufacturer article numbers actually work.
+- Repaired all 3 corrupted docs: restored the original Grohe data from the pre-batch backup,
+  and created 3 new distinct product docs (2 Hansgrohe, 1 AXOR) carrying the data that had been
+  clobbered, re-pointing their already-uploaded Supabase image (`product_media`) docs to the new
+  product IDs instead of re-uploading. Verified 0 remaining diffs against the backup, images
+  reachable (HTTP 200) at their new product IDs.
+- Took a fresh backup immediately after repair (`backend/backups/20260707_031204/`, also pushed
+  to the Supabase private bucket).
+
+**Current totals: 1,974 products** — Grohe 864, Geberit 496, Vitra 250, Hansgrohe 261, AXOR 103.
+**Remaining Hansgrohe files (batch 2/3 candidates):** Holder, Thermostat, WBM, TBM, Single_lever,
+Spout, Showerhose, kitchen, SHOWERS_HANSGROHE.
+
 User directive: restrained premium aesthetic (Apple philosophy, not style). Warm off-white canvas,
 near-black ink type, brass accent used ONLY for: primary CTA, focus, active nav, selected state, progress.
 Headings: Fraunces serif; everything else Inter. Priority: Quotation Builder 70% / Purchases 20% / Quotation List 10%.

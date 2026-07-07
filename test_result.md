@@ -2093,3 +2093,30 @@ agent_communication:
         media=Supabase, and the seed-guard means no future session can silently overwrite it.
         NOT YET DONE (deferred by user): Hansgrohe/AXOR catalog (needs the 14 original XLSX
         files if they ever resurface). No frontend testing was requested/run this session.
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Hansgrohe/AXOR recovery batch 1/3 (5 of 14 files: 3hole, BM, Ceramic, handshower, HFAV)
+        imported into Atlas per user's "Forge Catalog Recovery" master prompt. Delivered:
+        AXOR split into its own brand (per-row resolution in orchestrator.py, case-insensitive
+        to avoid dupes), categories taken verbatim from supplier filenames (no invented labels),
+        new backend/scripts/run_hansgrohe_batch.py with a persisted manifest so future batches
+        never reprocess a completed file. Result: 364 new products, 17 categories total, 0
+        missing images, 0 true duplicate SKUs, 9 files remaining.
+        FOUND AND FIXED A CRITICAL DATA-INTEGRITY BUG mid-batch: import_accepted matched existing
+        products by `sku` alone (global), not scoped by brand — 3 Hansgrohe/AXOR article numbers
+        coincidentally collided with pre-existing Grohe SKUs and silently overwrote those 3 Grohe
+        products. Caught it by diffing every product against the pre-batch backup snapshot
+        (brand_id mismatches), fixed the lookup to `{"sku": sku, "brand_id": ...}` (brand-scoped,
+        matches real-world manufacturer numbering), and repaired all 3 corrupted docs: restored
+        the original Grohe data from backup, created 3 new correctly-attributed Hansgrohe/AXOR
+        product docs re-using their already-uploaded Supabase images. Verified 0 remaining diffs
+        vs backup, images HTTP 200 at new IDs. Took a fresh backup immediately after
+        (pushed to Supabase private bucket).
+        Current health check: products=1974 (Grohe 864, Geberit 496, Vitra 250, Hansgrohe 261,
+        AXOR 103), brands=5 (no dupes), categories=17, mongo/supabase both connected, no warnings.
+        No automated test suites run this turn — user explicitly asked to skip them; all
+        verification was direct DB/API queries + image reachability checks. Please hold off on
+        deep_testing_backend_v2 unless the user asks for it.
+

@@ -32,19 +32,25 @@ from ..base import MISSING, BrandAdapter, ExtractionReport, ProductRow, dedupe_i
 from ..image_extractor import ExtractedImage, extract_images_from_xlsx_ex
 
 
-# Category is derived DIRECTLY from the source filename (per business rule):
-#   BM.xlsx           → "BM"
-#   Ceramic.xlsx      → "Ceramic"
-#   HFAV.xlsx         → "HFAV"
-#   Holder.xlsx       → "Holder"
-#   Thermostat.xlsx   → "Thermostat"
-#   WBM.xlsx          → "WBM"
-#   3hole.xlsx        → "3hole"
-#   handshower.xlsx   → "handshower"
-#   SHOWERS_HANSGROHE.xlsx → "SHOWERS_HANSGROHE"
-# The stem is used verbatim (whitespace collapsed) so that Forge's UI shows the
-# supplier's file-level grouping as the category.
-FILE_TO_CATEGORY: dict[str, tuple[str, str | None]] = {}  # kept for legacy imports; unused
+# Category is derived DIRECTLY from the source filename (per business rule) —
+# never invented, but given a readable display label per the supplier's own
+# per-file grouping. Only labels the user explicitly confirmed are mapped;
+# anything else falls back to the filename stem verbatim (still not invented).
+FILE_TO_CATEGORY: dict[str, str] = {
+    "bm": "BM",
+    "ceramic": "Ceramic",
+    "holder": "Holder",
+    "kitchen": "Kitchen",
+    "thermostat": "Thermostat",
+    "wbm": "WBM",
+    "tbm": "TBM",
+    "single_lever": "Single Lever",
+    "3hole": "Three Hole Mixers",
+    "showers_hansgrohe": "Showers",
+    "handshower": "Hand Showers",
+    "showerhose": "Shower Hose",
+    "spout": "Spouts",
+}
 
 # Section headers → subcategory
 SECTION_TO_SUBCAT = [
@@ -147,11 +153,15 @@ def _slug(s: str) -> str:
 
 
 def _category_from_filename(filename: str) -> tuple[str, str | None]:
-    """Category = filename stem verbatim (per business rule); subcategory = None."""
+    """Category = filename stem (per business rule); mapped to a readable
+    label when the supplier's own naming is confirmed (see FILE_TO_CATEGORY),
+    otherwise the stem verbatim — never fabricated either way."""
     import os
     stem = os.path.splitext(os.path.basename(filename or ""))[0]
     stem = stem.strip().replace("_", " ").strip()
-    return (stem or "Uncategorized", None)
+    key = re.sub(r"[^a-z0-9]+", "_", stem.lower()).strip("_")
+    label = FILE_TO_CATEGORY.get(key, stem)
+    return (label or "Uncategorized", None)
 
 
 def _detect_collection(name: str) -> str:

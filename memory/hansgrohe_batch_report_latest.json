@@ -1,0 +1,35 @@
+{
+  "files_processed": [
+    "3hole.xlsx",
+    "BM.xlsx",
+    "Ceramic.xlsx",
+    "handshower.xlsx",
+    "HFAV.xlsx"
+  ],
+  "already_done_skipped": [],
+  "categories_created": [
+    "BM",
+    "Ceramic",
+    "HFAV",
+    "Hand Showers",
+    "Three Hole Mixers"
+  ],
+  "products_imported": 361,
+  "products_updated": 5,
+  "products_skipped": 0,
+  "duplicate_skus_in_batch": 0,
+  "missing_images": 0,
+  "errors": [],
+  "runtime_s": 1343.4,
+  "remaining_files": [
+    "Holder.xlsx",
+    "Thermostat.xlsx",
+    "WBM.xlsx",
+    "TBM.xlsx",
+    "Single_lever.xlsx",
+    "Spout.xlsx",
+    "Showerhose.xlsx",
+    "kitchen.xlsx",
+    "SHOWERS_HANSGROHE.xlsx"
+  ]
+}

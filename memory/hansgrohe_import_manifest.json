@@ -1,0 +1,26 @@
+{
+  "processed_files": [
+    "3hole",
+    "bm",
+    "ceramic",
+    "handshower",
+    "hfav"
+  ],
+  "batches": [
+    {
+      "at": "2026-07-07T03:04:45Z",
+      "files": [
+        "3hole.xlsx",
+        "BM.xlsx",
+        "Ceramic.xlsx",
+        "handshower.xlsx",
+        "HFAV.xlsx"
+      ],
+      "stats": {
+        "imported": 361,
+        "updated": 5,
+        "skipped": 0
+      }
+    }
+  ]
+}
