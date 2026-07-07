@@ -2048,3 +2048,48 @@ agent_communication:
         Please regression-test backend now: focus on GET /api/health/system (shape + accurate counts +
         warnings array) and a full smoke pass on auth/quotations/customers/payments/followups/catalog
         endpoints since the Python venv was fully reinstalled this session (dependency drift risk).
+
+
+agent_communication:
+    - agent: "main"
+      message: |
+        RESOLVED — user explicitly asked to STOP automated test-suite runs for this thread
+        ("manual testing will be performed by me... only fix issues that prevent persistence
+        or threaten data integrity"). No deep_testing_backend_v2 / frontend testing was run
+        past this point in the session, per instruction — this is a documentation +
+        infra-migration update only.
+        Full audit delivered at /app/memory/persistence_audit_2026-07-07.md (filesystem map,
+        why .env/Mongo/images vanish every session, exactly what is/isn't recoverable).
+        User then provided MongoDB Atlas connection string + Supabase service_role/anon keys.
+        Completed the full migration:
+        (1) MONGO_URL now mongodb+srv://...@cluster0.vmc0rmr.mongodb.net (Atlas, verified
+            connected, is_local=false).
+        (2) SUPABASE_URL/SERVICE_ROLE_KEY/ANON_KEY wired for project vburaxruvbnbahegtbya
+            (verified connected, both buckets forge-products/forge-private pre-existed).
+        (3) backend/seed.py hardened — resync_catalog_if_needed() and seed_if_empty() now both
+            hard-guard on "any non-demo product exists => never touch/reseed the catalog"
+            (previously this could silently WIPE a real catalog back to demo data on a brand
+            -name mismatch — now impossible).
+        (4) Investigated catalog recovery BEFORE rebuilding (per explicit instruction): found
+            the original Grohe/Geberit/Vitra supplier files still live at persistent
+            customer-assets.emergentagent.com URLs referenced in
+            backend/scripts/run_catalog_imports.py. Re-ran the existing production pipeline
+            straight into Atlas. Result: 1,610 real products (Grohe 864, Geberit 496, Vitra
+            250), 1,612 product_media docs, images verified live on Supabase (HTTP 200 sample
+            check). Hansgrohe+AXOR (1,272 products / 14 source XLSX) confirmed NOT recoverable
+            anywhere in this project (not git, not local disk, not run attachments, no
+            persistent URL) — left empty, not fabricated, exactly as instructed.
+        (5) Post-restore verification (Priority 4): GET /api/brands and /api/categories show
+            correct per-brand/per-category product_count; GET /api/products?q=mixer returns
+            364 relevant results; sample image public_url returns HTTP 200 with real bytes.
+        (6) backend/scripts/backup_db.py extended to also push the JSON snapshot into the
+            Supabase private bucket (backups/<timestamp>/*.json) — added
+            pull_backup_from_supabase.py so a future empty session can pull it back down
+            before running restore_db.py. Ran a backup immediately after the catalog restore
+            (Priority 5) and confirmed the pull-back path lists it correctly.
+        Current health check (GET /api/health/system): mongo.connected=true/is_local=false,
+        supabase.configured=true/connected=true, products=1610, warnings=[] (empty — no more
+        red flags). This is a genuinely durable state now: code=GitHub, data=Atlas,
+        media=Supabase, and the seed-guard means no future session can silently overwrite it.
+        NOT YET DONE (deferred by user): Hansgrohe/AXOR catalog (needs the 14 original XLSX
+        files if they ever resurface). No frontend testing was requested/run this session.

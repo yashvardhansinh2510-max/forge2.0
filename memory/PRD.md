@@ -161,7 +161,54 @@ Iteration-1 endpoints unchanged plus:
 - Payments / Follow-ups full UIs
 
 
-## Design Reboot — Showroom Language (July 2026 fork)
+## Persistence & Disaster Recovery migration (2026-07-07, DELIVERED)
+
+Root cause fully diagnosed (see `/app/memory/persistence_audit_2026-07-07.md`): every new
+session/fork provisions a brand-new pod/volume seeded only from GitHub. Local MongoDB
+(`mongod` inside the container) and `.env` (correctly gitignored) never survive that —
+every session was a total data loss with a full demo re-seed on top.
+
+**Migrated to permanent infrastructure:**
+- `MONGO_URL` now points at a MongoDB **Atlas** M0 cluster (`cluster0.vmc0rmr.mongodb.net`) —
+  no more local Mongo for real data. `backend/db.py` needed zero code changes.
+- `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY` wired for project
+  `vburaxruvbnbahegtbya` (buckets `forge-products` public / `forge-private` private —
+  both pre-existed from a prior session's migration and were reachable).
+- `backend/.env.example` + `frontend/.env.example` committed (safe templates).
+- `GET /api/health/system` (no auth, never leaks secret values) — mongo/supabase
+  reachability, `is_local` flag, live collection counts, secrets-loaded booleans,
+  actionable `warnings[]`.
+- `backend/scripts/backup_db.py` / `restore_db.py` / `pull_backup_from_supabase.py` — JSON
+  snapshot backup that now ALSO pushes to the Supabase private bucket (`backups/<ts>/*.json`)
+  so the disaster-recovery point itself survives a session reset, not just local disk.
+- **Critical data-safety fix in `backend/seed.py`**: `resync_catalog_if_needed()` used to
+  wipe products/brands/categories back to demo data on ANY startup where the brand-name set
+  didn't exactly match the 5 demo brands (a near-certainty after a real import, e.g. Axor
+  folding into Hansgrohe). Added a guard — if any product exists without a `demo` tag, this
+  function now returns immediately and never touches the catalog. `seed_if_empty()` now also
+  checks `products` is empty (not just `users`) before seeding. Implements the user's explicit
+  requirement: "products > 0 → skip seed; database empty → run seed."
+
+**Catalog recovery — investigated before rebuilding, per explicit instruction:**
+Found the original GROHE/GEBERIT/VITRA supplier files still live on Emergent's persistent
+`customer-assets.emergentagent.com` storage (referenced by URL in
+`backend/scripts/run_catalog_imports.py`, verified reachable, downloaded, re-ran the existing
+production pipeline against Atlas). Result: **1,610 real products restored (0 demo)** —
+Grohe 864, Geberit 496 (+9 SKU updates), Vitra 250 — with 1,612 `product_media` docs pointing
+at live, verified-reachable Supabase image URLs (HTTP 200 confirmed on a sample).
+**Hansgrohe + AXOR (1,272 products, 14 source XLSX files) were NOT recoverable** — no
+persistent URL, not in git history, not in `backend/temp/`, not in this run's attached
+assets. Per user's explicit instruction: left empty, not fabricated, documented here and in
+the audit report — to be recovered only if/when the original files resurface.
+
+**Verified post-restore (Priority 4):** product/brand/category counts match exactly, per-brand
+`product_count` correct on `/api/brands` and `/api/categories`, a sample Supabase image URL
+returns HTTP 200 with real bytes, `/api/products?q=mixer` search returns 364 relevant results,
+category/brand filters return correctly-scoped counts. Backup taken immediately after
+(Priority 5) and confirmed pulled-back successfully from Supabase.
+
+**Total ledger (for when Hansgrohe/AXOR resurface):** 2,872 products = Vitra 250 + Grohe 854
++ Geberit 496 (per original tally) + Hansgrohe 826 + AXOR 446. Current live count: 1,610.
 User directive: restrained premium aesthetic (Apple philosophy, not style). Warm off-white canvas,
 near-black ink type, brass accent used ONLY for: primary CTA, focus, active nav, selected state, progress.
 Headings: Fraunces serif; everything else Inter. Priority: Quotation Builder 70% / Purchases 20% / Quotation List 10%.

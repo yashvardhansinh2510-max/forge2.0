@@ -29,11 +29,36 @@ ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
 DEFAULT_COLLECTIONS = [
-    "products", "brands", "categories", "customers", "quotations",
-    "purchase_orders", "payments", "followups", "users", "activity",
+    "products", "product_media", "brands", "categories", "customers", "quotations",
+    "purchase_orders", "payments", "followups", "users", "activity", "suppliers",
 ]
 
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", ROOT / "backups"))
+
+
+async def _push_to_supabase(out_dir: Path, ts: str) -> None:
+    """Best-effort: also push this snapshot into the private Supabase bucket so
+    the backup itself survives a session reset (local disk does not).
+    No-ops quietly if Supabase isn't configured."""
+    if not (os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY")):
+        print("  (Supabase not configured — backup stays local-only, will not survive a session reset)")
+        return
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT))
+    from media_storage import get_media_storage
+    from media_storage.factory import private_bucket
+
+    storage = get_media_storage()
+    bucket = private_bucket()
+    for path in out_dir.glob("*.json"):
+        data = path.read_bytes()
+        key = f"backups/{ts}/{path.name}"
+        try:
+            await storage.upload(bucket=bucket, key=key, data=data, content_type="application/json")
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! Supabase push failed for {path.name}: {e}")
+            return
+    print(f"  Pushed snapshot to Supabase private bucket '{bucket}' at backups/{ts}/ (persists across session resets)")
 
 
 def _json_default(o):
@@ -63,6 +88,7 @@ async def backup(collections: list[str]) -> Path:
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     latest_link = BACKUP_DIR / "latest.json"
     latest_link.write_text(json.dumps({"path": str(out_dir), **manifest}, indent=2), encoding="utf-8")
+    await _push_to_supabase(out_dir, ts)
     print(f"\nBackup complete: {out_dir}")
     client.close()
     return out_dir

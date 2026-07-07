@@ -38,7 +38,11 @@ def _resolve_snapshot_dir(arg: str | None) -> Path:
         return p
     latest = BACKUP_DIR / "latest.json"
     if not latest.exists():
-        raise SystemExit(f"No backups found under {BACKUP_DIR}. Run backup_db.py first.")
+        raise SystemExit(
+            f"No LOCAL backups found under {BACKUP_DIR}. If this is a fresh session/container, "
+            "the last backup may still be safe in Supabase — use scripts/pull_backup_from_supabase.py "
+            "to list/download snapshots from the private bucket first, then re-run this script."
+        )
     meta = json.loads(latest.read_text())
     return Path(meta["path"])
 
