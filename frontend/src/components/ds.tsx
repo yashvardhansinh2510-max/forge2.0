@@ -21,11 +21,13 @@ import {
   Animated,
   Easing,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   ViewStyle,
 } from "react-native";
@@ -44,7 +46,7 @@ import {
 export {
   Alert, Avatar, Badge, BrandMark, Button, Card, Chip, Divider, EmptyState,
   ErrorState, FormField, HeroBanner, Icon, IconButton, KpiCard, ListRow,
-  LoadingState, Modal, PageHeader, PillTabs, PriceTag, ProgressBar,
+  LoadingState, PageHeader, PillTabs, PriceTag, ProgressBar,
   ScreenTitle, SearchField, SectionHeader, SegmentedControl, Sheet, Skeleton,
   SkeletonCard, SkeletonGrid, SkeletonList, SkeletonRow, StatTile, StatusBadge,
   Table, TableCell, TableHeader, TableRow, Tabs, TextField, Toolbar,
@@ -761,19 +763,47 @@ export function Dropdown({
   variant?: "primary" | "secondary" | "ghost";
 }) {
   const [open, setOpen] = useState(false);
-  const anchorRef = useRef<View>(null);
+  const [anchor, setAnchor] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const btnRef = useRef<View>(null);
+  const { width: winW, height: winH } = useWindowDimensions();
 
   const btnBg = variant === "primary" ? colors.brand
     : variant === "ghost" ? "transparent"
     : colors.surfaceSecondary;
   const btnFg = variant === "primary" ? colors.onBrand : colors.onSurface;
 
+  // Menu renders inside a top-level Modal, positioned from the button's
+  // MEASURED screen coordinates — never an in-place position:"absolute"
+  // child. That in-place approach broke inside scrolling card lists: a
+  // sibling card rendered LATER in the DOM has no stacking relationship to
+  // an EARLIER card's overflowing children, so it silently painted on top
+  // of any open menu. A Modal always paints above the entire screen.
+  const openMenu = () => {
+    const node = btnRef.current as any;
+    if (node?.measureInWindow) {
+      node.measureInWindow((x: number, y: number, w: number, h: number) => {
+        setAnchor({ x, y, w, h });
+        setOpen(true);
+      });
+    } else {
+      setAnchor({ x: 0, y: 0, w: 0, h: 0 });
+      setOpen(true);
+    }
+  };
+
+  const menuW = 216;
+  const estH = 8 + items.length * 42;
+  let top = (anchor?.y ?? 0) + (anchor?.h ?? 0) + 6;
+  if (top + estH > winH - 12) top = Math.max(12, (anchor?.y ?? 0) - estH - 6);
+  let left = (anchor?.x ?? 0) + (anchor?.w ?? 0) - menuW;
+  left = Math.min(Math.max(12, left), winW - menuW - 12);
+
   return (
-    <View style={{ position: "relative" }}>
+    <View>
       <Pressable
-        ref={anchorRef}
+        ref={btnRef}
         testID={testID}
-        onPress={() => setOpen((v) => !v)}
+        onPress={openMenu}
         style={({ pressed, hovered }: any) => ({
           height: 40,
           paddingHorizontal: spacing.md,
@@ -794,45 +824,39 @@ export function Dropdown({
         }}>{label}</Text>
         <Feather name={open ? "chevron-up" : "chevron-down"} size={iconSize.sm} color={btnFg} />
       </Pressable>
-      {open ? (
-        <>
-          <Pressable
-            onPress={() => setOpen(false)}
-            style={StyleSheet.absoluteFillObject as any}
-          />
-          <View style={[{
-            position: "absolute", top: 46, right: 0, minWidth: 200,
-            borderRadius: radius.md,
-            backgroundColor: colors.surfaceSecondary,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: colors.border,
-            paddingVertical: 4,
-            zIndex: 100,
-          }, elevation.overlay]}>
-            {items.map((it, i) => (
-              <Pressable
-                key={i}
-                onPress={() => { setOpen(false); it.onPress(); }}
-                style={({ pressed, hovered }: any) => ({
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: spacing.sm,
-                  paddingVertical: 10,
-                  paddingHorizontal: spacing.md,
-                  backgroundColor: pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : "transparent",
-                })}
-              >
-                {it.icon ? <Feather name={it.icon} size={iconSize.md} color={it.tone === "danger" ? colors.error : colors.onSurfaceSecondary} /> : null}
-                <Text style={{
-                  fontSize: 13, fontFamily: type.body.fontFamily,
-                  fontWeight: "500",
-                  color: it.tone === "danger" ? colors.error : colors.onSurface,
-                }}>{it.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </>
-      ) : null}
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={StyleSheet.absoluteFillObject as any} onPress={() => setOpen(false)} />
+        <View style={[{
+          position: "absolute", top, left, width: menuW,
+          borderRadius: radius.md,
+          backgroundColor: colors.surfaceSecondary,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: colors.border,
+          paddingVertical: 4,
+        }, elevation.overlay]}>
+          {items.map((it, i) => (
+            <Pressable
+              key={i}
+              onPress={() => { setOpen(false); it.onPress(); }}
+              style={({ pressed, hovered }: any) => ({
+                flexDirection: "row",
+                alignItems: "center",
+                gap: spacing.sm,
+                paddingVertical: 10,
+                paddingHorizontal: spacing.md,
+                backgroundColor: pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : "transparent",
+              })}
+            >
+              {it.icon ? <Feather name={it.icon} size={iconSize.md} color={it.tone === "danger" ? colors.error : colors.onSurfaceSecondary} /> : null}
+              <Text style={{
+                fontSize: 13, fontFamily: type.body.fontFamily,
+                fontWeight: "500",
+                color: it.tone === "danger" ? colors.error : colors.onSurface,
+              }}>{it.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </Modal>
     </View>
   );
 }

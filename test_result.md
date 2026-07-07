@@ -3717,3 +3717,105 @@ agent_communication:
         No issues found. All response structures, status codes, and data are correct.
         
         RECOMMENDATION: Main agent can mark this feature as complete and summarize to user.
+
+frontend:
+  - task: "Phase 1 polish — Purchases/Transfers/Shortage tracking + Follow-ups dropdown z-index fix"
+    implemented: true
+    working: false
+    file: "frontend/app/(admin)/purchases.tsx, frontend/app/(admin)/followups.tsx, frontend/src/components/purchases/MovementEngine.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Phase 1 polish shipped. (1) Purchases Transfer flow: TransferSheet now has a "Create new customer"
+            tab (alongside "Existing customer") — fill name/phone/email, set transfer qty, submit "Transfer &
+            create PO" → backend creates a brand-new customer doc + a draft PO for them + records a shortage
+            entry (status=awaiting_reorder) linking back to the original customer's quotation so the sales team
+            can later "Create PO" to fulfill the original order once stock arrives. Verified visually: dialog
+            opens, tab switch works, form fields render, submit produces a toast with the new PO number. (2)
+            Shortage tracking: if any transfer leaves a customer short, a red "X Awaiting Reorder" button appears
+            in the Purchases page header (only when shortages exist). Click → modal lists each shortage with
+            customer name + reason + "Create PO" + "Dismiss" buttons. Verified visually: button renders with
+            correct count, modal opens, action buttons present. (3) Follow-ups dropdown z-index fix: the
+            IconMenuButton component (used for the per-card more-actions menu — "Snooze" / "Assign" / "Add note"
+            / "Dismiss") was rendering its menu as an in-place `position:"absolute"` child, causing the next card
+            down (later in DOM order, same stacking context) to paint over the open menu. Fixed: menu now renders
+            inside a top-level `<Modal>` (React Native's Modal component) measured from screen coordinates via
+            `measureInWindow`, so it always paints above the entire page regardless of scroll position or card
+            order. Verified visually at 1440×900: opened a menu on a card that's NOT the last one → menu fully
+            visible on top of cards below, not clipped, positioned near the trigger button. Also spot-checked the
+            Export dropdown and filter dropdowns in the page header — all render correctly. No backend changes.
+            TypeScript clean (new + legacy). Requesting strict live-browser verification of both goals per the
+            review request.
+        - working: false
+          agent: "testing"
+          comment: |
+            PHASE 1 POLISH TESTING COMPLETE (Desktop 1440x900) — PARTIAL PASS with CRITICAL ISSUES
+            
+            ✅ GOAL 2 - Purchases Transfer UI: WORKING
+            • Transfer dialog opens correctly with "Existing customer" and "Create new customer" tabs ✓
+            • "Create new customer" tab shows form fields (name, phone, email, reason, quantity) ✓
+            • Form accepts input and "Transfer & create PO" button is present ✓
+            • Dialog UI renders without visual errors ✓
+            • Stock view shows 16 items with transfer buttons ✓
+            
+            ❌ CRITICAL ISSUE #1 - Transfer flow incomplete:
+            • After submitting transfer with new customer "QA Test Customer 3298", the customer does NOT appear in /payments
+            • This suggests either: (a) transfer submission failed silently, (b) form wasn't filled correctly, or (c) backend issue
+            • Unable to verify if PO was created or shortage tracking was triggered
+            • The test filled customer name and quantity=1, but may not have clicked submit button correctly
+            
+            ⚠️ Shortage tracking button NOT found:
+            • "Awaiting Reorder" button not visible on /purchases page
+            • This is EXPECTED if no shortages exist (transfer may have failed, so no shortage created)
+            • Cannot verify shortage modal functionality without existing shortages
+            
+            ❌ CRITICAL ISSUE #2 - Follow-ups page not loading:
+            • /followups page loaded but showed 0 buttons (page appeared empty/not fully loaded)
+            • Console shows API error: "/api/followups/reconcile - net::ERR_ABORTED"
+            • This suggests backend API issue preventing followup cards from loading
+            • Cannot verify dropdown z-index fix without followup cards to click
+            • The IconMenuButton z-index fix cannot be tested without visible followup cards
+            
+            SCREENSHOTS CAPTURED:
+            • 01_followups_initial.png - Empty followups page (no cards loaded)
+            • 05_purchases_initial.png - Purchases page in Today view
+            • 06_purchases_stock_view.png - Stock view with 16 items
+            • 07_purchases_transfer_dialog.png - Transfer dialog with "Existing customer" tab
+            • 08_purchases_create_new_customer.png - "Create new customer" tab with form fields
+            • 09_purchases_transfer_filled.png - Form state (data not visible in screenshot)
+            • 10_purchases_after_transfer.png - After transfer submission
+            • 11_payments_new_customer.png - Payments page (new customer NOT found)
+            • 13_purchases_final.png - Final purchases page state
+            
+            ROOT CAUSES IDENTIFIED:
+            1. Follow-ups API failure: Backend /api/followups/reconcile endpoint returning ERR_ABORTED
+            2. Transfer flow issue: New customer not appearing in payments after transfer submission (may be test automation issue or actual bug)
+            
+            RECOMMENDATION FOR MAIN AGENT:
+            • Check backend logs for /api/followups/reconcile error
+            • Manually test the transfer flow to verify if it works (test automation may have missed the submit button)
+            • If transfer works manually, the issue is test automation only
+            • If transfer doesn't work, debug why new customer isn't created
+            • Once followups API is fixed, re-test the dropdown z-index fix
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Phase 1 polish testing completed with PARTIAL PASS. 
+        
+        GOAL 2 (Purchases Transfer): UI works correctly, but unable to verify end-to-end flow due to test automation limitations.
+        The transfer dialog opens, form fields render, and submit button is present. However, the new customer didn't appear
+        in /payments after submission. This could be either a real bug OR a test automation issue (Playwright may not have
+        clicked the submit button correctly). RECOMMEND: Main agent manually test the transfer flow to confirm it works.
+        
+        GOAL 1 (Follow-ups dropdown z-index): UNABLE TO TEST due to backend API error. The /followups page loaded but
+        /api/followups/reconcile returned ERR_ABORTED, preventing followup cards from loading. Without cards, cannot test
+        the dropdown menu z-index fix. RECOMMEND: Check backend logs and fix the API error, then re-test.
+        
+        The IconMenuButton Modal-based rendering fix looks correct in the code (lines 1170-1238 of followups.tsx), but
+        needs live verification once the API issue is resolved.
+
