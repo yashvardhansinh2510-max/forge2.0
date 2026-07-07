@@ -279,7 +279,9 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
             # overwrite a completely unrelated brand's product. Never again.
             existing = await db.products.find_one({"sku": sku, "brand_id": row_brand["id"]}, {"_id": 0})
             if existing:
-                await db.products.update_one({"sku": sku}, {"$set": payload})
+                await db.products.update_one(
+                    {"sku": sku, "brand_id": row_brand["id"]}, {"$set": payload}
+                )
                 await _upload_supplier_images(
                     resolved_images, image_meta, image_quality,
                     product_id=existing["id"], family_key=family_key,

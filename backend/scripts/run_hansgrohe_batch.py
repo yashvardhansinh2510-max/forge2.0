@@ -36,6 +36,7 @@ ALL_14_FILES = [
     "Single_lever.xlsx", "Spout.xlsx",
     "handshower.xlsx", "Showerhose.xlsx",
     "kitchen.xlsx", "SHOWERS_HANSGROHE.xlsx",
+    "rail.xlsx",  # discovered mid-recovery, not in the original 14 — tracked anyway
 ]
 
 

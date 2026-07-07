@@ -4,7 +4,12 @@
     "bm",
     "ceramic",
     "handshower",
-    "hfav"
+    "hfav",
+    "holder",
+    "kitchen",
+    "rail",
+    "showerhose",
+    "showers_hansgrohe"
   ],
   "batches": [
     {
@@ -19,6 +24,21 @@
       "stats": {
         "imported": 361,
         "updated": 5,
+        "skipped": 0
+      }
+    },
+    {
+      "at": "2026-07-07T03:43:00Z",
+      "files": [
+        "Holder.xlsx",
+        "kitchen.xlsx",
+        "rail.xlsx",
+        "Showerhose.xlsx",
+        "SHOWERS HANSGROHE.xlsx"
+      ],
+      "stats": {
+        "imported": 449,
+        "updated": 2,
         "skipped": 0
       }
     }

@@ -2120,3 +2120,37 @@ agent_communication:
         verification was direct DB/API queries + image reachability checks. Please hold off on
         deep_testing_backend_v2 unless the user asks for it.
 
+
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Hansgrohe batch 2/3 (Holder, kitchen, rail [new, not in original 14], Showerhose,
+        SHOWERS HANSGROHE — 505 rows) imported into Atlas. Pre-import full-catalog SKU integrity
+        scan (all 1974 products) was clean: 0 same-brand dupes, 0 orphaned media, 0 invalid
+        brand/category refs, exactly the 3 known-fixed cross-brand collisions from batch 1.
+        FOUND + FIXED A SECOND BUG in the same code path: my earlier brand-scoping fix only
+        patched the `find_one` lookup, but the actual `update_one({"sku": sku}, ...)` WRITE on
+        the same line still filtered by sku alone (no brand_id) — so whenever a same-brand match
+        was correctly found via the scoped lookup, the update itself could still land on a
+        DIFFERENT document if another brand happened to share that raw sku string (Mongo's
+        update_one has no ordering guarantee across non-unique-indexed fields). This overwrote 1
+        real Grohe product ("Euphoria 260 Headshower 6,6L", SKU 26456000) with a Hansgrohe
+        accessory row. Fixed the update_one filter to also scope by brand_id. Detected via the
+        same backup-diff technique (compared every product against the 03:12 post-batch-1-repair
+        snapshot); found 2 diffs, 1 real corruption (repaired: restored Grohe doc, created a new
+        distinct Hansgrohe product for the clobbered data — no image existed for that row, so
+        image_status stays "missing", not fabricated) and 1 harmless in-place same-brand/same-SKU
+        description refinement (not corruption, left as-is). Re-ran full integrity scan after
+        repair: 0 same-brand dupes, 0 orphaned media, 0 brand mismatches, 12 legitimate
+        cross-brand SKU collisions (Grohe vs Hansgrohe/AXOR numeric code coincidences — expected
+        and correctly modeled as distinct per-brand products now).
+        Batch 2 reconciliation: 449 imported, 2 updated (both legitimate in-batch/in-brand), 0
+        skipped, 8 true duplicate SKUs correctly rejected (not imported), 1 missing image
+        (genuinely absent in supplier file, not fabricated), 4 new categories (Holder, Kitchen,
+        Shower Hose, rail — "Showers" already existed, correctly reused not duplicated).
+        Current totals: 2,424 products — Grohe 864, Geberit 496, Vitra 250, Hansgrohe 615,
+        AXOR 199. Fresh backup taken post-repair, pushed to Supabase private bucket. 5 Hansgrohe
+        files remain: Thermostat, WBM, TBM, Single_lever, Spout.
+        No automated regression tests run this turn — user explicitly asked to hold off; all
+        verification was direct DB integrity scans + image reachability spot-checks.

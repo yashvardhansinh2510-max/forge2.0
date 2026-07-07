@@ -248,6 +248,20 @@ JSON snapshot (brand_id mismatches). Fixed:
 **Remaining Hansgrohe files (batch 2/3 candidates):** Holder, Thermostat, WBM, TBM, Single_lever,
 Spout, Showerhose, kitchen, SHOWERS_HANSGROHE.
 
+## Hansgrohe/AXOR recovery — Batch 2 of 3 (2026-07-07)
+
+5 more files (Holder, kitchen, rail [new/15th file], Showerhose, SHOWERS HANSGROHE — 505 rows).
+Pre-import full-catalog integrity scan clean. **Second bug found in the same code path**: the
+brand-scoping fix from batch 1 only patched the `find_one` lookup — the paired `update_one`
+write still filtered by `sku` alone, so it could land on a different brand's document than the
+one just verified to exist. Overwrote 1 real Grohe product; fixed `update_one` to also scope by
+`brand_id`, repaired the 1 real corruption (restored Grohe doc + created a distinct Hansgrohe
+product for the clobbered data), left 1 harmless same-brand description refinement as-is.
+Result: 449 imported, 2 updated, 8 true duplicate SKUs correctly rejected, 1 missing image
+(genuinely absent, not fabricated), 4 new categories. Fresh backup taken + pushed to Supabase.
+**Current totals: 2,424 products** — Grohe 864, Geberit 496, Vitra 250, Hansgrohe 615, AXOR 199.
+**Remaining files (batch 3):** Thermostat, WBM, TBM, Single_lever, Spout.
+
 User directive: restrained premium aesthetic (Apple philosophy, not style). Warm off-white canvas,
 near-black ink type, brass accent used ONLY for: primary CTA, focus, active nav, selected state, progress.
 Headings: Fraunces serif; everything else Inter. Priority: Quotation Builder 70% / Purchases 20% / Quotation List 10%.
