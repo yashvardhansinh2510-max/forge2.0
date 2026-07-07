@@ -229,7 +229,64 @@ backend:
             the Python venv was fully reinstalled this session.
 
 backend:
-  - task: "Follow-ups · Sales Command Center — reconciliation engine + priority scoring + full API"
+  - task: "Geberit product-name PDF extraction bug — 'Article No.' placeholder fix"
+    implemented: true
+    working: "NA"
+    file: "backend/catalog_pipeline/adapters/geberit.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            User-reported/confirmed bug: 400 of Geberit's 496 products had the literal name
+            "Article No." — a PDF table-header label leaking onto the SKU's text line for
+            certain multi-column variant-grid tables (colour/finish price grids), causing the
+            adapter to use it as the product name instead of falling back to search for a real
+            description line. Root cause confirmed in catalog_pipeline/adapters/geberit.py.
+            FIX: added JUNK_NAME_RE (matches "article no.", "art no", "sku", "description",
+            "colour", "finish", "price", "mrp" style header labels) — when the extracted name
+            matches, it's treated as empty so the existing backward-search fallback finds the
+            real description line instead.
+            APPLIED (scope-limited per explicit user instruction — name field ONLY, nothing else):
+            re-downloaded the same original Geberit PDF (persistent customer-assets URL), re-ran
+            ONLY the fixed adapter's extract() to build a sku->name map, then for the 400
+            products still showing brand_id=Geberit + name="Article No.", updated ONLY the
+            `name` field via update_one filtered by product id (sku/brand/category/series/mrp/
+            images/specs/ids all untouched — verified byte-identical brand/category/media counts
+            before and after: 2966 products, 5 brands, 26 categories, 2970 media, unchanged).
+            400/400 corrected via the fixed adapter's own extraction; 0 remained un-correctable.
+            Additionally found + fixed during verification: 154 products where the fallback
+            itself resolved to the literal sentinel string "[MISSING DATA]" (a bug in the
+            adapter's own MISSING constant leaking through as a "found" name) — fixed with an
+            honest, non-fabricated fallback composed from two already-correct fields:
+            f"{series} — {sku}". Also fixed 10 PDF ligature-encoding artifacts (fl/fi Unicode
+            ligatures like "ﬂ"/"ﬁ" rendered literally) plus 1 manual case ("feﬂective" ->
+            "reflective", the obvious intended Geberit finish name).
+            VERIFIED (own inspection, pending mandatory testing_agent confirmation per system
+            instruction): 0 remaining "Article No." / "[MISSING DATA]" / empty names on Geberit;
+            catalog_verify.py (no baseline) reports PASS clean (0 same-brand dupes, 0 orphaned
+            media, 0 invalid refs, 12 legitimate cross-brand SKU coincidences unchanged); brand/
+            category/media totals identical before and after (2966/5/26/2970). Final backup taken
+            and pushed to Supabase private bucket (backups/20260707_050006/).
+            REQUEST: please verify specifically — (1) GET a sample of Geberit products via
+            /api/products?brand_id=<geberit_id> and confirm no product name equals "Article No.",
+            "[MISSING DATA]", or is empty; (2) confirm sku/mrp/category_id/series are unchanged
+            for a few sampled products by cross-checking against
+            backend/backups/20260707_043055 (the pre-fix snapshot) vs current; (3) confirm overall
+            product/brand/category/media counts are unchanged (2966/5/26/2970); (4) confirm
+            catalog_verify.py exits 0.
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Catalog recovery is now fully complete + a real pre-existing Geberit name bug fixed, per
+        explicit user request and a mandatory system instruction to verify this specific bug fix
+        via the testing agent before finishing (overrides the user's earlier "skip automated
+        tests" instruction for THIS ONE fix only — scoped narrowly to validating the Geberit name
+        correction, not a full regression suite). Please focus verification on the task above.
+
     implemented: true
     working: true
     file: "backend/models.py, backend/services/followup_engine.py, backend/routes/followup_routes.py, backend/server.py, backend/routes/misc_routes.py, backend/seed.py"

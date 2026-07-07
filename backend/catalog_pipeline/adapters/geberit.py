@@ -43,6 +43,12 @@ SERIES_POOL = [
 ]
 
 
+JUNK_NAME_RE = re.compile(
+    r"^(article\s*no\.?|art\.?\s*no\.?|articleno|sku|description|colou?r|finish|price|mrp)\.?$",
+    re.IGNORECASE,
+)
+
+
 class GeberitAdapter(BrandAdapter):
     brand = "Geberit"
     supported_extensions = (".pdf",)
@@ -106,6 +112,13 @@ class GeberitAdapter(BrandAdapter):
                 text_without = SKU_RE.sub("", line)
                 text_without = re.sub(r"MRP:\s*[`₹]?\s*[\d,]+", "", text_without, flags=re.IGNORECASE)
                 name = text_without.strip(" ·-|:")
+                # A bare table-header label (e.g. "Article No.") sometimes leaks onto the
+                # same extracted text line as the SKU for certain multi-column variant-grid
+                # tables (colour/finish price grids). Treat that as no name at all so the
+                # existing backward-search fallback below finds the real description line —
+                # never let a header label become the product's name.
+                if name and JUNK_NAME_RE.match(name.strip()):
+                    name = ""
                 # If name still empty, try previous non-header non-SKU line as description
                 if not name or name == "":
                     for j in range(idx - 1, max(-1, idx - 5), -1):
