@@ -99,7 +99,19 @@ async def resync_catalog_if_needed():
     """Idempotently reconcile brands+categories+products to the current seed constants.
     Runs every startup. Only takes action when the current set differs from the target.
     Safe to run repeatedly. Quotations are unaffected (they store denormalized snapshots
-    of name/sku/image/price on each line, so historical quotes keep rendering)."""
+    of name/sku/image/price on each line, so historical quotes keep rendering).
+
+    DATA-SAFETY GUARD: never touch the catalog if it contains ANY real (non-demo)
+    product. Real imports (backend/catalog_pipeline) never tag rows "demo" — only
+    PRODUCT_SEEDS below does. Without this guard, a real catalog import whose brand
+    set doesn't exactly match the 5 demo brand names (e.g. Axor folded into
+    Hansgrohe as a collection) would cause this function to WIPE the entire
+    products/brands/categories collections and replace them with demo data on the
+    very next backend restart. This must never happen again."""
+    real_products = await db.products.count_documents({"tags": {"$ne": "demo"}})
+    if real_products > 0:
+        return
+
     desired = {name for name, _ in BRANDS}
     existing_docs = await db.brands.find({}, {"_id": 0, "name": 1}).to_list(200)
     existing = {d["name"] for d in existing_docs}
@@ -149,7 +161,14 @@ async def resync_catalog_if_needed():
 
 
 async def seed_if_empty():
+    """DATA-SAFETY GUARD: only ever seed demo data into a genuinely fresh/empty
+    database. Checks BOTH users and products — if either already has data
+    (e.g. a real catalog was restored but users hasn't been touched yet, or
+    vice versa), skip entirely. Per explicit requirement: products > 0 => skip;
+    database empty => seed."""
     if not await _empty("users"):
+        return
+    if not await _empty("products"):
         return
 
     now = datetime.now(timezone.utc)
