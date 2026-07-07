@@ -3853,3 +3853,57 @@ agent_communication:
         No code changes made this turn beyond environment/config recovery (no catalog, auth, or
         business-logic changes). Full production polish sprint (per user'''s brief) has NOT started
         yet — confirming milestone plan/sequencing with user before beginning actual polish work.
+
+
+    - agent: "main"
+      message: |
+        Session continued — user priority: fix Quotation Builder catalog loading fully +
+        insert brand logos before starting Milestone 1.1. Delivered:
+        1) BACKEND PERF FIX (root cause of slow/stuck grid): GET /api/products default
+           (popular) sort was pulling the ENTIRE matching catalog as FULL documents into
+           Python for in-memory ranking, then hydrating media with ONE sequential Mongo
+           query PER product (60x N+1) -> 17.6s per request against Atlas. Fixed: rank
+           over a slim {id,name} projection then refetch only the page's full docs by
+           ; added catalog_pipeline media_service.hydrate_media_batch() (one query for
+           the whole page) and swapped every hydrate_product_media() loop in
+           catalog_routes.py (products list, search, recent, frequent, similar,
+           complete-the-set) to it; parallelized count_documents/global-usage/my-usage
+           with asyncio.gather; added indexes (products: active+brand_id,
+           active+category_id, active+name, active+price, family_key, sku;
+           product_media: product_id, family_key; product_usage: user_id, product_id) in
+           server.py startup. Result: /api/products 17.6s -> ~2-4s (curl-verified).
+        2) Frontend FlatList virtualization bug fixed in ProductExplorer.tsx
+           (removeClippedSubviews is web-buggy — was capping visible/rendered cards
+           around ~20 despite more being loaded; disabled on web, windowSize 7->21,
+           initialNumToRender/maxToRenderPerBatch 10->24). Verified 60+ cards render and
+           stay rendered through scroll.
+        3) Added a real 3-col skeleton grid for the initial product-list loading state
+           (was plain "Loading products…" text) in ProductExplorer.tsx.
+        4) BuildCon House logo: user supplied 5 images (BuildCon House wordmark photo +
+           Grohe/Hansgrohe/Vitra/Geberit logos). Processed the BuildCon House photo
+           (cropped, background removed via luminance+connected-component matting,
+           soft contact-shadow baked in for legibility on light surfaces) into
+           frontend/assets/brands/buildcon-logo.png; new src/design/BrandLogo.tsx
+           exports <BuildConLogo/> (used in (auth)/login.tsx both layouts,
+           (admin)/_layout.tsx sidebar wordmark, (customer)/home.tsx header) and
+           SUPPLIER_LOGOS map / supplierLogoFor() wired into
+           components/quotation/catalog/BrandRail.tsx brand badges (Axor has no
+           supplied logo yet — keeps its initials-badge fallback by design).
+        5) Targeted data repair (not a re-import): 2 Geberit SKUs (154.050.00.1,
+           154.053.00.1) whose  was the literal PDF-extraction placeholder
+           "*Article No." — confirmed via web lookup these are Geberit CleanPoint
+           shower floor drains, real names applied via
+           backend/scripts/fix_geberit_article_no.py (name + updated_at ONLY;
+           integrity_guard.scan_catalog() run before/after, both ok=True, product count
+           unchanged 2966, verified no other field drifted). Report at
+           /app/memory/geberit_article_no_repair_report.json.
+        Also recovered backend/.env + frontend/.env + venv packages (wiped again on
+        session reset — see earlier entries) using credentials re-supplied by user;
+        confirmed DB_NAME=buildcon_house (not "buildcon") again.
+        NOT started yet: Milestone 1.1's broader UI consistency pass (typography/
+        spacing/shadow audit across the rest of the Quotation Builder — brand rail
+        collapse, categories drill-down, headers, empty/error states beyond the
+        skeleton). Spot-checked colors.brand token usage across the whole quotation/
+        folder — already brass everywhere, no black buttons found. Milestones 1.2+
+        (Purchases, Payments, Customers, Follow-ups, Dashboard, remaining pages) not
+        started.

@@ -85,6 +85,24 @@ async def _startup():
     except Exception as e:  # noqa: BLE001
         logger.warning("user_sessions index creation skipped: %s", e)
     try:
+        # Catalog indexes — the Quotation Builder's /products list is hit on
+        # every keystroke/filter change; these keep count_documents(), the
+        # ranking-pool find(), and the id-in page re-fetch all index-backed
+        # instead of falling back to a collection scan on the Atlas cluster.
+        await db.products.create_index("id", unique=True)
+        await db.products.create_index([("active", 1), ("brand_id", 1)])
+        await db.products.create_index([("active", 1), ("category_id", 1)])
+        await db.products.create_index([("active", 1), ("name", 1)])
+        await db.products.create_index([("active", 1), ("price", 1)])
+        await db.products.create_index("family_key")
+        await db.products.create_index("sku")
+        await db.product_media.create_index("product_id")
+        await db.product_media.create_index("family_key")
+        await db.product_usage.create_index([("user_id", 1)])
+        await db.product_usage.create_index([("product_id", 1)])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("catalog index creation skipped: %s", e)
+    try:
         await reconcile_followups()
     except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load
         logger.warning("Initial follow-up reconciliation skipped: %s", e)

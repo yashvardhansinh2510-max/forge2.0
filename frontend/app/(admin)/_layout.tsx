@@ -15,6 +15,7 @@ import {
 import { PaletteProvider } from "@/src/design/CommandPalette";
 import { useBp } from "@/src/design/responsive";
 import { brand, color, font, layout, radius, space } from "@/src/design/tokens";
+import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 
 type NavItem = { href: string; label: string; icon: FeatherName; match: string; roles?: string[] };
@@ -49,16 +50,7 @@ function Wordmark({ compact }: { compact?: boolean }) {
       </View>
     );
   }
-  return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-      <View style={styles.monogram}>
-        <Text style={{ fontFamily: font.serif, fontSize: 15, color: color.onAction }}>B</Text>
-      </View>
-      <Text style={{ fontFamily: font.serif, fontSize: 16.5, color: color.ink, letterSpacing: -0.2 }}>
-        {brand.name}
-      </Text>
-    </View>
-  );
+  return <BuildConLogo height={32} />;
 }
 
 // ── Sidebar item — the brass bar is the only accent in the chrome. ─────────

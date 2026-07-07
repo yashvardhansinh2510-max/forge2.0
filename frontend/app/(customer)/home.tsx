@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Badge, Button, Card, EmptyState, Skeleton, StatusBadge } from "@/src/components/ui";
+import { BuildConLogo } from "@/src/design/BrandLogo";
 import { api, getToken } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
@@ -49,11 +50,7 @@ export default function CustomerHome() {
           <View style={{ flex: 1, padding: spacing.xl, justifyContent: "space-between" }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
-                <View style={styles.brandMark}><Feather name="home" size={16} color="#fff" /></View>
-                <View>
-                  <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700", letterSpacing: -0.2, fontFamily: type.titleMd.fontFamily }}>BuildCon House</Text>
-                  <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontFamily: type.caption.fontFamily }}>Let you live better</Text>
-                </View>
+                <BuildConLogo height={34} />
               </View>
               <Pressable
                 testID="portal-logout"

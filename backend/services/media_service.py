@@ -183,13 +183,11 @@ async def list_media_for_product(product_id: str, family_key: Optional[str] = No
     return [ProductMedia(**d) for d in docs]
 
 
-async def hydrate_product_media(product: dict) -> dict:
-    """Attach media_summary + hero_image_url + gallery to a product dict
-    from the `product_media` collection (falling back to legacy `images` if
-    the new collection is empty for this product)."""
-    if not product:
-        return product
-    media = await list_media_for_product(product["id"], product.get("family_key"))
+def _apply_media_to_product(product: dict, media: list[ProductMedia]) -> None:
+    """Pure in-memory step of hydrate_product_media — given the already
+    fetched media rows for this product, attach media_summary/hero/gallery.
+    Split out so the batched path (hydrate_media_batch) can reuse the exact
+    same logic without an extra DB round trip per product."""
     summary = {"supplier": 0, "manufacturer": 0, "internal": 0}
     for m in media:
         summary[m.source_type] += 1
@@ -244,6 +242,70 @@ async def hydrate_product_media(product: dict) -> dict:
     elif hero_url:
         product["images"] = [hero_url]
     return product
+
+
+async def hydrate_product_media(product: dict) -> dict:
+    """Attach media_summary + hero_image_url + gallery to a SINGLE product
+    dict. Fine for one-off lookups (product detail page); for any list of
+    products always prefer `hydrate_media_batch` below — this issues one
+    query per call and turns into an N+1 when looped."""
+    if not product:
+        return product
+    media = await list_media_for_product(product["id"], product.get("family_key"))
+    _apply_media_to_product(product, media)
+    return product
+
+
+async def hydrate_media_batch(docs: list[dict]) -> list[dict]:
+    """Same result as calling hydrate_product_media() on every doc, but with
+    exactly ONE query against `product_media` for the whole page instead of
+    one query per product (was the single biggest latency source in the
+    Quotation Builder catalog grid — ~60 sequential round trips per page)."""
+    if not docs:
+        return docs
+    ids = [d["id"] for d in docs if d.get("id")]
+    family_keys = list({d["family_key"] for d in docs if d.get("family_key")})
+    or_clauses: list[dict] = []
+    if ids:
+        or_clauses.append({"product_id": {"$in": ids}})
+    if family_keys:
+        or_clauses.append({"family_key": {"$in": family_keys}})
+    if not or_clauses:
+        return docs
+    rows = await db.product_media.find({"$or": or_clauses}, {"_id": 0}).to_list(20000)
+    by_product: dict[str, list[dict]] = {}
+    by_family: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("product_id"):
+            by_product.setdefault(r["product_id"], []).append(r)
+        if r.get("family_key"):
+            by_family.setdefault(r["family_key"], []).append(r)
+
+    prio = {"internal": 0, "manufacturer": 1, "supplier": 2}
+
+    def _sorted_media(raw: list[dict]) -> list[ProductMedia]:
+        raw = sorted(raw, key=lambda d: (
+            prio.get(d.get("source_type", "supplier"), 3),
+            0 if d.get("is_primary") else 1,
+            int(d.get("sort_order", 100)),
+        ))
+        return [ProductMedia(**d) for d in raw]
+
+    for d in docs:
+        raw = list(by_product.get(d.get("id"), []))
+        if d.get("family_key"):
+            raw += by_family.get(d["family_key"], [])
+        # de-dupe (a row could match both product_id and family_key clauses)
+        seen_ids = set()
+        deduped = []
+        for r in raw:
+            rid = r.get("id")
+            if rid in seen_ids:
+                continue
+            seen_ids.add(rid)
+            deduped.append(r)
+        _apply_media_to_product(d, _sorted_media(deduped))
+    return docs
 
 
 async def hydrate_variants_batch(docs: list[dict], limit_per_family: int = 8) -> None:

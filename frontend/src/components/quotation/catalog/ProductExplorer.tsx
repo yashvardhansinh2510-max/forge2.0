@@ -112,12 +112,12 @@ export function ProductExplorer() {
             onOpenModal={(p) => b.openProductModal(p)}
           />
         )}
-        removeClippedSubviews
-        initialNumToRender={10}
-        maxToRenderPerBatch={10}
-        windowSize={7}
+        removeClippedSubviews={Platform.OS !== "web"}
+        initialNumToRender={24}
+        maxToRenderPerBatch={24}
+        windowSize={21}
         onEndReached={() => b.loadMoreProducts()}
-        onEndReachedThreshold={0.6}
+        onEndReachedThreshold={0.5}
         ListFooterComponent={
           b.productLoadingMore ? (
             <View style={{ paddingVertical: 20, alignItems: "center" }}>
@@ -130,11 +130,22 @@ export function ProductExplorer() {
           ) : null
         }
         ListEmptyComponent={
-          <EmptyState
-            icon={b.productLoading ? "loader" : "package"}
-            title={b.productLoading ? "Loading products…" : "No products match"}
-            subtitle={b.productLoading ? "Fetching latest catalog" : "Try clearing filters or a different search term."}
-          />
+          b.productLoading ? (
+            <View style={[styles.skeletonGrid, { flexDirection: numCols > 1 ? "row" : "column", flexWrap: "wrap" }]}>
+              {Array.from({ length: numCols > 1 ? 12 : 6 }).map((_, i) => (
+                <View key={i} style={[styles.skeletonCard, { width: numCols > 1 ? `${100 / numCols}%` : "100%" }]}>
+                  <View style={styles.skeletonMedia} />
+                  <View style={{ padding: 10, gap: 8 }}>
+                    <View style={[styles.skeletonLine, { width: "85%" }]} />
+                    <View style={[styles.skeletonLine, { width: "50%", height: 9 }]} />
+                    <View style={[styles.skeletonLine, { width: "40%", height: 13, marginTop: 4 }]} />
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <EmptyState icon="package" title="No products match" subtitle="Try clearing filters or a different search term." />
+          )
         }
       />
     </View>
@@ -299,5 +310,15 @@ const styles = StyleSheet.create({
   endOfList: {
     textAlign: "center", fontSize: 11, color: colors.onSurfaceMuted,
     paddingVertical: 20, paddingHorizontal: 24,
+  },
+  skeletonGrid: { gap: 12 },
+  skeletonCard: {
+    padding: 4,
+  },
+  skeletonMedia: {
+    aspectRatio: 1, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary,
+  },
+  skeletonLine: {
+    height: 11, borderRadius: 4, backgroundColor: colors.surfaceTertiary,
   },
 });

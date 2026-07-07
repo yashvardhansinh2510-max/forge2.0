@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button, Field, IconButton, Input, Txt } from "@/src/design/components";
+import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useBp } from "@/src/design/responsive";
 import { brand, color, font, radius, space } from "@/src/design/tokens";
 import { useAuth } from "@/src/state/auth";
@@ -93,7 +94,7 @@ export default function Login() {
   const form = (
     <View style={{ width: "100%", maxWidth: 384, alignSelf: "center", gap: space.x5 }}>
       <View style={{ gap: 8 }}>
-        {!isPhone ? <Txt v="eyebrow" tone="brass">{brand.name}</Txt> : null}
+        {!isPhone ? <BuildConLogo height={44} style={{ marginBottom: 4 }} /> : null}
         <Txt v="display" style={isPhone ? { fontSize: 30, lineHeight: 38 } : undefined}>
           {mode === "staff" ? "Welcome back." : "Your project, live."}
         </Txt>
@@ -169,8 +170,7 @@ export default function Login() {
             <Image source={{ uri: HERO }} style={{ flex: 1 }} contentFit="cover" transition={300} />
             <LinearGradient colors={["rgba(20,17,12,0.05)", "rgba(20,17,12,0.55)"]} style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }} />
             <View style={{ position: "absolute", left: 20, bottom: 16, right: 20 }}>
-              <Text style={{ fontFamily: font.serif, fontSize: 20, color: "#FFFFFF" }}>{brand.name}</Text>
-              <Text style={{ fontFamily: font.regular, fontSize: 12.5, color: "rgba(255,255,255,0.85)" }}>{brand.tagline}</Text>
+              <BuildConLogo height={40} />
             </View>
           </View>
           <View style={{ flex: 1, padding: 24, paddingTop: 32, paddingBottom: Math.max(24, insets.bottom + 16) }}>

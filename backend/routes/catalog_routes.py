@@ -1,4 +1,5 @@
 """Product / Brand / Category endpoints + AI-assisted catalog import stub."""
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -105,16 +106,19 @@ async def list_products(
             {"dimensions":  {"$regex": q, "$options": "i"}},
             {"tags":        {"$regex": q, "$options": "i"}},
         ]
-    total = await db.products.count_documents(query)
-
-    # ----- Global + per-user usage lookups (bounded, cached in-process) -----
-    global_usage_agg = await db.product_usage.aggregate([
-        {"$group": {"_id": "$product_id", "total": {"$sum": "$count"}}},
-    ]).to_list(20000)
+    # ----- Count + global/per-user usage lookups run concurrently — all three
+    # are independent of each other, so there is no reason to pay their
+    # Atlas round-trip latency sequentially on every single catalog request.
+    total, global_usage_agg, my_usage_rows = await asyncio.gather(
+        db.products.count_documents(query),
+        db.product_usage.aggregate([
+            {"$group": {"_id": "$product_id", "total": {"$sum": "$count"}}},
+        ]).to_list(20000),
+        db.product_usage.find(
+            {"user_id": user.id}, {"_id": 0, "product_id": 1, "count": 1, "last_used_at": 1}
+        ).to_list(20000),
+    )
     global_usage = {r["_id"]: int(r["total"]) for r in global_usage_agg}
-    my_usage_rows = await db.product_usage.find(
-        {"user_id": user.id}, {"_id": 0, "product_id": 1, "count": 1, "last_used_at": 1}
-    ).to_list(20000)
     my_usage = {r["product_id"]: int(r.get("count", 0)) for r in my_usage_rows}
     my_recent_at = {r["product_id"]: r.get("last_used_at") for r in my_usage_rows}
 
@@ -128,35 +132,46 @@ async def list_products(
             popular_ids = {pid for pid, cnt in global_usage.items() if cnt >= threshold}
 
     # ----- Sort -----
+    # NOTE: "recent" and "popular" need to rank the WHOLE matching set (usage
+    # data isn't a DB-sortable field), so we pull a slim {id, name} projection
+    # for ranking, then fetch full documents for ONLY the current page. This
+    # keeps the network payload from Atlas tiny even when the pool is the
+    # entire 2966-product catalog — pulling full docs (images, specs, etc.)
+    # for every product on every page request was the main cause of the
+    # Quotation Builder catalog grid taking 15-20s to load.
     if sort == "recent":
-        # Products with recent usage first (by this user), then everything else.
-        docs = await db.products.find(query, {"_id": 0}).to_list(min(8000, total or 8000))
-        docs.sort(key=lambda d: (my_recent_at.get(d["id"]) or "", d.get("name") or ""), reverse=True)
-        docs = docs[skip:skip + limit]
+        pool = await db.products.find(query, {"_id": 0, "id": 1, "name": 1}).to_list(min(8000, total or 8000))
+        pool.sort(key=lambda d: (my_recent_at.get(d["id"]) or "", d.get("name") or ""), reverse=True)
+        page_ids = [d["id"] for d in pool[skip:skip + limit]]
     elif sort == "price_asc":
         docs = await db.products.find(query, {"_id": 0}).sort("price", 1).skip(skip).limit(limit).to_list(limit)
+        page_ids = None
     elif sort == "price_desc":
         docs = await db.products.find(query, {"_id": 0}).sort("price", -1).skip(skip).limit(limit).to_list(limit)
+        page_ids = None
     elif sort == "name":
         docs = await db.products.find(query, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
+        page_ids = None
     else:  # popular / most_used (default)
-        # Pull a wide pool then rank by (global usage DESC, my usage DESC, name ASC).
-        # Cap is comfortably above the full catalog size (2966 at last count)
-        # so pagination actually reaches every product — not just the first
-        # 2000 in Mongo's natural order — even on the unfiltered "All brands"
-        # view, which is the very first thing a salesperson sees.
-        pool_cap = min(8000, total or 8000)
-        pool = await db.products.find(query, {"_id": 0}).limit(pool_cap).to_list(pool_cap)
+        # Rank by (global usage DESC, my usage DESC, name ASC) across the
+        # WHOLE matching set (not just this page) so pagination is stable
+        # and actually reaches every product on the unfiltered "All brands"
+        # view — but only over a slim projection, see note above.
+        pool = await db.products.find(query, {"_id": 0, "id": 1, "name": 1}).to_list(min(8000, total or 8000))
         pool.sort(key=lambda d: (
             -global_usage.get(d["id"], 0),
             -my_usage.get(d["id"], 0),
             d.get("name") or "",
         ))
-        docs = pool[skip:skip + limit]
+        page_ids = [d["id"] for d in pool[skip:skip + limit]]
+
+    if page_ids is not None:
+        by_id = {d["id"]: d for d in await db.products.find({"id": {"$in": page_ids}}, {"_id": 0}).to_list(len(page_ids) or 1)}
+        docs = [by_id[i] for i in page_ids if i in by_id]
 
     docs = strip_ids(docs)
+    await media_service.hydrate_media_batch(docs)
     for d in docs:
-        await media_service.hydrate_product_media(d)
         pid = d.get("id")
         d["usage_count"] = global_usage.get(pid, 0)
         d["my_usage_count"] = my_usage.get(pid, 0)
@@ -468,9 +483,9 @@ async def catalog_search(
     docs.sort(key=lambda p: p["_score"], reverse=True)
 
     if not group:
-        for d in docs[:limit]:
-            await media_service.hydrate_product_media(d)
-        return {"query": q, "total": len(docs), "grouped": False, "items": docs[:limit]}
+        top = docs[:limit]
+        await media_service.hydrate_media_batch(top)
+        return {"query": q, "total": len(docs), "grouped": False, "items": top}
 
     # ----- Group by family_key -----
     groups: dict = {}
@@ -672,8 +687,7 @@ async def recent_products(
     by_id = {d["id"]: d for d in docs}
     # preserve recent order
     ordered = [by_id[i] for i in ids if i in by_id]
-    for p in ordered:
-        await media_service.hydrate_product_media(p)
+    await media_service.hydrate_media_batch(ordered)
     await media_service.hydrate_variants_batch(ordered)
     return ordered
 
@@ -693,8 +707,7 @@ async def frequent_products(
     docs = await db.products.find({"id": {"$in": ids}, "active": True}, {"_id": 0}).to_list(limit)
     by_id = {d["id"]: d for d in docs}
     ordered = [by_id[i] for i in ids if i in by_id]
-    for p in ordered:
-        await media_service.hydrate_product_media(p)
+    await media_service.hydrate_media_batch(ordered)
     await media_service.hydrate_variants_batch(ordered)
     return ordered
 
@@ -765,8 +778,7 @@ async def product_alternates(
     scored.sort(key=lambda x: (x[0], x[1], x[2]))
 
     out = [p for _t, _u, _pr, p in scored[:limit]]
-    for p in out:
-        await media_service.hydrate_product_media(p)
+    await media_service.hydrate_media_batch(out)
     await media_service.hydrate_variants_batch(out)
     return {
         "source_product_id": product_id,
@@ -816,8 +828,7 @@ async def complete_the_set(
         if cid not in by_cat:
             by_cat[cid] = d
     items = list(by_cat.values())[:limit]
-    for p in items:
-        await media_service.hydrate_product_media(p)
+    await media_service.hydrate_media_batch(items)
     await media_service.hydrate_variants_batch(items)
     return {"source_product_id": product_id, "items": items}
 
