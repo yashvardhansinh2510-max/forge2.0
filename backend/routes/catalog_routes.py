@@ -130,7 +130,7 @@ async def list_products(
     # ----- Sort -----
     if sort == "recent":
         # Products with recent usage first (by this user), then everything else.
-        docs = await db.products.find(query, {"_id": 0}).to_list(2000)
+        docs = await db.products.find(query, {"_id": 0}).to_list(min(8000, total or 8000))
         docs.sort(key=lambda d: (my_recent_at.get(d["id"]) or "", d.get("name") or ""), reverse=True)
         docs = docs[skip:skip + limit]
     elif sort == "price_asc":
@@ -141,7 +141,12 @@ async def list_products(
         docs = await db.products.find(query, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
     else:  # popular / most_used (default)
         # Pull a wide pool then rank by (global usage DESC, my usage DESC, name ASC).
-        pool = await db.products.find(query, {"_id": 0}).limit(min(2000, total or 2000)).to_list(2000)
+        # Cap is comfortably above the full catalog size (2966 at last count)
+        # so pagination actually reaches every product — not just the first
+        # 2000 in Mongo's natural order — even on the unfiltered "All brands"
+        # view, which is the very first thing a salesperson sees.
+        pool_cap = min(8000, total or 8000)
+        pool = await db.products.find(query, {"_id": 0}).limit(pool_cap).to_list(pool_cap)
         pool.sort(key=lambda d: (
             -global_usage.get(d["id"], 0),
             -my_usage.get(d["id"], 0),
@@ -158,6 +163,7 @@ async def list_products(
         d["popular"] = pid in popular_ids
         d["frequently_used"] = my_usage.get(pid, 0) >= 3
         d["recently_used"] = bool(my_recent_at.get(pid))
+    await media_service.hydrate_variants_batch(docs)
     return {"total": total, "items": docs}
 
 
@@ -668,6 +674,7 @@ async def recent_products(
     ordered = [by_id[i] for i in ids if i in by_id]
     for p in ordered:
         await media_service.hydrate_product_media(p)
+    await media_service.hydrate_variants_batch(ordered)
     return ordered
 
 
@@ -688,6 +695,7 @@ async def frequent_products(
     ordered = [by_id[i] for i in ids if i in by_id]
     for p in ordered:
         await media_service.hydrate_product_media(p)
+    await media_service.hydrate_variants_batch(ordered)
     return ordered
 
 
@@ -697,6 +705,7 @@ async def get_product(product_id: str, _: UserPublic = Depends(get_current_user)
     if not doc:
         raise HTTPException(status_code=404, detail="Product not found")
     await media_service.hydrate_product_media(doc)
+    await media_service.hydrate_variants_batch([doc])
     return Product(**doc)
 
 
@@ -758,6 +767,7 @@ async def product_alternates(
     out = [p for _t, _u, _pr, p in scored[:limit]]
     for p in out:
         await media_service.hydrate_product_media(p)
+    await media_service.hydrate_variants_batch(out)
     return {
         "source_product_id": product_id,
         "items": out,
@@ -808,6 +818,7 @@ async def complete_the_set(
     items = list(by_cat.values())[:limit]
     for p in items:
         await media_service.hydrate_product_media(p)
+    await media_service.hydrate_variants_batch(items)
     return {"source_product_id": product_id, "items": items}
 
 

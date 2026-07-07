@@ -14,6 +14,7 @@ import { ProductImage } from "@/src/components/ProductImage";
 import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
+import { productImageList } from "../helpers/media";
 import type { Product, ProductVariant } from "../helpers/types";
 
 export function ProductModal() {
@@ -28,6 +29,8 @@ export function ProductModal() {
   const [alternates, setAlternates] = useState<Product[]>([]);
   const [completeSet, setCompleteSet] = useState<Product[]>([]);
   const [loadingRel, setLoadingRel] = useState(false);
+  const [zoomOpen, setZoomOpen] = useState(false);
+  const [activeImageIdx, setActiveImageIdx] = useState(0);
 
   // Reset when product changes.
   useEffect(() => {
@@ -38,6 +41,7 @@ export function ProductModal() {
     setNotes("");
     setAlternates([]);
     setCompleteSet([]);
+    setActiveImageIdx(0);
     setLoadingRel(true);
     (async () => {
       try {
@@ -62,7 +66,21 @@ export function ProductModal() {
 
   if (!product) return null;
 
-  const heroImages = product.images && product.images.length ? product.images : [];
+  // Variant-aware gallery — when a finish/colour is selected AND that
+  // sibling product has its own real photo, it takes priority; the base
+  // product's gallery always follows as fallback/additional angles.
+  const heroImages = useMemo(() => {
+    const base = productImageList(product);
+    if (selectedVariant?.image && !base.includes(selectedVariant.image)) {
+      return [selectedVariant.image, ...base];
+    }
+    if (selectedVariant?.image) {
+      return [selectedVariant.image, ...base.filter((u) => u !== selectedVariant.image)];
+    }
+    return base;
+  }, [product, selectedVariant]);
+
+  const activeImage = heroImages[Math.min(activeImageIdx, Math.max(0, heroImages.length - 1))];
 
   const commit = (closeAfter: boolean) => {
     const v: ProductVariant | undefined = selectedVariant ?? undefined;
@@ -81,6 +99,7 @@ export function ProductModal() {
   };
 
   return (
+    <>
     <Modal visible={open} transparent animationType="fade" onRequestClose={b.closeProductModal}>
       <Pressable style={styles.backdrop} onPress={b.closeProductModal}>
         <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
@@ -100,13 +119,20 @@ export function ProductModal() {
             <View style={styles.body}>
               {/* Left: gallery + price */}
               <View style={styles.left}>
-                <ProductImage source={heroImages} style={styles.hero} fallbackLabel={product.sku} />
+                <Pressable onPress={() => setZoomOpen(true)} disabled={!activeImage} testID="pm-hero-zoom">
+                  <ProductImage source={activeImage ? [activeImage] : []} style={styles.hero} fallbackLabel={product.sku} />
+                  {activeImage ? (
+                    <View style={styles.zoomHint}>
+                      <Feather name="maximize-2" size={11} color="#fff" />
+                    </View>
+                  ) : null}
+                </Pressable>
                 {heroImages.length > 1 ? (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }}>
-                    {heroImages.slice(0, 6).map((url, i) => (
-                      <View key={`${url}-${i}`} style={styles.thumb}>
+                    {heroImages.slice(0, 8).map((url, i) => (
+                      <Pressable key={`${url}-${i}`} onPress={() => setActiveImageIdx(i)} style={[styles.thumb, i === activeImageIdx && styles.thumbActive]}>
                         <ProductImage source={[url]} style={{ width: "100%", height: "100%" }} fallbackLabel={product.sku} />
-                      </View>
+                      </Pressable>
                     ))}
                   </ScrollView>
                 ) : null}
@@ -143,7 +169,7 @@ export function ProductModal() {
                         return (
                           <Pressable
                             key={v.sku}
-                            onPress={() => setSelectedVariant(on ? null : v)}
+                            onPress={() => { setSelectedVariant(on ? null : v); setActiveImageIdx(0); }}
                             style={[styles.variantChip, on && styles.variantChipActive]}
                             testID={`pm-variant-${v.sku}`}
                           >
@@ -228,7 +254,7 @@ export function ProductModal() {
                       onPress={() => b.openProductModal(alt)}
                       style={styles.relCard}
                     >
-                      <ProductImage source={alt.images} style={styles.relThumb} fallbackLabel={alt.sku} />
+                      <ProductImage source={productImageList(alt)} style={styles.relThumb} fallbackLabel={alt.sku} />
                       <Text style={styles.relName} numberOfLines={2}>{alt.name}</Text>
                       <Text style={styles.relPrice}>{money(alt.price)}</Text>
                     </Pressable>
@@ -250,7 +276,7 @@ export function ProductModal() {
                       onPress={() => b.addFromProduct(s)}
                       style={styles.relCard}
                     >
-                      <ProductImage source={s.images} style={styles.relThumb} fallbackLabel={s.sku} />
+                      <ProductImage source={productImageList(s)} style={styles.relThumb} fallbackLabel={s.sku} />
                       <Text style={styles.relName} numberOfLines={2}>{s.name}</Text>
                       <Text style={styles.relPrice}>{money(s.price)}</Text>
                     </Pressable>
@@ -282,6 +308,22 @@ export function ProductModal() {
         </Pressable>
       </Pressable>
     </Modal>
+
+    {/* Zoom overlay — tap-to-enlarge the active hero image */}
+    <Modal visible={zoomOpen} transparent animationType="fade" onRequestClose={() => setZoomOpen(false)}>
+      <Pressable style={styles.zoomBackdrop} onPress={() => setZoomOpen(false)}>
+        <Pressable style={styles.zoomClose} onPress={() => setZoomOpen(false)} hitSlop={8}>
+          <Feather name="x" size={20} color="#fff" />
+        </Pressable>
+        <ProductImage
+          source={activeImage ? [activeImage] : []}
+          style={styles.zoomImage}
+          contentFit="contain"
+          fallbackLabel={product.sku}
+        />
+      </Pressable>
+    </Modal>
+    </>
   );
 }
 
@@ -333,6 +375,19 @@ const styles = StyleSheet.create({
 
   hero: { width: "100%", aspectRatio: 1, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   thumb: { width: 52, height: 52, borderRadius: 8, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
+  thumbActive: { borderWidth: 2, borderColor: ds.brass },
+  zoomHint: {
+    position: "absolute", bottom: 8, right: 8, width: 26, height: 26, borderRadius: 999,
+    backgroundColor: "rgba(0,0,0,0.55)", alignItems: "center", justifyContent: "center",
+  },
+  zoomBackdrop: {
+    flex: 1, backgroundColor: "rgba(9,9,11,0.92)", alignItems: "center", justifyContent: "center", padding: 24,
+  },
+  zoomClose: {
+    position: "absolute", top: 24, right: 24, width: 40, height: 40, borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.14)", alignItems: "center", justifyContent: "center", zIndex: 2,
+  },
+  zoomImage: { width: "100%", height: "100%", maxWidth: 900 },
 
   priceCard: {
     padding: 12, borderRadius: radius.md,

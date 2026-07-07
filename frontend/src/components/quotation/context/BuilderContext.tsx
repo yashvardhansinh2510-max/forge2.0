@@ -22,6 +22,7 @@ import { useHistory, useUndoRedoShortcuts } from "@/src/hooks/useHistory";
 import type { HistoryApi } from "@/src/hooks/useHistory";
 
 import { computeTotals, effectivePct } from "../helpers/pricing";
+import { productImageList } from "../helpers/media";
 import {
   Brand, BuilderRow, BuilderState, Category, Customer, DEFAULT_ROOMS, DescSheetState, DiscountSheetState,
   INITIAL_BUILDER_STATE, Line, PickerTab, Product, ProductVariant, QuotationHeader,
@@ -62,6 +63,9 @@ export type BuilderApi = {
   products: Product[];
   productTotal: number;
   productLoading: boolean;
+  productHasMore: boolean;
+  productLoadingMore: boolean;
+  loadMoreProducts: () => void;
   recent: Product[];
   frequent: Product[];
   searchRef: React.MutableRefObject<TextInput | null>;
@@ -186,6 +190,9 @@ export function BuilderProvider({ onFinalize, children }: {
   const [products, setProducts] = useState<Product[]>([]);
   const [productTotal, setProductTotal] = useState(0);
   const [productLoading, setProductLoading] = useState(false);
+  const [productHasMore, setProductHasMore] = useState(false);
+  const [productLoadingMore, setProductLoadingMore] = useState(false);
+  const productFetchGen = useRef(0);
   const [recent, setRecent] = useState<Product[]>([]);
   const [frequent, setFrequent] = useState<Product[]>([]);
   const [pickerTab, setPickerTab] = useState<PickerTab>("search");
@@ -305,28 +312,65 @@ export function BuilderProvider({ onFinalize, children }: {
     });
   }, []);
 
-  // ---------- Product explorer fetch ----------
+  // ---------- Product explorer fetch (page 1 on filter/search/sort change) ----------
+  const PRODUCT_PAGE_SIZE = 60;
   useEffect(() => {
+    const gen = ++productFetchGen.current;
     const t = setTimeout(async () => {
       setProductLoading(true);
       try {
         const params = new URLSearchParams();
-        params.set("limit", "60");
+        params.set("limit", String(PRODUCT_PAGE_SIZE));
+        params.set("skip", "0");
         params.set("sort", sortKey);
         if (q) params.set("q", q);
         if (selectedBrandId) params.set("brand_id", selectedBrandId);
         if (selectedCategoryId) params.set("category_id", selectedCategoryId);
         const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`);
-        setProducts(res.items || []);
+        if (gen !== productFetchGen.current) return; // a newer filter change already superseded this
+        const items = res.items || [];
+        setProducts(items);
         setProductTotal(res.total || 0);
+        setProductHasMore(items.length < (res.total || 0));
       } catch (e) {
         console.warn("Product search failed", e);
       } finally {
-        setProductLoading(false);
+        if (gen === productFetchGen.current) setProductLoading(false);
       }
     }, 180);
     return () => clearTimeout(t);
   }, [q, selectedBrandId, selectedCategoryId, sortKey]);
+
+  // ---------- Infinite scroll — fetch the next page and append ----------
+  const loadMoreProducts = useCallback(() => {
+    if (productLoadingMore || productLoading || !productHasMore) return;
+    const gen = productFetchGen.current;
+    setProductLoadingMore(true);
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.set("limit", String(PRODUCT_PAGE_SIZE));
+        params.set("skip", String(products.length));
+        params.set("sort", sortKey);
+        if (q) params.set("q", q);
+        if (selectedBrandId) params.set("brand_id", selectedBrandId);
+        if (selectedCategoryId) params.set("category_id", selectedCategoryId);
+        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`);
+        if (gen !== productFetchGen.current) return; // filters changed mid-flight — discard
+        const items = res.items || [];
+        setProducts((cur) => {
+          const seen = new Set(cur.map((p) => p.id));
+          return [...cur, ...items.filter((p) => !seen.has(p.id))];
+        });
+        setProductTotal(res.total || 0);
+        setProductHasMore(products.length + items.length < (res.total || 0));
+      } catch (e) {
+        console.warn("Load more products failed", e);
+      } finally {
+        setProductLoadingMore(false);
+      }
+    })();
+  }, [productLoadingMore, productLoading, productHasMore, products.length, q, selectedBrandId, selectedCategoryId, sortKey]);
 
   // ---------- Autosave ----------
   const persist = useCallback(async () => {
@@ -542,7 +586,7 @@ export function BuilderProvider({ onFinalize, children }: {
         lines: [...cur.lines, {
           id: `${p.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           product_id: p.id, sku,
-          name: displayName, image: p.images?.[0],
+          name: displayName, image: variant?.image ?? productImageList(p)[0] ?? null,
           category_id: p.category_id, room: cur.activeRoom,
           qty: 1, unit_price: variant?.price ?? p.price,
           discount_pct: null, finish,
@@ -728,7 +772,7 @@ export function BuilderProvider({ onFinalize, children }: {
         product_id: target.id,
         sku: variant?.sku ?? target.sku,
         name: displayName,
-        image: target.images?.[0] ?? src.image,
+        image: variant?.image ?? productImageList(target)[0] ?? src.image,
         category_id: target.category_id,
         unit_price: variant?.price ?? target.price,
         finish,
@@ -770,7 +814,8 @@ export function BuilderProvider({ onFinalize, children }: {
   const value: BuilderApi = {
     history, s,
     customers, categories, categoryById,
-    q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading, recent, frequent, searchRef,
+    q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading,
+    productHasMore, productLoadingMore, loadMoreProducts, recent, frequent, searchRef,
     brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
     sortKey, setSortKey, favouriteIds, toggleFavourite,
     setProjectName, setPhone, setReferenceSource,

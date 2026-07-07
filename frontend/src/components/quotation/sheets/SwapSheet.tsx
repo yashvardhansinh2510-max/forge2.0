@@ -9,6 +9,7 @@ import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { VariantSwatchStrip } from "../shared/VariantChip";
+import { productImageList } from "../helpers/media";
 
 export function SwapSheet() {
   const b = useBuilder();
@@ -41,7 +42,7 @@ export function SwapSheet() {
                   { backgroundColor: pressed ? colors.surfaceTertiary : colors.surfaceSecondary },
                 ]}
               >
-                <ProductImage source={p.images} style={styles.thumb} fallbackLabel={p.sku} />
+                <ProductImage source={productImageList(p)} style={styles.thumb} fallbackLabel={p.sku} />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
                   <Text style={type.caption}>{p.sku}{p.finish ? ` · ${p.finish}` : ""}</Text>

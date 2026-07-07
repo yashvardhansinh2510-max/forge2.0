@@ -163,6 +163,12 @@ class ProductVariant(BaseModel):
     mrp: float
     price: float
     stock: int = 0
+    # Populated dynamically at read-time (media_service.hydrate_variants_batch)
+    # from family-sibling products — NOT persisted on the stored embedded
+    # field. Lets every variant chip show its own real photo + link back to
+    # the sibling product it represents.
+    id: Optional[str] = None
+    image: Optional[str] = None
 
 
 class Product(TimestampedModel):

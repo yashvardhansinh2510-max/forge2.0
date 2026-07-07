@@ -6,7 +6,7 @@
 // in the sticky header.
 import { Feather } from "@expo/vector-icons";
 import { memo, useMemo } from "react";
-import { FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { EmptyState } from "@/src/components/ui";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -14,6 +14,7 @@ import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { VariantSwatchStrip } from "../shared/VariantChip";
+import { productImageList } from "../helpers/media";
 import type { Product, ProductVariant } from "../helpers/types";
 
 type SortKey = "popular" | "recent" | "price_asc" | "price_desc" | "name";
@@ -113,6 +114,19 @@ export function ProductExplorer() {
         initialNumToRender={10}
         maxToRenderPerBatch={10}
         windowSize={7}
+        onEndReached={() => b.loadMoreProducts()}
+        onEndReachedThreshold={0.6}
+        ListFooterComponent={
+          b.productLoadingMore ? (
+            <View style={{ paddingVertical: 20, alignItems: "center" }}>
+              <ActivityIndicator size="small" color={ds.brass} />
+            </View>
+          ) : !b.productLoading && b.products.length > 0 && !b.productHasMore ? (
+            <Text style={styles.endOfList}>
+              {b.products.length} of {b.productTotal} products — you've reached the end
+            </Text>
+          ) : null
+        }
         ListEmptyComponent={
           <EmptyState
             icon={b.productLoading ? "loader" : "package"}
@@ -151,7 +165,7 @@ function ProductGridCardImpl({ product, favourite, onToggleFav, onQuickAdd, onOp
       testID={`product-card-${product.sku}`}
     >
       <View style={styles.cardMedia}>
-        <ProductImage source={product.images} style={styles.thumb} fallbackLabel={product.sku} />
+        <ProductImage source={productImageList(product)} style={styles.thumb} fallbackLabel={product.sku} />
         {/* Overlay: badges + fav heart */}
         <View style={styles.badgeRow}>
           {badges.slice(0, 1).map((bg) => (
@@ -280,4 +294,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.sm, backgroundColor: colors.brand,
   },
   addLabel: { fontSize: 11, fontWeight: "700", color: colors.onBrand, letterSpacing: 0.2 },
+  endOfList: {
+    textAlign: "center", fontSize: 11, color: colors.onSurfaceMuted,
+    paddingVertical: 20, paddingHorizontal: 24,
+  },
 });

@@ -230,4 +230,79 @@ async def hydrate_product_media(product: dict) -> dict:
     product["media_summary"] = {**summary, "best_quality": best_q, "total": sum(summary.values())}
     product["hero_image_url"] = hero_url
     product["gallery"] = gallery
+
+    # Backfill the legacy `images` field from the real media pipeline.
+    # The catalog import stores photos exclusively in `product_media` /
+    # Supabase now — the embedded `product.images` array is empty for every
+    # supplier product (0/2966 at last audit). A large surface of the app
+    # (Quotation Builder cards, picker rows, modal gallery, swap sheet,
+    # assistant pane) reads `product.images` directly and predates the
+    # `hero_image_url`/`gallery` fields, so we keep that contract honest here
+    # — ONE place, every caller benefits, nothing else has to change.
+    if gallery:
+        product["images"] = [g["url"] for g in gallery if g.get("url")]
+    elif hero_url:
+        product["images"] = [hero_url]
     return product
+
+
+async def hydrate_variants_batch(docs: list[dict], limit_per_family: int = 8) -> None:
+    """Populate `product["variants"]` for every doc that has a `family_key`
+    but no variants of its own — using its FAMILY SIBLINGS (each finish/
+    colour of a real supplier product is its own full Product document, not
+    an embedded row). One batched query for the whole page/list, not N+1.
+
+    Safe no-op for products that already carry real embedded variants (the
+    two legacy demo SKUs) or have no family_key.
+    """
+    targets = [d for d in docs if d.get("family_key") and not d.get("variants")]
+    if not targets:
+        return
+    family_keys = list({d["family_key"] for d in targets})
+
+    siblings = await db.products.find(
+        {"family_key": {"$in": family_keys}, "active": True},
+        {
+            "_id": 0, "id": 1, "sku": 1, "family_key": 1, "finish": 1, "colour": 1,
+            "color": 1, "price": 1, "mrp": 1, "stock": 1, "name": 1,
+        },
+    ).to_list(20000)
+    if not siblings:
+        return
+
+    sib_ids = [s["id"] for s in siblings]
+    media_docs = await db.product_media.find(
+        {"product_id": {"$in": sib_ids}},
+        {"_id": 0, "product_id": 1, "public_url": 1, "is_primary": 1, "sort_order": 1, "source_type": 1},
+    ).to_list(50000)
+    prio = {"internal": 0, "manufacturer": 1, "supplier": 2}
+    media_docs.sort(key=lambda m: (
+        prio.get(m.get("source_type", "supplier"), 3),
+        0 if m.get("is_primary") else 1,
+        int(m.get("sort_order", 100)),
+    ))
+    image_by_pid: dict[str, str] = {}
+    for m in media_docs:
+        pid = m.get("product_id")
+        if pid and pid not in image_by_pid and m.get("public_url"):
+            image_by_pid[pid] = m["public_url"]
+
+    by_family: dict[str, list[dict]] = {}
+    for s in siblings:
+        by_family.setdefault(s["family_key"], []).append(s)
+
+    for d in targets:
+        fam = by_family.get(d["family_key"], [])
+        variants = []
+        for s in fam:
+            if s["id"] == d["id"]:
+                continue
+            variants.append({
+                "id": s["id"], "sku": s["sku"],
+                "finish": s.get("finish"), "color": s.get("colour") or s.get("color"),
+                "price": float(s.get("price") or 0), "mrp": float(s.get("mrp") or s.get("price") or 0),
+                "stock": int(s.get("stock") or 0),
+                "image": image_by_pid.get(s["id"]),
+            })
+        if variants:
+            d["variants"] = variants[:limit_per_family]
