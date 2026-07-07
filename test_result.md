@@ -622,7 +622,7 @@ backend:
           comment: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Fix applied: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin)."
         - working: true
           agent: "testing"
-          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://forge-production-1.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
+          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://mobile-polish-sprint-1.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
 
 frontend:
   - task: "Quotation Builder 2.0 Phase 1A — undo/redo, DnD, variants, alternates"
@@ -1646,9 +1646,9 @@ agent_communication:
     - agent: "main"
       message: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause suspected: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Applied fix: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin). Please verify: (1) Login with owner@forge.app / Forge@2026 succeeds, (2) Dashboard loads, (3) Navigate to catalog screen, (4) Verify products list loads (may be empty), (5) Confirm request URLs are same-origin (preview URL) not localhost:8001, (6) Check browser console for 'Failed to fetch' errors."
     - agent: "testing"
-      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://forge-production-1.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
+      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://mobile-polish-sprint-1.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
     - agent: "main"
-      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://forge-production-1.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
+      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://mobile-polish-sprint-1.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
     - agent: "testing"
       message: |
         Quotation Builder V4 Backend Regression Testing COMPLETE — ALL 63 TESTS PASSED (100% success rate).
@@ -3125,3 +3125,340 @@ agent_communication:
         6. Then call testing agent again to verify APIs
         
         TESTING STATUS: BLOCKED - Cannot proceed without backend recovery
+
+
+#====================================================================================================
+# SESSION — Purchases V2 (Operations Dashboard completion) — 2026
+#====================================================================================================
+# Environment recovery note: session started with backend/.env + frontend/.env wiped again (same
+# recurring container-recycle issue documented above). User supplied MongoDB Atlas URI + Supabase
+# keys in-chat this time; recreated both .env files. Confirmed DB_NAME=buildcon_house holds the real
+# 2966-product catalog (NOT the sibling "buildcon" db, which is a stale/empty decoy — do not point at
+# it). Backend healthy, login verified, /app/memory/test_credentials.md recreated.
+
+backend:
+  - task: "Purchases — partial-quantity stage move (split-move engine)"
+    implemented: true
+    working: true
+    file: "backend/routes/purchases_tracker.py, backend/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            POST /api/purchases/items/{item_id}/move now accepts optional `qty`. If qty < the item's
+            current qty, the line SPLITS: a new tracked item is created at `to_stage` carrying `qty`
+            units (with split_from_item_id lineage + a `split_in` stage_history event), the original
+            item's qty is reduced by that amount and stays at its stage (with a `split_out` event
+            pointing at the new item via split_into_item_id). If qty is omitted or equals the full
+            qty, behaviour is unchanged (full move). PO status is re-synced via
+            _sync_po_status_with_stages after either path. New action values "split_in"/"split_out"
+            added to PurchaseStageEvent.action Literal in models.py.
+            Please test: (1) full move still works (no qty / qty=full), (2) partial move "3 of 20"
+            creates a 2nd item at new stage + reduces original to 17, (3) moving qty > available
+            returns 400, (4) moving qty <= 0 returns 400, (5) GET /purchases/items/{id} on both
+            pieces shows correct stage_history/lineage.
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ ALL TESTS PASSED (16/16)
+            • Full move (no qty param): Item moved to different stage, no split flag, stage_history has "move" action ✅
+            • Partial move (qty=2 of 10): split=true, new_item_id returned, qty_moved=2, qty_remaining=8 ✅
+            • Original item after split: qty reduced to 8, stage UNCHANGED, "split_out" action in history ✅
+            • New item after split: qty=2, stage=target_stage, "split_in" action with ref_item_id ✅
+            • Invalid qty=0: Rejected with 422 (Pydantic validation) ✅
+            • Invalid qty=-1: Rejected with 422 (Pydantic validation) ✅
+            • Invalid qty > available: Rejected with 400 with message mentioning available qty ✅
+            • Move to SAME stage: Returns no_change=true, no new history entry ✅
+
+  - task: "Purchases — Customer Purchase Workspace aggregate endpoint"
+    implemented: true
+    working: true
+    file: "backend/routes/purchases_tracker.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            New GET /api/purchases/customers/{customer_id}/workspace — one-call aggregate returning:
+            customer, summary (total_items/total_value/outstanding_value/outstanding_count/open_pos/
+            blocked_count/delivered_count), products (flat tracker rows for this customer), brands
+            breakdown, stages breakdown (all 6 stages incl. zero-count), purchase_orders (scoped
+            list w/ item_count + expected_delivery_at), outstanding_items, recent_activity (via
+            services.activity_log.timeline_for, limit 15), expected_delivery (next_at + up to 5 POs
+            sorted by ETA). 404 if customer doesn't exist. Please test happy path + 404 case.
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ ALL TESTS PASSED (7/7)
+            • Valid customer_id: Returns 200 with all required top-level keys ✅
+            • All top-level keys present: customer, summary, products, brands, stages, purchase_orders, outstanding_items, recent_activity, expected_delivery ✅
+            • Summary fields: All 7 fields present (total_items, total_value, outstanding_value, outstanding_count, open_pos, blocked_count, delivered_count) ✅
+            • Summary values: All fields are numbers ✅
+            • Stages: List covers all 6 known stages (order_in_company, company_billing, in_box, dispatched, in_transit, delivered) ✅
+            • Stages count: Each stage has count field (even if 0) ✅
+            • Non-existent customer_id: Returns 404 ✅
+
+  - task: "Purchases — supplier passthrough + product_id filter on tracker rows"
+    implemented: true
+    working: true
+    file: "backend/routes/purchases_tracker.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            _flatten_item now includes supplier_id/supplier_name (from the parent PO) and lineage
+            fields (split_from_item_id, transferred_from_item_id, transferred_from_customer_id).
+            GET /api/purchases/items accepts a new optional `product_id` query param, filtering to
+            tracker rows for that catalog product across all customers/POs (powers the new "Where
+            this is right now" section on the Catalog product detail page). Please verify
+            /purchases/items?product_id=<a real product id> returns only matching rows, and that
+            supplier_name appears on normal /purchases/items rows when the PO has a supplier.
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ ALL TESTS PASSED (4/4)
+            • Supplier fields present: All items have supplier_id and supplier_name keys (values may be null) ✅
+            • Verified on 8 items ✅
+            • product_id filter: GET /api/purchases/items?product_id={id} returns only matching rows ✅
+            • Filter accuracy: All returned items have the correct product_id ✅
+
+  - task: "Purchases — transfer to existing customer (pre-existing, re-verify after nearby changes)"
+    implemented: true
+    working: true
+    file: "backend/routes/purchases_tracker.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            No logic change here, but this endpoint sits right next to the split-move code that WAS
+            changed, and the frontend now also composes "create customer THEN transfer" as two calls
+            (POST /api/customers then POST /api/purchases/items/{id}/transfer) — please re-verify
+            POST /api/purchases/items/{item_id}/transfer with an existing new_customer_id still works
+            end to end (creates destination PO, deducts qty from source, logs activity on both
+            customer_ids).
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ ALL TESTS PASSED (4/4)
+            • Transfer to existing customer: POST with {new_customer_id, qty, reason} returns 200 ✅
+            • Response shape: Contains "destination" object with po_number and customer_name ✅
+            • New PO created: GET /api/purchase-orders?customer_id={destination} includes the new PO ✅
+            • Original item qty: Decreased correctly (or removed if full qty transferred) ✅
+            • Verified: New PO created for destination customer with transferred item at same stage ✅
+
+frontend:
+  - task: "Purchases — shared Movement Engine (Move w/ partial qty, Transfer w/ new-customer-inline, History)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/purchases/MovementEngine.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            New shared sheets — MoveStageSheet (qty defaults to full available, editable for partial
+            "3 of 20" moves, shows a split-warning hint when partial), TransferSheet (Tabs toggle:
+            Existing customer search-and-pick OR Create new customer inline with name/phone/email,
+            then transfers in one submit), HistorySheet (fetches GET /purchases/items/{id}, renders
+            full stage_history timeline + split/transfer lineage banners). These are now the ONLY
+            move/transfer/history implementations — reused verbatim across Purchases page, PO detail,
+            Customer Purchase Workspace, and Catalog product detail. NOT YET FRONTEND-TESTED (own
+            screenshot attempts this session hit a tool-level rendering glitch — blank captures with
+            no console errors on ANY route including root "/", while the JS bundle itself compiles
+            clean and contains the new code ~23 references). Needs an actual frontend test pass.
+
+  - task: "Purchases page — wired to shared Movement Engine + fixed authenticatedUrl() await bug"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/purchases.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Removed the local TransferModal + per-row instant MoveMenu (kept MoveMenu only for the
+            multi-select bulk-move action, which stays full-qty-only by design). Per-row actions now
+            open MoveStageSheet / TransferSheet / HistorySheet from the shared engine. Added a History
+            (clock icon) action next to Move/Transfer on every row, mobile row, and blocked-SLA card.
+            Rows now also show supplier_name where present. Also fixed a real pre-existing bug:
+            doExport() called `api.authenticatedUrl(...)` without `await` (that function is async and
+            returns a Promise<string> — window.open() was receiving a Promise object instead of a
+            URL string). Confirmed followups.tsx already awaits it correctly; purchases.tsx did not.
+
+  - task: "Purchase Order detail — per-line Move/Transfer/History actions"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/purchase-orders/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Added a stage pill + Move/Transfer/History action row under every line item in the items
+            table (previously this page had zero item-level stage control — only PO-level Receive/
+            Status). Wired to the shared Movement Engine; `load()` re-runs after any action.
+
+  - task: "Customer detail — full Purchase Workspace tab (replaces the old plain PO list tab)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/customers/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            "Purchases" tab (relabelled "Purchase Workspace · N") now renders: expected-delivery
+            banner, 4 summary StatTiles (order value/outstanding/open POs/delayed), brand chips +
+            stage progress bars side-by-side, a filterable Products Ordered list (All/Outstanding/
+            Delayed chips) with per-row Move/Transfer/History, the Purchase Orders list (reused from
+            the workspace payload, now shows item_count + ETA), and a Recent Activity dense timeline
+            — all sourced from the single GET /purchases/customers/{id}/workspace call added this
+            session. Falls back to the old empty state if the workspace call fails/customer has no
+            purchase history.
+
+  - task: "Catalog product detail — 'Where this is right now' live pipeline section"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/catalog/[id].tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            New section (only rendered when non-delivered tracker rows exist for this product_id)
+            listing every open PO line for this SKU across all customers, with per-row Move/Transfer/
+            History via the shared engine — this is the 4th and final surface required by the
+            "one movement engine everywhere" requirement (Purchases page, PO detail, Customer
+            workspace, Catalog product page).
+
+metadata:
+  created_by: "main_agent"
+  version: "3.1"
+  test_sequence: 13
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Purchases — partial-quantity stage move (split-move engine)"
+    - "Purchases — Customer Purchase Workspace aggregate endpoint"
+    - "Purchases — supplier passthrough + product_id filter on tracker rows"
+    - "Purchases — transfer to existing customer (pre-existing, re-verify after nearby changes)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Purchases V2 (Prompt 1) backend + frontend implemented per user spec: partial-quantity
+        split-move, one shared Movement Engine (Move/Transfer/History) wired into Purchases page,
+        PO detail, new Customer Purchase Workspace, and Catalog product detail. Transfer-to-new-
+        customer is composed client-side (POST /customers then POST .../transfer) since the customer
+        API already only requires `name`.
+        Environment note: backend/.env + frontend/.env were wiped again on session start (recurring
+        issue) — recreated using credentials supplied in this session's chat; confirmed DB_NAME must
+        be buildcon_house (2966 real products), not the sibling "buildcon" db. Updated
+        /app/memory/test_credentials.md accordingly.
+        Requesting BACKEND testing now for the 4 backend tasks above. Frontend has NOT been tested —
+        my own screenshot verification attempts hit a tool-level capture glitch (blank white
+        screenshots with zero console errors on every route, including the unrelated root "/"); the
+        JS bundle itself compiles cleanly and contains the new code, so treating this as a
+        session/tool quirk rather than a code regression, but flagging it explicitly rather than
+        claiming visual verification I don't actually have.
+    
+    - agent: "testing"
+      message: |
+        ✅ PURCHASES V2 BACKEND TESTING COMPLETE — ALL 32 TESTS PASSED (100% success rate)
+        
+        Tested ONLY the 4 newly added/changed Purchases endpoints as per review request:
+        
+        ═══════════════════════════════════════════════════════════════════════════════
+        TEST 1: PARTIAL-QUANTITY SPLIT MOVE — POST /api/purchases/items/{item_id}/move
+        ═══════════════════════════════════════════════════════════════════════════════
+        ✅ 1a. FULL move (no qty param): Item moved to different stage, response has no "split" key,
+           GET /api/purchases/items/{item_id} shows new stage with "move" action in stage_history.
+        
+        ✅ 1b. PARTIAL move (qty=2 of 10): Response contains split=true, new_item_id, qty_moved=2,
+           qty_remaining=8. Original item: qty reduced to 8, stage UNCHANGED, stage_history has
+           "split_out" action. New item: qty=2, stage=target_stage, stage_history has "split_in"
+           action with ref_item_id referencing original item. ALL VERIFIED.
+        
+        ✅ 1c. INVALID qty: qty=0 rejected with 422 (Pydantic validation), qty=-1 rejected with 422,
+           qty > available rejected with 400 with message mentioning available qty.
+        
+        ✅ 1d. Moving to SAME stage with no qty: Response has no_change=true, no new stage_history
+           entry added (verified by response flag).
+        
+        ═══════════════════════════════════════════════════════════════════════════════
+        TEST 2: CUSTOMER PURCHASE WORKSPACE — GET /api/purchases/customers/{customer_id}/workspace
+        ═══════════════════════════════════════════════════════════════════════════════
+        ✅ 2a. Valid customer_id: Returns 200 with all required top-level keys (customer, summary,
+           products, brands, stages, purchase_orders, outstanding_items, recent_activity,
+           expected_delivery). Summary has all required fields (total_items, total_value,
+           outstanding_value, outstanding_count, open_pos, blocked_count, delivered_count) as
+           numbers. Stages is a list covering all 6 known stages (order_in_company, company_billing,
+           in_box, dispatched, in_transit, delivered) with count field for each (even if 0).
+        
+        ✅ 2b. Non-existent customer_id: Returns 404.
+        
+        ═══════════════════════════════════════════════════════════════════════════════
+        TEST 3: SUPPLIER PASSTHROUGH + product_id FILTER — GET /api/purchases/items
+        ═══════════════════════════════════════════════════════════════════════════════
+        ✅ 3a. Supplier fields: GET /api/purchases/items?view=stock returns items where each row
+           includes "supplier_id" and "supplier_name" keys (values may be null but keys exist).
+           Verified on 8 items.
+        
+        ✅ 3b. product_id filter: GET /api/purchases/items?product_id={id} returns only rows with
+           that product_id. Verified filter works correctly (all returned items match filter).
+        
+        ═══════════════════════════════════════════════════════════════════════════════
+        TEST 4: TRANSFER TO EXISTING CUSTOMER — POST /api/purchases/items/{item_id}/transfer
+        ═══════════════════════════════════════════════════════════════════════════════
+        ✅ 4. Transfer to existing customer: POST with {new_customer_id, qty, reason} returns 200
+           with "destination" object containing po_number and customer_name. Verified:
+           - GET /api/purchase-orders?customer_id={destination} includes the new PO
+           - Original item's qty decreased correctly (or item removed if full qty transferred)
+           - New PO created for destination customer with transferred item at same stage
+        
+        ═══════════════════════════════════════════════════════════════════════════════
+        SUMMARY
+        ═══════════════════════════════════════════════════════════════════════════════
+        ALL 4 FEATURES WORKING CORRECTLY:
+        • Partial-quantity split move with full lineage tracking ✅
+        • Customer Purchase Workspace aggregate endpoint ✅
+        • Supplier passthrough + product_id filter ✅
+        • Transfer to existing customer ✅
+        
+        Test file: /app/purchases_new_features_test.py
+        Test output: /tmp/purchases_test_final.log
+        
+        NO ISSUES FOUND. All endpoints return correct response shapes, status codes, and data.
+        All validation rules working as expected (invalid qty rejected, non-existent IDs return 404).
+        
+        NOTES:
+        • Invalid qty values (0, -1) return 422 (Pydantic validation error) instead of 400, which
+          is correct behavior for FastAPI/Pydantic validation.
+        • All stage_history tracking working correctly (move, split_in, split_out, transfer_in actions).
+        • PO status sync working (po_status_synced_to field in responses).
+        • Activity logging confirmed (events created for stage moves and transfers).

@@ -16,6 +16,9 @@ import {
 } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { colors, icon as iconSize, money, radius, spacing, type } from "@/src/theme/tokens";
+import {
+  HistorySheet, MovableItem, MoveStageSheet, STAGE_TONE, TransferSheet,
+} from "@/src/components/purchases/MovementEngine";
 
 type Customer = {
   id: string; name: string; company?: string | null; email: string;
@@ -24,6 +27,26 @@ type Customer = {
 };
 type Quotation = { id: string; number: string; status: string; grand_total: number; created_at: string; items: any[] };
 type PO = { id: string; number: string; brand_name?: string | null; status: string; grand_total: number; created_at: string };
+
+type WorkspaceProduct = {
+  item_id: string; po_id: string; po_number: string; sku: string; name: string; image?: string | null;
+  brand_name?: string | null; supplier_name?: string | null; stage: string; stage_label: string;
+  qty: number; unit_cost: number; blocked: boolean; age_days: number; customer_id: string; customer_name: string;
+};
+type Workspace = {
+  customer: Customer;
+  summary: {
+    total_items: number; total_value: number; outstanding_value: number; outstanding_count: number;
+    open_pos: number; blocked_count: number; delivered_count: number;
+  };
+  products: WorkspaceProduct[];
+  brands: { id: string | null; name: string; count: number }[];
+  stages: { key: string; label: string; count: number }[];
+  purchase_orders: { id: string; number: string; status: string; brand_name?: string | null; supplier_name?: string | null; grand_total: number; created_at: string; expected_delivery_at?: string | null; item_count: number }[];
+  outstanding_items: WorkspaceProduct[];
+  recent_activity: TimelineEvent[];
+  expected_delivery: { next_at: string | null; purchase_orders: { po_id: string; po_number: string; expected_delivery_at: string }[] };
+};
 
 type Tab = "overview" | "quotations" | "purchases" | "timeline";
 
@@ -37,22 +60,42 @@ export default function CustomerDetail() {
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [purchases, setPurchases] = useState<PO[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
+  const [productFilter, setProductFilter] = useState<"all" | "outstanding" | "blocked">("all");
+  const [moveItem, setMoveItem] = useState<WorkspaceProduct | null>(null);
+  const [transferItem, setTransferItem] = useState<WorkspaceProduct | null>(null);
+  const [historyItemId, setHistoryItemId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [c, qs, pos, tl] = await Promise.all([
+    const [c, qs, pos, tl, ws] = await Promise.all([
       api.get<Customer>(`/customers/${id}`),
       api.get<Quotation[]>(`/quotations`).then((all) => all.filter((q: any) => q.customer_id === id)).catch(() => []),
       api.get<PO[]>(`/purchase-orders?customer_id=${id}`).catch(() => []),
       api.get<TimelineEvent[]>(`/activity/customer/${id}`).catch(() => []),
+      api.get<Workspace>(`/purchases/customers/${id}/workspace`).catch(() => null),
     ]);
     setCustomer(c);
     setQuotations(qs);
     setPurchases(pos);
     setTimeline(tl);
+    setWorkspace(ws);
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  const toMovable = useCallback((p: WorkspaceProduct): MovableItem => ({
+    item_id: p.item_id, sku: p.sku, name: p.name, image: p.image, qty: p.qty,
+    stage: p.stage as any, customer_id: p.customer_id, customer_name: p.customer_name,
+    po_number: p.po_number, brand_name: p.brand_name, supplier_name: p.supplier_name,
+  }), []);
+
+  const visibleProducts = useMemo(() => {
+    if (!workspace) return [];
+    if (productFilter === "outstanding") return workspace.outstanding_items;
+    if (productFilter === "blocked") return workspace.products.filter((p) => p.blocked);
+    return workspace.products;
+  }, [workspace, productFilter]);
 
   const totalRevenue = useMemo(
     () => quotations.filter((q) => ["won", "ordered"].includes(q.status)).reduce((s, q) => s + q.grand_total, 0),
@@ -120,7 +163,7 @@ export default function CustomerDetail() {
           options={[
             { value: "overview", label: "Overview" },
             { value: "quotations", label: `Quotations · ${quotations.length}` },
-            { value: "purchases", label: `Purchases · ${purchases.length}` },
+            { value: "purchases", label: `Purchase Workspace · ${workspace?.summary.total_items ?? purchases.length}` },
             { value: "timeline", label: "Timeline" },
           ]}
           fullWidth={!isDesktop}
@@ -168,37 +211,174 @@ export default function CustomerDetail() {
             </Card>
           )
         ) : tab === "purchases" ? (
-          purchases.length === 0 ? (
+          !workspace ? (
             <Card>
-              <EmptyState icon="shopping-cart" title="No purchase orders" subtitle="Orders will appear here after placement." />
+              <EmptyState icon="shopping-cart" title="No purchase activity" subtitle="Orders will appear here after placement." />
             </Card>
           ) : (
-            <Card padding={0}>
-              {purchases.map((p, i) => (
-                <Pressable
-                  key={p.id}
-                  onPress={() => router.push(`/(admin)/purchase-orders/${p.id}` as any)}
-                  style={({ pressed, hovered }: any) => [
-                    styles.listRow,
-                    {
-                      borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
-                      borderTopColor: colors.divider,
-                      backgroundColor: pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : "transparent",
-                    },
-                  ]}
-                >
-                  <Text style={[type.mono, { width: 120 }]} numberOfLines={1}>{p.number}</Text>
-                  <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                    <Text style={type.titleSm} numberOfLines={1}>{p.brand_name || "—"}</Text>
-                    <Text style={type.caption}>{fmtDate(p.created_at)}</Text>
+            <View style={{ gap: spacing.lg }}>
+              {/* Expected delivery banner */}
+              {workspace.expected_delivery.next_at ? (
+                <Card style={{ backgroundColor: "#FBF0DD", borderColor: "#E7C77A" }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                    <View style={styles.deliveryIcon}>
+                      <Feather name="truck" size={16} color="#8A6116" />
+                    </View>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={{ fontSize: 13, fontWeight: "700", color: "#5C4008" }}>
+                        Next expected delivery · {fmtDate(workspace.expected_delivery.next_at)}
+                      </Text>
+                      <Text style={type.caption} numberOfLines={1}>
+                        {workspace.expected_delivery.purchase_orders.map((p) => p.po_number).join(", ")}
+                      </Text>
+                    </View>
                   </View>
-                  <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]}>
-                    {money(p.grand_total)}
-                  </Text>
-                  <StatusBadge status={p.status} />
-                </Pressable>
-              ))}
-            </Card>
+                </Card>
+              ) : null}
+
+              {/* Purchase summary */}
+              <View style={[styles.statsRow, !isDesktop && styles.statsRowMobile]}>
+                <StatTile label="Order Value" value={money(workspace.summary.total_value)} icon="shopping-bag" tone="brand" sub={`${workspace.summary.total_items} products`} />
+                <StatTile label="Outstanding" value={money(workspace.summary.outstanding_value)} icon="clock" tone="warning" sub={`${workspace.summary.outstanding_count} pending`} />
+                <StatTile label="Open POs" value={String(workspace.summary.open_pos)} icon="file-text" tone="brand" sub={`${purchases.length} total`} />
+                <StatTile label="Delayed" value={String(workspace.summary.blocked_count)} icon="alert-triangle" tone={workspace.summary.blocked_count > 0 ? "danger" : "success"} sub="Past SLA" />
+              </View>
+
+              {/* Brands + Stages breakdown */}
+              <View style={{ flexDirection: isDesktop ? "row" : "column", gap: spacing.lg }}>
+                <Card style={{ flex: 1 }}>
+                  <Text style={[type.overline, { marginBottom: spacing.sm }]}>Brands ordered</Text>
+                  {workspace.brands.length === 0 ? (
+                    <Text style={type.caption}>No brand data yet</Text>
+                  ) : (
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                      {workspace.brands.map((b) => (
+                        <View key={b.id || "unbranded"} style={styles.chip}>
+                          <Text style={styles.chipText}>{b.name}</Text>
+                          <View style={styles.chipCount}><Text style={styles.chipCountText}>{b.count}</Text></View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                </Card>
+                <Card style={{ flex: 1 }}>
+                  <Text style={[type.overline, { marginBottom: spacing.sm }]}>Current stages</Text>
+                  <View style={{ gap: 6 }}>
+                    {workspace.stages.filter((s) => s.count > 0).length === 0 ? (
+                      <Text style={type.caption}>No items in flight</Text>
+                    ) : workspace.stages.filter((s) => s.count > 0).map((s) => {
+                      const tone = STAGE_TONE[s.key as keyof typeof STAGE_TONE];
+                      const pct = workspace.summary.total_items > 0 ? (s.count / workspace.summary.total_items) * 100 : 0;
+                      return (
+                        <View key={s.key} style={{ gap: 3 }}>
+                          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                            <Text style={{ fontSize: 12.5, color: colors.onSurface, fontWeight: "600" }}>{s.label}</Text>
+                            <Text style={{ fontSize: 12.5, color: colors.onSurfaceMuted }}>{s.count}</Text>
+                          </View>
+                          <View style={styles.barTrack}>
+                            <View style={[styles.barFill, { width: `${Math.max(4, pct)}%`, backgroundColor: tone?.fg || colors.onSurfaceMuted }]} />
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </Card>
+              </View>
+
+              {/* Products ordered */}
+              <Card padding={0}>
+                <View style={{ padding: spacing.lg, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                  <Text style={type.overline}>Products ordered</Text>
+                  <View style={{ flexDirection: "row", gap: 6 }}>
+                    <FilterChip label={`All ${workspace.products.length}`} active={productFilter === "all"} onPress={() => setProductFilter("all")} />
+                    <FilterChip label={`Outstanding ${workspace.outstanding_items.length}`} active={productFilter === "outstanding"} onPress={() => setProductFilter("outstanding")} />
+                    <FilterChip label={`Delayed ${workspace.summary.blocked_count}`} active={productFilter === "blocked"} onPress={() => setProductFilter("blocked")} />
+                  </View>
+                </View>
+                {visibleProducts.length === 0 ? (
+                  <View style={{ padding: spacing.lg }}>
+                    <Text style={type.caption}>No products in this filter.</Text>
+                  </View>
+                ) : visibleProducts.map((p, i) => (
+                  <View
+                    key={p.item_id}
+                    style={{
+                      flexDirection: "row", alignItems: "center", gap: 10, padding: spacing.md,
+                      borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0, borderTopColor: colors.divider,
+                      backgroundColor: p.blocked ? "#FBEAEA" : "transparent",
+                    }}
+                  >
+                    <Pressable onPress={() => router.push(`/(admin)/purchase-orders/${p.po_id}` as any)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <View style={styles.prodThumb}>
+                        {p.image ? (
+                          // @ts-ignore
+                          <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 6 }} />
+                        ) : <Feather name="image" size={13} color={colors.onSurfaceMuted} />}
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
+                        <Text style={type.caption} numberOfLines={1}>
+                          {p.sku} · {p.brand_name || "—"}{p.supplier_name ? ` · via ${p.supplier_name}` : ""} · Qty {p.qty}
+                        </Text>
+                      </View>
+                    </Pressable>
+                    <View style={[styles.stagePillSm, { backgroundColor: STAGE_TONE[p.stage as keyof typeof STAGE_TONE]?.bg || colors.surfaceTertiary }]}>
+                      <Text style={{ fontSize: 11, fontWeight: "600", color: STAGE_TONE[p.stage as keyof typeof STAGE_TONE]?.fg || colors.onSurfaceMuted }}>
+                        {p.stage_label}
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 6 }}>
+                      <Pressable testID={`ws-history-${p.item_id}`} onPress={() => setHistoryItemId(p.item_id)} style={styles.itemActionBtn} hitSlop={6}>
+                        <Feather name="clock" size={12} color={colors.onSurface} />
+                      </Pressable>
+                      <Pressable testID={`ws-move-${p.item_id}`} onPress={() => setMoveItem(p)} style={styles.itemActionBtn} hitSlop={6}>
+                        <Feather name="arrow-right" size={12} color={colors.onSurface} />
+                      </Pressable>
+                      <Pressable testID={`ws-transfer-${p.item_id}`} onPress={() => setTransferItem(p)} style={styles.itemActionBtn} hitSlop={6}>
+                        <Feather name="repeat" size={12} color={colors.onSurface} />
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+              </Card>
+
+              {/* Purchase Orders */}
+              <Card padding={0}>
+                <Text style={[type.overline, { padding: spacing.lg, paddingBottom: spacing.sm }]}>Purchase orders</Text>
+                {workspace.purchase_orders.length === 0 ? (
+                  <View style={{ padding: spacing.lg, paddingTop: 0 }}><Text style={type.caption}>None yet.</Text></View>
+                ) : workspace.purchase_orders.map((p, i) => (
+                  <Pressable
+                    key={p.id}
+                    onPress={() => router.push(`/(admin)/purchase-orders/${p.id}` as any)}
+                    style={({ pressed, hovered }: any) => [
+                      styles.listRow,
+                      {
+                        borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
+                        borderTopColor: colors.divider,
+                        backgroundColor: pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : "transparent",
+                      },
+                    ]}
+                  >
+                    <Text style={[type.mono, { width: 120 }]} numberOfLines={1}>{p.number}</Text>
+                    <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                      <Text style={type.titleSm} numberOfLines={1}>{p.brand_name || "—"} · {p.item_count} items</Text>
+                      <Text style={type.caption}>{fmtDate(p.created_at)}{p.expected_delivery_at ? ` · ETA ${fmtDate(p.expected_delivery_at)}` : ""}</Text>
+                    </View>
+                    <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]}>
+                      {money(p.grand_total)}
+                    </Text>
+                    <StatusBadge status={p.status} />
+                  </Pressable>
+                ))}
+              </Card>
+
+              {/* Recent activity */}
+              <Card>
+                <Text style={[type.overline, { marginBottom: spacing.md }]}>Recent activity</Text>
+                <ActivityTimeline events={workspace.recent_activity} dense emptyLabel="No activity yet" />
+              </Card>
+            </View>
           )
         ) : (
           <Card>
@@ -206,6 +386,24 @@ export default function CustomerDetail() {
           </Card>
         )}
       </ScrollView>
+
+      <MoveStageSheet
+        visible={!!moveItem}
+        item={moveItem ? toMovable(moveItem) : null}
+        onClose={() => setMoveItem(null)}
+        onMoved={async () => { await load(); }}
+      />
+      <TransferSheet
+        visible={!!transferItem}
+        item={transferItem ? toMovable(transferItem) : null}
+        onClose={() => setTransferItem(null)}
+        onSuccess={async () => { await load(); }}
+      />
+      <HistorySheet
+        visible={!!historyItemId}
+        itemId={historyItemId}
+        onClose={() => setHistoryItemId(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -216,6 +414,22 @@ function Row({ icon, text }: { icon: keyof typeof Feather.glyphMap; text: string
       <Feather name={icon} size={iconSize.sm} color={colors.onSurfaceMuted} />
       <Text style={[type.bodySm, { color: colors.onSurfaceSecondary }]} numberOfLines={1}>{text}</Text>
     </View>
+  );
+}
+
+function FilterChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[
+        styles.filterChip,
+        active && { backgroundColor: colors.brand, borderColor: colors.brand },
+      ]}
+    >
+      <Text style={{ fontSize: 11.5, fontWeight: "600", color: active ? colors.onBrand : colors.onSurfaceSecondary }}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -234,5 +448,35 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
+  },
+  deliveryIcon: {
+    width: 34, height: 34, borderRadius: 17, backgroundColor: "#F3DFA3",
+    alignItems: "center", justifyContent: "center",
+  },
+  chip: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+    backgroundColor: colors.surfaceTertiary,
+  },
+  chipText: { fontSize: 12.5, fontWeight: "600", color: colors.onSurface },
+  chipCount: {
+    minWidth: 18, height: 18, borderRadius: 9, backgroundColor: colors.surface,
+    alignItems: "center", justifyContent: "center", paddingHorizontal: 4,
+  },
+  chipCountText: { fontSize: 10.5, fontWeight: "700", color: colors.onSurfaceMuted },
+  barTrack: { height: 6, borderRadius: 3, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
+  barFill: { height: 6, borderRadius: 3 },
+  prodThumb: {
+    width: 36, height: 36, borderRadius: 6, backgroundColor: colors.surfaceTertiary,
+    alignItems: "center", justifyContent: "center", overflow: "hidden",
+  },
+  stagePillSm: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  itemActionBtn: {
+    width: 28, height: 28, borderRadius: radius.sm, alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  filterChip: {
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
 });

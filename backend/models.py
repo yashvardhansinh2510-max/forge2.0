@@ -404,9 +404,10 @@ class PurchaseStageEvent(BaseModel):
     by_user_id: str
     by_user_name: str
     note: Optional[str] = None
-    action: Literal["move", "transfer_in", "transfer_out", "create"] = "move"
-    ref_item_id: Optional[str] = None   # opposite side of a transfer
+    action: Literal["move", "transfer_in", "transfer_out", "create", "split_in", "split_out"] = "move"
+    ref_item_id: Optional[str] = None   # opposite side of a transfer/split
     ref_po_id: Optional[str] = None
+    qty: Optional[float] = None          # units affected — set for split events
 
 
 class PurchaseOrderItem(BaseModel):
@@ -441,6 +442,9 @@ class PurchaseOrderItem(BaseModel):
     transferred_from_item_id: Optional[str] = None   # set on the destination item
     transferred_from_po_id: Optional[str] = None
     transferred_from_customer_id: Optional[str] = None
+    # Split bookkeeping (partial-quantity stage move — e.g. "3 of 20")
+    split_from_item_id: Optional[str] = None          # set on the new (moved) piece
+    split_into_item_id: Optional[str] = None           # set on the remainder, if any
 
 
 class PurchaseStatusEvent(BaseModel):

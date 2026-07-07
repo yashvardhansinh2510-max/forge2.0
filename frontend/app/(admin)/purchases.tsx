@@ -19,6 +19,9 @@ import { api, ApiError } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import { color as ds, font as dsFont } from "@/src/design/tokens";
+import {
+  HistorySheet, MovableItem, MoveStageSheet, TransferSheet,
+} from "@/src/components/purchases/MovementEngine";
 
 // -----------------------------------------------------------------------------
 // Types
@@ -46,6 +49,8 @@ type Item = {
   customer_name: string;
   brand_id: string;
   brand_name: string;
+  supplier_id?: string | null;
+  supplier_name?: string | null;
   stage: Stage;
   stage_label: string;
   stage_tone: { bg: string; fg: string };
@@ -126,6 +131,13 @@ export default function PurchasesScreen() {
   const [transferItem, setTransferItem] = useState<Item | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [rowMoveTarget, setRowMoveTarget] = useState<Item | null>(null);
+  const [historyItemId, setHistoryItemId] = useState<string | null>(null);
+
+  const toMovable = useCallback((r: Item): MovableItem => ({
+    item_id: r.item_id, sku: r.sku, name: r.name, image: r.image, qty: r.qty,
+    stage: r.stage, customer_id: r.customer_id, customer_name: r.customer_name,
+    po_number: r.po_number, brand_name: r.brand_name, supplier_name: r.supplier_name,
+  }), []);
 
   // -----------------------------------
   // Data loaders
@@ -173,14 +185,6 @@ export default function PurchasesScreen() {
   // -----------------------------------
   // Mutations
   // -----------------------------------
-  const moveItem = useCallback(async (itemId: string, toStage: Stage, note?: string) => {
-    try {
-      await api.post(`/purchases/items/${itemId}/move`, { stage: toStage, note });
-      toast.success(`Moved to ${VIEW_META.today.label ? "" : ""}${stages.find((s) => s.key === toStage)?.label || toStage}`);
-      await Promise.all([loadItems(), loadFacets()]);
-    } catch (e: any) { toast.error(e?.detail || "Move failed"); }
-  }, [loadItems, loadFacets, stages]);
-
   const bulkMove = useCallback(async (toStage: Stage) => {
     if (selected.size === 0) { toast.error("Select at least one item"); return; }
     try {
@@ -200,8 +204,8 @@ export default function PurchasesScreen() {
     if (brand && brand !== "all") qs.set("brand", brand);
     if (q) qs.set("q", q);
     if (stage) qs.set("stage", stage);
-    const url = api.authenticatedUrl(`/purchases/export.xlsx?${qs.toString()}`);
     try {
+      const url = await api.authenticatedUrl(`/purchases/export.xlsx?${qs.toString()}`);
       if (Platform.OS === "web") {
         // @ts-ignore — web only
         window.open(url, "_blank");
@@ -396,6 +400,7 @@ export default function PurchasesScreen() {
                         key={r.item_id} row={r}
                         onOpenMove={() => setRowMoveTarget(r)}
                         onTransfer={() => setTransferItem(r)}
+                        onHistory={() => setHistoryItemId(r.item_id)}
                       />
                     ))}
                   </View>
@@ -449,7 +454,7 @@ export default function PurchasesScreen() {
                       <Text style={[styles.th, { width: 130 }]}>STAGE</Text>
                       <Text style={[styles.th, { width: 44, textAlign: "right" }]}>QTY</Text>
                       <Text style={[styles.th, { flex: 1.1 }]}>LAST MOVE / BY</Text>
-                      <Text style={[styles.th, { width: 90, textAlign: "right" }]}>ACTION</Text>
+                      <Text style={[styles.th, { width: 118, textAlign: "right" }]}>ACTION</Text>
                     </View>
                   ) : null}
 
@@ -468,6 +473,7 @@ export default function PurchasesScreen() {
                       }}
                       onOpenMove={() => setRowMoveTarget(r)}
                       onTransfer={() => setTransferItem(r)}
+                      onHistory={() => setHistoryItemId(r.item_id)}
                       onOpenPo={() => router.push(`/(admin)/purchase-orders/${r.po_id}` as any)}
                     />
                   ))}
@@ -486,24 +492,22 @@ export default function PurchasesScreen() {
         onPick={(s) => bulkMove(s)}
         title={selected.size > 0 ? `Move ${selected.size} item${selected.size === 1 ? "" : "s"}` : "Bulk move"}
       />
-      <MoveMenu
+      <MoveStageSheet
         visible={!!rowMoveTarget}
-        stages={stages}
+        item={rowMoveTarget ? toMovable(rowMoveTarget) : null}
         onClose={() => setRowMoveTarget(null)}
-        onPick={async (s) => {
-          if (rowMoveTarget) await moveItem(rowMoveTarget.item_id, s);
-          setRowMoveTarget(null);
-        }}
-        title={rowMoveTarget ? `Move ${rowMoveTarget.name}` : ""}
-        currentStage={rowMoveTarget?.stage}
+        onMoved={async () => { await Promise.all([loadItems(), loadFacets()]); }}
       />
-      <TransferModal
-        item={transferItem}
+      <TransferSheet
+        visible={!!transferItem}
+        item={transferItem ? toMovable(transferItem) : null}
         onClose={() => setTransferItem(null)}
-        onSuccess={async () => {
-          setTransferItem(null);
-          await Promise.all([loadItems(), loadFacets()]);
-        }}
+        onSuccess={async () => { await Promise.all([loadItems(), loadFacets()]); }}
+      />
+      <HistorySheet
+        visible={!!historyItemId}
+        itemId={historyItemId}
+        onClose={() => setHistoryItemId(null)}
       />
       <SettingsModal
         visible={showSettings}
@@ -524,9 +528,9 @@ export default function PurchasesScreen() {
 // -----------------------------------------------------------------------------
 function ItemRow(props: {
   row: Item; isTablet: boolean; checked: boolean;
-  onToggle: () => void; onOpenMove: () => void; onTransfer: () => void; onOpenPo: () => void;
+  onToggle: () => void; onOpenMove: () => void; onTransfer: () => void; onHistory: () => void; onOpenPo: () => void;
 }) {
-  const { row, isTablet, checked, onToggle, onOpenMove, onTransfer, onOpenPo } = props;
+  const { row, isTablet, checked, onToggle, onOpenMove, onTransfer, onHistory, onOpenPo } = props;
   if (!isTablet) {
     return (
       <View style={styles.mobileRow}>
@@ -534,15 +538,18 @@ function ItemRow(props: {
           <BulkChk checked={checked} onToggle={onToggle} />
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{row.name}</Text>
-            <Text style={type.caption}>{row.sku} · {row.customer_name}</Text>
+            <Text style={type.caption} numberOfLines={1}>{row.sku} · {row.customer_name}</Text>
           </View>
           <StageBadge stage={row.stage} tone={row.stage_tone} label={row.stage_label} />
         </View>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-          <Text style={type.caption}>Qty {row.qty} · {row.brand_name} · {row.age_days}d</Text>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8, flexWrap: "wrap", gap: 6 }}>
+          <Text style={type.caption} numberOfLines={1}>
+            Qty {row.qty} · {row.brand_name} · {row.age_days}d{row.supplier_name ? ` · via ${row.supplier_name}` : ""}
+          </Text>
           <View style={{ flexDirection: "row", gap: 6 }}>
-            <Pressable onPress={onOpenMove} style={styles.moveBtn}><Text style={styles.moveBtnText}>Move</Text></Pressable>
-            <Pressable onPress={onTransfer} style={styles.transferBtn}><Feather name="repeat" size={12} color={colors.onSurface} /></Pressable>
+            <Pressable onPress={onHistory} style={styles.transferBtn} hitSlop={6}><Feather name="clock" size={12} color={colors.onSurface} /></Pressable>
+            <Pressable onPress={onOpenMove} style={styles.moveBtn} hitSlop={6}><Text style={styles.moveBtnText}>Move</Text></Pressable>
+            <Pressable onPress={onTransfer} style={styles.transferBtn} hitSlop={6}><Feather name="repeat" size={12} color={colors.onSurface} /></Pressable>
           </View>
         </View>
       </View>
@@ -577,7 +584,7 @@ function ItemRow(props: {
       {/* Customer */}
       <View style={{ flex: 1.2, minWidth: 0 }}>
         <Text style={{ fontSize: 13, color: colors.onSurface }} numberOfLines={1}>{row.customer_name}</Text>
-        <Text style={styles.mono}>{row.po_number}</Text>
+        <Text style={styles.mono} numberOfLines={1}>{row.po_number}{row.supplier_name ? ` · ${row.supplier_name}` : ""}</Text>
       </View>
       {/* Brand */}
       <Text style={{ width: 96, fontSize: 13, color: colors.onSurface, textTransform: "uppercase", fontWeight: "600" }} numberOfLines={1}>
@@ -597,7 +604,10 @@ function ItemRow(props: {
         <Text style={type.caption} numberOfLines={1}>{row.last_moved_by_name || "—"}</Text>
       </View>
       {/* Action */}
-      <View style={{ width: 90, alignItems: "flex-end", flexDirection: "row", justifyContent: "flex-end", gap: 6 }}>
+      <View style={{ width: 118, alignItems: "flex-end", flexDirection: "row", justifyContent: "flex-end", gap: 6 }}>
+        <Pressable onPress={onHistory} testID={`row-history-${row.item_id}`} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}>
+          <Feather name="clock" size={12} color={colors.onSurface} />
+        </Pressable>
         <Pressable onPress={onOpenMove} testID={`row-move-${row.item_id}`} style={({ pressed }) => [styles.moveBtn, pressed && { opacity: 0.85 }]}>
           <Text style={styles.moveBtnText}>Move</Text>
           <Feather name="chevron-down" size={11} color={colors.onSurfaceMuted} />
@@ -610,7 +620,9 @@ function ItemRow(props: {
   );
 }
 
-function BlockedCard({ row, onOpenMove, onTransfer }: { row: Item; onOpenMove: () => void; onTransfer: () => void }) {
+function BlockedCard({ row, onOpenMove, onTransfer, onHistory }: {
+  row: Item; onOpenMove: () => void; onTransfer: () => void; onHistory: () => void;
+}) {
   return (
     <View style={styles.blockedCard}>
       <View style={styles.blockedThumb}>
@@ -621,7 +633,7 @@ function BlockedCard({ row, onOpenMove, onTransfer }: { row: Item; onOpenMove: (
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{row.name}</Text>
-        <Text style={styles.mono}>{row.sku} · {row.brand_name}</Text>
+        <Text style={styles.mono} numberOfLines={1}>{row.sku} · {row.brand_name}{row.supplier_name ? ` · ${row.supplier_name}` : ""}</Text>
       </View>
       <View style={styles.orderInPill}>
         <Text style={{ color: ds.warn, fontWeight: "600", fontSize: 12 }}>{row.stage_label} · {row.qty} unit{row.qty === 1 ? "" : "s"}</Text>
@@ -631,6 +643,9 @@ function BlockedCard({ row, onOpenMove, onTransfer }: { row: Item; onOpenMove: (
         <Text style={{ color: colors.error, fontSize: 11, fontWeight: "700" }}>{row.age_days}d</Text>
       </View>
       <View style={{ flexDirection: "row", gap: 6 }}>
+        <Pressable onPress={onHistory} style={styles.transferBtn}>
+          <Feather name="clock" size={12} color={colors.onSurface} />
+        </Pressable>
         <Pressable onPress={onOpenMove} style={styles.moveBtn}>
           <Text style={styles.moveBtnText}>Move</Text>
           <Feather name="chevron-down" size={11} color={colors.onSurfaceMuted} />
@@ -704,162 +719,6 @@ function MoveMenu({ visible, stages, onClose, onPick, title, currentStage }: {
           </View>
         </View>
       </Pressable>
-    </Modal>
-  );
-}
-
-type CustomerLite = { id: string; name: string; company?: string | null };
-
-function TransferModal({ item, onClose, onSuccess }: {
-  item: Item | null; onClose: () => void; onSuccess: () => void | Promise<void>;
-}) {
-  const [customers, setCustomers] = useState<CustomerLite[]>([]);
-  const [pick, setPick] = useState<string>("");
-  const [qty, setQty] = useState<string>("1");
-  const [reason, setReason] = useState<string>("");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!item) return;
-    setPick(""); setQty(String(item.qty)); setReason("");
-    api.get<CustomerLite[]>(`/customers`).then((list) => {
-      setCustomers((list || []).filter((c) => c.id !== item.customer_id));
-    }).catch(() => {});
-  }, [item]);
-
-  if (!item) return null;
-
-  const submit = async () => {
-    if (!pick) { toast.error("Pick a destination customer"); return; }
-    const n = Number(qty || "0");
-    if (!n || n <= 0) { toast.error("Enter a valid qty"); return; }
-    if (n > item.qty) { toast.error(`Only ${item.qty} available`); return; }
-    setBusy(true);
-    try {
-      const r = await api.post<{ destination: { po_number: string } }>(`/purchases/items/${item.item_id}/transfer`, {
-        new_customer_id: pick, qty: n, reason: reason || null,
-      });
-      toast.success(`Transferred · new PO ${r.destination.po_number}`);
-      await onSuccess();
-    } catch (e: any) {
-      toast.error(e instanceof ApiError ? e.detail || e.message : "Transfer failed");
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.transferBackdrop}
-      >
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={styles.transferCard}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <Text style={type.titleMd}>Transfer to Another Customer</Text>
-            <Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={16} color={colors.onSurfaceMuted} /></Pressable>
-          </View>
-
-          <Text style={styles.fieldLabel}>PRODUCT</Text>
-          <View style={styles.transferProduct}>
-            <View style={styles.transferThumb}>
-              {item.image && Platform.OS === "web" ? (
-                // @ts-ignore
-                <img src={item.image} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 6 }} />
-              ) : <Feather name="image" size={14} color={colors.onSurfaceMuted} />}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={2}>{item.name}</Text>
-              <Text style={styles.mono}>{item.sku}</Text>
-            </View>
-          </View>
-
-          <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>CURRENT CUSTOMER</Text>
-              <View style={styles.transferReadonly}>
-                <Text style={{ fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{item.customer_name}</Text>
-                <Text style={styles.mono}>{item.po_number}</Text>
-              </View>
-            </View>
-            <View style={{ width: 110 }}>
-              <Text style={styles.fieldLabel}>QTY TO TRANSFER</Text>
-              <TextInput
-                testID="transfer-qty"
-                value={qty} onChangeText={(v) => setQty(v.replace(/[^0-9.]/g, ""))}
-                keyboardType="numeric"
-                style={[styles.input, { textAlign: "center", fontWeight: "700" }]}
-              />
-              <Text style={{ fontSize: 11, color: colors.onSurfaceMuted, marginTop: 4, textAlign: "center" }}>
-                Available: {item.qty}
-              </Text>
-            </View>
-          </View>
-
-          <View style={{ marginTop: 12 }}>
-            <Text style={styles.fieldLabel}>NEW CUSTOMER</Text>
-            {Platform.OS === "web" ? (
-              // @ts-ignore
-              <select
-                testID="transfer-customer"
-                value={pick}
-                onChange={(e: any) => setPick(e.target.value)}
-                style={{
-                  borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 10, fontSize: 14,
-                  backgroundColor: colors.surfaceSecondary, color: colors.onSurface, width: "100%",
-                } as any}
-              >
-                <option value="">Select new customer</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>{c.company || c.name}</option>
-                ))}
-              </select>
-            ) : (
-              <ScrollView style={{ maxHeight: 160, borderWidth: 1, borderColor: colors.border, borderRadius: 8 }}>
-                {customers.map((c) => (
-                  <Pressable key={c.id} onPress={() => setPick(c.id)} style={[styles.custPick, pick === c.id && styles.custPickOn]}>
-                    <Text style={{ fontSize: 13, color: colors.onSurface, flex: 1 }} numberOfLines={1}>{c.company || c.name}</Text>
-                    {pick === c.id ? <Feather name="check" size={13} color={colors.brand} /> : null}
-                  </Pressable>
-                ))}
-              </ScrollView>
-            )}
-          </View>
-
-          <View style={{ marginTop: 12 }}>
-            <Text style={styles.fieldLabel}>REASON (optional)</Text>
-            <TextInput
-              testID="transfer-reason"
-              value={reason} onChangeText={setReason}
-              placeholder="Enter reason for transfer…"
-              placeholderTextColor={colors.onSurfaceMuted}
-              style={[styles.input, { minHeight: 60 }]}
-              multiline
-            />
-          </View>
-
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-            <Pressable onPress={onClose} style={[styles.cancelBtn, { flex: 1 }]}>
-              <Text style={{ color: colors.onSurface, fontWeight: "600" }}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              testID="transfer-submit"
-              onPress={submit} disabled={busy}
-              style={({ pressed }) => [styles.transferPrimary, { flex: 1.4 }, busy ? { opacity: 0.6 } : pressed ? { opacity: 0.9 } : null]}
-            >
-              {busy ? <ActivityIndicator size="small" color={colors.onBrand} /> :
-                <Text style={{ color: colors.onBrand, fontWeight: "700" }}>Transfer &amp; Create PO</Text>
-              }
-            </Pressable>
-          </View>
-
-          <View style={styles.transferFoot}>
-            <Feather name="info" size={11} color={colors.onSurfaceMuted} />
-            <Text style={{ fontSize: 11, color: colors.onSurfaceMuted }}>
-              This will create a new PO for the new customer. Audit trail is preserved.
-            </Text>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
     </Modal>
   );
 }

@@ -42,7 +42,7 @@ from models import (
     PURCHASE_STAGES, PurchaseStage, UserPublic, now_iso,
 )
 from routes.purchase_routes import ALLOWED_TRANSITIONS, STATUS_LABELS
-from services.activity_log import log_event
+from services.activity_log import log_event, timeline_for
 from services.followup_engine import reconcile_followups
 
 router = APIRouter(prefix="/purchases", tags=["purchases"])
@@ -160,6 +160,7 @@ def _flatten_item(po: dict, it: dict, sla_days: int) -> dict:
         "item_id": it["id"],
         "po_id": po["id"],
         "po_number": po.get("number"),
+        "po_status": po.get("status"),
         "quotation_id": po.get("quotation_id"),
         "quotation_number": po.get("quotation_number"),
         "quotation_line_id": it.get("quotation_line_id"),
@@ -171,17 +172,23 @@ def _flatten_item(po: dict, it: dict, sla_days: int) -> dict:
         "customer_name": it.get("customer_name") or po.get("customer_name"),
         "brand_id": it.get("brand_id") or po.get("brand_id"),
         "brand_name": it.get("brand_name") or po.get("brand_name"),
+        "supplier_id": po.get("supplier_id"),
+        "supplier_name": po.get("supplier_name"),
         "stage": stage,
         "stage_label": STAGE_LABELS.get(stage, stage),
         "stage_tone": STAGE_TONES.get(stage, {"bg": "#F4F4F5", "fg": "#3F3F46"}),
         "qty": float(it.get("qty") or 0),
         "unit_cost": float(it.get("unit_cost") or 0),
         "room": it.get("room"),
+        "expected_delivery_at": po.get("expected_delivery_at"),
         "last_moved_at": last_moved_at,
         "last_moved_by_name": it.get("last_moved_by_name") or po.get("created_by_name"),
         "age_days": age,
         "blocked": blocked,
         "sla_days": sla_days,
+        "split_from_item_id": it.get("split_from_item_id"),
+        "transferred_from_item_id": it.get("transferred_from_item_id"),
+        "transferred_from_customer_id": it.get("transferred_from_customer_id"),
     }
 
 
@@ -193,6 +200,7 @@ async def _iter_items(
     q: Optional[str],
     sla_days: int,
     limit: int = 2000,
+    product_id: Optional[str] = None,
 ) -> list[dict]:
     """Return a flat list of tracker rows across all POs, filtered."""
     match: dict = {"status": {"$ne": "cancelled"}}
@@ -208,6 +216,8 @@ async def _iter_items(
         match["brand_id"] = brand
     if customer:
         match["customer_id"] = customer
+    if product_id:
+        match["items.product_id"] = product_id
 
     pipeline: list[dict] = [
         {"$match": match},
@@ -217,10 +227,13 @@ async def _iter_items(
             "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
             "brand_id": 1, "brand_name": 1, "quotation_id": 1, "quotation_number": 1,
             "created_at": 1, "created_by_name": 1, "status": 1,
+            "supplier_id": 1, "supplier_name": 1, "expected_delivery_at": 1,
             "items": 1,
         }},
     ]
 
+    if product_id:
+        pipeline.append({"$match": {"items.product_id": product_id}})
     if view == "dispatch_record":
         pipeline.append({"$match": {"items.stage": {"$in": list(DISPATCH_STAGES)}}})
     elif stage:
@@ -324,6 +337,88 @@ async def customer_facets(_: UserPublic = Depends(get_current_user)):
     ]
 
 
+@router.get("/customers/{customer_id}/workspace")
+async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_current_user)):
+    """One-call aggregate powering the Customer Purchase Workspace: summary,
+    products ordered, brand/stage breakdowns, POs, outstanding items, recent
+    activity, and expected delivery. Everything here is derived live from the
+    same PO/item documents the rest of Purchases uses — no separate cache to
+    go stale.
+    """
+    customer = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = await _load_settings()
+    rows = await _iter_items("stock", None, customer_id, None, None, settings.sla_days, limit=2000)
+    pos = await db.purchase_orders.find({"customer_id": customer_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+    total_value = round(sum(r["qty"] * r["unit_cost"] for r in rows), 2)
+    outstanding_rows = [r for r in rows if r["stage"] != "delivered"]
+    outstanding_value = round(sum(r["qty"] * r["unit_cost"] for r in outstanding_rows), 2)
+    blocked_rows = [r for r in rows if r["blocked"]]
+    delivered_rows = [r for r in rows if r["stage"] == "delivered"]
+
+    brand_map: dict = {}
+    for r in rows:
+        key = r.get("brand_id") or "unbranded"
+        b = brand_map.setdefault(key, {"id": r.get("brand_id"), "name": r.get("brand_name") or "Unbranded", "count": 0})
+        b["count"] += 1
+    stage_counts = {k: 0 for k in PURCHASE_STAGES}
+    for r in rows:
+        stage_counts[r["stage"]] = stage_counts.get(r["stage"], 0) + 1
+    stages = [
+        {"key": k, "label": STAGE_LABELS[k], "count": stage_counts.get(k, 0), "tone": STAGE_TONES[k]}
+        for k in PURCHASE_STAGES
+    ]
+
+    activity = await timeline_for(customer_id=customer_id, limit=15)
+
+    open_pos = [p for p in pos if p.get("status") != "cancelled"]
+    expected = sorted(
+        [
+            {"po_id": p["id"], "po_number": p.get("number"), "expected_delivery_at": p.get("expected_delivery_at")}
+            for p in open_pos if p.get("expected_delivery_at")
+        ],
+        key=lambda x: x["expected_delivery_at"],
+    )
+
+    return {
+        "customer": {
+            "id": customer["id"], "name": customer.get("name"), "company": customer.get("company"),
+            "tier": customer.get("tier"), "email": customer.get("email"), "phone": customer.get("phone"),
+        },
+        "summary": {
+            "total_items": len(rows),
+            "total_value": total_value,
+            "outstanding_value": outstanding_value,
+            "outstanding_count": len(outstanding_rows),
+            "open_pos": len(open_pos),
+            "blocked_count": len(blocked_rows),
+            "delivered_count": len(delivered_rows),
+        },
+        "products": rows,
+        "brands": sorted(brand_map.values(), key=lambda x: -x["count"]),
+        "stages": stages,
+        "purchase_orders": [
+            {
+                "id": p["id"], "number": p.get("number"), "status": p.get("status"),
+                "brand_name": p.get("brand_name"), "supplier_name": p.get("supplier_name"),
+                "grand_total": p.get("grand_total"), "created_at": p.get("created_at"),
+                "expected_delivery_at": p.get("expected_delivery_at"),
+                "item_count": len(p.get("items") or []),
+            }
+            for p in pos
+        ],
+        "outstanding_items": outstanding_rows,
+        "recent_activity": activity,
+        "expected_delivery": {
+            "next_at": expected[0]["expected_delivery_at"] if expected else None,
+            "purchase_orders": expected[:5],
+        },
+    }
+
+
 @router.get("/items")
 async def list_items(
     view: str = Query("stock", regex="^(today|stock|customers|dispatch_record)$"),
@@ -331,12 +426,13 @@ async def list_items(
     customer: Optional[str] = None,
     stage: Optional[str] = None,
     q: Optional[str] = None,
+    product_id: Optional[str] = None,
     limit: int = Query(500, ge=1, le=2000),
     _: UserPublic = Depends(get_current_user),
 ):
-    """Flat tracker rows filtered by view/brand/customer/stage/q."""
+    """Flat tracker rows filtered by view/brand/customer/stage/q/product_id."""
     settings = await _load_settings()
-    rows = await _iter_items(view, brand, customer, stage, q, settings.sla_days, limit)
+    rows = await _iter_items(view, brand, customer, stage, q, settings.sla_days, limit, product_id)
 
     blocked_count = sum(1 for r in rows if r["blocked"])
     return {
@@ -381,6 +477,7 @@ async def get_item(item_id: str, _: UserPublic = Depends(get_current_user)):
 class MoveBody(BaseModel):
     stage: PurchaseStage
     note: Optional[str] = None
+    qty: Optional[float] = Field(default=None, gt=0)  # partial move — e.g. "3 of 20"
 
 
 class BulkMoveBody(BaseModel):
@@ -493,8 +590,18 @@ async def _sync_po_status_with_stages(po_id: str, user: UserPublic) -> Optional[
 
 async def _apply_stage_change(
     item_id: str, to_stage: str, user: UserPublic, note: Optional[str],
+    qty: Optional[float] = None,
 ) -> dict:
-    """Atomic update of a single item's stage — writes stage_history entry."""
+    """Atomic update of a single item's stage — writes stage_history entry.
+
+    If `qty` is given and is LESS than the item's current quantity, this is a
+    PARTIAL move ("3 of 20") — the line is split: a brand-new tracked item is
+    created at `to_stage` carrying `qty` units, and the original item's
+    quantity is reduced by that amount and stays at its current stage. Full
+    lineage is recorded both ways (split_out on the original, split_in on the
+    new piece) so the Movement History for either piece traces back to the
+    other.
+    """
     po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0})
     if not po:
         raise HTTPException(status_code=404, detail="Item not found")
@@ -502,14 +609,107 @@ async def _apply_stage_change(
     if not it:
         raise HTTPException(status_code=404, detail="Item not found")
     from_stage = it.get("stage") or "order_in_company"
-    if from_stage == to_stage:
-        return {"po": po, "item": it, "no_change": True}
+    full_qty = float(it.get("qty") or 0)
+    move_qty = float(qty) if qty is not None else full_qty
+    if move_qty <= 0:
+        raise HTTPException(status_code=400, detail="Move quantity must be greater than 0")
+    if move_qty > full_qty + 1e-6:
+        raise HTTPException(status_code=400, detail=f"Only {full_qty} available to move")
+
+    is_partial = move_qty < full_qty - 1e-6
+
+    if not is_partial and from_stage == to_stage:
+        return {"po_id": po["id"], "item_id": item_id, "no_change": True}
 
     now = now_iso()
+
+    # -------------------------------------------------------------------
+    # PARTIAL MOVE — split the line into two tracked pieces.
+    # -------------------------------------------------------------------
+    if is_partial:
+        remaining = round(full_qty - move_qty, 4)
+        new_item_id = str(uuid4())
+
+        move_ev = PurchaseStageEvent(
+            from_stage=from_stage, to_stage=to_stage,
+            by_user_id=user.id, by_user_name=user.full_name,
+            note=note, action="split_in",
+            ref_item_id=item_id, ref_po_id=po["id"], qty=move_qty,
+        ).dict()
+        new_item = dict(it)
+        new_item["id"] = new_item_id
+        new_item["qty"] = move_qty
+        new_item["qty_received"] = 0
+        new_item["stage"] = to_stage
+        new_item["last_moved_at"] = now
+        new_item["last_moved_by"] = user.id
+        new_item["last_moved_by_name"] = user.full_name
+        new_item["split_from_item_id"] = item_id
+        new_item["split_into_item_id"] = None
+        new_item["stage_history"] = list(it.get("stage_history") or []) + [move_ev]
+
+        src_ev = PurchaseStageEvent(
+            from_stage=from_stage, to_stage=from_stage,
+            by_user_id=user.id, by_user_name=user.full_name,
+            note=note or f"Split {move_qty} of {full_qty} → {STAGE_LABELS.get(to_stage, to_stage)}",
+            action="split_out",
+            ref_item_id=new_item_id, ref_po_id=po["id"], qty=move_qty,
+        ).dict()
+
+        await db.purchase_orders.update_one(
+            {"id": po["id"], "items.id": item_id},
+            {
+                "$set": {
+                    "items.$.qty": remaining,
+                    "items.$.split_into_item_id": new_item_id,
+                    "items.$.last_moved_at": now,
+                    "items.$.last_moved_by": user.id,
+                    "items.$.last_moved_by_name": user.full_name,
+                    "updated_at": now,
+                },
+                "$push": {"items.$.stage_history": src_ev},
+            },
+        )
+        await db.purchase_orders.update_one(
+            {"id": po["id"]},
+            {"$push": {"items": new_item}},
+        )
+
+        await log_event(
+            event_type="purchase.stage_split",
+            entity_type="purchase", entity_id=po["id"], actor=user,
+            customer_id=po.get("customer_id"),
+            summary=(
+                f"{it.get('name')} · split {move_qty} of {full_qty} · "
+                f"{STAGE_LABELS.get(from_stage, from_stage)} → {STAGE_LABELS.get(to_stage, to_stage)}"
+                + (f" · {note}" if note else "")
+            ),
+            payload={
+                "item_id": item_id, "new_item_id": new_item_id, "po_number": po.get("number"),
+                "from_stage": from_stage, "to_stage": to_stage,
+                "sku": it.get("sku"), "qty_moved": move_qty, "qty_remaining": remaining,
+            },
+        )
+
+        new_status = await _sync_po_status_with_stages(po["id"], user)
+        if to_stage in ("dispatched", "in_transit", "delivered") or new_status:
+            asyncio.create_task(reconcile_followups())
+
+        return {
+            "po_id": po["id"], "item_id": item_id, "split": True,
+            "new_item_id": new_item_id,
+            "from_stage": from_stage, "to_stage": to_stage,
+            "qty_moved": move_qty, "qty_remaining": remaining,
+            "po_status_synced_to": new_status,
+        }
+
+    # -------------------------------------------------------------------
+    # FULL MOVE — existing behaviour, whole line advances together.
+    # -------------------------------------------------------------------
     ev = PurchaseStageEvent(
         from_stage=from_stage, to_stage=to_stage,
         by_user_id=user.id, by_user_name=user.full_name,
-        note=note, action="move",
+        note=note, action="move", qty=move_qty,
     ).dict()
 
     await db.purchase_orders.update_one(
@@ -566,7 +766,7 @@ async def move_item(
 ):
     if body.stage not in PURCHASE_STAGES:
         raise HTTPException(status_code=400, detail=f"Unknown stage '{body.stage}'")
-    return await _apply_stage_change(item_id, body.stage, user, body.note)
+    return await _apply_stage_change(item_id, body.stage, user, body.note, body.qty)
 
 
 @router.post("/items/bulk-move")

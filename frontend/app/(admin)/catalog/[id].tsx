@@ -30,6 +30,9 @@ import { Button, Card, IconButton, PriceTag } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import {
+  HistorySheet, MovableItem, MoveStageSheet, STAGE_TONE, TransferSheet,
+} from "@/src/components/purchases/MovementEngine";
 
 type Product = {
   id: string; name: string; sku: string; description?: string | null;
@@ -46,6 +49,12 @@ type Product = {
 };
 
 type Brand = { id: string; name: string };
+
+type PipelineItem = {
+  item_id: string; po_id: string; po_number: string; sku: string; name: string; image?: string | null;
+  customer_id: string; customer_name: string; brand_name?: string | null; supplier_name?: string | null;
+  stage: string; stage_label: string; qty: number;
+};
 
 function swatchColor(label?: string | null): string {
   const l = (label || "").toLowerCase();
@@ -77,6 +86,23 @@ export default function ProductDetail() {
   const [imageIdx, setImageIdx] = useState(0);
   const [galleryW, setGalleryW] = useState(0);
   const galleryRef = useRef<FlatList<string>>(null);
+  const [pipeline, setPipeline] = useState<PipelineItem[]>([]);
+  const [moveItem, setMoveItem] = useState<PipelineItem | null>(null);
+  const [transferItem, setTransferItem] = useState<PipelineItem | null>(null);
+  const [historyItemId, setHistoryItemId] = useState<string | null>(null);
+
+  const toMovable = (it: PipelineItem): MovableItem => ({
+    item_id: it.item_id, sku: it.sku, name: it.name, image: it.image, qty: it.qty,
+    stage: it.stage as any, customer_id: it.customer_id, customer_name: it.customer_name,
+    po_number: it.po_number, brand_name: it.brand_name, supplier_name: it.supplier_name,
+  });
+
+  const loadPipeline = async (productId: string) => {
+    try {
+      const r = await api.get<{ items: PipelineItem[] }>(`/purchases/items?product_id=${productId}&limit=50`);
+      setPipeline((r.items || []).filter((it) => it.stage !== "delivered"));
+    } catch { setPipeline([]); }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -85,6 +111,7 @@ export default function ProductDetail() {
       try {
         const prod = await api.get<Product>(`/products/${id}`);
         setP(prod);
+        loadPipeline(prod.id);
         if (prod.family_key) {
           const res = await api.get<{ items: Product[] }>(`/products?family_key=${encodeURIComponent(prod.family_key)}&limit=20`);
           setSiblings(res.items.filter((x) => x.id !== prod.id));
@@ -320,6 +347,50 @@ export default function ProductDetail() {
         </Card>
       </View>
 
+      {/* Where this is right now — live purchase pipeline for this SKU */}
+      {pipeline.length > 0 ? (
+        <View style={{ gap: spacing.sm }}>
+          <Text style={type.overline}>Where this is right now · {pipeline.length}</Text>
+          <Card style={{ padding: 0 }}>
+            {pipeline.map((it, i) => (
+              <View
+                key={it.item_id}
+                style={{
+                  flexDirection: "row", alignItems: "center", gap: 10, padding: spacing.md,
+                  borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0, borderTopColor: colors.border,
+                }}
+              >
+                <Pressable
+                  onPress={() => router.push(`/(admin)/purchase-orders/${it.po_id}` as any)}
+                  style={{ flex: 1, minWidth: 0 }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{it.customer_name}</Text>
+                  <Text style={type.caption} numberOfLines={1}>
+                    {it.po_number} · Qty {it.qty}{it.supplier_name ? ` · via ${it.supplier_name}` : ""}
+                  </Text>
+                </Pressable>
+                <View style={[styles.pipelinePill, { backgroundColor: STAGE_TONE[it.stage as keyof typeof STAGE_TONE]?.bg || colors.surfaceTertiary }]}>
+                  <Text style={{ fontSize: 11, fontWeight: "600", color: STAGE_TONE[it.stage as keyof typeof STAGE_TONE]?.fg || colors.onSurfaceMuted }}>
+                    {it.stage_label}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: "row", gap: 6 }}>
+                  <Pressable onPress={() => setHistoryItemId(it.item_id)} style={styles.pipelineBtn} hitSlop={6}>
+                    <Feather name="clock" size={12} color={colors.onSurface} />
+                  </Pressable>
+                  <Pressable onPress={() => setMoveItem(it)} style={styles.pipelineBtn} hitSlop={6}>
+                    <Feather name="arrow-right" size={12} color={colors.onSurface} />
+                  </Pressable>
+                  <Pressable onPress={() => setTransferItem(it)} style={styles.pipelineBtn} hitSlop={6}>
+                    <Feather name="repeat" size={12} color={colors.onSurface} />
+                  </Pressable>
+                </View>
+              </View>
+            ))}
+          </Card>
+        </View>
+      ) : null}
+
       {/* Actions (inline on tablet; sticky on phone below) */}
       {isWide ? (
         <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
@@ -399,6 +470,24 @@ export default function ProductDetail() {
           <Button label="Add to quotation" icon="plus" size="lg" onPress={() => router.push("/(admin)/quotations/new" as any)} testID="add-to-quote" />
         </View>
       ) : null}
+
+      <MoveStageSheet
+        visible={!!moveItem}
+        item={moveItem ? toMovable(moveItem) : null}
+        onClose={() => setMoveItem(null)}
+        onMoved={async () => { await loadPipeline(p.id); }}
+      />
+      <TransferSheet
+        visible={!!transferItem}
+        item={transferItem ? toMovable(transferItem) : null}
+        onClose={() => setTransferItem(null)}
+        onSuccess={async () => { await loadPipeline(p.id); }}
+      />
+      <HistorySheet
+        visible={!!historyItemId}
+        itemId={historyItemId}
+        onClose={() => setHistoryItemId(null)}
+      />
     </View>
   );
 }
@@ -474,5 +563,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
     shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 18, shadowOffset: { width: 0, height: -8 }, elevation: 8,
+  },
+  pipelinePill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+  pipelineBtn: {
+    width: 28, height: 28, borderRadius: radius.sm, alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,
   },
 });
