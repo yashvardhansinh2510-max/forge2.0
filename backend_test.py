@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 # Configuration
-BASE_URL = "https://persist-arch.preview.emergentagent.com/api"
+BASE_URL = "https://readiness-scan-7.preview.emergentagent.com/api"
 PRIMARY_EMAIL = "owner@forge.app"
 PRIMARY_PASSWORD = "Forge@2026"
 SALES_EMAIL = "sales@forge.app"
