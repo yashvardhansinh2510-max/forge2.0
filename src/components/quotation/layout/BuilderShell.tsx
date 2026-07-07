@@ -35,6 +35,7 @@ const TWO_PANE = 820;
 export function BuilderShell({ onBack }: { onBack: () => void }) {
   const b = useBuilder();
   const [w, setW] = useState(0);
+  const [railCollapsed, setRailCollapsed] = useState(false);
 
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
 
@@ -42,7 +43,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
   const twoPane = !threePane && w >= TWO_PANE;
   const isPhone = !threePane && !twoPane;
 
-  const railW = w >= 1400 ? 260 : 240;
+  const railW = railCollapsed ? 56 : w >= 1400 ? 260 : 240;
   const quotationW = w >= 1440 ? 480 : w >= 1200 ? 440 : 400;
 
   // On smaller layouts, when a line/product gets focused, open the Assistant sheet.
@@ -65,7 +66,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       ) : threePane ? (
         <View style={{ flex: 1, flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
           <View style={{ width: railW, overflow: "hidden" }}>
-            <BrandRail />
+            <BrandRail collapsed={railCollapsed} onToggleCollapsed={() => setRailCollapsed((v) => !v)} />
           </View>
           <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
             <ProductExplorer />
@@ -76,8 +77,8 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
         </View>
       ) : twoPane ? (
         <View style={{ flex: 1, flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
-          <View style={{ width: 220, overflow: "hidden" }}>
-            <BrandRail />
+          <View style={{ width: railCollapsed ? 56 : 220, overflow: "hidden" }}>
+            <BrandRail collapsed={railCollapsed} onToggleCollapsed={() => setRailCollapsed((v) => !v)} />
           </View>
           <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
             <QuotationPane />

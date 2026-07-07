@@ -6,7 +6,7 @@
 // in the sticky header.
 import { Feather } from "@expo/vector-icons";
 import { memo, useMemo } from "react";
-import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 
 import { EmptyState } from "@/src/components/ui";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -15,6 +15,7 @@ import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { VariantSwatchStrip } from "../shared/VariantChip";
 import { productImageList } from "../helpers/media";
+import { quotationGridColumns } from "../helpers/responsive";
 import type { Product, ProductVariant } from "../helpers/types";
 
 type SortKey = "popular" | "recent" | "price_asc" | "price_desc" | "name";
@@ -29,8 +30,9 @@ const SORT_OPTIONS: { k: SortKey; label: string; icon: React.ComponentProps<type
 
 export function ProductExplorer() {
   const b = useBuilder();
+  const { width: windowWidth } = useWindowDimensions();
 
-  const numCols = 2;
+  const numCols = quotationGridColumns(windowWidth);
   const brandName = useMemo(() => {
     if (!b.selectedBrandId) return "All brands";
     return b.brands.find((x) => x.id === b.selectedBrandId)?.name || "Brand";
@@ -97,7 +99,7 @@ export function ProductExplorer() {
         key={`grid-${numCols}`}
         numColumns={numCols}
         style={{ flex: 1, minHeight: 0 }}
-        columnWrapperStyle={{ gap: 12 }}
+        columnWrapperStyle={numCols > 1 ? { gap: 12 } : undefined}
         keyExtractor={(p) => p.id}
         contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 32 }}
         keyboardShouldPersistTaps="handled"
