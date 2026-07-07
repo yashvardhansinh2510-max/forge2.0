@@ -548,11 +548,11 @@ frontend:
 frontend:
   - task: "Quotation Builder 3.0 — architectural refactor + 3-pane responsive shell + Quotation Assistant right pane"
     implemented: true
-    working: true
+    working: false
     file: "frontend/app/(admin)/quotations/new.tsx (thin entry) + frontend/src/components/quotation/**"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
         - working: "NA"
           agent: "main"
@@ -620,18 +620,83 @@ frontend:
             • Code quality: TypeScript clean, proper testIDs throughout, memoization for performance
             
             RECOMMENDATION: Mark as WORKING. All requirements implemented correctly. The "Loading products..." issue in automated testing is environmental (API latency), not a functional bug. Main agent's visual verification at multiple viewports already confirmed everything works.
+        - working: false
+          agent: "testing"
+          comment: |
+            CRITICAL BUG FOUND — Product Grid Not Rendering (2026-07-07 Live Browser Test)
+            
+            ❌ PRODUCT GRID RENDERING FAILURE:
+            • Login successful: owner@forge.app redirected to /dashboard ✓
+            • Navigation to /quotations/new successful ✓
+            • 3-pane builder shell renders correctly ✓
+            • Brand rail shows all 5 brands with correct counts (Hansgrohe 908, Axor 448, Grohe 864, Geberit 496, Vitra 250 = 2966 total) ✓
+            • BUT: Product grid stuck on "Loading products..." indefinitely
+            • Product count shows "0 products" even after 20+ seconds wait
+            • NO product cards render in the DOM (0 cards found)
+            
+            🔍 ROOT CAUSE ANALYSIS:
+            • Backend API working perfectly:
+              - GET /api/products?limit=60&skip=0&sort=popular → 200 OK
+              - Response contains {"total":2966,"items":[...]} with full product data
+              - Products have valid images from Supabase storage
+              - Backend logs show: "GET /api/products?limit=60&skip=0&sort=popular HTTP/1.1" 200 OK
+            • Frontend API calls happening:
+              - Network monitor shows GET /api/products/recent → 200 OK
+              - GET /api/products/frequent → 200 OK
+              - GET /api/products?limit=60&skip=0&sort=popular → 200 OK
+              - GET /api/products?limit=60&skip=0&sort=popular&brand_id=... → 200 OK (after clicking Hansgrohe)
+            • BUT: React component NOT rendering the fetched data
+              - UI remains stuck in loading state
+              - No error messages in console
+              - No error messages on page
+              - Product cards never appear in DOM
+            
+            📸 EVIDENCE (Screenshots):
+            • wait_5s.png, wait_10s.png, wait_15s.png: All show "Loading products..." with spinner
+            • 19_after_hansgrohe_click.png: Brand accordion expands (categories visible), but center pane still shows "Loading products..."
+            • Product count remains "0 products" throughout all tests
+            
+            🧪 TESTS PERFORMED:
+            1. Waited 5s, 10s, 15s, 20s after navigation (per user's guidance for Metro hydration)
+            2. Clicked "All brands" button (no effect)
+            3. Clicked "Hansgrohe" brand (accordion expanded showing categories, but products still not loading)
+            4. Verified API responses with curl (confirmed 2966 products returned)
+            5. Checked backend logs (confirmed 200 OK responses)
+            6. Monitored network requests (confirmed API calls happening and succeeding)
+            
+            ⚠️ INFINITE SCROLL TEST: BLOCKED
+            • Cannot test infinite scroll because initial product load fails
+            • Cannot test product cards because none render
+            • Cannot test product modal because no products to click
+            • Cannot test variant chips because modal never opens
+            
+            🎯 CONCLUSION:
+            This is a CRITICAL FRONTEND BUG in the ProductExplorer component or BuilderContext.
+            The data pipeline works (API → Network → Response), but the React rendering pipeline is broken.
+            Likely causes:
+            1. State update not triggering re-render after API response
+            2. Conditional rendering logic preventing product cards from showing
+            3. Error in data transformation between API response and component props
+            4. Missing dependency in useEffect causing stale closure
+            
+            RECOMMENDATION: Main agent must debug the ProductExplorer.tsx component's data flow:
+            - Check how API response is stored in state
+            - Verify state updates trigger re-renders
+            - Check conditional rendering logic for product cards
+            - Add console.log to track data flow from API response to render
 
 
 metadata:
   created_by: "main_agent"
   version: "2.0"
-  test_sequence: 10
+  test_sequence: 11
   run_ui: true
 
 test_plan:
   current_focus:
-    - "Follow-ups · Sales Command Center — reconciliation engine + priority scoring + workspace UI"
-  stuck_tasks: []
+    - "Quotation Builder 3.0 — CRITICAL: Product grid not rendering despite successful API calls"
+  stuck_tasks:
+    - "Quotation Builder 3.0 — architectural refactor + 3-pane responsive shell + Quotation Assistant right pane"
   test_all: false
   test_priority: "high_first"
 
@@ -2545,4 +2610,62 @@ agent_communication:
             for each step), payments tracking is accurate, and follow-ups reconciliation is idempotent.
             
             No critical issues found. The app is ready for production use from a backend API perspective.
+
+
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        CRITICAL BUG FOUND IN QUOTATION BUILDER — Product Grid Not Rendering
+        
+        Performed strict live browser verification as requested (2026-07-07). Login and navigation work perfectly,
+        but the product grid is completely broken — it never loads products despite successful API calls.
+        
+        WHAT WORKS:
+        ✅ Login flow (owner@forge.app / Forge@2026)
+        ✅ 3-pane builder shell renders
+        ✅ Brand rail shows all 5 brands with correct counts (2966 total products)
+        ✅ Backend API returns 200 OK with full product data
+        ✅ Frontend makes API calls successfully (network monitor confirms)
+        
+        WHAT'S BROKEN:
+        ❌ Product grid stuck on "Loading products..." indefinitely (waited 20+ seconds)
+        ❌ Product count shows "0 products" despite API returning 2966 products
+        ❌ NO product cards render in DOM (0 cards found)
+        ❌ Cannot test infinite scroll (no products to scroll)
+        ❌ Cannot test product modal (no products to click)
+        ❌ Cannot test variant chips (modal never opens)
+        ❌ Cannot test product images (no cards render)
+        
+        ROOT CAUSE:
+        This is a FRONTEND RENDERING BUG in ProductExplorer.tsx or BuilderContext.
+        The data pipeline works perfectly (API → Network → 200 OK → Response with 2966 products),
+        but the React component is NOT rendering the fetched data. The UI remains stuck in loading
+        state with no error messages.
+        
+        EVIDENCE:
+        • curl test confirms API returns: {"total":2966,"items":[...]} with full product data
+        • Backend logs show: GET /api/products?limit=60&skip=0&sort=popular HTTP/1.1" 200 OK
+        • Network monitor shows all API calls succeed (200 OK)
+        • Console logs show NO errors
+        • Page shows NO error messages
+        • Product cards never appear in DOM even after 20+ seconds
+        
+        LIKELY CAUSES:
+        1. State update not triggering re-render after API response
+        2. Conditional rendering logic preventing product cards from showing
+        3. Error in data transformation between API response and component props
+        4. Missing dependency in useEffect causing stale closure
+        5. Async state update race condition
+        
+        URGENT ACTION REQUIRED:
+        Main agent must debug ProductExplorer.tsx data flow:
+        1. Add console.log to track API response → state → render
+        2. Check if products state is being set correctly
+        3. Verify conditional rendering logic for product cards
+        4. Check FlatList data prop is receiving the products array
+        5. Verify no early returns preventing render
+        
+        This is a BLOCKING BUG — the entire Quotation Builder is unusable without product selection.
+        Cannot proceed with any further testing until products render.
 
