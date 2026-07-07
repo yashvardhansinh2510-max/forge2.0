@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Linking, Platform, Pressable, RefreshControl, ScrollView,
   StyleSheet, Text, TextInput, useWindowDimensions, View,
+  KeyboardAvoidingView,
 } from "react-native";
 import { Swipeable } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -224,6 +225,8 @@ export default function FollowupsScreen() {
   const { staff } = useAuth();
   const { width } = useWindowDimensions();
   const isDesktop = width >= 900;
+  const isPhone = width < 640;
+  const pagePad = isPhone ? spacing.md : spacing.xl;
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -620,32 +623,41 @@ export default function FollowupsScreen() {
       <PageHeader
         overline="WORKSPACE"
         title="Follow-ups"
-        subtitle="Never lose another customer. Every follow-up, payment reminder and quotation reminder in one workspace."
+        subtitle={isPhone ? "Today's calls, reminders and customer promises." : "Never lose another customer. Every follow-up, payment reminder and quotation reminder in one workspace."}
+        dense={isPhone}
         actions={
-          <>
-            <IconButton icon="rotate-cw" onPress={onRefresh} tone="surface" accessibilityLabel="Refresh" size={38} />
-            <Button label="Automation Rules" icon="zap" variant="secondary" size="md" onPress={() => setRulesSheet(true)} />
-            <Dropdown
-              label="Export" icon="download" variant="secondary"
-              items={[
-                { label: "Export as Excel (.xlsx)", icon: "file-text", onPress: () => doExport("xlsx") },
-                { label: "Export as CSV", icon: "file", onPress: () => doExport("csv") },
-              ]}
-            />
-            <Button label="New Follow-up" icon="plus" variant="primary" size="md" onPress={() => setNewSheet(true)} testID="new-followup-btn" />
-          </>
+          isPhone ? (
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <IconButton icon="rotate-cw" onPress={onRefresh} tone="surface" accessibilityLabel="Refresh" size={40} />
+              <IconButton icon="plus" onPress={() => setNewSheet(true)} tone="brand" accessibilityLabel="New follow-up" size={40} testID="new-followup-btn" />
+            </View>
+          ) : (
+            <>
+              <IconButton icon="rotate-cw" onPress={onRefresh} tone="surface" accessibilityLabel="Refresh" size={38} />
+              <Button label="Automation Rules" icon="zap" variant="secondary" size="md" onPress={() => setRulesSheet(true)} />
+              <Dropdown
+                label="Export" icon="download" variant="secondary"
+                items={[
+                  { label: "Export as Excel (.xlsx)", icon: "file-text", onPress: () => doExport("xlsx") },
+                  { label: "Export as CSV", icon: "file", onPress: () => doExport("csv") },
+                ]}
+              />
+              <Button label="New Follow-up" icon="plus" variant="primary" size="md" onPress={() => setNewSheet(true)} testID="new-followup-btn" />
+            </>
+          )
         }
       />
 
       <ScrollView
-        contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}
+        contentContainerStyle={{ padding: pagePad, gap: isPhone ? spacing.md : spacing.lg, paddingBottom: isPhone ? 132 : spacing.xxxl }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
         {/* Today's Mission */}
-        <MissionHero mission={mission} loading={loading} onJumpTop={() => topPriorityOpen && selectCard(topPriorityOpen)} />
+        <MissionHero mission={mission} loading={loading} onJumpTop={() => topPriorityOpen && selectCard(topPriorityOpen)} compact={isPhone} />
 
         {/* KPI strip */}
-        <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
+        <ScrollView horizontal={isPhone} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingRight: isPhone ? spacing.md : 0 }} style={isPhone ? { marginHorizontal: -pagePad, paddingHorizontal: pagePad } : undefined}>
+          <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: isPhone ? "nowrap" : "wrap" }}>
           <StatTile label="Today's Tasks" value={stats ? stats.today_tasks : "—"} icon="sun" tone="brand"
             sub={stats?.today_critical ? `${stats.today_critical} critical` : "On track"}
             onPress={() => toggleKpi("today")} style={kpiFilter === "today" ? activeTileStyle : undefined} />
@@ -662,15 +674,16 @@ export default function FollowupsScreen() {
           <StatTile label="Completed Today" value={stats ? stats.completed_today : "—"} icon="check-circle" tone="success"
             sub={stats ? `${stats.completed_trend >= 0 ? "+" : ""}${stats.completed_trend} vs yesterday` : undefined}
             onPress={() => toggleKpi("completed")} style={kpiFilter === "completed" ? activeTileStyle : undefined} />
-        </View>
+          </View>
+        </ScrollView>
 
         {/* Smart search + filters — Priority chips always visible; the rest
             collapse behind "More filters" to keep the list within reach
             (UX audit: filters previously pushed the first card ~200px down). */}
         <Panel padding={spacing.md}>
           <View style={{ gap: spacing.md }}>
-            <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>
-              <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: isPhone ? "wrap" : "nowrap" }}>
+              <View style={{ flex: 1, minWidth: isPhone ? "100%" : 0 }}>
                 <SearchField
                   testID="followups-search"
                   value={q}
@@ -694,8 +707,8 @@ export default function FollowupsScreen() {
                 { value: "low", label: "Low", count: priorityCounts.low || undefined },
               ]}
             />
-            <Pressable onPress={() => setFiltersExpanded((v) => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" }}>
-              <Feather name={filtersExpanded ? "chevron-up" : "sliders"} size={13} color={colors.onSurfaceSecondary} />
+            <Pressable onPress={() => setFiltersExpanded((v) => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", minHeight: 44, paddingVertical: 8 }}>
+              <Feather name={filtersExpanded ? "chevron-up" : "sliders"} size={14} color={colors.onSurfaceSecondary} />
               <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary }}>
                 {filtersExpanded ? "Hide filters" : "More filters"}{activeFilterCount ? ` (${activeFilterCount})` : ""}
               </Text>
@@ -808,7 +821,7 @@ export default function FollowupsScreen() {
       </ScrollView>
 
       {/* Mobile: floating quick-contact for the #1 priority item */}
-      {!isDesktop && topPriorityOpen ? (
+      {!isDesktop && !isPhone && topPriorityOpen ? (
         <View style={styles.fabWrap} pointerEvents="box-none">
           <Pressable
             testID="fab-whatsapp"
@@ -835,8 +848,8 @@ export default function FollowupsScreen() {
         title={detail?.customer?.company || detail?.customer?.name || "Customer"}
         subtitle={detail?.followup?.reason}
       >
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md }}>
-          <ContextPanel detail={detail} loading={loadingDetail} embedded />
+        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: 120 }}>
+          <ContextPanel detail={detail} loading={loadingDetail} embedded compact={isPhone} />
           <InsightsPanel insights={insights} />
         </ScrollView>
       </Sheet>
@@ -973,7 +986,7 @@ function ShortcutHelpSheet({ visible, onClose }: { visible: boolean; onClose: ()
 // ─────────────────────────────────────────────────────────────────────────────
 // MissionHero — Today's Mission
 // ─────────────────────────────────────────────────────────────────────────────
-function MissionHero({ mission, loading, onJumpTop }: { mission: Mission | null; loading: boolean; onJumpTop: () => void }) {
+function MissionHero({ mission, loading, onJumpTop, compact }: { mission: Mission | null; loading: boolean; onJumpTop: () => void; compact?: boolean }) {
   if (loading || !mission) {
     return (
       <View style={{ padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, gap: spacing.md }}>
@@ -984,13 +997,47 @@ function MissionHero({ mission, loading, onJumpTop }: { mission: Mission | null;
     );
   }
   const clean = mission.due_count === 0;
+  if (compact) {
+    return (
+      <View style={styles.mobileMissionCard}>
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.md }}>
+          <View style={styles.mobileMissionIcon}>
+            <Feather name={clean ? "check-circle" : "zap"} size={18} color={clean ? colors.success : colors.brand} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
+            <Text style={type.overline}>TODAY'S MISSION</Text>
+            <Text style={styles.mobileMissionTitle} numberOfLines={3}>
+              {clean ? `${greeting()}, ${mission.greeting_name}. You're clear.` : `${mission.due_count} follow-up${mission.due_count === 1 ? "" : "s"} need you.`}
+            </Text>
+            <Text style={type.bodyMuted} numberOfLines={2}>
+              {clean ? "No revenue at risk right now." : `₹${mission.revenue_at_risk_short.replace("₹", "")} at risk · ${mission.estimated_minutes} min to clear`}
+            </Text>
+          </View>
+          {!clean ? <Button label="#1" icon="arrow-right" variant="primary" size="sm" onPress={onJumpTop} testID="mission-jump-top" /> : null}
+        </View>
+        {!clean && mission.top_priorities.length ? (
+          <View style={{ gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.divider }}>
+            {mission.top_priorities.slice(0, 3).map((p, i) => (
+              <Pressable key={p.id} onPress={onJumpTop} style={styles.mobileMissionPriority}>
+                <View style={styles.mobileRank}><Text style={styles.mobileRankText}>{i + 1}</Text></View>
+                <Text style={[type.bodySm, { flex: 1 }]} numberOfLines={1}>{p.customer_name} — {p.reason}</Text>
+                <Badge label={String(p.priority_score)} tone="brand" size="sm" />
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    );
+  }
   return (
     <HeroCard
       overline="TODAY'S MISSION"
       title={clean ? `${greeting()}, ${mission.greeting_name}. You're clear.` : `${greeting()}, ${mission.greeting_name}. ${mission.due_count} follow-up${mission.due_count === 1 ? "" : "s"} need you.`}
       subtitle={clean
         ? "No revenue is at risk right now — great work staying ahead."
-        : `₹${mission.revenue_at_risk_short.replace("₹", "")} potential revenue at risk · ${mission.overdue_payments} overdue payment${mission.overdue_payments === 1 ? "" : "s"} · ${mission.quotations_expiring_today} quotation${mission.quotations_expiring_today === 1 ? "" : "s"} expiring today · Est. ${mission.estimated_minutes} min to clear`}
+        : compact
+          ? `₹${mission.revenue_at_risk_short.replace("₹", "")} at risk · ${mission.estimated_minutes} min to clear`
+          : `₹${mission.revenue_at_risk_short.replace("₹", "")} potential revenue at risk · ${mission.overdue_payments} overdue payment${mission.overdue_payments === 1 ? "" : "s"} · ${mission.quotations_expiring_today} quotation${mission.quotations_expiring_today === 1 ? "" : "s"} expiring today · Est. ${mission.estimated_minutes} min to clear`}
       icon={clean ? "check-circle" : "zap"}
       iconTone={clean ? "success" : mission.critical_count > 0 ? "danger" : "brand"}
       actions={clean ? undefined : <Button label="Start with #1" icon="arrow-right" variant="primary" size="md" onPress={onJumpTop} testID="mission-jump-top" />}
@@ -1331,7 +1378,7 @@ function FollowupCard({
 // ─────────────────────────────────────────────────────────────────────────────
 // ContextPanel — full customer context (desktop right column / mobile sheet)
 // ─────────────────────────────────────────────────────────────────────────────
-function ContextPanel({ detail, loading, embedded }: { detail: Detail | null; loading: boolean; embedded?: boolean }) {
+function ContextPanel({ detail, loading, embedded, compact }: { detail: Detail | null; loading: boolean; embedded?: boolean; compact?: boolean }) {
   if (loading) {
     return (
       <Panel title="Customer" overline="CONTEXT">
@@ -1377,12 +1424,12 @@ function ContextPanel({ detail, loading, embedded }: { detail: Detail | null; lo
       </Panel>
 
       <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
-        <StatTile dense label="Lifetime Revenue" value={moneyShort(stats.lifetime_revenue)} icon="trending-up" tone="brand" />
-        <StatTile dense label="Outstanding" value={moneyShort(stats.outstanding_total)} icon="alert-circle" tone={stats.outstanding_total > 0 ? "danger" : "success"} />
-        <StatTile dense label="Conversion Rate" value={`${stats.conversion_rate}%`} icon="percent" tone="neutral" />
-        <StatTile dense label="Avg. Order Value" value={moneyShort(stats.average_order_value)} icon="bar-chart-2" tone="neutral" />
-        <StatTile dense label="Pending Quotations" value={String(stats.pending_quotations)} icon="file-text" tone="neutral" />
-        <StatTile dense label="Pending Orders" value={String(stats.pending_orders)} icon="package" tone="neutral" />
+        <StatTile dense label="Lifetime Revenue" value={moneyShort(stats.lifetime_revenue)} icon="trending-up" tone="brand" style={compact ? styles.contextStatMobile : undefined} />
+        <StatTile dense label="Outstanding" value={moneyShort(stats.outstanding_total)} icon="alert-circle" tone={stats.outstanding_total > 0 ? "danger" : "success"} style={compact ? styles.contextStatMobile : undefined} />
+        <StatTile dense label="Conversion Rate" value={`${stats.conversion_rate}%`} icon="percent" tone="neutral" style={compact ? styles.contextStatMobile : undefined} />
+        <StatTile dense label="Avg. Order Value" value={moneyShort(stats.average_order_value)} icon="bar-chart-2" tone="neutral" style={compact ? styles.contextStatMobile : undefined} />
+        <StatTile dense label="Pending Quotations" value={String(stats.pending_quotations)} icon="file-text" tone="neutral" style={compact ? styles.contextStatMobile : undefined} />
+        <StatTile dense label="Pending Orders" value={String(stats.pending_orders)} icon="package" tone="neutral" style={compact ? styles.contextStatMobile : undefined} />
       </View>
 
       {quotations.length ? (
@@ -1556,6 +1603,8 @@ function NewFollowupSheet({ visible, onClose, customers, assignees, defaultAssig
   visible: boolean; onClose: () => void; customers: CustomerLite[]; assignees: Assignee[]; defaultAssignee?: string;
   onCreate: (payload: any) => void;
 }) {
+  const { width } = useWindowDimensions();
+  const isPhone = width < 640;
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerQuery, setCustomerQuery] = useState("");
   const [category, setCategory] = useState<string>("general");
@@ -1584,14 +1633,15 @@ function NewFollowupSheet({ visible, onClose, customers, assignees, defaultAssig
   };
 
   return (
-    <Sheet visible={visible} onClose={onClose} variant="drawer" title="New Follow-up" subtitle="Manually add a reminder — the workspace will rank it alongside automated cards."
+    <Sheet visible={visible} onClose={onClose} variant={isPhone ? "bottom" : "drawer"} title="New Follow-up" subtitle="Manually add a reminder — the workspace will rank it alongside automated cards."
       footer={<>
         <Button label="Cancel" variant="secondary" onPress={onClose} size="md" />
         <View style={{ flex: 1 }} />
         <Button label="Create Follow-up" variant="primary" icon="plus" loading={saving} onPress={submit} size="md" testID="create-followup" />
       </>}
     >
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: isPhone ? spacing.lg : spacing.xl, gap: spacing.lg, paddingBottom: isPhone ? 120 : spacing.xl }}>
         <FormField label="Customer" required>
           <SearchField value={selectedCustomer ? (selectedCustomer.company || selectedCustomer.name) : customerQuery}
             onChangeText={(v) => { setCustomerQuery(v); setCustomerId(null); }} placeholder="Search customer…" onClear={() => { setCustomerQuery(""); setCustomerId(null); }} />
@@ -1636,7 +1686,8 @@ function NewFollowupSheet({ visible, onClose, customers, assignees, defaultAssig
             ))}
           </View>
         </FormField>
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Sheet>
   );
 }
@@ -1677,7 +1728,7 @@ function AutomationRulesSheet({ visible, onClose, rules }: { visible: boolean; o
 // ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   fabWrap: {
-    position: "absolute", right: spacing.lg, bottom: spacing.xl, gap: spacing.sm,
+    position: "absolute", right: spacing.lg, bottom: 104, gap: spacing.sm,
   },
   fab: {
     width: 52, height: 52, borderRadius: 26, alignItems: "center", justifyContent: "center",
@@ -1710,5 +1761,52 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.brandBorder,
     padding: spacing.md,
+  },
+  mobileMissionCard: {
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    gap: spacing.md,
+    ...elevation.low,
+  },
+  mobileMissionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.md,
+    backgroundColor: colors.brandTint,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  mobileMissionTitle: {
+    ...type.titleLg,
+    fontSize: 22,
+    lineHeight: 28,
+  },
+  mobileMissionPriority: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  mobileRank: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.brandTint,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mobileRankText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: colors.brand,
+  },
+  contextStatMobile: {
+    minWidth: 0,
+    flexBasis: "47%",
+    flexGrow: 1,
   },
 });

@@ -392,7 +392,7 @@ const styles = StyleSheet.create({
   tabLabel: { fontFamily: font.medium, fontWeight: "500", fontSize: 10 },
   fabSlot: { width: 68, alignItems: "center", justifyContent: "center" },
   fab: {
-    width: 52, height: 52, borderRadius: 26, backgroundColor: color.ink,
+    width: 52, height: 52, borderRadius: 26, backgroundColor: color.brass,
     alignItems: "center", justifyContent: "center", marginTop: -22,
     borderWidth: 4, borderColor: color.canvas,
   },
