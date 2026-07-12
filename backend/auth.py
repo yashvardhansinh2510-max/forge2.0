@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Optional
 from uuid import uuid4
 
@@ -17,6 +18,51 @@ from settings import settings
 JWT_SECRET = settings.jwt_secret
 JWT_ALG = settings.jwt_algorithm
 JWT_EXP_MIN = settings.jwt_exp_minutes
+
+
+# Atlas is geographically remote from the preview runtime (~229 ms RTT). Every
+# authenticated endpoint previously paid two sequential reads (session + user)
+# before its own business query. Cache only a successfully validated principal
+# for a deliberately short window: logout/session revocation remains bounded to
+# 10 seconds, while normal page waterfalls avoid repeating the same two reads.
+_PRINCIPAL_CACHE_TTL_SECONDS = 10.0
+_PRINCIPAL_CACHE_MAX_ENTRIES = 2048
+_principal_cache: dict[tuple[str, str, str], tuple[float, dict]] = {}
+
+
+def _cached_principal(kind: str, subject: str, session_id: str | None) -> dict | None:
+    key = (kind, subject, session_id or "")
+    hit = _principal_cache.get(key)
+    if not hit:
+        return None
+    expires_at, doc = hit
+    if expires_at <= monotonic():
+        _principal_cache.pop(key, None)
+        return None
+    return doc.copy()
+
+
+def _cache_principal(kind: str, subject: str, session_id: str | None, doc: dict) -> None:
+    if len(_principal_cache) >= _PRINCIPAL_CACHE_MAX_ENTRIES:
+        now = monotonic()
+        expired = [key for key, (expires_at, _) in _principal_cache.items() if expires_at <= now]
+        for key in expired:
+            _principal_cache.pop(key, None)
+        if len(_principal_cache) >= _PRINCIPAL_CACHE_MAX_ENTRIES:
+            _principal_cache.pop(next(iter(_principal_cache)))
+    _principal_cache[(kind, subject, session_id or "")] = (
+        monotonic() + _PRINCIPAL_CACHE_TTL_SECONDS,
+        doc.copy(),
+    )
+
+
+def invalidate_principal_cache(kind: str, subject: str, session_id: str | None = None) -> None:
+    """Invalidate one session or every cached session for a principal."""
+    if session_id is not None:
+        _principal_cache.pop((kind, subject, session_id), None)
+        return
+    for key in [key for key in _principal_cache if key[0] == kind and key[1] == subject]:
+        _principal_cache.pop(key, None)
 
 GOOGLE_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 
@@ -57,21 +103,45 @@ def _extract_token(authorization: Optional[str]) -> str:
     return authorization.split(" ", 1)[1].strip()
 
 
-async def _check_session(payload: dict) -> None:
-    """If this token was issued with a session_id (all logins going forward),
-    make sure that session hasn't been revoked ('logout everywhere' / one
-    device kicked out). Tokens without a session_id (should not happen for
-    new logins, kept only for safety) are allowed through unchecked."""
-    sid = payload.get("session_id")
-    if not sid:
-        return
-    sess = await db.user_sessions.find_one({"id": sid}, {"_id": 0, "revoked": 1})
-    if not sess or sess.get("revoked"):
-        raise HTTPException(status_code=401, detail="Session expired or was signed out. Please sign in again.")
-    # Best-effort "last seen" bump — never block the request on this.
-    async def _bump():
-        await db.user_sessions.update_one({"id": sid}, {"$set": {"last_seen_at": datetime.now(timezone.utc).isoformat()}})
-    asyncio.create_task(_bump())
+async def _load_active_principal(payload: dict, *, kind: str, collection: str) -> dict:
+    """Validate session + active principal, using a short safe cache on success."""
+    subject = payload["sub"]
+    session_id = payload.get("session_id")
+    cached = _cached_principal(kind, subject, session_id)
+    if cached:
+        return cached
+
+    if session_id:
+        session_filter = {
+            "id": session_id,
+            "user_type": kind,
+            "user_id": subject,
+            "revoked": {"$ne": True},
+        }
+        session_doc, principal = await asyncio.gather(
+            db.user_sessions.find_one(session_filter, {"_id": 0, "id": 1}),
+            db[collection].find_one({"id": subject}, {"_id": 0, "password_hash": 0}),
+        )
+        if not session_doc:
+            raise HTTPException(status_code=401, detail="Session expired or was signed out. Please sign in again.")
+        # Best-effort "last seen" bump — never block the request on this.
+        asyncio.create_task(db.user_sessions.update_one(
+            {"id": session_id},
+            {"$set": {"last_seen_at": datetime.now(timezone.utc).isoformat()}},
+        ))
+    else:
+        # Legacy tokens had no session id; preserve compatibility while still
+        # requiring the principal to exist and remain active.
+        principal = await db[collection].find_one(
+            {"id": subject}, {"_id": 0, "password_hash": 0},
+        )
+
+    if not principal or not principal.get("active", True):
+        raise HTTPException(status_code=401, detail=(
+            "User not found or inactive" if kind == "staff" else "Customer not found"
+        ))
+    _cache_principal(kind, subject, session_id, principal)
+    return principal
 
 
 def _device_label(user_agent: Optional[str]) -> str:
@@ -152,11 +222,7 @@ async def get_current_user(
     payload = decode_token(token)
     if payload.get("kind") != "staff":
         raise HTTPException(status_code=403, detail="Not a staff token")
-    await _check_session(payload)
-    user_id = payload["sub"]
-    doc = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
-    if not doc or not doc.get("active", True):
-        raise HTTPException(status_code=401, detail="User not found or inactive")
+    doc = await _load_active_principal(payload, kind="staff", collection="users")
     return UserPublic(**doc)
 
 
@@ -164,11 +230,7 @@ async def get_current_customer(authorization: Optional[str] = Header(None)) -> C
     payload = decode_token(_extract_token(authorization))
     if payload.get("kind") != "customer":
         raise HTTPException(status_code=403, detail="Not a customer token")
-    await _check_session(payload)
-    cid = payload["sub"]
-    doc = await db.customers.find_one({"id": cid}, {"_id": 0, "password_hash": 0})
-    if not doc:
-        raise HTTPException(status_code=401, detail="Customer not found")
+    doc = await _load_active_principal(payload, kind="customer", collection="customers")
     return CustomerPublic(**doc)
 
 

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from auth import (
     create_session, create_token, decode_token, get_current_customer, get_current_user,
-    verify_google_session, verify_password,
+    invalidate_principal_cache, verify_google_session, verify_password,
 )
 from db import db
 from models import (
@@ -133,6 +133,7 @@ async def logout_current_session(authorization: Optional[str] = Header(None)):
     sid = payload.get("session_id")
     if not sid:
         return {"revoked": False}
+    invalidate_principal_cache(payload.get("kind", ""), payload.get("sub", ""), sid)
     await db.user_sessions.update_one({"id": sid}, {"$set": {"revoked": True}})
     return {"revoked": True}
 
@@ -157,6 +158,7 @@ async def list_sessions(authorization: Optional[str] = Header(None)):
 async def logout_all_sessions(authorization: Optional[str] = Header(None)):
     """Revoke every active session for this user — 'logout from all devices'."""
     kind, sub, _ = _principal_from_token(authorization)
+    invalidate_principal_cache(kind, sub)
     res = await db.user_sessions.update_many(
         {"user_type": kind, "user_id": sub, "revoked": {"$ne": True}}, {"$set": {"revoked": True}},
     )
@@ -166,6 +168,7 @@ async def logout_all_sessions(authorization: Optional[str] = Header(None)):
 @router.delete("/sessions/{session_id}")
 async def revoke_one_session(session_id: str, authorization: Optional[str] = Header(None)):
     kind, sub, _ = _principal_from_token(authorization)
+    invalidate_principal_cache(kind, sub, session_id)
     res = await db.user_sessions.update_one(
         {"id": session_id, "user_type": kind, "user_id": sub}, {"$set": {"revoked": True}},
     )
