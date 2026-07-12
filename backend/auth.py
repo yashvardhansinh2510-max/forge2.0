@@ -125,7 +125,7 @@ async def _load_active_principal(payload: dict, *, kind: str, collection: str) -
         if not session_doc:
             raise HTTPException(status_code=401, detail="Session expired or was signed out. Please sign in again.")
         # Best-effort "last seen" bump — never block the request on this.
-        asyncio.create_task(db.user_sessions.update_one(
+        asyncio.ensure_future(db.user_sessions.update_one(
             {"id": session_id},
             {"$set": {"last_seen_at": datetime.now(timezone.utc).isoformat()}},
         ))
