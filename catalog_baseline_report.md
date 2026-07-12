@@ -2,7 +2,7 @@
 
 **Date**: 2026-07-12  
 **Viewport Tested**: Desktop 1920x800  
-**URL**: https://product-query-opt.preview.emergentagent.com  
+**URL**: https://frontend-auth-trace.preview.emergentagent.com  
 **Credentials**: owner@forge.app / Forge@2026  
 
 ---
