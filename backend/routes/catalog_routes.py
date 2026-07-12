@@ -61,6 +61,55 @@ async def list_categories(
     return out
 
 
+
+
+async def _usage_ranked_product_page(
+    *,
+    query: dict,
+    ranked_ids: set[str],
+    rank_key,
+    skip: int,
+    limit: int,
+) -> list[dict]:
+    """Return a deterministic page with sparse usage-ranked products first.
+
+    Usage exists for only a small fraction of the catalog. The previous path
+    downloaded all 2,966 matching {id,name} rows on every page and sorted them
+    in Python. This path fetches only matching usage IDs, then lets Mongo page
+    the non-usage remainder by the indexed/stable (name,id) order.
+    """
+    ranked_pool: list[dict] = []
+    if ranked_ids:
+        ranked_pool = await db.products.find(
+            {**query, "id": {"$in": list(ranked_ids)}},
+            {"_id": 0, "id": 1, "name": 1},
+        ).to_list(len(ranked_ids))
+        ranked_pool.sort(key=rank_key)
+
+    ranked_count = len(ranked_pool)
+    selected_ranked = ranked_pool[skip:min(skip + limit, ranked_count)] if skip < ranked_count else []
+    regular_skip = max(0, skip - ranked_count)
+    regular_needed = limit - len(selected_ranked)
+
+    async def _ranked_full() -> list[dict]:
+        ids = [d["id"] for d in selected_ranked]
+        if not ids:
+            return []
+        rows = await db.products.find({"id": {"$in": ids}}, {"_id": 0}).to_list(len(ids))
+        by_id = {row["id"]: row for row in rows}
+        return [by_id[pid] for pid in ids if pid in by_id]
+
+    async def _regular_full() -> list[dict]:
+        if regular_needed <= 0:
+            return []
+        regular_query = query if not ranked_ids else {**query, "id": {"$nin": list(ranked_ids)}}
+        return await db.products.find(regular_query, {"_id": 0}).sort([
+            ("name", 1), ("id", 1),
+        ]).skip(regular_skip).limit(regular_needed).to_list(regular_needed)
+
+    ranked_full, regular_full = await asyncio.gather(_ranked_full(), _regular_full())
+    return [*ranked_full, *regular_full]
+
 # ---------- Products ----------
 @router.get("/products")
 async def list_products(
@@ -132,42 +181,40 @@ async def list_products(
             popular_ids = {pid for pid, cnt in global_usage.items() if cnt >= threshold}
 
     # ----- Sort -----
-    # NOTE: "recent" and "popular" need to rank the WHOLE matching set (usage
-    # data isn't a DB-sortable field), so we pull a slim {id, name} projection
-    # for ranking, then fetch full documents for ONLY the current page. This
-    # keeps the network payload from Atlas tiny even when the pool is the
-    # entire 2966-product catalog — pulling full docs (images, specs, etc.)
-    # for every product on every page request was the main cause of the
-    # Quotation Builder catalog grid taking 15-20s to load.
     if sort == "recent":
-        pool = await db.products.find(query, {"_id": 0, "id": 1, "name": 1}).to_list(min(8000, total or 8000))
-        pool.sort(key=lambda d: (my_recent_at.get(d["id"]) or "", d.get("name") or ""), reverse=True)
-        page_ids = [d["id"] for d in pool[skip:skip + limit]]
+        ranked_ids = {pid for pid, at in my_recent_at.items() if at}
+        docs = await _usage_ranked_product_page(
+            query=query,
+            ranked_ids=ranked_ids,
+            rank_key=lambda d: (
+                -(datetime.fromisoformat(my_recent_at[d["id"]].replace("Z", "+00:00")).timestamp()
+                  if isinstance(my_recent_at.get(d["id"]), str) else 0),
+                d.get("name") or "",
+                d["id"],
+            ),
+            skip=skip,
+            limit=limit,
+        )
     elif sort == "price_asc":
-        docs = await db.products.find(query, {"_id": 0}).sort("price", 1).skip(skip).limit(limit).to_list(limit)
-        page_ids = None
+        docs = await db.products.find(query, {"_id": 0}).sort([("price", 1), ("id", 1)]).skip(skip).limit(limit).to_list(limit)
     elif sort == "price_desc":
-        docs = await db.products.find(query, {"_id": 0}).sort("price", -1).skip(skip).limit(limit).to_list(limit)
-        page_ids = None
+        docs = await db.products.find(query, {"_id": 0}).sort([("price", -1), ("id", 1)]).skip(skip).limit(limit).to_list(limit)
     elif sort == "name":
-        docs = await db.products.find(query, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
-        page_ids = None
+        docs = await db.products.find(query, {"_id": 0}).sort([("name", 1), ("id", 1)]).skip(skip).limit(limit).to_list(limit)
     else:  # popular / most_used (default)
-        # Rank by (global usage DESC, my usage DESC, name ASC) across the
-        # WHOLE matching set (not just this page) so pagination is stable
-        # and actually reaches every product on the unfiltered "All brands"
-        # view — but only over a slim projection, see note above.
-        pool = await db.products.find(query, {"_id": 0, "id": 1, "name": 1}).to_list(min(8000, total or 8000))
-        pool.sort(key=lambda d: (
-            -global_usage.get(d["id"], 0),
-            -my_usage.get(d["id"], 0),
-            d.get("name") or "",
-        ))
-        page_ids = [d["id"] for d in pool[skip:skip + limit]]
-
-    if page_ids is not None:
-        by_id = {d["id"]: d for d in await db.products.find({"id": {"$in": page_ids}}, {"_id": 0}).to_list(len(page_ids) or 1)}
-        docs = [by_id[i] for i in page_ids if i in by_id]
+        ranked_ids = {pid for pid, count in global_usage.items() if count > 0}
+        docs = await _usage_ranked_product_page(
+            query=query,
+            ranked_ids=ranked_ids,
+            rank_key=lambda d: (
+                -global_usage.get(d["id"], 0),
+                -my_usage.get(d["id"], 0),
+                d.get("name") or "",
+                d["id"],
+            ),
+            skip=skip,
+            limit=limit,
+        )
 
     docs = strip_ids(docs)
     await media_service.hydrate_media_batch(docs)
@@ -346,16 +393,39 @@ async def list_families(
         {"$skip": skip}, {"$limit": limit},
     ]
     fams = await db.products.aggregate(pipeline).to_list(limit)
-    # Enrich each family with a hero image from product_media (falls back to
-    # legacy embedded sample_image if the family has no media rows yet).
+    # One batched media lookup for the whole page. The old implementation did
+    # one Atlas query per family (60 sequential round trips ≈ 14.3 seconds).
+    family_keys = [f.get("family_key") for f in fams if f.get("family_key")]
+    sample_ids = [
+        (f.get("variants") or [{}])[0].get("id") for f in fams
+        if (f.get("variants") or [{}])[0].get("id")
+    ]
+    media_rows = await db.product_media.find(
+        {"$or": [
+            {"family_key": {"$in": family_keys}},
+            {"product_id": {"$in": sample_ids}},
+        ]},
+        {
+            "_id": 0, "family_key": 1, "product_id": 1, "public_url": 1,
+            "quality": 1, "source_type": 1, "is_primary": 1, "sort_order": 1,
+        },
+    ).to_list(max(1000, limit * 20))
+    media_rows.sort(key=lambda row: (
+        0 if row.get("is_primary") else 1,
+        int(row.get("sort_order", 100)),
+    ))
+    media_by_family: dict[str, dict] = {}
+    media_by_product: dict[str, dict] = {}
+    for row in media_rows:
+        if row.get("family_key") and row["family_key"] not in media_by_family:
+            media_by_family[row["family_key"]] = row
+        if row.get("product_id") and row["product_id"] not in media_by_product:
+            media_by_product[row["product_id"]] = row
+
     for f in fams:
         f.pop("_id", None)
-        hero = await db.product_media.find_one(
-            {"$or": [{"family_key": f.get("family_key")},
-                     {"product_id": (f.get("variants") or [{}])[0].get("id")}]},
-            {"_id": 0, "public_url": 1, "quality": 1, "source_type": 1},
-            sort=[("is_primary", -1), ("sort_order", 1)],
-        )
+        sample_id = (f.get("variants") or [{}])[0].get("id")
+        hero = media_by_family.get(f.get("family_key")) or media_by_product.get(sample_id)
         if hero and hero.get("public_url"):
             f["sample_image"] = hero["public_url"]
             f["sample_image_quality"] = hero.get("quality") or f.get("sample_image_quality")
