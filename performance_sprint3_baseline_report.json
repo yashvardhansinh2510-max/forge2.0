@@ -1,0 +1,156 @@
+{
+  "viewports": {
+    "desktop": {
+      "catalog": {
+        "viewport": "desktop",
+        "route": "catalog",
+        "path": "/catalog",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0,
+          "load_complete": 0,
+          "first_contentful_paint": 496,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 75,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 800,
+          "viewport_height": 800
+        },
+        "scroll_metrics": {
+          "initial_dom_nodes": 75,
+          "after_scroll_dom_nodes": 75,
+          "dom_growth": 0,
+          "scroll_position": 0,
+          "body_height": 800
+        },
+        "catalog_metrics": {
+          "visible_products": 0,
+          "visible_families": 0,
+          "loading_elements": 0
+        },
+        "network_requests_count": 25,
+        "api_requests_count": 3,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {},
+        "unique_api_endpoints": [
+          "categories",
+          "brands",
+          "catalog/hierarchy"
+        ],
+        "console_errors": 3,
+        "console_warnings": 2,
+        "navigation_duration_ms": 3302.1788597106934,
+        "network_idle_ms": 3307.5828552246094
+      },
+      "quotations_new": {
+        "viewport": "desktop",
+        "route": "quotations_new",
+        "path": "/quotations/new",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0,
+          "load_complete": 0,
+          "first_contentful_paint": 500,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 76,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 800,
+          "viewport_height": 800
+        },
+        "scroll_metrics": {
+          "initial_products": 0,
+          "after_scroll_products": 0,
+          "products_loaded_on_scroll": 0,
+          "api_calls_triggered": 0
+        },
+        "quotation_builder_metrics": {
+          "product_cards": 0,
+          "line_items": 0,
+          "loading_elements": 0
+        },
+        "network_requests_count": 33,
+        "api_requests_count": 7,
+        "image_requests_count": 3,
+        "duplicate_api_urls": {
+          "https://product-query-opt.preview.emergentagent.com/api/categories": 2
+        },
+        "unique_api_endpoints": [
+          "categories",
+          "brands",
+          "quotations/recent",
+          "products/recent",
+          "products/frequent",
+          "customers"
+        ],
+        "console_errors": 8,
+        "console_warnings": 4,
+        "navigation_duration_ms": 3309.368133544922,
+        "network_idle_ms": 3314.0971660614014
+      },
+      "purchases": {
+        "viewport": "desktop",
+        "route": "purchases",
+        "path": "/purchases",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0,
+          "load_complete": 0.09999996423721313,
+          "first_contentful_paint": 512,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 75,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 800,
+          "viewport_height": 800
+        },
+        "scroll_metrics": {},
+        "purchases_metrics": {
+          "catalog_api_calls": 0,
+          "po_cards": 0
+        },
+        "network_requests_count": 24,
+        "api_requests_count": 3,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {},
+        "unique_api_endpoints": [
+          "purchases/stages",
+          "purchases/shortages",
+          "purchases/brands"
+        ],
+        "console_errors": 3,
+        "console_warnings": 2,
+        "navigation_duration_ms": 3314.318895339966,
+        "network_idle_ms": 3318.462133407593
+      }
+    }
+  },
+  "routes": {},
+  "summary": {},
+  "test_timestamp": 1783879444.7635064
+}

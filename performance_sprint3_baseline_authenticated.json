@@ -1,0 +1,431 @@
+{
+  "viewports": {
+    "desktop": {
+      "catalog": {
+        "viewport": "desktop",
+        "route": "catalog",
+        "path": "/catalog",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0.10000002384185791,
+          "load_complete": 0.10000002384185791,
+          "first_contentful_paint": 516,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 75,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 800,
+          "viewport_height": 800
+        },
+        "scroll_metrics": {
+          "initial_dom_nodes": 75,
+          "after_scroll_dom_nodes": 75,
+          "dom_growth": 0
+        },
+        "catalog_metrics": {
+          "visible_products": 0,
+          "visible_families": 0,
+          "loading_elements": 0
+        },
+        "network_requests_count": 25,
+        "api_requests_count": 3,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {},
+        "unique_api_endpoints": [
+          "categories",
+          "brands",
+          "catalog/hierarchy"
+        ],
+        "console_errors": 3,
+        "console_warnings": 2,
+        "navigation_duration_ms": 3298.470973968506,
+        "network_idle_ms": 3303.2658100128174
+      },
+      "quotations_new": {
+        "viewport": "desktop",
+        "route": "quotations_new",
+        "path": "/quotations/new",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0.10000002384185791,
+          "load_complete": 0,
+          "first_contentful_paint": 540,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 76,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 800,
+          "viewport_height": 800
+        },
+        "scroll_metrics": {},
+        "quotation_builder_metrics": {
+          "product_cards": 0,
+          "line_items": 0,
+          "loading_elements": 0
+        },
+        "network_requests_count": 33,
+        "api_requests_count": 7,
+        "image_requests_count": 3,
+        "duplicate_api_urls": {
+          "https://product-query-opt.preview.emergentagent.com/api/categories": 2
+        },
+        "unique_api_endpoints": [
+          "categories",
+          "brands",
+          "quotations/recent",
+          "products/recent",
+          "products/frequent",
+          "customers"
+        ],
+        "console_errors": 8,
+        "console_warnings": 4,
+        "navigation_duration_ms": 3343.416213989258,
+        "network_idle_ms": 3347.822427749634
+      },
+      "purchases": {
+        "viewport": "desktop",
+        "route": "purchases",
+        "path": "/purchases",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0.09999996423721313,
+          "load_complete": 0.10000002384185791,
+          "first_contentful_paint": 540,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 75,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 800,
+          "viewport_height": 800
+        },
+        "scroll_metrics": {},
+        "purchases_metrics": {
+          "catalog_api_calls": 0
+        },
+        "network_requests_count": 24,
+        "api_requests_count": 3,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {},
+        "unique_api_endpoints": [
+          "purchases/stages",
+          "purchases/shortages",
+          "purchases/brands"
+        ],
+        "console_errors": 3,
+        "console_warnings": 2,
+        "navigation_duration_ms": 3334.1896533966064,
+        "network_idle_ms": 3338.263511657715
+      }
+    },
+    "tablet": {
+      "catalog": {
+        "viewport": "tablet",
+        "route": "catalog",
+        "path": "/catalog",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0,
+          "load_complete": 0.10000002384185791,
+          "first_contentful_paint": 484,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 75,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 768,
+          "viewport_height": 768
+        },
+        "scroll_metrics": {
+          "initial_dom_nodes": 75,
+          "after_scroll_dom_nodes": 75,
+          "dom_growth": 0
+        },
+        "catalog_metrics": {
+          "visible_products": 0,
+          "visible_families": 0,
+          "loading_elements": 0
+        },
+        "network_requests_count": 25,
+        "api_requests_count": 3,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {},
+        "unique_api_endpoints": [
+          "categories",
+          "brands",
+          "catalog/hierarchy"
+        ],
+        "console_errors": 3,
+        "console_warnings": 2,
+        "navigation_duration_ms": 3302.59108543396,
+        "network_idle_ms": 3306.71763420105
+      },
+      "quotations_new": {
+        "viewport": "tablet",
+        "route": "quotations_new",
+        "path": "/quotations/new",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0,
+          "load_complete": 0.09999996423721313,
+          "first_contentful_paint": 536,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 76,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 768,
+          "viewport_height": 768
+        },
+        "scroll_metrics": {},
+        "quotation_builder_metrics": {
+          "product_cards": 0,
+          "line_items": 0,
+          "loading_elements": 0
+        },
+        "network_requests_count": 29,
+        "api_requests_count": 7,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {
+          "https://product-query-opt.preview.emergentagent.com/api/categories": 2
+        },
+        "unique_api_endpoints": [
+          "categories",
+          "brands",
+          "quotations/recent",
+          "products/recent",
+          "products/frequent",
+          "customers"
+        ],
+        "console_errors": 8,
+        "console_warnings": 4,
+        "navigation_duration_ms": 3352.1671295166016,
+        "network_idle_ms": 3356.2004566192627
+      },
+      "purchases": {
+        "viewport": "tablet",
+        "route": "purchases",
+        "path": "/purchases",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0,
+          "load_complete": 0,
+          "first_contentful_paint": 488,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 75,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 768,
+          "viewport_height": 768
+        },
+        "scroll_metrics": {},
+        "purchases_metrics": {
+          "catalog_api_calls": 0
+        },
+        "network_requests_count": 24,
+        "api_requests_count": 3,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {},
+        "unique_api_endpoints": [
+          "purchases/stages",
+          "purchases/shortages",
+          "purchases/brands"
+        ],
+        "console_errors": 3,
+        "console_warnings": 2,
+        "navigation_duration_ms": 3307.4467182159424,
+        "network_idle_ms": 3311.5592002868652
+      }
+    },
+    "mobile": {
+      "catalog": {
+        "viewport": "mobile",
+        "route": "catalog",
+        "path": "/catalog",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0,
+          "load_complete": 0.09999996423721313,
+          "first_contentful_paint": 488,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 75,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 844,
+          "viewport_height": 844
+        },
+        "scroll_metrics": {
+          "initial_dom_nodes": 75,
+          "after_scroll_dom_nodes": 75,
+          "dom_growth": 0
+        },
+        "catalog_metrics": {
+          "visible_products": 0,
+          "visible_families": 0,
+          "loading_elements": 0
+        },
+        "network_requests_count": 25,
+        "api_requests_count": 3,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {},
+        "unique_api_endpoints": [
+          "categories",
+          "brands",
+          "catalog/hierarchy"
+        ],
+        "console_errors": 3,
+        "console_warnings": 2,
+        "navigation_duration_ms": 3306.9703578948975,
+        "network_idle_ms": 3312.3741149902344
+      },
+      "quotations_new": {
+        "viewport": "mobile",
+        "route": "quotations_new",
+        "path": "/quotations/new",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0.09999996423721313,
+          "load_complete": 0,
+          "first_contentful_paint": 500,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 76,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 844,
+          "viewport_height": 844
+        },
+        "scroll_metrics": {},
+        "quotation_builder_metrics": {
+          "product_cards": 0,
+          "line_items": 0,
+          "loading_elements": 0
+        },
+        "network_requests_count": 28,
+        "api_requests_count": 7,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {
+          "https://product-query-opt.preview.emergentagent.com/api/categories": 2
+        },
+        "unique_api_endpoints": [
+          "categories",
+          "brands",
+          "quotations/recent",
+          "products/recent",
+          "products/frequent",
+          "customers"
+        ],
+        "console_errors": 8,
+        "console_warnings": 4,
+        "navigation_duration_ms": 3311.6238117218018,
+        "network_idle_ms": 3315.687656402588
+      },
+      "purchases": {
+        "viewport": "mobile",
+        "route": "purchases",
+        "path": "/purchases",
+        "network_requests": [],
+        "api_requests": [],
+        "image_requests": [],
+        "duplicate_urls": {},
+        "console_logs": [],
+        "performance_metrics": {
+          "dom_content_loaded": 0,
+          "load_complete": 0,
+          "first_contentful_paint": 496,
+          "js_heap_size": 26000000,
+          "js_heap_limit": 3760000000
+        },
+        "dom_metrics": {
+          "total_nodes": 75,
+          "images": 2,
+          "buttons": 0,
+          "inputs": 2,
+          "body_height": 844,
+          "viewport_height": 844
+        },
+        "scroll_metrics": {},
+        "purchases_metrics": {
+          "catalog_api_calls": 0
+        },
+        "network_requests_count": 24,
+        "api_requests_count": 3,
+        "image_requests_count": 2,
+        "duplicate_api_urls": {},
+        "unique_api_endpoints": [
+          "purchases/stages",
+          "purchases/shortages",
+          "purchases/brands"
+        ],
+        "console_errors": 3,
+        "console_warnings": 2,
+        "navigation_duration_ms": 3312.5617504119873,
+        "network_idle_ms": 3318.6683654785156
+      }
+    }
+  },
+  "routes": {},
+  "summary": {},
+  "test_timestamp": 1783879605.0643053,
+  "authenticated_user": "owner@forge.app"
+}
