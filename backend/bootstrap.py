@@ -42,16 +42,25 @@ REQUIRED_COLLECTIONS = {
 
 # These are existing application indexes, not new optimization proposals.
 # Signatures are checked by key pattern so Atlas-generated index names are valid.
-REQUIRED_INDEXES: dict[str, list[tuple[tuple[str, int], ...]]] = {
+REQUIRED_INDEXES: dict[str, list[tuple[tuple[str, Any], ...]]] = {
     "products": [
         (("id", 1),),
         (("sku", 1),),
         (("family_key", 1),),
         (("active", 1), ("brand_id", 1)),
         (("active", 1), ("category_id", 1)),
+        (("active", 1), ("name", 1), ("id", 1)),
+        (("active", 1), ("price", 1), ("id", 1)),
+        (("active", 1), ("price", -1), ("id", 1)),
+        (("_fts", "text"), ("_ftsx", 1)),
     ],
     "product_media": [(("product_id", 1),), (("family_key", 1),)],
-    "product_usage": [(("user_id", 1),), (("product_id", 1),)],
+    "product_usage": [
+        (("user_id", 1),),
+        (("product_id", 1),),
+        (("user_id", 1), ("last_used_at", -1)),
+        (("user_id", 1), ("count", -1)),
+    ],
     "user_sessions": [(("id", 1),), (("user_type", 1), ("user_id", 1))],
 }
 
@@ -77,8 +86,11 @@ class BootstrapReport:
         return {"healthy": self.healthy, "checks": self.checks, "errors": self.errors}
 
 
-def _index_signature(spec: dict[str, Any]) -> tuple[tuple[str, int], ...]:
-    return tuple((str(k), int(v)) for k, v in spec.get("key", []))
+def _index_signature(spec: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
+    return tuple(
+        (str(key), int(value) if isinstance(value, (int, float)) else str(value))
+        for key, value in spec.get("key", [])
+    )
 
 
 async def _check_mongo(cfg: Settings, report: BootstrapReport) -> None:

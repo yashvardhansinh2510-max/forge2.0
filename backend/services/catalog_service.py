@@ -623,13 +623,19 @@ async def search_catalog(
 
     if query:
         scored = [(score(row), row) for row in products]
-        docs = [row for value, row in sorted(scored, key=lambda item: item[0], reverse=True) if value > 0][:limit * 3]
+        matched_docs = [
+            row for value, row in sorted(scored, key=lambda item: item[0], reverse=True)
+            if value > 0
+        ]
+        total_matches = len(matched_docs)
+        docs = matched_docs[:limit * 3]
     else:
+        total_matches = len(products)
         docs = products[:limit * 3]
 
     if not group:
         items = [hydrate_product(row, snapshot) for row in docs[:limit]]
-        return {"query": query, "total": len(docs), "grouped": False, "items": items}
+        return {"query": query, "total": total_matches, "grouped": False, "items": items}
 
     groups: dict[str, dict] = {}
     order: list[str] = []

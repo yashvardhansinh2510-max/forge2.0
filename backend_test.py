@@ -1,665 +1,628 @@
 #!/usr/bin/env python3
 """
-Backend Testing Script for Task 1: Auth Principal Cache Performance Improvement
-Verification Requirements:
-1. Run settings + auth cache unit tests (expected 13/13)
-2. Staff password login and repeated GET /api/auth/me; report cold first request and warm median over at least 5 requests
-3. Customer password login and repeated /api/auth/customer/me
-4. Revocation correctness: current logout invalidates immediately; logout-all invalidates all cached sessions immediately; 
-   DELETE one session invalidates that session; revoked/missing sessions return 401 and are never cached
-5. Role enforcement remains correct for a lower-role user on protected endpoints
-6. Legacy token without session_id still validates active principal (unit or isolated test)
-7. Representative authenticated smoke: dashboard/stats, brands, categories, products?limit=20, customers, 
-   quotations/recent, payments/stats, followups/stats. Confirm no 500s/API errors and products total=2966
-8. Inspect cache safety: TTL=10 seconds, max=2048, values contain principal docs without password_hash and do not store JWTs; 
-   explicit invalidation wired to all three session-revocation routes
-9. Compare warm latency against PERFORMANCE.md baselines where possible. State exact results and any regression
+Performance Sprint 2 — Backend Catalog Query Optimization Testing
+Test only backend catalog endpoints with direct localhost requests.
 """
-
 import asyncio
 import json
-import os
-import subprocess
-import sys
 import time
-from statistics import median
-from typing import Optional
+from collections import Counter
+from typing import Any, Dict, List, Optional, Set
 
 import httpx
 
-# Backend URL - use localhost since we're in the same container
-BACKEND_URL = "http://localhost:8001"
-BASE_URL = f"{BACKEND_URL}/api"
+# Test configuration
+BASE_URL = "http://127.0.0.1:8001/api"
+CREDENTIALS = {
+    "owner": {"email": "owner@forge.app", "password": "Forge@2026"},
+    "sales": {"email": "sales@forge.app", "password": "Forge@2026"},
+}
 
-# Test credentials
-STAFF_EMAIL = "owner@forge.app"
-STAFF_PASSWORD = "Forge@2026"
-CUSTOMER_EMAIL = "customer@forge.app"
-CUSTOMER_PASSWORD = "Forge@2026"
-SALES_EMAIL = "sales@forge.app"
-SALES_PASSWORD = "Forge@2026"
+# Expected catalog totals
+EXPECTED_TOTAL_PRODUCTS = 2966
+EXPECTED_BRANDS = 5
+EXPECTED_CATEGORIES = 26
 
-# ANSI colors
-GREEN = "\033[92m"
-RED = "\033[91m"
-YELLOW = "\033[93m"
-BLUE = "\033[94m"
-RESET = "\033[0m"
+# Performance targets (warm medians, after startup)
+TARGET_LATENCY_MS = 200
 
 
-def print_section(title: str):
-    print(f"\n{'=' * 80}")
-    print(f"{BLUE}{title}{RESET}")
-    print('=' * 80)
+class TestResults:
+    def __init__(self):
+        self.passed = 0
+        self.failed = 0
+        self.warnings = 0
+        self.errors: List[str] = []
+        self.timings: Dict[str, List[float]] = {}
 
+    def record_timing(self, endpoint: str, duration_ms: float):
+        if endpoint not in self.timings:
+            self.timings[endpoint] = []
+        self.timings[endpoint].append(duration_ms)
 
-def print_test(name: str, passed: bool, details: str = ""):
-    status = f"{GREEN}✅ PASS{RESET}" if passed else f"{RED}❌ FAIL{RESET}"
-    print(f"{status} - {name}")
-    if details:
-        print(f"  {details}")
+    def pass_test(self, name: str):
+        self.passed += 1
+        print(f"✅ {name}")
 
+    def fail_test(self, name: str, reason: str):
+        self.failed += 1
+        error_msg = f"❌ {name}: {reason}"
+        print(error_msg)
+        self.errors.append(error_msg)
 
-def print_metric(name: str, value: str):
-    print(f"  {YELLOW}→{RESET} {name}: {value}")
+    def warn_test(self, name: str, reason: str):
+        self.warnings += 1
+        print(f"⚠️  {name}: {reason}")
 
-
-async def test_unit_tests():
-    """Requirement 1: Run settings + auth cache unit tests (expected 13/13)"""
-    print_section("TEST 1: Unit Tests (Settings + Auth Cache)")
-    
-    # Run pytest for auth cache tests
-    result = subprocess.run(
-        ["python", "-m", "pytest", "backend/tests/test_auth_cache.py", "-v"],
-        cwd="/app",
-        capture_output=True,
-        text=True
-    )
-    
-    auth_passed = result.returncode == 0
-    auth_count = result.stdout.count(" PASSED")
-    
-    # Run settings tests
-    settings_result = subprocess.run(
-        ["python", "-m", "pytest", "backend/tests/test_settings.py", "-v"],
-        cwd="/app",
-        capture_output=True,
-        text=True
-    )
-    
-    settings_passed = settings_result.returncode == 0
-    settings_count = settings_result.stdout.count(" PASSED")
-    
-    total_tests = auth_count + settings_count
-    all_passed = auth_passed and settings_passed
-    
-    print_test(
-        f"Unit tests execution ({total_tests} tests)",
-        all_passed,
-        f"Auth cache: {auth_count} passed, Settings: {settings_count} passed"
-    )
-    
-    if not all_passed:
-        print(f"{RED}STDOUT:{RESET}\n{result.stdout}")
-        print(f"{RED}STDERR:{RESET}\n{result.stderr}")
-        print(f"{RED}Settings STDOUT:{RESET}\n{settings_result.stdout}")
-        print(f"{RED}Settings STDERR:{RESET}\n{settings_result.stderr}")
-    
-    return all_passed, total_tests
-
-
-async def test_staff_auth_performance(client: httpx.AsyncClient):
-    """Requirement 2: Staff password login and repeated GET /api/auth/me"""
-    print_section("TEST 2: Staff Auth Performance (Cold + Warm)")
-    
-    # Login
-    login_resp = await client.post(
-        f"{BASE_URL}/auth/login",
-        json={"email": STAFF_EMAIL, "password": STAFF_PASSWORD}
-    )
-    
-    if login_resp.status_code != 200:
-        print_test("Staff login", False, f"Status: {login_resp.status_code}")
-        return False, None, None, None
-    
-    token = login_resp.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    print_test("Staff login", True, f"Token received for {STAFF_EMAIL}")
-    
-    # Cold request (first request after login)
-    start = time.time()
-    cold_resp = await client.get(f"{BASE_URL}/auth/me", headers=headers)
-    cold_time = (time.time() - start) * 1000
-    
-    cold_passed = cold_resp.status_code == 200
-    print_test("Cold /auth/me request", cold_passed, f"Time: {cold_time:.0f}ms")
-    
-    # Warm requests (5 more requests to measure cache performance)
-    warm_times = []
-    for i in range(5):
-        start = time.time()
-        warm_resp = await client.get(f"{BASE_URL}/auth/me", headers=headers)
-        warm_time = (time.time() - start) * 1000
-        warm_times.append(warm_time)
+    def print_summary(self):
+        print("\n" + "=" * 80)
+        print("PERFORMANCE SPRINT 2 — BACKEND CATALOG OPTIMIZATION TEST SUMMARY")
+        print("=" * 80)
+        print(f"✅ Passed: {self.passed}")
+        print(f"❌ Failed: {self.failed}")
+        print(f"⚠️  Warnings: {self.warnings}")
         
-        if warm_resp.status_code != 200:
-            print_test(f"Warm request {i+1}", False, f"Status: {warm_resp.status_code}")
-            return False, token, cold_time, None
-    
-    warm_median = median(warm_times)
-    improvement = ((cold_time - warm_median) / cold_time * 100) if cold_time > 0 else 0
-    
-    print_test(
-        "Warm /auth/me requests (5 requests)",
-        True,
-        f"Median: {warm_median:.0f}ms, Improvement: {improvement:.1f}%"
-    )
-    
-    print_metric("Cold first request", f"{cold_time:.0f}ms")
-    print_metric("Warm median (5 requests)", f"{warm_median:.0f}ms")
-    print_metric("Individual warm times", f"{[f'{t:.0f}ms' for t in warm_times]}")
-    
-    # Compare against PERFORMANCE.md baseline (before: 506ms, after: 42ms)
-    baseline_before = 506
-    baseline_after = 42
-    
-    if warm_median <= baseline_after * 2:  # Allow 2x tolerance
-        print_metric("Baseline comparison", f"{GREEN}Within expected range (baseline: {baseline_after}ms){RESET}")
-    else:
-        print_metric("Baseline comparison", f"{YELLOW}Higher than baseline (baseline: {baseline_after}ms){RESET}")
-    
-    return True, token, cold_time, warm_median
-
-
-async def test_customer_auth_performance(client: httpx.AsyncClient):
-    """Requirement 3: Customer password login and repeated /api/auth/customer/me"""
-    print_section("TEST 3: Customer Auth Performance (Cold + Warm)")
-    
-    # Login
-    login_resp = await client.post(
-        f"{BASE_URL}/auth/customer/login",
-        json={"email": CUSTOMER_EMAIL, "password": CUSTOMER_PASSWORD}
-    )
-    
-    if login_resp.status_code != 200:
-        print_test("Customer login", False, f"Status: {login_resp.status_code}")
-        return False, None, None, None
-    
-    token = login_resp.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    print_test("Customer login", True, f"Token received for {CUSTOMER_EMAIL}")
-    
-    # Cold request
-    start = time.time()
-    cold_resp = await client.get(f"{BASE_URL}/auth/customer/me", headers=headers)
-    cold_time = (time.time() - start) * 1000
-    
-    cold_passed = cold_resp.status_code == 200
-    print_test("Cold /auth/customer/me request", cold_passed, f"Time: {cold_time:.0f}ms")
-    
-    # Warm requests
-    warm_times = []
-    for i in range(5):
-        start = time.time()
-        warm_resp = await client.get(f"{BASE_URL}/auth/customer/me", headers=headers)
-        warm_time = (time.time() - start) * 1000
-        warm_times.append(warm_time)
+        if self.timings:
+            print("\n" + "-" * 80)
+            print("PERFORMANCE METRICS (warm medians, target <200ms)")
+            print("-" * 80)
+            for endpoint, times in sorted(self.timings.items()):
+                if times:
+                    median = sorted(times)[len(times) // 2]
+                    min_time = min(times)
+                    max_time = max(times)
+                    status = "✅" if median < TARGET_LATENCY_MS else "⚠️"
+                    print(f"{status} {endpoint:50s} median: {median:6.1f}ms  (min: {min_time:6.1f}ms, max: {max_time:6.1f}ms, n={len(times)})")
         
-        if warm_resp.status_code != 200:
-            print_test(f"Warm request {i+1}", False, f"Status: {warm_resp.status_code}")
-            return False, token, cold_time, None
-    
-    warm_median = median(warm_times)
-    improvement = ((cold_time - warm_median) / cold_time * 100) if cold_time > 0 else 0
-    
-    print_test(
-        "Warm /auth/customer/me requests (5 requests)",
-        True,
-        f"Median: {warm_median:.0f}ms, Improvement: {improvement:.1f}%"
-    )
-    
-    print_metric("Cold first request", f"{cold_time:.0f}ms")
-    print_metric("Warm median (5 requests)", f"{warm_median:.0f}ms")
-    
-    return True, token, cold_time, warm_median
-
-
-async def test_revocation_correctness(client: httpx.AsyncClient):
-    """Requirement 4: Revocation correctness"""
-    print_section("TEST 4: Revocation Correctness")
-    
-    # Create a fresh session for testing
-    login_resp = await client.post(
-        f"{BASE_URL}/auth/login",
-        json={"email": STAFF_EMAIL, "password": STAFF_PASSWORD}
-    )
-    token1 = login_resp.json()["access_token"]
-    headers1 = {"Authorization": f"Bearer {token1}"}
-    
-    # Create a second session
-    login_resp2 = await client.post(
-        f"{BASE_URL}/auth/login",
-        json={"email": STAFF_EMAIL, "password": STAFF_PASSWORD}
-    )
-    token2 = login_resp2.json()["access_token"]
-    headers2 = {"Authorization": f"Bearer {token2}"}
-    
-    # Verify both sessions work
-    resp1 = await client.get(f"{BASE_URL}/auth/me", headers=headers1)
-    resp2 = await client.get(f"{BASE_URL}/auth/me", headers=headers2)
-    
-    both_work = resp1.status_code == 200 and resp2.status_code == 200
-    print_test("Two active sessions created", both_work)
-    
-    if not both_work:
-        return False
-    
-    # Test 4a: Current logout invalidates immediately
-    logout_resp = await client.post(f"{BASE_URL}/auth/logout", headers=headers1)
-    logout_success = logout_resp.status_code == 200 and logout_resp.json().get("revoked") == True
-    
-    # Verify session1 is now invalid
-    resp1_after = await client.get(f"{BASE_URL}/auth/me", headers=headers1)
-    session1_invalid = resp1_after.status_code == 401
-    
-    # Verify session2 still works
-    resp2_after = await client.get(f"{BASE_URL}/auth/me", headers=headers2)
-    session2_valid = resp2_after.status_code == 200
-    
-    print_test(
-        "Current logout invalidates immediately",
-        logout_success and session1_invalid and session2_valid,
-        f"Session1 revoked: {session1_invalid}, Session2 still valid: {session2_valid}"
-    )
-    
-    # Test 4b: Get list of sessions for session2
-    sessions_resp = await client.get(f"{BASE_URL}/auth/sessions", headers=headers2)
-    sessions = sessions_resp.json() if sessions_resp.status_code == 200 else []
-    
-    # Test 4c: DELETE one specific session
-    if len(sessions) > 0:
-        session_to_delete = sessions[0]["id"]
-        delete_resp = await client.delete(
-            f"{BASE_URL}/auth/sessions/{session_to_delete}",
-            headers=headers2
-        )
-        delete_success = delete_resp.status_code == 200
-        print_test("DELETE one session", delete_success, f"Deleted session: {session_to_delete}")
-    else:
-        print_test("DELETE one session", False, "No sessions found to delete")
-        delete_success = False
-    
-    # Test 4d: Logout-all invalidates all cached sessions
-    # Create a third session for this test
-    login_resp3 = await client.post(
-        f"{BASE_URL}/auth/login",
-        json={"email": STAFF_EMAIL, "password": STAFF_PASSWORD}
-    )
-    token3 = login_resp3.json()["access_token"]
-    headers3 = {"Authorization": f"Bearer {token3}"}
-    
-    # Warm up cache for session3
-    await client.get(f"{BASE_URL}/auth/me", headers=headers3)
-    
-    # Logout all
-    logout_all_resp = await client.post(f"{BASE_URL}/auth/sessions/logout-all", headers=headers3)
-    logout_all_success = logout_all_resp.status_code == 200
-    revoked_count = logout_all_resp.json().get("revoked_count", 0) if logout_all_success else 0
-    
-    # Verify session3 is now invalid immediately (cache should be invalidated)
-    resp3_after = await client.get(f"{BASE_URL}/auth/me", headers=headers3)
-    session3_invalid = resp3_after.status_code == 401
-    
-    print_test(
-        "Logout-all invalidates all sessions immediately",
-        logout_all_success and session3_invalid,
-        f"Revoked {revoked_count} sessions, Session3 immediately invalid: {session3_invalid}"
-    )
-    
-    # Test 4e: Revoked/missing sessions return 401 and are never cached
-    # Try to use the revoked token again multiple times
-    attempts = []
-    for i in range(3):
-        resp = await client.get(f"{BASE_URL}/auth/me", headers=headers3)
-        attempts.append(resp.status_code == 401)
-    
-    all_401 = all(attempts)
-    print_test(
-        "Revoked sessions consistently return 401 (never cached)",
-        all_401,
-        f"3 attempts all returned 401: {all_401}"
-    )
-    
-    return logout_success and session1_invalid and delete_success and logout_all_success and session3_invalid and all_401
-
-
-async def test_role_enforcement(client: httpx.AsyncClient):
-    """Requirement 5: Role enforcement remains correct for a lower-role user"""
-    print_section("TEST 5: Role Enforcement")
-    
-    # Login as sales user (lower role)
-    login_resp = await client.post(
-        f"{BASE_URL}/auth/login",
-        json={"email": SALES_EMAIL, "password": SALES_PASSWORD}
-    )
-    
-    if login_resp.status_code != 200:
-        print_test("Sales user login", False, f"Status: {login_resp.status_code}")
-        return False
-    
-    token = login_resp.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    print_test("Sales user login", True, f"Token received for {SALES_EMAIL}")
-    
-    # Test endpoints that require higher roles
-    # DELETE quotation requires manager+ role
-    delete_resp = await client.delete(f"{BASE_URL}/quotations/fake-id", headers=headers)
-    delete_forbidden = delete_resp.status_code == 403
-    
-    print_test(
-        "Sales role cannot delete quotations (403)",
-        delete_forbidden,
-        f"Status: {delete_resp.status_code}"
-    )
-    
-    # POST payment requires accounts+ role
-    payment_resp = await client.post(
-        f"{BASE_URL}/payments",
-        headers=headers,
-        json={
-            "quotation_id": "fake-id",
-            "amount": 1000,
-            "payment_method": "cash",
-            "payment_date": "2026-07-12"
-        }
-    )
-    payment_forbidden = payment_resp.status_code in [403, 404]  # 404 if quotation doesn't exist, but should check role first
-    
-    # Actually, let's check if it's 403 or if it tries to process (which would be wrong)
-    # If it's 404, it means role check passed (bad), if 403, role check worked (good)
-    if payment_resp.status_code == 403:
-        payment_test_passed = True
-        detail = "Correctly blocked by role check (403)"
-    elif payment_resp.status_code == 404:
-        # This might mean role check passed but quotation not found
-        # Let's check the error message
-        error_detail = payment_resp.json().get("detail", "")
-        if "role" in error_detail.lower() or "permission" in error_detail.lower():
-            payment_test_passed = True
-            detail = "Blocked by role check (404 with role message)"
+        if self.errors:
+            print("\n" + "-" * 80)
+            print("FAILED TESTS:")
+            print("-" * 80)
+            for error in self.errors:
+                print(error)
+        
+        print("\n" + "=" * 80)
+        if self.failed == 0:
+            print("✅ ALL TESTS PASSED")
         else:
-            payment_test_passed = False
-            detail = f"Role check may have passed (404 without role message): {error_detail}"
+            print(f"❌ {self.failed} TEST(S) FAILED")
+        print("=" * 80)
+
+
+async def login(client: httpx.AsyncClient, email: str, password: str) -> str:
+    """Login and return JWT token."""
+    response = await client.post(
+        f"{BASE_URL}/auth/login",
+        json={"email": email, "password": password}
+    )
+    if response.status_code != 200:
+        raise Exception(f"Login failed: {response.status_code} {response.text}")
+    data = response.json()
+    return data.get("access_token") or data.get("token")
+
+
+async def timed_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    results: TestResults,
+    endpoint_name: str,
+    **kwargs
+) -> tuple[httpx.Response, float]:
+    """Make a timed HTTP request and record the duration."""
+    start = time.perf_counter()
+    response = await client.request(method, url, **kwargs)
+    duration_ms = (time.perf_counter() - start) * 1000
+    results.record_timing(endpoint_name, duration_ms)
+    return response, duration_ms
+
+
+async def test_endpoint_contracts(client: httpx.AsyncClient, token: str, results: TestResults):
+    """Test 1: Verify all catalog GET endpoints return 200 and preserve response contracts."""
+    print("\n" + "=" * 80)
+    print("TEST 1: ENDPOINT CONTRACTS & STATUS CODES")
+    print("=" * 80)
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # Test brands
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/brands", results, "GET /brands", headers=headers
+    )
+    if response.status_code == 200:
+        data = response.json()
+        if isinstance(data, list) and len(data) > 0 and "id" in data[0] and "name" in data[0]:
+            results.pass_test("GET /brands returns 200 with correct shape")
+        else:
+            results.fail_test("GET /brands", f"Invalid response shape: {data}")
     else:
-        payment_test_passed = payment_resp.status_code == 403
-        detail = f"Status: {payment_resp.status_code}"
+        results.fail_test("GET /brands", f"Status {response.status_code}")
     
-    print_test(
-        "Sales role cannot record payments",
-        payment_test_passed,
-        detail
+    # Test categories
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/categories", results, "GET /categories", headers=headers
     )
+    if response.status_code == 200:
+        data = response.json()
+        if isinstance(data, list) and len(data) > 0:
+            results.pass_test("GET /categories returns 200 with correct shape")
+        else:
+            results.fail_test("GET /categories", f"Invalid response shape")
+    else:
+        results.fail_test("GET /categories", f"Status {response.status_code}")
     
-    # Test that sales CAN access endpoints they should have access to
-    quotations_resp = await client.get(f"{BASE_URL}/quotations", headers=headers)
-    quotations_allowed = quotations_resp.status_code == 200
-    
-    print_test(
-        "Sales role CAN access quotations list (200)",
-        quotations_allowed,
-        f"Status: {quotations_resp.status_code}"
-    )
-    
-    return delete_forbidden and quotations_allowed
-
-
-async def test_legacy_token_compatibility():
-    """Requirement 6: Legacy token without session_id still validates active principal"""
-    print_section("TEST 6: Legacy Token Compatibility (Unit Test)")
-    
-    # This is tested in the unit tests (test_legacy_staff_token_without_session_still_validates_user)
-    # Let's verify it ran successfully
-    result = subprocess.run(
-        ["python", "-m", "pytest", "backend/tests/test_auth_cache.py::test_legacy_staff_token_without_session_still_validates_user", "-v"],
-        cwd="/app",
-        capture_output=True,
-        text=True
-    )
-    
-    passed = result.returncode == 0 and "PASSED" in result.stdout
-    
-    print_test(
-        "Legacy token without session_id validates correctly",
-        passed,
-        "Verified via unit test: test_legacy_staff_token_without_session_still_validates_user"
-    )
-    
-    if not passed:
-        print(f"{RED}STDOUT:{RESET}\n{result.stdout}")
-        print(f"{RED}STDERR:{RESET}\n{result.stderr}")
-    
-    return passed
-
-
-async def test_authenticated_smoke(client: httpx.AsyncClient, staff_token: str):
-    """Requirement 7: Representative authenticated smoke tests"""
-    print_section("TEST 7: Authenticated Smoke Tests")
-    
-    headers = {"Authorization": f"Bearer {staff_token}"}
-    
-    endpoints = [
-        ("/dashboard/stats", "Dashboard stats"),
-        ("/brands", "Brands"),
-        ("/categories", "Categories"),
-        ("/products?limit=20", "Products (limit=20)"),
-        ("/customers", "Customers"),
-        ("/quotations/recent", "Recent quotations"),
-        ("/payments/stats", "Payment stats"),
-        ("/followups/stats", "Follow-up stats"),
+    # Test products with various parameters
+    test_cases = [
+        ("popular skip=0", {"sort": "popular", "limit": 60, "skip": 0}),
+        ("popular skip=60", {"sort": "popular", "limit": 60, "skip": 60}),
+        ("name sort", {"sort": "name", "limit": 60, "skip": 0}),
+        ("price_asc", {"sort": "price_asc", "limit": 60, "skip": 0}),
+        ("price_desc", {"sort": "price_desc", "limit": 60, "skip": 0}),
+        ("recent", {"sort": "recent", "limit": 60, "skip": 0}),
+        ("search basin", {"q": "basin", "limit": 60, "skip": 0}),
     ]
     
-    results = []
-    timings = {}
-    
-    for endpoint, name in endpoints:
-        start = time.time()
-        resp = await client.get(f"{BASE_URL}{endpoint}", headers=headers)
-        elapsed = (time.time() - start) * 1000
-        
-        passed = resp.status_code == 200
-        results.append(passed)
-        timings[name] = elapsed
-        
-        detail = f"Status: {resp.status_code}, Time: {elapsed:.0f}ms"
-        
-        # Check for specific data
-        if passed and endpoint == "/products?limit=20":
-            data = resp.json()
-            total = data.get("total", 0)
-            items_count = len(data.get("items", []))
-            detail += f", Total: {total}, Items: {items_count}"
-            
-            if total != 2966:
-                passed = False
-                detail += f" {RED}(Expected total=2966){RESET}"
-        
-        print_test(name, passed, detail)
-    
-    # Print timing summary
-    print(f"\n{YELLOW}Timing Summary:{RESET}")
-    for name, elapsed in timings.items():
-        print_metric(name, f"{elapsed:.0f}ms")
-    
-    # Compare against PERFORMANCE.md baselines (warm medians after optimization)
-    baselines = {
-        "Brands": 520,
-        "Categories": 521,
-        "Dashboard stats": 995,
-        "Customers": 281,
-        "Recent quotations": 281,
-        "Payment stats": 755,
-        "Follow-up stats": 775,
-    }
-    
-    print(f"\n{YELLOW}Baseline Comparison (PERFORMANCE.md 'After' values):{RESET}")
-    for name, baseline in baselines.items():
-        if name in timings:
-            actual = timings[name]
-            diff = actual - baseline
-            diff_pct = (diff / baseline * 100) if baseline > 0 else 0
-            
-            if actual <= baseline * 1.5:  # Within 50% tolerance
-                status = f"{GREEN}✓{RESET}"
+    for name, params in test_cases:
+        response, _ = await timed_request(
+            client, "GET", f"{BASE_URL}/products", results, f"GET /products {name}",
+            headers=headers, params=params
+        )
+        if response.status_code == 200:
+            data = response.json()
+            if "total" in data and "items" in data and isinstance(data["items"], list):
+                results.pass_test(f"GET /products {name} returns 200 with {{total, items}}")
             else:
-                status = f"{YELLOW}⚠{RESET}"
+                results.fail_test(f"GET /products {name}", f"Invalid response shape")
+        else:
+            results.fail_test(f"GET /products {name}", f"Status {response.status_code}")
+    
+    # Test hierarchy
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/catalog/hierarchy", results, "GET /catalog/hierarchy",
+        headers=headers
+    )
+    if response.status_code == 200:
+        data = response.json()
+        if "tree" in data:
+            results.pass_test("GET /catalog/hierarchy returns 200 with {tree}")
+        else:
+            results.fail_test("GET /catalog/hierarchy", "Missing 'tree' field")
+    else:
+        results.fail_test("GET /catalog/hierarchy", f"Status {response.status_code}")
+    
+    # Test families
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/products/families", results, "GET /products/families",
+        headers=headers, params={"limit": 60, "skip": 0}
+    )
+    if response.status_code == 200:
+        data = response.json()
+        if "total" in data and "items" in data:
+            results.pass_test("GET /products/families returns 200 with {total, items}")
+        else:
+            results.fail_test("GET /products/families", "Invalid response shape")
+    else:
+        results.fail_test("GET /products/families", f"Status {response.status_code}")
+    
+    # Test facets
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/catalog/facets", results, "GET /catalog/facets",
+        headers=headers
+    )
+    if response.status_code == 200:
+        data = response.json()
+        if "brands" in data and "categories" in data:
+            results.pass_test("GET /catalog/facets returns 200 with facet buckets")
+        else:
+            results.fail_test("GET /catalog/facets", "Missing facet fields")
+    else:
+        results.fail_test("GET /catalog/facets", f"Status {response.status_code}")
+    
+    # Test search
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/catalog/search", results, "GET /catalog/search",
+        headers=headers, params={"q": "basin", "limit": 30}
+    )
+    if response.status_code == 200:
+        data = response.json()
+        if "query" in data and "total" in data and "items" in data:
+            results.pass_test("GET /catalog/search returns 200 with {query, total, items}")
+        else:
+            results.fail_test("GET /catalog/search", "Invalid response shape")
+    else:
+        results.fail_test("GET /catalog/search", f"Status {response.status_code}")
+    
+    # Test recent/frequent
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/products/recent", results, "GET /products/recent",
+        headers=headers, params={"limit": 12}
+    )
+    if response.status_code == 200:
+        results.pass_test("GET /products/recent returns 200")
+    else:
+        results.fail_test("GET /products/recent", f"Status {response.status_code}")
+    
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/products/frequent", results, "GET /products/frequent",
+        headers=headers, params={"limit": 12}
+    )
+    if response.status_code == 200:
+        results.pass_test("GET /products/frequent returns 200")
+    else:
+        results.fail_test("GET /products/frequent", f"Status {response.status_code}")
+
+
+async def test_performance_targets(client: httpx.AsyncClient, token: str, results: TestResults):
+    """Test 2: Measure warm medians for key endpoints (target <200ms)."""
+    print("\n" + "=" * 80)
+    print("TEST 2: PERFORMANCE TARGETS (warm medians, 5 repetitions)")
+    print("=" * 80)
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # Warm up cache with 2 requests
+    for _ in range(2):
+        await client.get(f"{BASE_URL}/products", headers=headers, params={"sort": "popular", "limit": 60, "skip": 0})
+    
+    # Measure key endpoints 5 times each
+    test_cases = [
+        ("products popular skip=0", "GET", f"{BASE_URL}/products", {"sort": "popular", "limit": 60, "skip": 0}),
+        ("products popular skip=60", "GET", f"{BASE_URL}/products", {"sort": "popular", "limit": 60, "skip": 60}),
+        ("products popular skip=2900", "GET", f"{BASE_URL}/products", {"sort": "popular", "limit": 60, "skip": 2900}),
+        ("products name skip=0", "GET", f"{BASE_URL}/products", {"sort": "name", "limit": 60, "skip": 0}),
+        ("products price_asc", "GET", f"{BASE_URL}/products", {"sort": "price_asc", "limit": 60, "skip": 0}),
+        ("products price_desc", "GET", f"{BASE_URL}/products", {"sort": "price_desc", "limit": 60, "skip": 0}),
+        ("products recent", "GET", f"{BASE_URL}/products", {"sort": "recent", "limit": 60, "skip": 0}),
+        ("search basin", "GET", f"{BASE_URL}/catalog/search", {"q": "basin", "limit": 30}),
+        ("families", "GET", f"{BASE_URL}/products/families", {"limit": 60, "skip": 0}),
+        ("hierarchy", "GET", f"{BASE_URL}/catalog/hierarchy", {}),
+        ("facets", "GET", f"{BASE_URL}/catalog/facets", {}),
+        ("brands", "GET", f"{BASE_URL}/brands", {}),
+        ("categories", "GET", f"{BASE_URL}/categories", {}),
+    ]
+    
+    for name, method, url, params in test_cases:
+        for _ in range(5):
+            await timed_request(
+                client, method, url, results, name,
+                headers=headers, params=params
+            )
+    
+    # Check if medians meet target
+    for endpoint, times in results.timings.items():
+        if times:
+            median = sorted(times)[len(times) // 2]
+            if median < TARGET_LATENCY_MS:
+                results.pass_test(f"Performance: {endpoint} median {median:.1f}ms < {TARGET_LATENCY_MS}ms")
+            else:
+                results.warn_test(f"Performance: {endpoint} median {median:.1f}ms", f"Exceeds {TARGET_LATENCY_MS}ms target")
+
+
+async def test_pagination_integrity(client: httpx.AsyncClient, token: str, results: TestResults):
+    """Test 3: Exhaustively page popular results to prove 2966 unique IDs, no gaps/duplicates."""
+    print("\n" + "=" * 80)
+    print("TEST 3: PAGINATION INTEGRITY (exhaustive popular paging)")
+    print("=" * 80)
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # Get first page to check total
+    response = await client.get(
+        f"{BASE_URL}/products",
+        headers=headers,
+        params={"sort": "popular", "limit": 60, "skip": 0}
+    )
+    data = response.json()
+    total = data.get("total", 0)
+    
+    if total == EXPECTED_TOTAL_PRODUCTS:
+        results.pass_test(f"Total products = {EXPECTED_TOTAL_PRODUCTS}")
+    else:
+        results.fail_test("Total products", f"Expected {EXPECTED_TOTAL_PRODUCTS}, got {total}")
+    
+    # Exhaustively page through all products
+    all_ids: List[str] = []
+    skip = 0
+    limit = 60
+    
+    while skip < total:
+        response = await client.get(
+            f"{BASE_URL}/products",
+            headers=headers,
+            params={"sort": "popular", "limit": limit, "skip": skip}
+        )
+        data = response.json()
+        items = data.get("items", [])
+        
+        if not items:
+            break
+        
+        for item in items:
+            all_ids.append(item["id"])
+        
+        skip += limit
+    
+    # Check counts
+    if len(all_ids) == EXPECTED_TOTAL_PRODUCTS:
+        results.pass_test(f"Exhaustive paging returned {EXPECTED_TOTAL_PRODUCTS} rows")
+    else:
+        results.fail_test("Exhaustive paging", f"Expected {EXPECTED_TOTAL_PRODUCTS} rows, got {len(all_ids)}")
+    
+    # Check for unique IDs
+    unique_ids = set(all_ids)
+    if len(unique_ids) == EXPECTED_TOTAL_PRODUCTS:
+        results.pass_test(f"All {EXPECTED_TOTAL_PRODUCTS} IDs are unique")
+    else:
+        results.fail_test("Unique IDs", f"Expected {EXPECTED_TOTAL_PRODUCTS} unique, got {len(unique_ids)}")
+    
+    # Check for duplicates
+    id_counts = Counter(all_ids)
+    duplicates = {id_: count for id_, count in id_counts.items() if count > 1}
+    if not duplicates:
+        results.pass_test("No duplicate IDs found")
+    else:
+        results.fail_test("Duplicate IDs", f"Found {len(duplicates)} duplicates: {list(duplicates.keys())[:5]}")
+    
+    # Check last page
+    last_skip = (total // limit) * limit
+    response = await client.get(
+        f"{BASE_URL}/products",
+        headers=headers,
+        params={"sort": "popular", "limit": limit, "skip": last_skip}
+    )
+    data = response.json()
+    last_page_items = data.get("items", [])
+    expected_last_page = total - last_skip
+    
+    if len(last_page_items) == expected_last_page:
+        results.pass_test(f"Last page (skip={last_skip}) has {expected_last_page} items")
+    else:
+        results.fail_test("Last page", f"Expected {expected_last_page} items, got {len(last_page_items)}")
+
+
+async def test_sort_filter_stability(client: httpx.AsyncClient, token: str, results: TestResults):
+    """Test 4: Verify page ordering/filter parity for popular, recent, name, price_asc, price_desc, q=basin."""
+    print("\n" + "=" * 80)
+    print("TEST 4: SORT & FILTER STABILITY")
+    print("=" * 80)
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # Test each sort mode
+    sort_modes = ["popular", "recent", "name", "price_asc", "price_desc"]
+    
+    for sort_mode in sort_modes:
+        # Get first page
+        response = await client.get(
+            f"{BASE_URL}/products",
+            headers=headers,
+            params={"sort": sort_mode, "limit": 60, "skip": 0}
+        )
+        data = response.json()
+        first_page_ids = [item["id"] for item in data.get("items", [])]
+        
+        # Get first page again
+        response = await client.get(
+            f"{BASE_URL}/products",
+            headers=headers,
+            params={"sort": sort_mode, "limit": 60, "skip": 0}
+        )
+        data = response.json()
+        second_page_ids = [item["id"] for item in data.get("items", [])]
+        
+        # Check stability
+        if first_page_ids == second_page_ids:
+            results.pass_test(f"Sort {sort_mode}: deterministic (same IDs in same order)")
+        else:
+            results.fail_test(f"Sort {sort_mode}", "Non-deterministic ordering")
+    
+    # Test search filter stability
+    response = await client.get(
+        f"{BASE_URL}/products",
+        headers=headers,
+        params={"q": "basin", "limit": 60, "skip": 0}
+    )
+    data1 = response.json()
+    
+    response = await client.get(
+        f"{BASE_URL}/products",
+        headers=headers,
+        params={"q": "basin", "limit": 60, "skip": 0}
+    )
+    data2 = response.json()
+    
+    if data1.get("total") == data2.get("total"):
+        results.pass_test(f"Search q=basin: deterministic total ({data1.get('total')} results)")
+    else:
+        results.fail_test("Search q=basin", f"Non-deterministic total: {data1.get('total')} vs {data2.get('total')}")
+    
+    ids1 = [item["id"] for item in data1.get("items", [])]
+    ids2 = [item["id"] for item in data2.get("items", [])]
+    
+    if ids1 == ids2:
+        results.pass_test("Search q=basin: deterministic ordering")
+    else:
+        results.fail_test("Search q=basin", "Non-deterministic ordering")
+
+
+async def test_related_endpoints(client: httpx.AsyncClient, token: str, results: TestResults):
+    """Test 5: Product detail, media, alternates, complete-set endpoints."""
+    print("\n" + "=" * 80)
+    print("TEST 5: PRODUCT DETAIL & RELATED ENDPOINTS")
+    print("=" * 80)
+    
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # Get a sample product ID
+    response = await client.get(
+        f"{BASE_URL}/products",
+        headers=headers,
+        params={"sort": "popular", "limit": 1, "skip": 0}
+    )
+    data = response.json()
+    items = data.get("items", [])
+    
+    if not items:
+        results.fail_test("Sample product", "No products found")
+        return
+    
+    product_id = items[0]["id"]
+    
+    # Test product detail
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/products/{product_id}", results, "GET /products/{id}",
+        headers=headers
+    )
+    if response.status_code == 200:
+        data = response.json()
+        if "id" in data and "name" in data:
+            results.pass_test(f"GET /products/{{id}} returns product detail")
+        else:
+            results.fail_test("GET /products/{id}", "Invalid response shape")
+    else:
+        results.fail_test("GET /products/{id}", f"Status {response.status_code}")
+    
+    # Test alternates
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/products/{product_id}/alternates", results, "GET /products/{id}/alternates",
+        headers=headers, params={"limit": 12}
+    )
+    if response.status_code == 200:
+        data = response.json()
+        if "source_product_id" in data and "items" in data and "tiers" in data:
+            results.pass_test("GET /products/{id}/alternates returns {source_product_id, items, tiers}")
+        else:
+            results.fail_test("GET /products/{id}/alternates", "Invalid response shape")
+    else:
+        results.fail_test("GET /products/{id}/alternates", f"Status {response.status_code}")
+    
+    # Test complete-the-set
+    response, _ = await timed_request(
+        client, "GET", f"{BASE_URL}/products/{product_id}/complete-the-set", results, "GET /products/{id}/complete-the-set",
+        headers=headers, params={"limit": 12}
+    )
+    if response.status_code == 200:
+        data = response.json()
+        if "source_product_id" in data and "items" in data:
+            results.pass_test("GET /products/{id}/complete-the-set returns {source_product_id, items}")
+        else:
+            results.fail_test("GET /products/{id}/complete-the-set", "Invalid response shape")
+    else:
+        results.fail_test("GET /products/{id}/complete-the-set", f"Status {response.status_code}")
+
+
+async def test_bootstrap_indexes(results: TestResults):
+    """Test 6: Bootstrap reports no missing indexes."""
+    print("\n" + "=" * 80)
+    print("TEST 6: BOOTSTRAP & INDEX VALIDATION")
+    print("=" * 80)
+    
+    # Run bootstrap.py
+    proc = await asyncio.create_subprocess_exec(
+        "python", "/app/backend/bootstrap.py",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
+    
+    if proc.returncode == 0:
+        output = stdout.decode()
+        try:
+            data = json.loads(output)
+            if data.get("healthy"):
+                results.pass_test("Bootstrap reports healthy=true")
+            else:
+                results.fail_test("Bootstrap", "healthy=false")
             
-            print(f"  {status} {name}: {actual:.0f}ms vs {baseline}ms baseline ({diff:+.0f}ms, {diff_pct:+.1f}%)")
-    
-    return all(results)
+            missing_indexes = data.get("missing_indexes", [])
+            if not missing_indexes:
+                results.pass_test("Bootstrap reports no missing indexes")
+            else:
+                results.fail_test("Bootstrap", f"Missing indexes: {missing_indexes}")
+        except json.JSONDecodeError:
+            results.fail_test("Bootstrap", f"Invalid JSON output: {output[:200]}")
+    else:
+        results.fail_test("Bootstrap", f"Exit code {proc.returncode}: {stderr.decode()[:200]}")
 
 
-async def test_cache_safety():
-    """Requirement 8: Inspect cache safety"""
-    print_section("TEST 8: Cache Safety Inspection")
+async def test_focused_regression(results: TestResults):
+    """Test 7: Run focused backend regression tests."""
+    print("\n" + "=" * 80)
+    print("TEST 7: FOCUSED BACKEND REGRESSION")
+    print("=" * 80)
     
-    # Read auth.py to verify cache configuration
-    with open("/app/backend/auth.py", "r") as f:
-        auth_code = f.read()
+    # Check if test file exists
+    import os
+    test_files = [
+        "/app/backend/tests/test_catalog_service.py",
+        "/app/backend/tests/test_auth_cache.py",
+    ]
     
-    # Check TTL
-    ttl_correct = "_PRINCIPAL_CACHE_TTL_SECONDS = 10.0" in auth_code
-    print_test("Cache TTL is 10 seconds", ttl_correct, "Verified in auth.py")
+    found_tests = [f for f in test_files if os.path.exists(f)]
     
-    # Check max entries
-    max_correct = "_PRINCIPAL_CACHE_MAX_ENTRIES = 2048" in auth_code
-    print_test("Cache max entries is 2048", max_correct, "Verified in auth.py")
+    if not found_tests:
+        results.warn_test("Focused regression", "No test files found")
+        return
     
-    # Check that password_hash is excluded
-    password_excluded = '"password_hash": 0' in auth_code
-    print_test(
-        "password_hash excluded from cached principal",
-        password_excluded,
-        "Verified projection excludes password_hash"
+    # Run pytest
+    proc = await asyncio.create_subprocess_exec(
+        "python", "-m", "pytest", "-xvs", *found_tests,
+        cwd="/app/backend",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
     )
+    stdout, stderr = await proc.communicate()
     
-    # Check that cache stores doc.copy() not the JWT
-    stores_doc_copy = "doc.copy()" in auth_code
-    print_test(
-        "Cache stores principal doc copy (not JWT)",
-        stores_doc_copy,
-        "Verified _cache_principal stores doc.copy()"
-    )
+    output = stdout.decode() + stderr.decode()
     
-    # Check invalidation is wired to logout routes
-    with open("/app/backend/routes/auth_routes.py", "r") as f:
-        auth_routes_code = f.read()
-    
-    logout_invalidates = "invalidate_principal_cache" in auth_routes_code and "logout" in auth_routes_code
-    logout_all_invalidates = "invalidate_principal_cache(kind, sub)" in auth_routes_code
-    delete_session_invalidates = "invalidate_principal_cache(kind, sub, session_id)" in auth_routes_code
-    
-    print_test(
-        "Logout route invalidates cache",
-        logout_invalidates,
-        "Verified invalidate_principal_cache called in logout"
-    )
-    
-    print_test(
-        "Logout-all route invalidates all sessions",
-        logout_all_invalidates,
-        "Verified invalidate_principal_cache(kind, sub) in logout-all"
-    )
-    
-    print_test(
-        "DELETE session route invalidates specific session",
-        delete_session_invalidates,
-        "Verified invalidate_principal_cache(kind, sub, session_id) in DELETE"
-    )
-    
-    return (ttl_correct and max_correct and password_excluded and stores_doc_copy and 
-            logout_invalidates and logout_all_invalidates and delete_session_invalidates)
+    if proc.returncode == 0:
+        # Count passed tests
+        import re
+        passed = len(re.findall(r"PASSED", output))
+        results.pass_test(f"Focused regression: {passed} tests passed")
+    else:
+        results.fail_test("Focused regression", f"Exit code {proc.returncode}")
+        print(output[:1000])
 
 
 async def main():
-    print(f"\n{BLUE}{'=' * 80}")
-    print("TASK 1 VERIFICATION: Auth Principal Cache Performance Improvement")
-    print(f"{'=' * 80}{RESET}\n")
+    results = TestResults()
+    
+    print("=" * 80)
+    print("PERFORMANCE SPRINT 2 — BACKEND CATALOG QUERY OPTIMIZATION")
+    print("Testing backend catalog endpoints with direct localhost requests")
+    print("=" * 80)
     
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Test 1: Unit tests
-        unit_tests_passed, unit_test_count = await test_unit_tests()
-        
-        # Test 2: Staff auth performance
-        staff_auth_passed, staff_token, staff_cold, staff_warm = await test_staff_auth_performance(client)
-        
-        # Test 3: Customer auth performance
-        customer_auth_passed, customer_token, customer_cold, customer_warm = await test_customer_auth_performance(client)
-        
-        # Test 4: Revocation correctness
-        revocation_passed = await test_revocation_correctness(client)
-        
-        # Test 5: Role enforcement
-        role_enforcement_passed = await test_role_enforcement(client)
-        
-        # Test 6: Legacy token compatibility
-        legacy_token_passed = await test_legacy_token_compatibility()
-        
-        # Test 7: Authenticated smoke tests (get fresh token since previous one may have expired)
-        # Login fresh for smoke tests
-        login_resp = await client.post(
-            f"{BASE_URL}/auth/login",
-            json={"email": STAFF_EMAIL, "password": STAFF_PASSWORD}
-        )
-        if login_resp.status_code == 200:
-            fresh_token = login_resp.json()["access_token"]
-            smoke_passed = await test_authenticated_smoke(client, fresh_token)
-        else:
-            print_section("TEST 7: Authenticated Smoke Tests")
-            print_test("Authenticated smoke tests", False, "Could not get fresh token")
-            smoke_passed = False
-        
-        # Test 8: Cache safety
-        cache_safety_passed = await test_cache_safety()
+        try:
+            # Login
+            print("\n🔐 Logging in as owner@forge.app...")
+            token = await login(client, **CREDENTIALS["owner"])
+            print("✅ Login successful")
+            
+            # Run all tests
+            await test_endpoint_contracts(client, token, results)
+            await test_performance_targets(client, token, results)
+            await test_pagination_integrity(client, token, results)
+            await test_sort_filter_stability(client, token, results)
+            await test_related_endpoints(client, token, results)
+            
+        except Exception as e:
+            results.fail_test("Test execution", str(e))
+            import traceback
+            traceback.print_exc()
     
-    # Summary
-    print_section("SUMMARY")
+    # Run non-HTTP tests
+    await test_bootstrap_indexes(results)
+    await test_focused_regression(results)
     
-    all_tests = [
-        ("Unit Tests", unit_tests_passed, f"{unit_test_count} tests"),
-        ("Staff Auth Performance", staff_auth_passed, f"Cold: {staff_cold:.0f}ms, Warm: {staff_warm:.0f}ms" if staff_cold and staff_warm else "N/A"),
-        ("Customer Auth Performance", customer_auth_passed, f"Cold: {customer_cold:.0f}ms, Warm: {customer_warm:.0f}ms" if customer_cold and customer_warm else "N/A"),
-        ("Revocation Correctness", revocation_passed, "All revocation scenarios"),
-        ("Role Enforcement", role_enforcement_passed, "Lower-role user blocked correctly"),
-        ("Legacy Token Compatibility", legacy_token_passed, "Sessionless tokens work"),
-        ("Authenticated Smoke Tests", smoke_passed, "8 endpoints, products total=2966"),
-        ("Cache Safety", cache_safety_passed, "TTL, max, no password_hash, invalidation wired"),
-    ]
+    # Print summary
+    results.print_summary()
     
-    passed_count = sum(1 for _, passed, _ in all_tests if passed)
-    total_count = len(all_tests)
-    
-    print(f"\n{BLUE}Test Results:{RESET}")
-    for name, passed, details in all_tests:
-        status = f"{GREEN}✅{RESET}" if passed else f"{RED}❌{RESET}"
-        print(f"{status} {name}: {details}")
-    
-    print(f"\n{BLUE}Overall: {passed_count}/{total_count} test groups passed{RESET}")
-    
-    if passed_count == total_count:
-        print(f"\n{GREEN}{'=' * 80}")
-        print("ALL TESTS PASSED ✅")
-        print(f"{'=' * 80}{RESET}\n")
-        return 0
-    else:
-        print(f"\n{RED}{'=' * 80}")
-        print(f"SOME TESTS FAILED ({total_count - passed_count} failures)")
-        print(f"{'=' * 80}{RESET}\n")
-        return 1
+    # Exit with appropriate code
+    return 0 if results.failed == 0 else 1
 
 
 if __name__ == "__main__":
     exit_code = asyncio.run(main())
-    sys.exit(exit_code)
+    exit(exit_code)

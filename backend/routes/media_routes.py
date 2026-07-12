@@ -30,10 +30,10 @@ async def _brand_slug_for_product(product_id: str) -> tuple[str, Optional[str], 
 
 @router.get("/products/{product_id}/media", response_model=list[ProductMedia])
 async def list_product_media(product_id: str, _: UserPublic = Depends(get_current_user)):
-    prod = await db.products.find_one({"id": product_id}, {"_id": 0, "family_key": 1})
-    if not prod:
+    media = await catalog_service.media_for_product(product_id)
+    if media is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    return await media_service.list_media_for_product(product_id, prod.get("family_key"))
+    return media
 
 
 @router.post("/products/{product_id}/media", response_model=ProductMedia)
