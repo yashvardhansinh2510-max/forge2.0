@@ -45,6 +45,7 @@ from routes.purchase_routes import ALLOWED_TRANSITIONS, STATUS_LABELS
 from routes.quotation_routes import _next_number as _next_quotation_number
 from services.activity_log import log_event, timeline_for
 from services.followup_engine import reconcile_followups
+from services.transfer_workflow import execute_transfer, transfer_history
 
 router = APIRouter(prefix="/purchases", tags=["purchases"])
 
@@ -169,6 +170,8 @@ def _flatten_item(po: dict, it: dict, sla_days: int) -> dict:
         "sku": it.get("sku"),
         "name": it.get("name"),
         "image": it.get("image"),
+        "finish": it.get("finish"),
+        "colour": it.get("colour"),
         "customer_id": it.get("customer_id") or po.get("customer_id"),
         "customer_name": it.get("customer_name") or po.get("customer_name"),
         "brand_id": it.get("brand_id") or po.get("brand_id"),
@@ -379,6 +382,21 @@ async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_curre
         {"customer_id": customer_id, "status": "awaiting_reorder"}, {"_id": 0},
     ).sort("created_at", -1).to_list(100)
 
+    order_quotes = await db.quotations.find(
+        {"customer_id": customer_id, "status": {"$in": ["ordered", "won"]}},
+        {"_id": 0, "id": 1, "grand_total": 1},
+    ).to_list(500)
+    from routes.payment_routes import _paid_by_quotation
+    paid_map = await _paid_by_quotation([quote["id"] for quote in order_quotes])
+    outstanding_balance = round(sum(
+        max(0.0, float(quote.get("grand_total") or 0) - paid_map.get(quote["id"], 0.0))
+        for quote in order_quotes
+    ), 2)
+    payments = await db.payments.find({"customer_id": customer_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    followups = await db.followups.find(
+        {"customer_id": customer_id, "status": {"$in": ["open", "snoozed"]}}, {"_id": 0},
+    ).sort("due_at", 1).to_list(100)
+
     open_pos = [p for p in pos if p.get("status") != "cancelled"]
     expected = sorted(
         [
@@ -402,8 +420,12 @@ async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_curre
             "blocked_count": len(blocked_rows),
             "delivered_count": len(delivered_rows),
             "shortage_count": len(shortages),
+            "outstanding_balance": outstanding_balance,
+            "open_followup_count": len(followups),
         },
         "shortages": shortages,
+        "payments": payments,
+        "followups": followups,
         "products": rows,
         "brands": sorted(brand_map.values(), key=lambda x: -x["count"]),
         "stages": stages,
@@ -494,9 +516,12 @@ class BulkMoveBody(BaseModel):
 
 
 class TransferBody(BaseModel):
-    new_customer_id: str
+    destination_customer_id: Optional[str] = None
+    new_customer_id: Optional[str] = None  # legacy request compatibility
+    new_customer: Optional[dict] = None
     qty: float = Field(..., gt=0)
     reason: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 def _derive_po_status_from_stages(items: list[dict], current_status: str) -> Optional[str]:
@@ -917,8 +942,32 @@ async def _reconcile_shortage_for_line(
         )
     return None
 
-
 @router.post("/items/{item_id}/transfer")
+async def transfer_item_command(
+    item_id: str,
+    body: TransferBody,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Transactional, idempotent transfer command for existing or new customers."""
+    return await execute_transfer(
+        item_id=item_id,
+        destination_customer_id=body.destination_customer_id,
+        new_customer=body.new_customer,
+        qty=float(body.qty),
+        reason=body.reason,
+        idempotency_key=body.idempotency_key,
+        user=user,
+    )
+
+
+@router.get("/items/{item_id}/transfer-history")
+async def item_transfer_history(item_id: str, _: UserPublic = Depends(get_current_user)):
+    return {"item_id": item_id, "transfers": await transfer_history(item_id)}
+
+
+
+
+@router.post("/legacy/items/{item_id}/transfer")
 async def transfer_item(
     item_id: str,
     body: TransferBody,

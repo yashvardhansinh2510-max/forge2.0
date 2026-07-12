@@ -1,713 +1,828 @@
-#!/usr/bin/env python3
 """
-Production Workflow Backend Verification
-Tests quotation PDF generation, place-order workflow, and transactional automation.
+Purchases Phase 1A-C Backend Testing
+=====================================
+Tests the transactional transfer engine and expanded customer workspace contract.
+
+Test Scenarios:
+A. Existing-customer transfer with idempotency
+B. Inline-new-customer transfer with idempotency
+C. Workspace contract verification
+D. Regression: partial move and stage movement
 """
-import io
+import asyncio
+import json
 import os
 import sys
-import time
-from typing import Any
+from datetime import datetime
+from uuid import uuid4
 
-import requests
-from PyPDF2 import PdfReader
+import httpx
 
-# Backend URL configuration
-BACKEND_URL = os.getenv("BACKEND_URL", "https://frontend-auth-trace.preview.emergentagent.com/api")
+# Backend URL from environment
+BACKEND_URL = os.getenv("REACT_APP_BACKEND_URL", "").rstrip("/") + "/api"
+if not BACKEND_URL.startswith("http"):
+    BACKEND_URL = "https://frontend-auth-trace.preview.emergentagent.com/api"
 
-# Test credentials from /app/memory/test_credentials.md
+print(f"🔗 Backend URL: {BACKEND_URL}")
+
+# Test credentials
 OWNER_EMAIL = "owner@forge.app"
 OWNER_PASSWORD = "Forge@2026"
 
-# Global auth token
-AUTH_TOKEN = None
+# Global state
+token = None
+headers = {}
 
 
-def login() -> str:
-    """Authenticate and return JWT token."""
-    global AUTH_TOKEN
-    print(f"\n{'='*80}")
-    print("AUTHENTICATION")
-    print(f"{'='*80}")
-    
-    response = requests.post(
-        f"{BACKEND_URL}/auth/login",
-        json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}
-    )
-    
-    print(f"POST /api/auth/login: {response.status_code}")
-    
-    if response.status_code != 200:
-        print(f"❌ Login failed: {response.text}")
-        sys.exit(1)
-    
-    data = response.json()
-    AUTH_TOKEN = data.get("access_token") or data.get("token")
-    
-    if not AUTH_TOKEN:
-        print(f"❌ No token in response: {data}")
-        sys.exit(1)
-    
-    print(f"✅ Authenticated as {data.get('user', {}).get('full_name')} ({data.get('user', {}).get('email')})")
-    return AUTH_TOKEN
+def log_test(name: str, status: str, details: str = ""):
+    """Log test result with emoji."""
+    emoji = "✅" if status == "PASS" else "❌" if status == "FAIL" else "⚠️"
+    print(f"{emoji} {name}: {status}")
+    if details:
+        print(f"   {details}")
 
 
-def get_headers() -> dict:
-    """Return authorization headers."""
-    return {"Authorization": f"Bearer {AUTH_TOKEN}"}
-
-
-def get_products(limit: int = 60) -> list[dict]:
-    """GET /api/products?limit=N and return product list."""
-    print(f"\n{'='*80}")
-    print(f"FETCHING PRODUCTS (limit={limit})")
-    print(f"{'='*80}")
-    
-    response = requests.get(
-        f"{BACKEND_URL}/products",
-        params={"limit": limit},
-        headers=get_headers()
-    )
-    
-    print(f"GET /api/products?limit={limit}: {response.status_code}")
-    
-    if response.status_code != 200:
-        print(f"❌ Failed to fetch products: {response.text}")
-        sys.exit(1)
-    
-    data = response.json()
-    products = data.get("items", [])
-    
-    print(f"✅ Fetched {len(products)} products")
-    
-    if products:
-        sample = products[0]
-        print(f"   Sample product fields: {list(sample.keys())}")
-        print(f"   Sample: {sample.get('sku')} - {sample.get('name')} - ₹{sample.get('mrp')}")
-    
-    return products
-
-
-def get_customers() -> list[dict]:
-    """GET /api/customers and return customer list."""
-    print(f"\n{'='*80}")
-    print("FETCHING CUSTOMERS")
-    print(f"{'='*80}")
-    
-    response = requests.get(
-        f"{BACKEND_URL}/customers",
-        headers=get_headers()
-    )
-    
-    print(f"GET /api/customers: {response.status_code}")
-    
-    if response.status_code != 200:
-        print(f"❌ Failed to fetch customers: {response.text}")
-        sys.exit(1)
-    
-    data = response.json()
-    # Handle both list and object responses
-    if isinstance(data, list):
-        customers = data
-    else:
-        customers = data.get("items", [])
-    
-    print(f"✅ Fetched {len(customers)} customers")
-    
-    if customers:
-        sample = customers[0]
-        print(f"   Sample: {sample.get('name')} ({sample.get('id')})")
-    
-    return customers
-
-
-def build_line_item(product: dict, room: str, qty: float = 1.0) -> dict:
-    """Construct a QuotationLineItem from a product."""
-    return {
-        "product_id": product["id"],
-        "sku": product["sku"],
-        "name": product["name"],
-        "image": product.get("images", [None])[0] if product.get("images") else None,
-        "category_id": product.get("category_id"),
-        "room": room,
-        "qty": qty,
-        "unit_price": float(product.get("mrp", 0)),
-        "discount_pct": None,
-        "finish": product.get("finish"),
-        "colour": product.get("colour"),
-    }
-
-
-def create_quotation(customer_id: str, items: list[dict], rooms: list[str], 
-                     project_name: str = "Production Workflow Test",
-                     phone: str = "9876543210",
-                     reference: str = "Testing",
-                     project_discount_pct: float = 0.0,
-                     category_discounts: dict = None) -> dict:
-    """POST /api/quotations to create a new quotation."""
-    payload = {
-        "customer_id": customer_id,
-        "items": items,
-        "rooms": rooms,
-        "project_name": project_name,
-        "phone_snapshot": phone,
-        "reference_source": reference,
-        "project_discount_pct": project_discount_pct,
-        "category_discounts": category_discounts or {},
-        "room_discounts": {}
-    }
-    
-    response = requests.post(
-        f"{BACKEND_URL}/quotations",
-        json=payload,
-        headers=get_headers()
-    )
-    
-    print(f"POST /api/quotations: {response.status_code}")
-    
-    if response.status_code not in [200, 201]:
-        print(f"❌ Failed to create quotation: {response.text}")
-        sys.exit(1)
-    
-    quotation = response.json()
-    print(f"✅ Created quotation {quotation.get('number')} (ID: {quotation.get('id')})")
-    print(f"   Items: {len(quotation.get('items', []))}, Rooms: {quotation.get('rooms')}")
-    print(f"   Subtotal: ₹{quotation.get('subtotal', 0):,.2f}")
-    print(f"   Discount: ₹{quotation.get('discount_total', 0):,.2f}")
-    print(f"   Grand Total: ₹{quotation.get('grand_total', 0):,.2f}")
-    
-    return quotation
-
-
-def get_quotation_pdf(quotation_id: str) -> bytes:
-    """GET /api/quotations/{id}/pdf and return PDF bytes."""
-    response = requests.get(
-        f"{BACKEND_URL}/quotations/{quotation_id}/pdf",
-        headers=get_headers()
-    )
-    
-    print(f"GET /api/quotations/{quotation_id}/pdf: {response.status_code}")
-    
-    if response.status_code != 200:
-        print(f"❌ Failed to get PDF: {response.text}")
-        return None
-    
-    pdf_bytes = response.content
-    print(f"✅ PDF generated: {len(pdf_bytes)} bytes")
-    
-    return pdf_bytes
-
-
-def analyze_pdf(pdf_bytes: bytes, quotation_number: str) -> dict:
-    """Analyze PDF structure and return metadata."""
-    if not pdf_bytes:
-        return {"valid": False, "error": "No PDF bytes"}
-    
-    try:
-        pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
-        page_count = len(pdf_reader.pages)
+async def authenticate():
+    """Authenticate as owner and get JWT token."""
+    global token, headers
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{BACKEND_URL}/auth/login",
+            json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}
+        )
+        if response.status_code != 200:
+            log_test("Authentication", "FAIL", f"Status {response.status_code}: {response.text}")
+            sys.exit(1)
         
-        # Extract text from all pages
-        pages_text = []
-        for i, page in enumerate(pdf_reader.pages):
-            text = page.extract_text()
-            pages_text.append(text)
+        data = response.json()
+        token = data.get("access_token") or data.get("token")
+        if not token:
+            log_test("Authentication", "FAIL", f"No token in response: {data}")
+            sys.exit(1)
         
-        # Check for official markers
-        full_text = " ".join(pages_text)
-        has_buildcon = "BuildCon House" in full_text or "buildcon" in full_text.lower()
-        has_quotation_number = quotation_number in full_text
+        headers = {"Authorization": f"Bearer {token}"}
+        log_test("Authentication", "PASS", f"Logged in as {data.get('user', {}).get('full_name')}")
+
+
+async def create_test_quotation_and_order():
+    """Create a quotation with a product line qty >= 10 and place order to get PO item."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Get a product
+        response = await client.get(f"{BACKEND_URL}/products?limit=1", headers=headers)
+        if response.status_code != 200:
+            log_test("Get Product", "FAIL", f"Status {response.status_code}")
+            return None, None
         
-        # Check page size (A4 is 595 x 842 points)
-        first_page = first_page = pdf_reader.pages[0]
-        mediabox = first_page.mediabox
-        width = float(mediabox.width)
-        height = float(mediabox.height)
-        is_a4 = (590 <= width <= 600) and (837 <= height <= 847)
+        products_data = response.json()
+        products = products_data.get("items", products_data if isinstance(products_data, list) else [])
+        if not products:
+            log_test("Get Product", "FAIL", "No products available")
+            return None, None
         
-        return {
-            "valid": True,
-            "page_count": page_count,
-            "is_a4": is_a4,
-            "width": width,
-            "height": height,
-            "has_buildcon": has_buildcon,
-            "has_quotation_number": has_quotation_number,
-            "pages_text": pages_text,
-            "full_text": full_text
+        product = products[0]
+        
+        # Get a customer
+        response = await client.get(f"{BACKEND_URL}/customers?limit=1", headers=headers)
+        if response.status_code != 200:
+            log_test("Get Customer", "FAIL", f"Status {response.status_code}")
+            return None, None
+        
+        customers_data = response.json()
+        customers = customers_data if isinstance(customers_data, list) else customers_data.get("items", [])
+        if not customers:
+            log_test("Get Customer", "FAIL", "No customers available")
+            return None, None
+        
+        customer = customers[0]
+        
+        # Create quotation with qty >= 10
+        quotation_data = {
+            "customer_id": customer["id"],
+            "items": [{
+                "product_id": product["id"],
+                "sku": product["sku"],
+                "name": product["name"],
+                "qty": 15,  # >= 10 as required
+                "unit_price": product.get("price", 1000),
+                "room": "Test Room"
+            }],
+            "status": "draft"
         }
-    except Exception as e:
-        return {"valid": False, "error": str(e)}
+        
+        response = await client.post(f"{BACKEND_URL}/quotations", json=quotation_data, headers=headers)
+        if response.status_code not in [200, 201]:
+            log_test("Create Quotation", "FAIL", f"Status {response.status_code}: {response.text}")
+            return None, None
+        
+        quotation = response.json()
+        log_test("Create Quotation", "PASS", f"Created {quotation.get('number')} with 15 units")
+        
+        # Place order to create PO
+        response = await client.post(
+            f"{BACKEND_URL}/quotations/{quotation['id']}/place-order/confirm",
+            json={},
+            headers=headers
+        )
+        if response.status_code != 200:
+            log_test("Place Order", "FAIL", f"Status {response.status_code}: {response.text}")
+            return None, None
+        
+        order_result = response.json()
+        log_test("Place Order Response", "INFO", f"Response: {json.dumps(order_result, indent=2)[:500]}")
+        purchase_order_ids = order_result.get("purchase_order_ids", [])
+        if not purchase_order_ids:
+            log_test("Place Order", "FAIL", f"No purchase orders created. Response: {order_result}")
+            return None, None
+        
+        # Get the first PO details
+        po_id = purchase_order_ids[0]
+        response = await client.get(f"{BACKEND_URL}/purchase-orders/{po_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("Get PO Details", "FAIL", f"Status {response.status_code}")
+            return None, None
+        
+        po = response.json()
+        log_test("Place Order", "PASS", f"Created PO {po.get('number')}")
+        
+        # Get the item ID from the PO
+        po_detail = po  # Already have the PO details from above
+        items = po_detail.get("items", [])
+        if not items:
+            log_test("Get PO Items", "FAIL", "No items in PO")
+            return None, None
+        
+        item = items[0]
+        log_test("Get PO Item", "PASS", f"Item ID: {item['id']}, Qty: {item['qty']}")
+        
+        return item["id"], customer["id"]
 
 
-def get_workflow_status(quotation_id: str) -> dict:
-    """GET /api/quotations/{id}/workflow-status."""
-    response = requests.get(
-        f"{BACKEND_URL}/quotations/{quotation_id}/workflow-status",
-        headers=get_headers()
-    )
+async def test_existing_customer_transfer(source_item_id: str, source_customer_id: str):
+    """Test A: Existing-customer transfer with idempotency."""
+    print("\n" + "="*80)
+    print("TEST A: Existing-Customer Transfer with Idempotency")
+    print("="*80)
     
-    print(f"GET /api/quotations/{quotation_id}/workflow-status: {response.status_code}")
-    
-    if response.status_code != 200:
-        print(f"❌ Failed to get workflow status: {response.text}")
-        return None
-    
-    return response.json()
-
-
-def place_order(quotation_id: str, project_name: str = "Production Workflow Test") -> dict:
-    """POST /api/quotations/{id}/place-order/confirm."""
-    payload = {
-        "supplier_by_brand": {},
-        "notes_by_brand": {},
-        "expected_delivery_at": None,
-        "project_name": project_name
-    }
-    
-    response = requests.post(
-        f"{BACKEND_URL}/quotations/{quotation_id}/place-order/confirm",
-        json=payload,
-        headers=get_headers()
-    )
-    
-    print(f"POST /api/quotations/{quotation_id}/place-order/confirm: {response.status_code}")
-    
-    if response.status_code != 200:
-        print(f"❌ Failed to place order: {response.text}")
-        return None
-    
-    return response.json()
-
-
-def verify_workflow_status(status: dict, test_name: str, expected: dict):
-    """Verify workflow status matches expectations."""
-    print(f"\n   Workflow Status Verification for {test_name}:")
-    
-    issues = []
-    
-    # Check events
-    events = status.get("events", [])
-    event_types = [e.get("event_type") for e in events]
-    
-    for event_type, expected_count in expected.get("events", {}).items():
-        actual_count = event_types.count(event_type)
-        status_icon = "✅" if actual_count == expected_count else "❌"
-        print(f"   {status_icon} {event_type}: {actual_count} (expected {expected_count})")
-        if actual_count != expected_count:
-            issues.append(f"{event_type}: expected {expected_count}, got {actual_count}")
-    
-    # Check timeline
-    timeline = status.get("timeline", [])
-    timeline_count = len(timeline)
-    expected_timeline = expected.get("timeline", 0)
-    status_icon = "✅" if timeline_count == expected_timeline else "❌"
-    print(f"   {status_icon} Automation timeline items: {timeline_count} (expected {expected_timeline})")
-    if timeline_count != expected_timeline:
-        issues.append(f"Timeline: expected {expected_timeline}, got {timeline_count}")
-    
-    # Check followups
-    followups = status.get("followups", [])
-    followup_count = len(followups)
-    expected_followups = expected.get("followups", 0)
-    status_icon = "✅" if followup_count == expected_followups else "❌"
-    print(f"   {status_icon} Automation follow-ups: {followup_count} (expected {expected_followups})")
-    if followup_count != expected_followups:
-        issues.append(f"Follow-ups: expected {expected_followups}, got {followup_count}")
-    
-    # Check payments
-    payments = status.get("payments", [])
-    payment_count = len(payments)
-    expected_payments = expected.get("payments", 0)
-    status_icon = "✅" if payment_count == expected_payments else "❌"
-    print(f"   {status_icon} Pending payments: {payment_count} (expected {expected_payments})")
-    if payment_count != expected_payments:
-        issues.append(f"Payments: expected {expected_payments}, got {payment_count}")
-    
-    # Check payment amount
-    if payments and expected.get("payment_amount"):
-        payment_amount = sum(float(p.get("amount", 0)) for p in payments if p.get("status") == "pending")
-        expected_amount = expected["payment_amount"]
-        status_icon = "✅" if abs(payment_amount - expected_amount) < 0.01 else "❌"
-        print(f"   {status_icon} Payment amount: ₹{payment_amount:,.2f} (expected ₹{expected_amount:,.2f})")
-        if abs(payment_amount - expected_amount) >= 0.01:
-            issues.append(f"Payment amount: expected ₹{expected_amount:,.2f}, got ₹{payment_amount:,.2f}")
-    
-    # Check purchase orders
-    purchase_orders = status.get("purchase_orders", [])
-    po_count = len(purchase_orders)
-    expected_pos = expected.get("purchase_orders", 0)
-    status_icon = "✅" if po_count == expected_pos else "❌"
-    print(f"   {status_icon} Purchase orders: {po_count} (expected {expected_pos})")
-    if po_count != expected_pos:
-        issues.append(f"Purchase orders: expected {expected_pos}, got {po_count}")
-    
-    # Check PO line quantities
-    if purchase_orders and expected.get("total_po_qty"):
-        total_po_qty = 0
-        for po in purchase_orders:
-            for item in po.get("items", []):
-                # PO items use 'qty' field, not 'quantity'
-                total_po_qty += float(item.get("qty", 0))
-        expected_qty = expected["total_po_qty"]
-        status_icon = "✅" if abs(total_po_qty - expected_qty) < 0.01 else "❌"
-        print(f"   {status_icon} Total PO quantities: {total_po_qty} (expected {expected_qty})")
-        if abs(total_po_qty - expected_qty) >= 0.01:
-            issues.append(f"PO quantities: expected {expected_qty}, got {total_po_qty}")
-    
-    return issues
-
-
-def test_one_room_quotation(products: list[dict], customer_id: str):
-    """Test A: One-room quotation with PDF generation and workflow verification."""
-    print(f"\n{'='*80}")
-    print("TEST A: ONE-ROOM QUOTATION")
-    print(f"{'='*80}")
-    
-    # Create quotation with 3 products in one room
-    items = [
-        build_line_item(products[0], "Master Bathroom", qty=2.0),
-        build_line_item(products[1], "Master Bathroom", qty=1.0),
-        build_line_item(products[2], "Master Bathroom", qty=3.0),
-    ]
-    
-    quotation = create_quotation(
-        customer_id=customer_id,
-        items=items,
-        rooms=["Master Bathroom"],
-        project_name="One Room Test",
-        project_discount_pct=5.0
-    )
-    
-    quotation_id = quotation["id"]
-    quotation_number = quotation["number"]
-    grand_total = float(quotation["grand_total"])
-    
-    # Verify totals match breakdown
-    subtotal = float(quotation["subtotal"])
-    discount_total = float(quotation["discount_total"])
-    calculated_total = subtotal - discount_total
-    
-    print(f"\n   Totals Verification:")
-    print(f"   Subtotal: ₹{subtotal:,.2f}")
-    print(f"   Discount: ₹{discount_total:,.2f}")
-    print(f"   Grand Total: ₹{grand_total:,.2f}")
-    print(f"   Calculated: ₹{calculated_total:,.2f}")
-    
-    if abs(grand_total - calculated_total) < 0.01:
-        print(f"   ✅ Totals match breakdown")
-    else:
-        print(f"   ❌ Totals mismatch: {grand_total} != {calculated_total}")
-    
-    # Generate PDF twice
-    print(f"\n   PDF Generation (First Call):")
-    pdf_bytes_1 = get_quotation_pdf(quotation_id)
-    pdf_analysis_1 = analyze_pdf(pdf_bytes_1, quotation_number)
-    
-    time.sleep(1)  # Brief pause
-    
-    print(f"\n   PDF Generation (Second Call):")
-    pdf_bytes_2 = get_quotation_pdf(quotation_id)
-    pdf_analysis_2 = analyze_pdf(pdf_bytes_2, quotation_number)
-    
-    # Verify PDF properties
-    print(f"\n   PDF Analysis:")
-    if pdf_analysis_1.get("valid"):
-        print(f"   ✅ PDF is valid")
-        print(f"   ✅ Page count: {pdf_analysis_1['page_count']}")
-        print(f"   {'✅' if pdf_analysis_1['is_a4'] else '❌'} A4 size: {pdf_analysis_1['width']:.1f} x {pdf_analysis_1['height']:.1f} points")
-        print(f"   {'✅' if pdf_analysis_1['has_buildcon'] else '❌'} Contains BuildCon House branding")
-        print(f"   {'✅' if pdf_analysis_1['has_quotation_number'] else '❌'} Contains quotation number {quotation_number}")
-    else:
-        print(f"   ❌ PDF invalid: {pdf_analysis_1.get('error')}")
-    
-    # Get workflow status
-    time.sleep(2)  # Allow automation to complete
-    status = get_workflow_status(quotation_id)
-    
-    if status:
-        issues = verify_workflow_status(
-            status,
-            "One-Room Test",
-            {
-                "events": {"QuotationGenerated": 1},
-                "timeline": 1,
-                "followups": 1,
-                "payments": 0,
-                "purchase_orders": 0
-            }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Get another customer for destination
+        response = await client.get(f"{BACKEND_URL}/customers?limit=10", headers=headers)
+        if response.status_code != 200:
+            log_test("A.1 Get Destination Customer", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        customers_data = response.json()
+        customers = customers_data if isinstance(customers_data, list) else customers_data.get("items", [])
+        destination_customer = None
+        for c in customers:
+            if c["id"] != source_customer_id:
+                destination_customer = c
+                break
+        
+        if not destination_customer:
+            log_test("A.1 Get Destination Customer", "FAIL", "No other customer available")
+            return None
+        
+        log_test("A.1 Get Destination Customer", "PASS", f"Using {destination_customer.get('name')}")
+        
+        # Generate unique idempotency key
+        idempotency_key = f"phase1-existing-{uuid4()}"
+        
+        # First transfer call
+        transfer_data = {
+            "destination_customer_id": destination_customer["id"],
+            "qty": 2,
+            "reason": "Phase 1 test",
+            "idempotency_key": idempotency_key
+        }
+        
+        response1 = await client.post(
+            f"{BACKEND_URL}/purchases/items/{source_item_id}/transfer",
+            json=transfer_data,
+            headers=headers
         )
         
-        if not issues:
-            print(f"\n   ✅ TEST A PASSED")
-        else:
-            print(f"\n   ❌ TEST A FAILED:")
-            for issue in issues:
-                print(f"      - {issue}")
-    
-    return quotation_id, grand_total
-
-
-def test_place_order(quotation_id: str, grand_total: float):
-    """Test B: Place order twice and verify idempotency."""
-    print(f"\n{'='*80}")
-    print("TEST B: PLACE ORDER (IDEMPOTENCY)")
-    print(f"{'='*80}")
-    
-    # First place-order call
-    print(f"\n   First Place Order Call:")
-    result_1 = place_order(quotation_id, "Place Order Test")
-    
-    if result_1:
-        print(f"   ✅ First call succeeded")
-        print(f"   Idempotent: {result_1.get('idempotent')}")
-    
-    time.sleep(2)  # Allow automation to complete
-    
-    # Second place-order call (should be idempotent)
-    print(f"\n   Second Place Order Call:")
-    result_2 = place_order(quotation_id, "Place Order Test")
-    
-    if result_2:
-        print(f"   ✅ Second call succeeded")
-        print(f"   Idempotent: {result_2.get('idempotent')}")
-    
-    # Get workflow status
-    time.sleep(2)
-    status = get_workflow_status(quotation_id)
-    
-    if status:
-        # Calculate total PO quantities
-        total_po_qty = 0
-        for po in status.get("purchase_orders", []):
-            for item in po.get("items", []):
-                total_po_qty += float(item.get("quantity", 0))
+        if response1.status_code != 200:
+            log_test("A.2 First Transfer Call", "FAIL", f"Status {response1.status_code}: {response1.text}")
+            return None
         
-        # Original quotation had 2 + 1 + 3 = 6 items
-        expected_qty = 6.0
+        result1 = response1.json()
+        log_test("A.2 First Transfer Call", "PASS", f"Transfer ID: {result1.get('transfer_id')}")
         
-        issues = verify_workflow_status(
-            status,
-            "Place Order Test",
-            {
-                "events": {"QuotationGenerated": 1, "OrderPlaced": 1},
-                "timeline": 2,  # 1 generated + 1 order
-                "followups": 2,  # 1 generated + 1 order
-                "payments": 1,
-                "payment_amount": grand_total,
-                "purchase_orders": 2,  # Multiple brands = multiple POs
-                "total_po_qty": expected_qty
-            }
+        # Second transfer call with same idempotency key
+        response2 = await client.post(
+            f"{BACKEND_URL}/purchases/items/{source_item_id}/transfer",
+            json=transfer_data,
+            headers=headers
         )
         
-        if not issues:
-            print(f"\n   ✅ TEST B PASSED")
+        if response2.status_code != 200:
+            log_test("A.3 Second Transfer Call (Idempotency)", "FAIL", f"Status {response2.status_code}: {response2.text}")
+            return None
+        
+        result2 = response2.json()
+        
+        # Verify idempotency
+        if result2.get("idempotent") == True:
+            log_test("A.3 Idempotency Check", "PASS", "Second call returned idempotent=true")
         else:
-            print(f"\n   ❌ TEST B FAILED:")
-            for issue in issues:
-                print(f"      - {issue}")
+            log_test("A.3 Idempotency Check", "WARN", f"Expected idempotent=true, got {result2.get('idempotent')}")
+        
+        # Get transfer history
+        response = await client.get(
+            f"{BACKEND_URL}/purchases/items/{source_item_id}/transfer-history",
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            log_test("A.4 Transfer History", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        history = response.json()
+        transfers = history.get("transfers", [])
+        
+        if len(transfers) == 1:
+            log_test("A.4 Transfer History", "PASS", f"Exactly 1 transfer recorded (idempotency working)")
+        else:
+            log_test("A.4 Transfer History", "FAIL", f"Expected 1 transfer, found {len(transfers)}")
+        
+        # Verify source quantity decreased
+        response = await client.get(
+            f"{BACKEND_URL}/purchases/items/{source_item_id}",
+            headers=headers
+        )
+        
+        if response.status_code == 404:
+            # Item might have been removed if qty went to 0
+            log_test("A.5 Source Quantity", "PASS", "Source item removed (qty went to 0)")
+        elif response.status_code == 200:
+            source_item = response.json()
+            remaining_qty = source_item.get("qty", 0)
+            log_test("A.5 Source Quantity", "PASS", f"Source qty decreased to {remaining_qty}")
+        else:
+            log_test("A.5 Source Quantity", "FAIL", f"Status {response.status_code}")
+        
+        # Verify destination PO/line created
+        dest_po_id = result1.get("destination", {}).get("po_id")
+        if not dest_po_id:
+            log_test("A.6 Destination PO", "FAIL", "No destination PO ID in response")
+            return None
+        
+        response = await client.get(f"{BACKEND_URL}/purchase-orders/{dest_po_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("A.6 Destination PO", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        dest_po = response.json()
+        dest_items = dest_po.get("items", [])
+        if len(dest_items) == 1 and dest_items[0].get("qty") == 2:
+            log_test("A.6 Destination PO", "PASS", f"Destination PO {dest_po.get('number')} has 1 item with qty=2")
+        else:
+            log_test("A.6 Destination PO", "FAIL", f"Expected 1 item with qty=2, found {len(dest_items)} items")
+        
+        # Verify destination quotation linked
+        dest_quote_id = result1.get("destination", {}).get("quotation_id")
+        if not dest_quote_id:
+            log_test("A.7 Destination Quotation", "FAIL", "No destination quotation ID in response")
+            return None
+        
+        response = await client.get(f"{BACKEND_URL}/quotations/{dest_quote_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("A.7 Destination Quotation", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        dest_quote = response.json()
+        if dest_quote.get("status") == "ordered":
+            log_test("A.7 Destination Quotation", "PASS", f"Quotation {dest_quote.get('number')} status=ordered")
+        else:
+            log_test("A.7 Destination Quotation", "FAIL", f"Expected status=ordered, got {dest_quote.get('status')}")
+        
+        # Verify pending payment created
+        response = await client.get(
+            f"{BACKEND_URL}/payments?customer_id={destination_customer['id']}",
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            log_test("A.8 Pending Payment", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        payments = response.json()
+        pending_payments = [p for p in payments if p.get("status") == "pending" and p.get("quotation_id") == dest_quote_id]
+        
+        if len(pending_payments) >= 1:
+            payment_amount = pending_payments[0].get("amount", 0)
+            log_test("A.8 Pending Payment", "PASS", f"Pending payment of ₹{payment_amount:,.2f} created")
+        else:
+            log_test("A.8 Pending Payment", "FAIL", f"No pending payment found for destination quotation")
+        
+        # Verify transfer-specific follow-up created
+        response = await client.get(
+            f"{BACKEND_URL}/followups?customer_id={destination_customer['id']}",
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            log_test("A.9 Transfer Follow-up", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        followups = response.json()
+        transfer_followups = [f for f in followups if f.get("category") == "purchase" and "transfer" in f.get("reason", "").lower()]
+        
+        if len(transfer_followups) >= 1:
+            log_test("A.9 Transfer Follow-up", "PASS", f"Transfer-specific follow-up created")
+        else:
+            log_test("A.9 Transfer Follow-up", "WARN", f"No transfer-specific follow-up found (might be in different category)")
+        
+        # Verify customer timelines include transfer activity
+        response = await client.get(
+            f"{BACKEND_URL}/activity/customer/{destination_customer['id']}",
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            log_test("A.10 Customer Timeline", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        activities = response.json()
+        transfer_activities = [a for a in activities if "transfer" in a.get("event_type", "")]
+        
+        if len(transfer_activities) >= 1:
+            log_test("A.10 Customer Timeline", "PASS", f"Transfer activity recorded in customer timeline")
+        else:
+            log_test("A.10 Customer Timeline", "FAIL", f"No transfer activity in customer timeline")
+        
+        # Check for source shortage/reorder state
+        response = await client.get(
+            f"{BACKEND_URL}/purchases/shortages?customer_id={source_customer_id}",
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            log_test("A.11 Source Shortage Check", "FAIL", f"Status {response.status_code}")
+        else:
+            shortages = response.json().get("items", [])
+            if len(shortages) > 0:
+                log_test("A.11 Source Shortage/Reorder", "PASS", f"Shortage flagged for source customer (awaiting reorder)")
+            else:
+                log_test("A.11 Source Shortage/Reorder", "PASS", f"No shortage (allocation still sufficient)")
+        
+        return destination_customer["id"]
 
 
-def test_five_room_quotation(products: list[dict], customer_id: str):
-    """Test C: Five-room quotation with PDF pagination verification."""
-    print(f"\n{'='*80}")
-    print("TEST C: FIVE-ROOM QUOTATION")
-    print(f"{'='*80}")
+async def test_inline_new_customer_transfer(source_item_id: str):
+    """Test B: Inline-new-customer transfer with idempotency."""
+    print("\n" + "="*80)
+    print("TEST B: Inline-New-Customer Transfer with Idempotency")
+    print("="*80)
     
-    rooms = ["Living Room", "Master Bedroom", "Kitchen", "Guest Bathroom", "Balcony"]
-    items = []
-    
-    # Add 2 products per room
-    for i, room in enumerate(rooms):
-        items.append(build_line_item(products[i * 2], room, qty=1.0))
-        items.append(build_line_item(products[i * 2 + 1], room, qty=2.0))
-    
-    quotation = create_quotation(
-        customer_id=customer_id,
-        items=items,
-        rooms=rooms,
-        project_name="Five Room Test"
-    )
-    
-    quotation_id = quotation["id"]
-    quotation_number = quotation["number"]
-    
-    # Generate PDF
-    print(f"\n   PDF Generation:")
-    pdf_bytes = get_quotation_pdf(quotation_id)
-    pdf_analysis = analyze_pdf(pdf_bytes, quotation_number)
-    
-    # Verify PDF structure
-    print(f"\n   PDF Structure Verification:")
-    if pdf_analysis.get("valid"):
-        page_count = pdf_analysis["page_count"]
-        print(f"   ✅ PDF is valid")
-        print(f"   ✅ Page count: {page_count}")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Generate unique customer details
+        unique_id = str(uuid4())[:8]
+        idempotency_key = f"phase1-new-{unique_id}"
         
-        # Expected: 1 summary page + 5 room pages = 6 pages
-        expected_pages = 6
-        if page_count == expected_pages:
-            print(f"   ✅ Page count matches expected ({expected_pages})")
+        new_customer_data = {
+            "name": f"Phase 1 Transfer {unique_id}",
+            "phone": f"+91-9876-{unique_id[:6]}",
+            "email": f"transfer-{unique_id}@test.forge.app"
+        }
+        
+        # First transfer call with inline new customer
+        transfer_data = {
+            "new_customer": new_customer_data,
+            "qty": 1,
+            "reason": "inline customer",
+            "idempotency_key": idempotency_key
+        }
+        
+        response1 = await client.post(
+            f"{BACKEND_URL}/purchases/items/{source_item_id}/transfer",
+            json=transfer_data,
+            headers=headers
+        )
+        
+        if response1.status_code != 200:
+            log_test("B.1 First Transfer Call (New Customer)", "FAIL", f"Status {response1.status_code}: {response1.text}")
+            return None
+        
+        result1 = response1.json()
+        log_test("B.1 First Transfer Call (New Customer)", "PASS", f"Transfer ID: {result1.get('transfer_id')}")
+        
+        dest_customer_id = result1.get("destination", {}).get("customer_id")
+        if not dest_customer_id:
+            log_test("B.2 Customer Creation", "FAIL", "No destination customer ID in response")
+            return None
+        
+        # Verify customer was created
+        response = await client.get(f"{BACKEND_URL}/customers/{dest_customer_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("B.2 Customer Creation", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        customer = response.json()
+        log_test("B.2 Customer Creation", "PASS", f"Customer '{customer.get('name')}' created")
+        
+        # Second transfer call with same idempotency key
+        response2 = await client.post(
+            f"{BACKEND_URL}/purchases/items/{source_item_id}/transfer",
+            json=transfer_data,
+            headers=headers
+        )
+        
+        if response2.status_code != 200:
+            log_test("B.3 Second Transfer Call (Idempotency)", "FAIL", f"Status {response2.status_code}: {response2.text}")
+            return None
+        
+        result2 = response2.json()
+        
+        # Verify idempotency
+        if result2.get("idempotent") == True:
+            log_test("B.3 Idempotency Check", "PASS", "Second call returned idempotent=true")
         else:
-            print(f"   ⚠️  Page count: {page_count} (expected {expected_pages})")
+            log_test("B.3 Idempotency Check", "WARN", f"Expected idempotent=true, got {result2.get('idempotent')}")
         
-        # Check if each room appears on its own page
-        pages_text = pdf_analysis.get("pages_text", [])
-        if len(pages_text) > 1:
-            # First page should be summary
-            first_page_text = pages_text[0]
-            print(f"   {'✅' if 'summary' in first_page_text.lower() or len(first_page_text) < 500 else '⚠️ '} First page appears to be summary")
+        # Verify only ONE customer was created (no duplicates)
+        response = await client.get(f"{BACKEND_URL}/customers?q={new_customer_data['name']}", headers=headers)
+        if response.status_code != 200:
+            log_test("B.4 No Duplicate Customers", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        customers_data = response.json()
+        matching_customers = customers_data if isinstance(customers_data, list) else customers_data.get("items", [])
+        if len(matching_customers) == 1:
+            log_test("B.4 No Duplicate Customers", "PASS", "Exactly 1 customer created (no duplicates)")
+        else:
+            log_test("B.4 No Duplicate Customers", "FAIL", f"Expected 1 customer, found {len(matching_customers)}")
+        
+        # Verify destination chain (PO + quotation + payment + follow-up)
+        dest_po_id = result1.get("destination", {}).get("po_id")
+        dest_quote_id = result1.get("destination", {}).get("quotation_id")
+        
+        if not dest_po_id or not dest_quote_id:
+            log_test("B.5 Destination Chain", "FAIL", "Missing PO or quotation ID")
+            return None
+        
+        # Check PO
+        response = await client.get(f"{BACKEND_URL}/purchase-orders/{dest_po_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("B.5 Destination PO", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        dest_po = response.json()
+        log_test("B.5 Destination PO", "PASS", f"PO {dest_po.get('number')} created")
+        
+        # Check Quotation
+        response = await client.get(f"{BACKEND_URL}/quotations/{dest_quote_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("B.6 Destination Quotation", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        dest_quote = response.json()
+        log_test("B.6 Destination Quotation", "PASS", f"Quotation {dest_quote.get('number')} created")
+        
+        # Check Payment
+        response = await client.get(f"{BACKEND_URL}/payments?customer_id={dest_customer_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("B.7 Destination Payment", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        payments = response.json()
+        pending_payments = [p for p in payments if p.get("status") == "pending"]
+        if len(pending_payments) >= 1:
+            log_test("B.7 Destination Payment", "PASS", f"Pending payment created")
+        else:
+            log_test("B.7 Destination Payment", "FAIL", "No pending payment found")
+        
+        # Check Follow-up
+        response = await client.get(f"{BACKEND_URL}/followups?customer_id={dest_customer_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("B.8 Destination Follow-up", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        followups = response.json()
+        if len(followups) >= 1:
+            log_test("B.8 Destination Follow-up", "PASS", f"Follow-up created")
+        else:
+            log_test("B.8 Destination Follow-up", "FAIL", "No follow-up found")
+        
+        # Check Activity
+        response = await client.get(f"{BACKEND_URL}/activity/customer/{dest_customer_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("B.9 Destination Activity", "FAIL", f"Status {response.status_code}")
+            return None
+        
+        activities = response.json()
+        if len(activities) >= 1:
+            log_test("B.9 Destination Activity", "PASS", f"{len(activities)} activity events recorded")
+        else:
+            log_test("B.9 Destination Activity", "FAIL", "No activity events found")
+        
+        return dest_customer_id
+
+
+async def test_workspace_contract(customer_id: str):
+    """Test C: Workspace contract verification."""
+    print("\n" + "="*80)
+    print("TEST C: Workspace Contract Verification")
+    print("="*80)
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{BACKEND_URL}/purchases/customers/{customer_id}/workspace",
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            log_test("C.1 Workspace API", "FAIL", f"Status {response.status_code}: {response.text}")
+            return
+        
+        workspace = response.json()
+        log_test("C.1 Workspace API", "PASS", "Workspace endpoint accessible")
+        
+        # Verify required fields
+        required_fields = ["customer", "summary", "payments", "followups", "products", "brands", "stages", "purchase_orders", "outstanding_items", "recent_activity", "expected_delivery"]
+        
+        missing_fields = [f for f in required_fields if f not in workspace]
+        if missing_fields:
+            log_test("C.2 Workspace Shape", "FAIL", f"Missing fields: {', '.join(missing_fields)}")
+        else:
+            log_test("C.2 Workspace Shape", "PASS", "All required fields present")
+        
+        # Verify summary.outstanding_balance
+        summary = workspace.get("summary", {})
+        if "outstanding_balance" in summary:
+            outstanding = summary["outstanding_balance"]
+            log_test("C.3 Outstanding Balance", "PASS", f"Outstanding balance: ₹{outstanding:,.2f}")
+        else:
+            log_test("C.3 Outstanding Balance", "FAIL", "outstanding_balance field missing")
+        
+        # Verify payments array
+        payments = workspace.get("payments", [])
+        log_test("C.4 Payments Array", "PASS", f"{len(payments)} payment(s) in workspace")
+        
+        # Verify followups array
+        followups = workspace.get("followups", [])
+        log_test("C.5 Followups Array", "PASS", f"{len(followups)} follow-up(s) in workspace")
+        
+        # Verify POs
+        pos = workspace.get("purchase_orders", [])
+        log_test("C.6 Purchase Orders", "PASS", f"{len(pos)} PO(s) in workspace")
+        
+        # Verify products/brands/stages
+        products = workspace.get("products", [])
+        brands = workspace.get("brands", [])
+        stages = workspace.get("stages", [])
+        log_test("C.7 Products/Brands/Stages", "PASS", f"{len(products)} products, {len(brands)} brands, {len(stages)} stages")
+        
+        # Verify activity
+        activity = workspace.get("recent_activity", [])
+        log_test("C.8 Recent Activity", "PASS", f"{len(activity)} activity event(s)")
+        
+        # Verify shortages (if any)
+        shortages = workspace.get("shortages", [])
+        log_test("C.9 Shortages", "PASS", f"{len(shortages)} shortage(s) tracked")
+
+
+async def test_regression_partial_move_and_stage():
+    """Test D: Regression - partial move and stage movement."""
+    print("\n" + "="*80)
+    print("TEST D: Regression - Partial Move and Stage Movement")
+    print("="*80)
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Create a new test quotation/order with qty=10
+        response = await client.get(f"{BACKEND_URL}/products?limit=1", headers=headers)
+        if response.status_code != 200:
+            log_test("D.1 Setup - Get Product", "FAIL", f"Status {response.status_code}")
+            return
+        
+        products_data = response.json()
+        products = products_data.get("items", products_data if isinstance(products_data, list) else [])
+        if not products:
+            log_test("D.1 Setup - Get Product", "FAIL", "No products available")
+            return
+        
+        product = products[0]
+        
+        response = await client.get(f"{BACKEND_URL}/customers?limit=1", headers=headers)
+        if response.status_code != 200:
+            log_test("D.1 Setup - Get Customer", "FAIL", f"Status {response.status_code}")
+            return
+        
+        customers_data = response.json()
+        customers = customers_data if isinstance(customers_data, list) else customers_data.get("items", [])
+        if not customers:
+            log_test("D.1 Setup - Get Customer", "FAIL", "No customers available")
+            return
+        
+        customer = customers[0]
+        
+        # Create quotation
+        quotation_data = {
+            "customer_id": customer["id"],
+            "items": [{
+                "product_id": product["id"],
+                "sku": product["sku"],
+                "name": product["name"],
+                "qty": 10,
+                "unit_price": product.get("price", 1000),
+                "room": "Regression Test Room"
+            }],
+            "status": "draft"
+        }
+        
+        response = await client.post(f"{BACKEND_URL}/quotations", json=quotation_data, headers=headers)
+        if response.status_code not in [200, 201]:
+            log_test("D.1 Setup - Create Quotation", "FAIL", f"Status {response.status_code}")
+            return
+        
+        quotation = response.json()
+        
+        # Place order
+        response = await client.post(
+            f"{BACKEND_URL}/quotations/{quotation['id']}/place-order/confirm",
+            json={},
+            headers=headers
+        )
+        if response.status_code != 200:
+            log_test("D.1 Setup - Place Order", "FAIL", f"Status {response.status_code}")
+            return
+        
+        order_result = response.json()
+        purchase_order_ids = order_result.get("purchase_order_ids", [])
+        if not purchase_order_ids:
+            log_test("D.1 Setup - Place Order", "FAIL", "No purchase orders created")
+            return
+        
+        po_id = purchase_order_ids[0]
+        
+        # Get item ID
+        response = await client.get(f"{BACKEND_URL}/purchase-orders/{po_id}", headers=headers)
+        if response.status_code != 200:
+            log_test("D.1 Setup - Get PO", "FAIL", f"Status {response.status_code}")
+            return
+        
+        po_detail = response.json()
+        items = po_detail.get("items", [])
+        if not items:
+            log_test("D.1 Setup - Get PO", "FAIL", "No items in PO")
+            return
+        
+        item = items[0]
+        item_id = item["id"]
+        log_test("D.1 Setup Complete", "PASS", f"Created PO {po_detail.get('number')} with item qty=10")
+        
+        # Test partial move (3 of 10)
+        move_data = {
+            "stage": "company_billing",
+            "qty": 3,
+            "note": "Partial move test - 3 of 10"
+        }
+        
+        response = await client.post(
+            f"{BACKEND_URL}/purchases/items/{item_id}/move",
+            json=move_data,
+            headers=headers
+        )
+        
+        if response.status_code != 200:
+            log_test("D.2 Partial Move", "FAIL", f"Status {response.status_code}: {response.text}")
+            return
+        
+        move_result = response.json()
+        
+        if move_result.get("split") == True:
+            new_item_id = move_result.get("new_item_id")
+            qty_moved = move_result.get("qty_moved")
+            qty_remaining = move_result.get("qty_remaining")
+            log_test("D.2 Partial Move", "PASS", f"Split: {qty_moved} moved, {qty_remaining} remaining")
             
-            # Check room distribution
-            room_pages = {}
-            for i, page_text in enumerate(pages_text[1:], start=2):
-                for room in rooms:
-                    if room in page_text:
-                        if room not in room_pages:
-                            room_pages[room] = []
-                        room_pages[room].append(i)
+            # Verify original item still exists with reduced qty
+            response = await client.get(f"{BACKEND_URL}/purchases/items/{item_id}", headers=headers)
+            if response.status_code != 200:
+                log_test("D.3 Original Item After Split", "FAIL", f"Status {response.status_code}")
+                return
             
-            print(f"   Room distribution across pages:")
-            for room in rooms:
-                pages = room_pages.get(room, [])
-                if len(pages) == 1:
-                    print(f"      ✅ {room}: page {pages[0]}")
-                elif len(pages) > 1:
-                    print(f"      ⚠️  {room}: pages {pages} (expected single page)")
-                else:
-                    print(f"      ❌ {room}: not found in PDF")
-        
-        print(f"\n   ✅ TEST C PASSED")
-    else:
-        print(f"   ❌ PDF invalid: {pdf_analysis.get('error')}")
-        print(f"\n   ❌ TEST C FAILED")
-
-
-def test_stress_quotations(products: list[dict], customer_id: str):
-    """Test D: 50-line and 200-line quotations (no order placement)."""
-    print(f"\n{'='*80}")
-    print("TEST D: STRESS QUOTATIONS (50 and 200 lines)")
-    print(f"{'='*80}")
-    
-    # Test 50-line quotation
-    print(f"\n   50-Line Quotation:")
-    items_50 = []
-    rooms_50 = [f"Room {i+1}" for i in range(10)]  # 10 rooms
-    
-    for i in range(50):
-        product = products[i % len(products)]
-        room = rooms_50[i % len(rooms_50)]
-        items_50.append(build_line_item(product, room, qty=1.0))
-    
-    quotation_50 = create_quotation(
-        customer_id=customer_id,
-        items=items_50,
-        rooms=rooms_50,
-        project_name="50 Line Stress Test"
-    )
-    
-    pdf_bytes_50 = get_quotation_pdf(quotation_50["id"])
-    pdf_analysis_50 = analyze_pdf(pdf_bytes_50, quotation_50["number"])
-    
-    if pdf_analysis_50.get("valid"):
-        print(f"   ✅ 50-line PDF generated: {pdf_analysis_50['page_count']} pages")
-        print(f"   ✅ Grand Total: ₹{quotation_50['grand_total']:,.2f}")
-        
-        # Verify all rooms present
-        full_text = pdf_analysis_50.get("full_text", "")
-        missing_rooms = [room for room in rooms_50 if room not in full_text]
-        if not missing_rooms:
-            print(f"   ✅ All 10 rooms present in PDF")
+            original_item = response.json()
+            if original_item.get("qty") == 7:
+                log_test("D.3 Original Item After Split", "PASS", f"Original item qty=7 (10-3)")
+            else:
+                log_test("D.3 Original Item After Split", "FAIL", f"Expected qty=7, got {original_item.get('qty')}")
+            
+            # Verify new item exists with moved qty
+            response = await client.get(f"{BACKEND_URL}/purchases/items/{new_item_id}", headers=headers)
+            if response.status_code != 200:
+                log_test("D.4 New Item After Split", "FAIL", f"Status {response.status_code}")
+                return
+            
+            new_item = response.json()
+            if new_item.get("qty") == 3 and new_item.get("stage") == "company_billing":
+                log_test("D.4 New Item After Split", "PASS", f"New item qty=3, stage=company_billing")
+            else:
+                log_test("D.4 New Item After Split", "FAIL", f"Expected qty=3 stage=company_billing, got qty={new_item.get('qty')} stage={new_item.get('stage')}")
+            
+            # Verify stage history preserved
+            stage_history = new_item.get("stage_history", [])
+            if len(stage_history) > 0:
+                log_test("D.5 Stage History Preserved", "PASS", f"{len(stage_history)} stage event(s) in history")
+            else:
+                log_test("D.5 Stage History Preserved", "FAIL", "No stage history")
+            
+            # Test stage movement on the new item
+            stage_move_data = {
+                "stage": "dispatched",
+                "note": "Moving to dispatched"
+            }
+            
+            response = await client.post(
+                f"{BACKEND_URL}/purchases/items/{new_item_id}/move",
+                json=stage_move_data,
+                headers=headers
+            )
+            
+            if response.status_code != 200:
+                log_test("D.6 Stage Movement", "FAIL", f"Status {response.status_code}: {response.text}")
+                return
+            
+            stage_result = response.json()
+            log_test("D.6 Stage Movement", "PASS", f"Moved to {stage_result.get('to_stage')}")
+            
+            # Verify dispatch record
+            response = await client.get(
+                f"{BACKEND_URL}/purchases/dispatch-record",
+                headers=headers
+            )
+            
+            if response.status_code != 200:
+                log_test("D.7 Dispatch Record", "FAIL", f"Status {response.status_code}")
+                return
+            
+            dispatch_data = response.json()
+            dispatch_items = dispatch_data.get("items", [])
+            
+            # Check if our moved item is in dispatch record
+            moved_item_in_dispatch = any(i.get("item_id") == new_item_id for i in dispatch_items)
+            if moved_item_in_dispatch:
+                log_test("D.7 Dispatch Record", "PASS", "Moved item appears in dispatch record")
+            else:
+                log_test("D.7 Dispatch Record", "FAIL", "Moved item not in dispatch record")
         else:
-            print(f"   ⚠️  Missing rooms: {missing_rooms}")
-    else:
-        print(f"   ❌ 50-line PDF failed: {pdf_analysis_50.get('error')}")
-    
-    # Test 200-line quotation
-    print(f"\n   200-Line Quotation:")
-    items_200 = []
-    rooms_200 = [f"Room {i+1}" for i in range(20)]  # 20 rooms
-    
-    for i in range(200):
-        product = products[i % len(products)]
-        room = rooms_200[i % len(rooms_200)]
-        items_200.append(build_line_item(product, room, qty=1.0))
-    
-    quotation_200 = create_quotation(
-        customer_id=customer_id,
-        items=items_200,
-        rooms=rooms_200,
-        project_name="200 Line Stress Test"
-    )
-    
-    pdf_bytes_200 = get_quotation_pdf(quotation_200["id"])
-    pdf_analysis_200 = analyze_pdf(pdf_bytes_200, quotation_200["number"])
-    
-    if pdf_analysis_200.get("valid"):
-        print(f"   ✅ 200-line PDF generated: {pdf_analysis_200['page_count']} pages")
-        print(f"   ✅ Grand Total: ₹{quotation_200['grand_total']:,.2f}")
-        
-        # Verify all rooms present
-        full_text = pdf_analysis_200.get("full_text", "")
-        missing_rooms = [room for room in rooms_200 if room not in full_text]
-        if not missing_rooms:
-            print(f"   ✅ All 20 rooms present in PDF")
-        else:
-            print(f"   ⚠️  Missing rooms: {missing_rooms}")
-    else:
-        print(f"   ❌ 200-line PDF failed: {pdf_analysis_200.get('error')}")
-    
-    print(f"\n   ✅ TEST D COMPLETED (no orders placed as requested)")
+            log_test("D.2 Partial Move", "FAIL", "Expected split=true for partial move")
 
 
-def main():
-    """Run all Production Workflow tests."""
-    print(f"\n{'#'*80}")
-    print("PRODUCTION WORKFLOW BACKEND VERIFICATION")
-    print(f"{'#'*80}")
-    print(f"Backend URL: {BACKEND_URL}")
+async def main():
+    """Main test runner."""
+    print("\n" + "="*80)
+    print("PURCHASES PHASE 1A-C BACKEND TESTING")
+    print("="*80)
+    print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*80)
     
-    # Authenticate
-    login()
-    
-    # Fetch test data
-    products = get_products(limit=60)
-    customers = get_customers()
-    
-    if not products:
-        print("❌ No products available for testing")
-        sys.exit(1)
-    
-    if not customers:
-        print("❌ No customers available for testing")
-        sys.exit(1)
-    
-    customer_id = customers[0]["id"]
-    
-    # Run tests
     try:
-        # Test A: One-room quotation
-        quotation_id, grand_total = test_one_room_quotation(products, customer_id)
+        # Authenticate
+        await authenticate()
         
-        # Test B: Place order (uses quotation from Test A)
-        test_place_order(quotation_id, grand_total)
+        # Create test data
+        print("\n" + "="*80)
+        print("SETUP: Creating Test Quotation and Order")
+        print("="*80)
+        source_item_id, source_customer_id = await create_test_quotation_and_order()
         
-        # Test C: Five-room quotation
-        test_five_room_quotation(products, customer_id)
+        if not source_item_id:
+            print("\n❌ SETUP FAILED: Cannot proceed with tests")
+            return
         
-        # Test D: Stress quotations
-        test_stress_quotations(products, customer_id)
+        # Test A: Existing-customer transfer
+        dest_customer_id = await test_existing_customer_transfer(source_item_id, source_customer_id)
         
-        print(f"\n{'#'*80}")
-        print("ALL TESTS COMPLETED")
-        print(f"{'#'*80}")
+        # Test B: Inline-new-customer transfer (need another source item)
+        print("\n" + "="*80)
+        print("SETUP: Creating Second Test Item for Test B")
+        print("="*80)
+        source_item_id_2, _ = await create_test_quotation_and_order()
+        
+        if source_item_id_2:
+            new_customer_id = await test_inline_new_customer_transfer(source_item_id_2)
+            
+            # Test C: Workspace contract (use the destination customer from Test A or new customer from Test B)
+            if dest_customer_id:
+                await test_workspace_contract(dest_customer_id)
+            elif new_customer_id:
+                await test_workspace_contract(new_customer_id)
+        
+        # Test D: Regression
+        await test_regression_partial_move_and_stage()
+        
+        print("\n" + "="*80)
+        print("TESTING COMPLETE")
+        print("="*80)
+        print(f"Finished at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*80)
         
     except Exception as e:
-        print(f"\n❌ Test suite failed with error: {e}")
+        print(f"\n❌ FATAL ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

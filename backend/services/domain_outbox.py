@@ -16,6 +16,7 @@ from models import ActivityEvent, Followup, Payment, PurchaseOrder, PurchaseOrde
 
 EVENT_QUOTATION_GENERATED = "QuotationGenerated"
 EVENT_ORDER_PLACED = "OrderPlaced"
+EVENT_PURCHASE_TRANSFERRED = "PurchaseTransferred"
 
 
 def now_iso() -> str:
@@ -167,7 +168,7 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         po_items = []
         for raw in group["items"]:
             po_items.append(PurchaseOrderItem(
-                product_id=raw["product_id"], sku=raw["sku"], name=raw["name"], image=raw.get("image"), category_id=raw.get("category_id"), room=raw.get("room"),
+                product_id=raw["product_id"], sku=raw["sku"], name=raw["name"], image=raw.get("image"), finish=raw.get("finish"), category_id=raw.get("category_id"), room=raw.get("room"),
                 qty=float(raw.get("qty") or 0), unit_cost=round(float(raw.get("unit_price") or 0) * (1 - float(raw.get("discount_pct") or 0) / 100), 2), quotation_line_id=raw.get("id"), stage="order_in_company",
                 customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name", ""), brand_id=group["brand_id"], brand_name=group["brand_name"],
                 last_moved_at=now, last_moved_by=event["actor_id"], last_moved_by_name=event["actor_name"],
@@ -220,6 +221,9 @@ async def dispatch_event(event_id: str) -> dict:
                 result = await _handle_quotation_generated(current, session)
             elif current["event_type"] == EVENT_ORDER_PLACED:
                 result = await _handle_order_placed(current, session)
+            elif current["event_type"] == EVENT_PURCHASE_TRANSFERRED:
+                from services.transfer_workflow import handle_purchase_transferred
+                result = await handle_purchase_transferred(current, session)
             else:
                 raise RuntimeError(f"Unsupported outbox event type {current['event_type']}")
             await db.event_outbox.update_one({"id": event_id}, {"$set": {"status": "completed", "result": result, "processed_at": now_iso(), "updated_at": now_iso()}, "$inc": {"attempts": 1}}, session=session)

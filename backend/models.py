@@ -424,6 +424,7 @@ class PurchaseOrderItem(BaseModel):
     sku: str
     name: str
     image: Optional[str] = None
+    finish: Optional[str] = None
     category_id: Optional[str] = None
     room: Optional[str] = None
     qty: float = 1
