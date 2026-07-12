@@ -211,7 +211,7 @@ async def dispatch_event(event_id: str) -> dict:
         raise RuntimeError("Outbox event not found")
     if event.get("status") == "completed":
         return event.get("result") or {"already_processed": True}
-    async with await db.client.start_session() as session:
+    async with await client.start_session() as session:
         async with session.start_transaction():
             current = await db.event_outbox.find_one({"id": event_id}, {"_id": 0}, session=session)
             if not current or current.get("status") == "completed":

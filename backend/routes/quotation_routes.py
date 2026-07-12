@@ -643,7 +643,11 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
                         raise HTTPException(status_code=404, detail="Quotation not found")
                     if not doc.get("items"):
                         raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
-                    await db.quotations.update_one({"id": quotation_id}, {"$set": {"status": "ordered", "updated_at": now_iso()}}, session=session)
+                    await db.quotations.update_one(
+                        {"id": quotation_id},
+                        {"$set": {"status": "ordered", "updated_at": now_iso()}},
+                        session=session,
+                    )
                     event = await enqueue_after_primary_commit(
                         event_type=EVENT_ORDER_PLACED,
                         idempotency_key=key,
@@ -660,3 +664,20 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
     result = await dispatch_event(event["id"])
     asyncio.create_task(reconcile_followups())
     return {"quotation_id": quotation_id, "idempotent": event.get("status") == "completed", **result}
+
+
+@router.get("/{quotation_id}/workflow-status")
+async def workflow_status(
+    quotation_id: str,
+    _: UserPublic = Depends(require_min_role("sales")),
+):
+    """Read-only audit projection for the transactional quotation workflow."""
+    quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    if not quotation:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    events = await db.event_outbox.find({"payload.quotation_id": quotation_id}, {"_id": 0}).sort("created_at", 1).to_list(50)
+    purchase_orders = await db.purchase_orders.find({"quotation_id": quotation_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    payments = await db.payments.find({"quotation_id": quotation_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    timeline = await db.activity_events.find({"quotation_id": quotation_id, "automation_key": {"$exists": True}}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    followups = await db.followups.find({"quotation_id": quotation_id, "automation_key": {"$exists": True}}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    return {"quotation_id": quotation_id, "quotation_total": round(float(quotation.get("grand_total") or 0), 2), "events": events, "purchase_orders": purchase_orders, "payments": payments, "timeline": timeline, "followups": followups}

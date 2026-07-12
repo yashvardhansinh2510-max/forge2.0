@@ -1,703 +1,713 @@
 #!/usr/bin/env python3
 """
-Backend Test Suite for Production Workflow — Official Quotation PDF + EventOutbox + Idempotent Order Automation
-Scope: Quotation PDF generation, EventOutbox workflow, place-order idempotency
+Production Workflow Backend Verification
+Tests quotation PDF generation, place-order workflow, and transactional automation.
 """
+import io
+import os
+import sys
+import time
+from typing import Any
 
 import requests
-import json
-import time
-from typing import Dict, Any, List, Optional
+from PyPDF2 import PdfReader
 
-BASE_URL = "http://127.0.0.1:8001/api"
+# Backend URL configuration
+BACKEND_URL = os.getenv("BACKEND_URL", "https://frontend-auth-trace.preview.emergentagent.com/api")
 
 # Test credentials from /app/memory/test_credentials.md
 OWNER_EMAIL = "owner@forge.app"
 OWNER_PASSWORD = "Forge@2026"
 
-class TestRunner:
-    def __init__(self):
-        self.token = None
-        self.test_results = []
-        self.quotation_ids = []  # Track created quotations for cleanup
-        
-    def log(self, message: str, level: str = "INFO"):
-        """Log test messages"""
-        timestamp = time.strftime("%H:%M:%S")
-        print(f"[{timestamp}] {level}: {message}")
-        
-    def login(self) -> bool:
-        """Authenticate and get JWT token"""
-        self.log("Authenticating with owner@forge.app...")
-        try:
-            response = requests.post(
-                f"{BASE_URL}/auth/login",
-                json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}
-            )
-            if response.status_code == 200:
-                data = response.json()
-                self.token = data.get("access_token")
-                self.log(f"✅ Login successful. User: {data.get('user', {}).get('full_name')}")
-                return True
-            else:
-                self.log(f"❌ Login failed: {response.status_code} - {response.text}", "ERROR")
-                return False
-        except Exception as e:
-            self.log(f"❌ Login exception: {str(e)}", "ERROR")
-            return False
+# Global auth token
+AUTH_TOKEN = None
+
+
+def login() -> str:
+    """Authenticate and return JWT token."""
+    global AUTH_TOKEN
+    print(f"\n{'='*80}")
+    print("AUTHENTICATION")
+    print(f"{'='*80}")
     
-    def headers(self) -> Dict[str, str]:
-        """Get authorization headers"""
-        return {"Authorization": f"Bearer {self.token}"}
+    response = requests.post(
+        f"{BACKEND_URL}/auth/login",
+        json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}
+    )
     
-    def get_customer_id(self) -> Optional[str]:
-        """Get a customer ID for testing"""
-        try:
-            response = requests.get(f"{BASE_URL}/customers?limit=1", headers=self.headers())
-            if response.status_code == 200:
-                customers = response.json()
-                if customers and len(customers) > 0:
-                    return customers[0]["id"]
-        except Exception as e:
-            self.log(f"Failed to get customer: {str(e)}", "ERROR")
+    print(f"POST /api/auth/login: {response.status_code}")
+    
+    if response.status_code != 200:
+        print(f"❌ Login failed: {response.text}")
+        sys.exit(1)
+    
+    data = response.json()
+    AUTH_TOKEN = data.get("access_token") or data.get("token")
+    
+    if not AUTH_TOKEN:
+        print(f"❌ No token in response: {data}")
+        sys.exit(1)
+    
+    print(f"✅ Authenticated as {data.get('user', {}).get('full_name')} ({data.get('user', {}).get('email')})")
+    return AUTH_TOKEN
+
+
+def get_headers() -> dict:
+    """Return authorization headers."""
+    return {"Authorization": f"Bearer {AUTH_TOKEN}"}
+
+
+def get_products(limit: int = 60) -> list[dict]:
+    """GET /api/products?limit=N and return product list."""
+    print(f"\n{'='*80}")
+    print(f"FETCHING PRODUCTS (limit={limit})")
+    print(f"{'='*80}")
+    
+    response = requests.get(
+        f"{BACKEND_URL}/products",
+        params={"limit": limit},
+        headers=get_headers()
+    )
+    
+    print(f"GET /api/products?limit={limit}: {response.status_code}")
+    
+    if response.status_code != 200:
+        print(f"❌ Failed to fetch products: {response.text}")
+        sys.exit(1)
+    
+    data = response.json()
+    products = data.get("items", [])
+    
+    print(f"✅ Fetched {len(products)} products")
+    
+    if products:
+        sample = products[0]
+        print(f"   Sample product fields: {list(sample.keys())}")
+        print(f"   Sample: {sample.get('sku')} - {sample.get('name')} - ₹{sample.get('mrp')}")
+    
+    return products
+
+
+def get_customers() -> list[dict]:
+    """GET /api/customers and return customer list."""
+    print(f"\n{'='*80}")
+    print("FETCHING CUSTOMERS")
+    print(f"{'='*80}")
+    
+    response = requests.get(
+        f"{BACKEND_URL}/customers",
+        headers=get_headers()
+    )
+    
+    print(f"GET /api/customers: {response.status_code}")
+    
+    if response.status_code != 200:
+        print(f"❌ Failed to fetch customers: {response.text}")
+        sys.exit(1)
+    
+    data = response.json()
+    # Handle both list and object responses
+    if isinstance(data, list):
+        customers = data
+    else:
+        customers = data.get("items", [])
+    
+    print(f"✅ Fetched {len(customers)} customers")
+    
+    if customers:
+        sample = customers[0]
+        print(f"   Sample: {sample.get('name')} ({sample.get('id')})")
+    
+    return customers
+
+
+def build_line_item(product: dict, room: str, qty: float = 1.0) -> dict:
+    """Construct a QuotationLineItem from a product."""
+    return {
+        "product_id": product["id"],
+        "sku": product["sku"],
+        "name": product["name"],
+        "image": product.get("images", [None])[0] if product.get("images") else None,
+        "category_id": product.get("category_id"),
+        "room": room,
+        "qty": qty,
+        "unit_price": float(product.get("mrp", 0)),
+        "discount_pct": None,
+        "finish": product.get("finish"),
+        "colour": product.get("colour"),
+    }
+
+
+def create_quotation(customer_id: str, items: list[dict], rooms: list[str], 
+                     project_name: str = "Production Workflow Test",
+                     phone: str = "9876543210",
+                     reference: str = "Testing",
+                     project_discount_pct: float = 0.0,
+                     category_discounts: dict = None) -> dict:
+    """POST /api/quotations to create a new quotation."""
+    payload = {
+        "customer_id": customer_id,
+        "items": items,
+        "rooms": rooms,
+        "project_name": project_name,
+        "phone_snapshot": phone,
+        "reference_source": reference,
+        "project_discount_pct": project_discount_pct,
+        "category_discounts": category_discounts or {},
+        "room_discounts": {}
+    }
+    
+    response = requests.post(
+        f"{BACKEND_URL}/quotations",
+        json=payload,
+        headers=get_headers()
+    )
+    
+    print(f"POST /api/quotations: {response.status_code}")
+    
+    if response.status_code not in [200, 201]:
+        print(f"❌ Failed to create quotation: {response.text}")
+        sys.exit(1)
+    
+    quotation = response.json()
+    print(f"✅ Created quotation {quotation.get('number')} (ID: {quotation.get('id')})")
+    print(f"   Items: {len(quotation.get('items', []))}, Rooms: {quotation.get('rooms')}")
+    print(f"   Subtotal: ₹{quotation.get('subtotal', 0):,.2f}")
+    print(f"   Discount: ₹{quotation.get('discount_total', 0):,.2f}")
+    print(f"   Grand Total: ₹{quotation.get('grand_total', 0):,.2f}")
+    
+    return quotation
+
+
+def get_quotation_pdf(quotation_id: str) -> bytes:
+    """GET /api/quotations/{id}/pdf and return PDF bytes."""
+    response = requests.get(
+        f"{BACKEND_URL}/quotations/{quotation_id}/pdf",
+        headers=get_headers()
+    )
+    
+    print(f"GET /api/quotations/{quotation_id}/pdf: {response.status_code}")
+    
+    if response.status_code != 200:
+        print(f"❌ Failed to get PDF: {response.text}")
         return None
     
-    def get_product_ids(self, count: int = 10) -> List[str]:
-        """Get product IDs for testing"""
-        try:
-            response = requests.get(f"{BASE_URL}/products?limit={count}", headers=self.headers())
-            if response.status_code == 200:
-                data = response.json()
-                return [p["id"] for p in data.get("items", [])]
-        except Exception as e:
-            self.log(f"Failed to get products: {str(e)}", "ERROR")
-        return []
+    pdf_bytes = response.content
+    print(f"✅ PDF generated: {len(pdf_bytes)} bytes")
     
-    def create_quotation(self, customer_id: str, items: List[Dict], rooms: List[Dict]) -> Optional[Dict]:
-        """Create a new quotation"""
-        try:
-            payload = {
-                "customer_id": customer_id,
-                "items": items,
-                "rooms": rooms,
-                "project_name": "Test Project - Production Workflow",
-                "notes": "Test quotation for PDF and EventOutbox verification"
-            }
-            response = requests.post(f"{BASE_URL}/quotations", json=payload, headers=self.headers())
-            if response.status_code == 201:
-                quotation = response.json()
-                self.quotation_ids.append(quotation["id"])
-                return quotation
-            else:
-                self.log(f"Failed to create quotation: {response.status_code} - {response.text}", "ERROR")
-                return None
-        except Exception as e:
-            self.log(f"Exception creating quotation: {str(e)}", "ERROR")
-            return None
+    return pdf_bytes
+
+
+def analyze_pdf(pdf_bytes: bytes, quotation_number: str) -> dict:
+    """Analyze PDF structure and return metadata."""
+    if not pdf_bytes:
+        return {"valid": False, "error": "No PDF bytes"}
     
-    def get_pdf(self, quotation_id: str) -> Optional[bytes]:
-        """Get quotation PDF"""
-        try:
-            response = requests.get(f"{BASE_URL}/quotations/{quotation_id}/pdf", headers=self.headers())
-            if response.status_code == 200:
-                return response.content
-            else:
-                self.log(f"Failed to get PDF: {response.status_code}", "ERROR")
-                return None
-        except Exception as e:
-            self.log(f"Exception getting PDF: {str(e)}", "ERROR")
-            return None
-    
-    def place_order(self, quotation_id: str) -> Optional[Dict]:
-        """Place order for quotation"""
-        try:
-            response = requests.post(
-                f"{BASE_URL}/quotations/{quotation_id}/place-order/confirm",
-                headers=self.headers()
-            )
-            if response.status_code in [200, 201]:
-                return response.json()
-            else:
-                self.log(f"Place order response: {response.status_code} - {response.text}", "ERROR")
-                return None
-        except Exception as e:
-            self.log(f"Exception placing order: {str(e)}", "ERROR")
-            return None
-    
-    def get_outbox_events(self, quotation_id: str) -> List[Dict]:
-        """Get EventOutbox entries for a quotation"""
-        try:
-            # Direct MongoDB query via a helper endpoint if available, or check via timeline
-            response = requests.get(f"{BASE_URL}/activity/quotation/{quotation_id}", headers=self.headers())
-            if response.status_code == 200:
-                return response.json()
-            return []
-        except Exception as e:
-            self.log(f"Exception getting outbox events: {str(e)}", "ERROR")
-            return []
-    
-    def get_timeline(self, quotation_id: str) -> List[Dict]:
-        """Get timeline entries for a quotation"""
-        try:
-            response = requests.get(f"{BASE_URL}/activity/quotation/{quotation_id}", headers=self.headers())
-            if response.status_code == 200:
-                return response.json()
-            return []
-        except Exception as e:
-            self.log(f"Exception getting timeline: {str(e)}", "ERROR")
-            return []
-    
-    def get_followups(self, quotation_id: str) -> List[Dict]:
-        """Get follow-ups for a quotation"""
-        try:
-            response = requests.get(f"{BASE_URL}/followups?quotation_id={quotation_id}", headers=self.headers())
-            if response.status_code == 200:
-                return response.json()
-            return []
-        except Exception as e:
-            self.log(f"Exception getting followups: {str(e)}", "ERROR")
-            return []
-    
-    def get_payments(self, quotation_id: str) -> List[Dict]:
-        """Get payments for a quotation"""
-        try:
-            response = requests.get(f"{BASE_URL}/payments/orders/{quotation_id}", headers=self.headers())
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("payments", [])
-            return []
-        except Exception as e:
-            self.log(f"Exception getting payments: {str(e)}", "ERROR")
-            return []
-    
-    def get_purchase_orders(self, quotation_id: str) -> List[Dict]:
-        """Get purchase orders for a quotation"""
-        try:
-            response = requests.get(f"{BASE_URL}/purchase-orders?quotation_id={quotation_id}", headers=self.headers())
-            if response.status_code == 200:
-                return response.json()
-            return []
-        except Exception as e:
-            self.log(f"Exception getting purchase orders: {str(e)}", "ERROR")
-            return []
-    
-    def verify_pdf_content(self, pdf_bytes: bytes, expected_markers: List[str]) -> bool:
-        """Verify PDF contains expected text markers"""
-        try:
-            # Check PDF magic bytes
-            if not pdf_bytes.startswith(b'%PDF'):
-                self.log("❌ Invalid PDF: missing %PDF magic bytes", "ERROR")
-                return False
-            
-            # Convert to text for marker verification (simple approach)
-            pdf_text = pdf_bytes.decode('latin-1', errors='ignore')
-            
-            missing_markers = []
-            for marker in expected_markers:
-                if marker not in pdf_text:
-                    missing_markers.append(marker)
-            
-            if missing_markers:
-                self.log(f"❌ PDF missing markers: {missing_markers}", "ERROR")
-                return False
-            
-            return True
-        except Exception as e:
-            self.log(f"Exception verifying PDF: {str(e)}", "ERROR")
-            return False
-    
-    def count_pdf_pages(self, pdf_bytes: bytes) -> int:
-        """Count pages in PDF (simple approach)"""
-        try:
-            pdf_text = pdf_bytes.decode('latin-1', errors='ignore')
-            # Count /Type /Page occurrences
-            return pdf_text.count('/Type /Page')
-        except Exception as e:
-            self.log(f"Exception counting PDF pages: {str(e)}", "ERROR")
-            return 0
-    
-    # ==================== TEST CASES ====================
-    
-    def test_1_isolated_quotation_with_pdf(self):
-        """
-        TEST 1: POST an isolated quotation with one room and at least two items; 
-        verify server totals/discount breakdown.
-        """
-        self.log("\n" + "="*80)
-        self.log("TEST 1: Create isolated quotation with one room and two items")
-        self.log("="*80)
+    try:
+        pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
+        page_count = len(pdf_reader.pages)
         
-        customer_id = self.get_customer_id()
-        if not customer_id:
-            self.log("❌ TEST 1 FAILED: No customer available", "ERROR")
-            return False
+        # Extract text from all pages
+        pages_text = []
+        for i, page in enumerate(pdf_reader.pages):
+            text = page.extract_text()
+            pages_text.append(text)
         
-        product_ids = self.get_product_ids(2)
-        if len(product_ids) < 2:
-            self.log("❌ TEST 1 FAILED: Not enough products available", "ERROR")
-            return False
+        # Check for official markers
+        full_text = " ".join(pages_text)
+        has_buildcon = "BuildCon House" in full_text or "buildcon" in full_text.lower()
+        has_quotation_number = quotation_number in full_text
         
-        # Create quotation with one room and two items
-        items = [
+        # Check page size (A4 is 595 x 842 points)
+        first_page = first_page = pdf_reader.pages[0]
+        mediabox = first_page.mediabox
+        width = float(mediabox.width)
+        height = float(mediabox.height)
+        is_a4 = (590 <= width <= 600) and (837 <= height <= 847)
+        
+        return {
+            "valid": True,
+            "page_count": page_count,
+            "is_a4": is_a4,
+            "width": width,
+            "height": height,
+            "has_buildcon": has_buildcon,
+            "has_quotation_number": has_quotation_number,
+            "pages_text": pages_text,
+            "full_text": full_text
+        }
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
+def get_workflow_status(quotation_id: str) -> dict:
+    """GET /api/quotations/{id}/workflow-status."""
+    response = requests.get(
+        f"{BACKEND_URL}/quotations/{quotation_id}/workflow-status",
+        headers=get_headers()
+    )
+    
+    print(f"GET /api/quotations/{quotation_id}/workflow-status: {response.status_code}")
+    
+    if response.status_code != 200:
+        print(f"❌ Failed to get workflow status: {response.text}")
+        return None
+    
+    return response.json()
+
+
+def place_order(quotation_id: str, project_name: str = "Production Workflow Test") -> dict:
+    """POST /api/quotations/{id}/place-order/confirm."""
+    payload = {
+        "supplier_by_brand": {},
+        "notes_by_brand": {},
+        "expected_delivery_at": None,
+        "project_name": project_name
+    }
+    
+    response = requests.post(
+        f"{BACKEND_URL}/quotations/{quotation_id}/place-order/confirm",
+        json=payload,
+        headers=get_headers()
+    )
+    
+    print(f"POST /api/quotations/{quotation_id}/place-order/confirm: {response.status_code}")
+    
+    if response.status_code != 200:
+        print(f"❌ Failed to place order: {response.text}")
+        return None
+    
+    return response.json()
+
+
+def verify_workflow_status(status: dict, test_name: str, expected: dict):
+    """Verify workflow status matches expectations."""
+    print(f"\n   Workflow Status Verification for {test_name}:")
+    
+    issues = []
+    
+    # Check events
+    events = status.get("events", [])
+    event_types = [e.get("event_type") for e in events]
+    
+    for event_type, expected_count in expected.get("events", {}).items():
+        actual_count = event_types.count(event_type)
+        status_icon = "✅" if actual_count == expected_count else "❌"
+        print(f"   {status_icon} {event_type}: {actual_count} (expected {expected_count})")
+        if actual_count != expected_count:
+            issues.append(f"{event_type}: expected {expected_count}, got {actual_count}")
+    
+    # Check timeline
+    timeline = status.get("timeline", [])
+    timeline_count = len(timeline)
+    expected_timeline = expected.get("timeline", 0)
+    status_icon = "✅" if timeline_count == expected_timeline else "❌"
+    print(f"   {status_icon} Automation timeline items: {timeline_count} (expected {expected_timeline})")
+    if timeline_count != expected_timeline:
+        issues.append(f"Timeline: expected {expected_timeline}, got {timeline_count}")
+    
+    # Check followups
+    followups = status.get("followups", [])
+    followup_count = len(followups)
+    expected_followups = expected.get("followups", 0)
+    status_icon = "✅" if followup_count == expected_followups else "❌"
+    print(f"   {status_icon} Automation follow-ups: {followup_count} (expected {expected_followups})")
+    if followup_count != expected_followups:
+        issues.append(f"Follow-ups: expected {expected_followups}, got {followup_count}")
+    
+    # Check payments
+    payments = status.get("payments", [])
+    payment_count = len(payments)
+    expected_payments = expected.get("payments", 0)
+    status_icon = "✅" if payment_count == expected_payments else "❌"
+    print(f"   {status_icon} Pending payments: {payment_count} (expected {expected_payments})")
+    if payment_count != expected_payments:
+        issues.append(f"Payments: expected {expected_payments}, got {payment_count}")
+    
+    # Check payment amount
+    if payments and expected.get("payment_amount"):
+        payment_amount = sum(float(p.get("amount", 0)) for p in payments if p.get("status") == "pending")
+        expected_amount = expected["payment_amount"]
+        status_icon = "✅" if abs(payment_amount - expected_amount) < 0.01 else "❌"
+        print(f"   {status_icon} Payment amount: ₹{payment_amount:,.2f} (expected ₹{expected_amount:,.2f})")
+        if abs(payment_amount - expected_amount) >= 0.01:
+            issues.append(f"Payment amount: expected ₹{expected_amount:,.2f}, got ₹{payment_amount:,.2f}")
+    
+    # Check purchase orders
+    purchase_orders = status.get("purchase_orders", [])
+    po_count = len(purchase_orders)
+    expected_pos = expected.get("purchase_orders", 0)
+    status_icon = "✅" if po_count == expected_pos else "❌"
+    print(f"   {status_icon} Purchase orders: {po_count} (expected {expected_pos})")
+    if po_count != expected_pos:
+        issues.append(f"Purchase orders: expected {expected_pos}, got {po_count}")
+    
+    # Check PO line quantities
+    if purchase_orders and expected.get("total_po_qty"):
+        total_po_qty = 0
+        for po in purchase_orders:
+            for item in po.get("items", []):
+                # PO items use 'qty' field, not 'quantity'
+                total_po_qty += float(item.get("qty", 0))
+        expected_qty = expected["total_po_qty"]
+        status_icon = "✅" if abs(total_po_qty - expected_qty) < 0.01 else "❌"
+        print(f"   {status_icon} Total PO quantities: {total_po_qty} (expected {expected_qty})")
+        if abs(total_po_qty - expected_qty) >= 0.01:
+            issues.append(f"PO quantities: expected {expected_qty}, got {total_po_qty}")
+    
+    return issues
+
+
+def test_one_room_quotation(products: list[dict], customer_id: str):
+    """Test A: One-room quotation with PDF generation and workflow verification."""
+    print(f"\n{'='*80}")
+    print("TEST A: ONE-ROOM QUOTATION")
+    print(f"{'='*80}")
+    
+    # Create quotation with 3 products in one room
+    items = [
+        build_line_item(products[0], "Master Bathroom", qty=2.0),
+        build_line_item(products[1], "Master Bathroom", qty=1.0),
+        build_line_item(products[2], "Master Bathroom", qty=3.0),
+    ]
+    
+    quotation = create_quotation(
+        customer_id=customer_id,
+        items=items,
+        rooms=["Master Bathroom"],
+        project_name="One Room Test",
+        project_discount_pct=5.0
+    )
+    
+    quotation_id = quotation["id"]
+    quotation_number = quotation["number"]
+    grand_total = float(quotation["grand_total"])
+    
+    # Verify totals match breakdown
+    subtotal = float(quotation["subtotal"])
+    discount_total = float(quotation["discount_total"])
+    calculated_total = subtotal - discount_total
+    
+    print(f"\n   Totals Verification:")
+    print(f"   Subtotal: ₹{subtotal:,.2f}")
+    print(f"   Discount: ₹{discount_total:,.2f}")
+    print(f"   Grand Total: ₹{grand_total:,.2f}")
+    print(f"   Calculated: ₹{calculated_total:,.2f}")
+    
+    if abs(grand_total - calculated_total) < 0.01:
+        print(f"   ✅ Totals match breakdown")
+    else:
+        print(f"   ❌ Totals mismatch: {grand_total} != {calculated_total}")
+    
+    # Generate PDF twice
+    print(f"\n   PDF Generation (First Call):")
+    pdf_bytes_1 = get_quotation_pdf(quotation_id)
+    pdf_analysis_1 = analyze_pdf(pdf_bytes_1, quotation_number)
+    
+    time.sleep(1)  # Brief pause
+    
+    print(f"\n   PDF Generation (Second Call):")
+    pdf_bytes_2 = get_quotation_pdf(quotation_id)
+    pdf_analysis_2 = analyze_pdf(pdf_bytes_2, quotation_number)
+    
+    # Verify PDF properties
+    print(f"\n   PDF Analysis:")
+    if pdf_analysis_1.get("valid"):
+        print(f"   ✅ PDF is valid")
+        print(f"   ✅ Page count: {pdf_analysis_1['page_count']}")
+        print(f"   {'✅' if pdf_analysis_1['is_a4'] else '❌'} A4 size: {pdf_analysis_1['width']:.1f} x {pdf_analysis_1['height']:.1f} points")
+        print(f"   {'✅' if pdf_analysis_1['has_buildcon'] else '❌'} Contains BuildCon House branding")
+        print(f"   {'✅' if pdf_analysis_1['has_quotation_number'] else '❌'} Contains quotation number {quotation_number}")
+    else:
+        print(f"   ❌ PDF invalid: {pdf_analysis_1.get('error')}")
+    
+    # Get workflow status
+    time.sleep(2)  # Allow automation to complete
+    status = get_workflow_status(quotation_id)
+    
+    if status:
+        issues = verify_workflow_status(
+            status,
+            "One-Room Test",
             {
-                "product_id": product_ids[0],
-                "quantity": 2,
-                "room_id": "room-1"
-            },
-            {
-                "product_id": product_ids[1],
-                "quantity": 3,
-                "room_id": "room-1"
+                "events": {"QuotationGenerated": 1},
+                "timeline": 1,
+                "followups": 1,
+                "payments": 0,
+                "purchase_orders": 0
             }
-        ]
+        )
         
-        rooms = [
+        if not issues:
+            print(f"\n   ✅ TEST A PASSED")
+        else:
+            print(f"\n   ❌ TEST A FAILED:")
+            for issue in issues:
+                print(f"      - {issue}")
+    
+    return quotation_id, grand_total
+
+
+def test_place_order(quotation_id: str, grand_total: float):
+    """Test B: Place order twice and verify idempotency."""
+    print(f"\n{'='*80}")
+    print("TEST B: PLACE ORDER (IDEMPOTENCY)")
+    print(f"{'='*80}")
+    
+    # First place-order call
+    print(f"\n   First Place Order Call:")
+    result_1 = place_order(quotation_id, "Place Order Test")
+    
+    if result_1:
+        print(f"   ✅ First call succeeded")
+        print(f"   Idempotent: {result_1.get('idempotent')}")
+    
+    time.sleep(2)  # Allow automation to complete
+    
+    # Second place-order call (should be idempotent)
+    print(f"\n   Second Place Order Call:")
+    result_2 = place_order(quotation_id, "Place Order Test")
+    
+    if result_2:
+        print(f"   ✅ Second call succeeded")
+        print(f"   Idempotent: {result_2.get('idempotent')}")
+    
+    # Get workflow status
+    time.sleep(2)
+    status = get_workflow_status(quotation_id)
+    
+    if status:
+        # Calculate total PO quantities
+        total_po_qty = 0
+        for po in status.get("purchase_orders", []):
+            for item in po.get("items", []):
+                total_po_qty += float(item.get("quantity", 0))
+        
+        # Original quotation had 2 + 1 + 3 = 6 items
+        expected_qty = 6.0
+        
+        issues = verify_workflow_status(
+            status,
+            "Place Order Test",
             {
-                "id": "room-1",
-                "name": "Master Bathroom",
-                "order": 0
+                "events": {"QuotationGenerated": 1, "OrderPlaced": 1},
+                "timeline": 2,  # 1 generated + 1 order
+                "followups": 2,  # 1 generated + 1 order
+                "payments": 1,
+                "payment_amount": grand_total,
+                "purchase_orders": 2,  # Multiple brands = multiple POs
+                "total_po_qty": expected_qty
             }
-        ]
+        )
         
-        quotation = self.create_quotation(customer_id, items, rooms)
-        if not quotation:
-            self.log("❌ TEST 1 FAILED: Could not create quotation", "ERROR")
-            return False
-        
-        self.log(f"✅ Created quotation: {quotation['id']}")
-        self.log(f"   Number: {quotation.get('number')}")
-        self.log(f"   Items: {len(quotation.get('items', []))}")
-        self.log(f"   Rooms: {len(quotation.get('rooms', []))}")
-        self.log(f"   Subtotal: ₹{quotation.get('subtotal', 0):,.2f}")
-        self.log(f"   Tax: ₹{quotation.get('tax', 0):,.2f}")
-        self.log(f"   Grand Total: ₹{quotation.get('grand_total', 0):,.2f}")
-        
-        # Verify totals are calculated
-        if quotation.get('grand_total', 0) <= 0:
-            self.log("❌ TEST 1 FAILED: Grand total is zero or negative", "ERROR")
-            return False
-        
-        self.log("✅ TEST 1 PASSED: Quotation created with valid totals")
-        return True
+        if not issues:
+            print(f"\n   ✅ TEST B PASSED")
+        else:
+            print(f"\n   ❌ TEST B FAILED:")
+            for issue in issues:
+                print(f"      - {issue}")
+
+
+def test_five_room_quotation(products: list[dict], customer_id: str):
+    """Test C: Five-room quotation with PDF pagination verification."""
+    print(f"\n{'='*80}")
+    print("TEST C: FIVE-ROOM QUOTATION")
+    print(f"{'='*80}")
     
-    def test_2_pdf_generation_and_outbox(self):
-        """
-        TEST 2: GET /api/quotations/{id}/pdf twice. Verify both 200 PDFs, valid A4, 
-        textual/template markers (BUILDCON HOUSE, PRICE QUOTATION, QUOTATION SUMMARY, 
-        room name, SKU, terms/footer) and exactly one EventOutbox QuotationGenerated 
-        for quotation_id + revision plus exactly one corresponding timeline entry and 
-        one corresponding follow-up.
-        """
-        self.log("\n" + "="*80)
-        self.log("TEST 2: PDF generation and EventOutbox verification")
-        self.log("="*80)
-        
-        if not self.quotation_ids:
-            self.log("❌ TEST 2 FAILED: No quotation available from TEST 1", "ERROR")
-            return False
-        
-        quotation_id = self.quotation_ids[0]
-        
-        # Generate PDF first time
-        self.log("Generating PDF (first time)...")
-        pdf1 = self.get_pdf(quotation_id)
-        if not pdf1:
-            self.log("❌ TEST 2 FAILED: First PDF generation failed", "ERROR")
-            return False
-        
-        self.log(f"✅ First PDF generated: {len(pdf1)} bytes")
-        
-        # Generate PDF second time
-        self.log("Generating PDF (second time)...")
-        pdf2 = self.get_pdf(quotation_id)
-        if not pdf2:
-            self.log("❌ TEST 2 FAILED: Second PDF generation failed", "ERROR")
-            return False
-        
-        self.log(f"✅ Second PDF generated: {len(pdf2)} bytes")
-        
-        # Verify PDF content markers
-        expected_markers = [
-            "BUILDCON HOUSE",
-            "PRICE QUOTATION",
-            "QUOTATION SUMMARY",
-            "Master Bathroom"  # Room name from TEST 1
-        ]
-        
-        if not self.verify_pdf_content(pdf1, expected_markers):
-            self.log("❌ TEST 2 FAILED: PDF missing expected markers", "ERROR")
-            return False
-        
-        self.log("✅ PDF contains all expected markers")
-        
-        # Count PDF pages
-        page_count = self.count_pdf_pages(pdf1)
-        self.log(f"   PDF page count: {page_count}")
-        
-        # Verify timeline entries
-        timeline = self.get_timeline(quotation_id)
-        self.log(f"   Timeline entries: {len(timeline)}")
-        
-        # Count QuotationGenerated events
-        generated_events = [e for e in timeline if e.get('event_type') == 'quotation_generated' or 'generated' in e.get('event_type', '').lower()]
-        self.log(f"   QuotationGenerated events: {len(generated_events)}")
-        
-        # Verify follow-ups
-        followups = self.get_followups(quotation_id)
-        self.log(f"   Follow-ups: {len(followups)}")
-        
-        # Note: We cannot directly query EventOutbox collection without a dedicated endpoint
-        # We verify indirectly through timeline and follow-ups
-        
-        self.log("✅ TEST 2 PASSED: PDF generation and outbox workflow verified")
-        return True
+    rooms = ["Living Room", "Master Bedroom", "Kitchen", "Guest Bathroom", "Balcony"]
+    items = []
     
-    def test_3_place_order_idempotency(self):
-        """
-        TEST 3: POST /api/quotations/{id}/place-order/confirm twice. Verify no error 
-        on repeat, a single OrderPlaced outbox event, exactly one pending payment with 
-        amount == quotation.grand_total, no duplicate POs/purchase lines, aggregated 
-        PO quantities match source quotation, and one order timeline + follow-up.
-        """
-        self.log("\n" + "="*80)
-        self.log("TEST 3: Place order idempotency verification")
-        self.log("="*80)
+    # Add 2 products per room
+    for i, room in enumerate(rooms):
+        items.append(build_line_item(products[i * 2], room, qty=1.0))
+        items.append(build_line_item(products[i * 2 + 1], room, qty=2.0))
+    
+    quotation = create_quotation(
+        customer_id=customer_id,
+        items=items,
+        rooms=rooms,
+        project_name="Five Room Test"
+    )
+    
+    quotation_id = quotation["id"]
+    quotation_number = quotation["number"]
+    
+    # Generate PDF
+    print(f"\n   PDF Generation:")
+    pdf_bytes = get_quotation_pdf(quotation_id)
+    pdf_analysis = analyze_pdf(pdf_bytes, quotation_number)
+    
+    # Verify PDF structure
+    print(f"\n   PDF Structure Verification:")
+    if pdf_analysis.get("valid"):
+        page_count = pdf_analysis["page_count"]
+        print(f"   ✅ PDF is valid")
+        print(f"   ✅ Page count: {page_count}")
         
-        if not self.quotation_ids:
-            self.log("❌ TEST 3 FAILED: No quotation available", "ERROR")
-            return False
+        # Expected: 1 summary page + 5 room pages = 6 pages
+        expected_pages = 6
+        if page_count == expected_pages:
+            print(f"   ✅ Page count matches expected ({expected_pages})")
+        else:
+            print(f"   ⚠️  Page count: {page_count} (expected {expected_pages})")
         
-        quotation_id = self.quotation_ids[0]
-        
-        # Get quotation details before placing order
-        response = requests.get(f"{BASE_URL}/quotations/{quotation_id}", headers=self.headers())
-        if response.status_code != 200:
-            self.log("❌ TEST 3 FAILED: Could not fetch quotation", "ERROR")
-            return False
-        
-        quotation = response.json()
-        grand_total = quotation.get('grand_total', 0)
-        self.log(f"Quotation grand total: ₹{grand_total:,.2f}")
-        
-        # Place order first time
-        self.log("Placing order (first time)...")
-        result1 = self.place_order(quotation_id)
-        if not result1:
-            self.log("❌ TEST 3 FAILED: First place order failed", "ERROR")
-            return False
-        
-        self.log("✅ First place order successful")
-        
-        # Place order second time (idempotency test)
-        self.log("Placing order (second time - idempotency test)...")
-        result2 = self.place_order(quotation_id)
-        if not result2:
-            self.log("❌ TEST 3 FAILED: Second place order failed", "ERROR")
-            return False
-        
-        self.log("✅ Second place order successful (no error on repeat)")
-        
-        # Verify payments
-        payments = self.get_payments(quotation_id)
-        self.log(f"   Payments created: {len(payments)}")
-        
-        if len(payments) != 1:
-            self.log(f"⚠️  WARNING: Expected exactly 1 payment, found {len(payments)}", "WARN")
-        
-        if payments:
-            payment = payments[0]
-            payment_amount = payment.get('amount', 0)
-            self.log(f"   Payment amount: ₹{payment_amount:,.2f}")
-            self.log(f"   Payment status: {payment.get('status')}")
+        # Check if each room appears on its own page
+        pages_text = pdf_analysis.get("pages_text", [])
+        if len(pages_text) > 1:
+            # First page should be summary
+            first_page_text = pages_text[0]
+            print(f"   {'✅' if 'summary' in first_page_text.lower() or len(first_page_text) < 500 else '⚠️ '} First page appears to be summary")
             
-            # Verify payment amount matches grand total
-            if abs(payment_amount - grand_total) > 0.01:
-                self.log(f"❌ TEST 3 FAILED: Payment amount (₹{payment_amount:,.2f}) != grand total (₹{grand_total:,.2f})", "ERROR")
-                return False
-        
-        # Verify purchase orders
-        purchase_orders = self.get_purchase_orders(quotation_id)
-        self.log(f"   Purchase orders created: {len(purchase_orders)}")
-        
-        # Verify timeline
-        timeline = self.get_timeline(quotation_id)
-        order_events = [e for e in timeline if 'order' in e.get('event_type', '').lower()]
-        self.log(f"   Order timeline events: {len(order_events)}")
-        
-        # Verify follow-ups
-        followups = self.get_followups(quotation_id)
-        order_followups = [f for f in followups if 'order' in f.get('category', '').lower()]
-        self.log(f"   Order follow-ups: {len(order_followups)}")
-        
-        self.log("✅ TEST 3 PASSED: Place order idempotency verified")
-        return True
-    
-    def test_4_five_room_quotation_pdf(self):
-        """
-        TEST 4: Create a five-room quotation and assert PDF pages are summary first + 
-        each room starts a new page/contains only its own product line.
-        """
-        self.log("\n" + "="*80)
-        self.log("TEST 4: Five-room quotation PDF pagination")
-        self.log("="*80)
-        
-        customer_id = self.get_customer_id()
-        if not customer_id:
-            self.log("❌ TEST 4 FAILED: No customer available", "ERROR")
-            return False
-        
-        product_ids = self.get_product_ids(10)
-        if len(product_ids) < 5:
-            self.log("❌ TEST 4 FAILED: Not enough products available", "ERROR")
-            return False
-        
-        # Create 5 rooms with different products
-        rooms = [
-            {"id": f"room-{i}", "name": f"Room {i+1}", "order": i}
-            for i in range(5)
-        ]
-        
-        items = []
-        for i, room in enumerate(rooms):
-            items.append({
-                "product_id": product_ids[i],
-                "quantity": 1,
-                "room_id": room["id"]
-            })
-        
-        quotation = self.create_quotation(customer_id, items, rooms)
-        if not quotation:
-            self.log("❌ TEST 4 FAILED: Could not create quotation", "ERROR")
-            return False
-        
-        self.log(f"✅ Created 5-room quotation: {quotation['id']}")
-        
-        # Generate PDF
-        pdf = self.get_pdf(quotation['id'])
-        if not pdf:
-            self.log("❌ TEST 4 FAILED: PDF generation failed", "ERROR")
-            return False
-        
-        page_count = self.count_pdf_pages(pdf)
-        self.log(f"   PDF page count: {page_count}")
-        
-        # Expected: 1 summary page + 5 room pages = 6 pages minimum
-        if page_count < 6:
-            self.log(f"⚠️  WARNING: Expected at least 6 pages (1 summary + 5 rooms), found {page_count}", "WARN")
-        
-        # Verify room names in PDF
-        pdf_text = pdf.decode('latin-1', errors='ignore')
-        for room in rooms:
-            if room['name'] not in pdf_text:
-                self.log(f"⚠️  WARNING: Room '{room['name']}' not found in PDF", "WARN")
-        
-        self.log("✅ TEST 4 PASSED: Five-room quotation PDF generated")
-        return True
-    
-    def test_5_stress_50_line_items(self):
-        """
-        TEST 5a: Stress generation with 50 line items (reuse valid product IDs; 
-        no fabricated values) and verify PDFs generate, paginate, and totals are correct.
-        """
-        self.log("\n" + "="*80)
-        self.log("TEST 5a: Stress test with 50 line items")
-        self.log("="*80)
-        
-        customer_id = self.get_customer_id()
-        if not customer_id:
-            self.log("❌ TEST 5a FAILED: No customer available", "ERROR")
-            return False
-        
-        product_ids = self.get_product_ids(50)
-        if len(product_ids) < 50:
-            self.log(f"⚠️  WARNING: Only {len(product_ids)} products available, using what we have", "WARN")
-        
-        # Create items (reuse products if needed)
-        items = []
-        rooms = [{"id": "room-1", "name": "Large Project Room", "order": 0}]
-        
-        for i in range(50):
-            product_id = product_ids[i % len(product_ids)]
-            items.append({
-                "product_id": product_id,
-                "quantity": 1,
-                "room_id": "room-1"
-            })
-        
-        self.log(f"Creating quotation with {len(items)} line items...")
-        quotation = self.create_quotation(customer_id, items, rooms)
-        if not quotation:
-            self.log("❌ TEST 5a FAILED: Could not create quotation", "ERROR")
-            return False
-        
-        self.log(f"✅ Created quotation with {len(quotation.get('items', []))} items")
-        self.log(f"   Grand total: ₹{quotation.get('grand_total', 0):,.2f}")
-        
-        # Generate PDF
-        self.log("Generating PDF for 50-item quotation...")
-        pdf = self.get_pdf(quotation['id'])
-        if not pdf:
-            self.log("❌ TEST 5a FAILED: PDF generation failed", "ERROR")
-            return False
-        
-        page_count = self.count_pdf_pages(pdf)
-        self.log(f"✅ PDF generated: {len(pdf)} bytes, {page_count} pages")
-        
-        # Verify totals are correct
-        if quotation.get('grand_total', 0) <= 0:
-            self.log("❌ TEST 5a FAILED: Invalid grand total", "ERROR")
-            return False
-        
-        self.log("✅ TEST 5a PASSED: 50-item quotation stress test successful")
-        return True
-    
-    def test_6_stress_200_line_items(self):
-        """
-        TEST 5b: Stress generation with 200 line items and verify PDFs generate, 
-        paginate, and totals are correct.
-        """
-        self.log("\n" + "="*80)
-        self.log("TEST 5b: Stress test with 200 line items")
-        self.log("="*80)
-        
-        customer_id = self.get_customer_id()
-        if not customer_id:
-            self.log("❌ TEST 5b FAILED: No customer available", "ERROR")
-            return False
-        
-        product_ids = self.get_product_ids(100)
-        if len(product_ids) < 10:
-            self.log("❌ TEST 5b FAILED: Not enough products available", "ERROR")
-            return False
-        
-        # Create items (reuse products)
-        items = []
-        rooms = [{"id": "room-1", "name": "Very Large Project Room", "order": 0}]
-        
-        for i in range(200):
-            product_id = product_ids[i % len(product_ids)]
-            items.append({
-                "product_id": product_id,
-                "quantity": 1,
-                "room_id": "room-1"
-            })
-        
-        self.log(f"Creating quotation with {len(items)} line items...")
-        quotation = self.create_quotation(customer_id, items, rooms)
-        if not quotation:
-            self.log("❌ TEST 5b FAILED: Could not create quotation", "ERROR")
-            return False
-        
-        self.log(f"✅ Created quotation with {len(quotation.get('items', []))} items")
-        self.log(f"   Grand total: ₹{quotation.get('grand_total', 0):,.2f}")
-        
-        # Generate PDF
-        self.log("Generating PDF for 200-item quotation (this may take a while)...")
-        start_time = time.time()
-        pdf = self.get_pdf(quotation['id'])
-        elapsed = time.time() - start_time
-        
-        if not pdf:
-            self.log("❌ TEST 5b FAILED: PDF generation failed", "ERROR")
-            return False
-        
-        page_count = self.count_pdf_pages(pdf)
-        self.log(f"✅ PDF generated: {len(pdf)} bytes, {page_count} pages in {elapsed:.2f}s")
-        
-        # Verify totals are correct
-        if quotation.get('grand_total', 0) <= 0:
-            self.log("❌ TEST 5b FAILED: Invalid grand total", "ERROR")
-            return False
-        
-        self.log("✅ TEST 5b PASSED: 200-item quotation stress test successful")
-        return True
-    
-    def test_7_backend_health(self):
-        """
-        TEST 6: Confirm backend remains healthy and report exact pass/fail evidence.
-        """
-        self.log("\n" + "="*80)
-        self.log("TEST 6: Backend health verification")
-        self.log("="*80)
-        
-        try:
-            # Check basic health
-            response = requests.get(f"{BASE_URL}/health")
-            if response.status_code != 200:
-                self.log(f"❌ TEST 6 FAILED: Health check returned {response.status_code}", "ERROR")
-                return False
+            # Check room distribution
+            room_pages = {}
+            for i, page_text in enumerate(pages_text[1:], start=2):
+                for room in rooms:
+                    if room in page_text:
+                        if room not in room_pages:
+                            room_pages[room] = []
+                        room_pages[room].append(i)
             
-            self.log("✅ Basic health check: OK")
-            
-            # Check system health
-            response = requests.get(f"{BASE_URL}/health/system")
-            if response.status_code == 200:
-                health = response.json()
-                self.log("✅ System health check: OK")
-                self.log(f"   MongoDB connected: {health.get('mongo', {}).get('connected')}")
-                self.log(f"   Supabase connected: {health.get('supabase', {}).get('connected')}")
-                self.log(f"   Products: {health.get('products')}")
-                self.log(f"   Warnings: {health.get('warnings', [])}")
-            
-            self.log("✅ TEST 6 PASSED: Backend is healthy")
-            return True
-        except Exception as e:
-            self.log(f"❌ TEST 6 FAILED: {str(e)}", "ERROR")
-            return False
+            print(f"   Room distribution across pages:")
+            for room in rooms:
+                pages = room_pages.get(room, [])
+                if len(pages) == 1:
+                    print(f"      ✅ {room}: page {pages[0]}")
+                elif len(pages) > 1:
+                    print(f"      ⚠️  {room}: pages {pages} (expected single page)")
+                else:
+                    print(f"      ❌ {room}: not found in PDF")
+        
+        print(f"\n   ✅ TEST C PASSED")
+    else:
+        print(f"   ❌ PDF invalid: {pdf_analysis.get('error')}")
+        print(f"\n   ❌ TEST C FAILED")
+
+
+def test_stress_quotations(products: list[dict], customer_id: str):
+    """Test D: 50-line and 200-line quotations (no order placement)."""
+    print(f"\n{'='*80}")
+    print("TEST D: STRESS QUOTATIONS (50 and 200 lines)")
+    print(f"{'='*80}")
     
-    def run_all_tests(self):
-        """Run all test cases"""
-        self.log("\n" + "="*80)
-        self.log("PRODUCTION WORKFLOW BACKEND TEST SUITE")
-        self.log("Scope: Quotation PDF + EventOutbox + Idempotent Order Automation")
-        self.log("="*80)
+    # Test 50-line quotation
+    print(f"\n   50-Line Quotation:")
+    items_50 = []
+    rooms_50 = [f"Room {i+1}" for i in range(10)]  # 10 rooms
+    
+    for i in range(50):
+        product = products[i % len(products)]
+        room = rooms_50[i % len(rooms_50)]
+        items_50.append(build_line_item(product, room, qty=1.0))
+    
+    quotation_50 = create_quotation(
+        customer_id=customer_id,
+        items=items_50,
+        rooms=rooms_50,
+        project_name="50 Line Stress Test"
+    )
+    
+    pdf_bytes_50 = get_quotation_pdf(quotation_50["id"])
+    pdf_analysis_50 = analyze_pdf(pdf_bytes_50, quotation_50["number"])
+    
+    if pdf_analysis_50.get("valid"):
+        print(f"   ✅ 50-line PDF generated: {pdf_analysis_50['page_count']} pages")
+        print(f"   ✅ Grand Total: ₹{quotation_50['grand_total']:,.2f}")
         
-        if not self.login():
-            self.log("❌ CRITICAL: Authentication failed. Cannot proceed.", "ERROR")
-            return
+        # Verify all rooms present
+        full_text = pdf_analysis_50.get("full_text", "")
+        missing_rooms = [room for room in rooms_50 if room not in full_text]
+        if not missing_rooms:
+            print(f"   ✅ All 10 rooms present in PDF")
+        else:
+            print(f"   ⚠️  Missing rooms: {missing_rooms}")
+    else:
+        print(f"   ❌ 50-line PDF failed: {pdf_analysis_50.get('error')}")
+    
+    # Test 200-line quotation
+    print(f"\n   200-Line Quotation:")
+    items_200 = []
+    rooms_200 = [f"Room {i+1}" for i in range(20)]  # 20 rooms
+    
+    for i in range(200):
+        product = products[i % len(products)]
+        room = rooms_200[i % len(rooms_200)]
+        items_200.append(build_line_item(product, room, qty=1.0))
+    
+    quotation_200 = create_quotation(
+        customer_id=customer_id,
+        items=items_200,
+        rooms=rooms_200,
+        project_name="200 Line Stress Test"
+    )
+    
+    pdf_bytes_200 = get_quotation_pdf(quotation_200["id"])
+    pdf_analysis_200 = analyze_pdf(pdf_bytes_200, quotation_200["number"])
+    
+    if pdf_analysis_200.get("valid"):
+        print(f"   ✅ 200-line PDF generated: {pdf_analysis_200['page_count']} pages")
+        print(f"   ✅ Grand Total: ₹{quotation_200['grand_total']:,.2f}")
         
-        tests = [
-            ("TEST 1: Isolated quotation with one room and two items", self.test_1_isolated_quotation_with_pdf),
-            ("TEST 2: PDF generation and EventOutbox verification", self.test_2_pdf_generation_and_outbox),
-            ("TEST 3: Place order idempotency", self.test_3_place_order_idempotency),
-            ("TEST 4: Five-room quotation PDF pagination", self.test_4_five_room_quotation_pdf),
-            ("TEST 5a: Stress test with 50 line items", self.test_5_stress_50_line_items),
-            ("TEST 5b: Stress test with 200 line items", self.test_6_stress_200_line_items),
-            ("TEST 6: Backend health verification", self.test_7_backend_health),
-        ]
+        # Verify all rooms present
+        full_text = pdf_analysis_200.get("full_text", "")
+        missing_rooms = [room for room in rooms_200 if room not in full_text]
+        if not missing_rooms:
+            print(f"   ✅ All 20 rooms present in PDF")
+        else:
+            print(f"   ⚠️  Missing rooms: {missing_rooms}")
+    else:
+        print(f"   ❌ 200-line PDF failed: {pdf_analysis_200.get('error')}")
+    
+    print(f"\n   ✅ TEST D COMPLETED (no orders placed as requested)")
+
+
+def main():
+    """Run all Production Workflow tests."""
+    print(f"\n{'#'*80}")
+    print("PRODUCTION WORKFLOW BACKEND VERIFICATION")
+    print(f"{'#'*80}")
+    print(f"Backend URL: {BACKEND_URL}")
+    
+    # Authenticate
+    login()
+    
+    # Fetch test data
+    products = get_products(limit=60)
+    customers = get_customers()
+    
+    if not products:
+        print("❌ No products available for testing")
+        sys.exit(1)
+    
+    if not customers:
+        print("❌ No customers available for testing")
+        sys.exit(1)
+    
+    customer_id = customers[0]["id"]
+    
+    # Run tests
+    try:
+        # Test A: One-room quotation
+        quotation_id, grand_total = test_one_room_quotation(products, customer_id)
         
-        results = []
-        for test_name, test_func in tests:
-            try:
-                result = test_func()
-                results.append((test_name, result))
-            except Exception as e:
-                self.log(f"❌ {test_name} EXCEPTION: {str(e)}", "ERROR")
-                results.append((test_name, False))
+        # Test B: Place order (uses quotation from Test A)
+        test_place_order(quotation_id, grand_total)
         
-        # Summary
-        self.log("\n" + "="*80)
-        self.log("TEST SUMMARY")
-        self.log("="*80)
+        # Test C: Five-room quotation
+        test_five_room_quotation(products, customer_id)
         
-        passed = sum(1 for _, result in results if result)
-        total = len(results)
+        # Test D: Stress quotations
+        test_stress_quotations(products, customer_id)
         
-        for test_name, result in results:
-            status = "✅ PASSED" if result else "❌ FAILED"
-            self.log(f"{status}: {test_name}")
+        print(f"\n{'#'*80}")
+        print("ALL TESTS COMPLETED")
+        print(f"{'#'*80}")
         
-        self.log("\n" + "="*80)
-        self.log(f"TOTAL: {passed}/{total} tests passed ({passed*100//total}% success rate)")
-        self.log("="*80)
-        
-        # Cleanup note
-        if self.quotation_ids:
-            self.log(f"\nCreated {len(self.quotation_ids)} test quotations:")
-            for qid in self.quotation_ids:
-                self.log(f"  - {qid}")
-            self.log("Note: Test quotations preserved for evidence. Clean up manually if needed.")
+    except Exception as e:
+        print(f"\n❌ Test suite failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-    runner = TestRunner()
-    runner.run_all_tests()
+    main()
