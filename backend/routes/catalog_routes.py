@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from auth import get_current_user, require_min_role
 from db import db, strip_ids
 from models import Product, ProductCreate, UserPublic
-from services import media_service
+from services import catalog_service, media_service
 
 router = APIRouter(tags=["catalog"])
 
@@ -18,16 +18,7 @@ router = APIRouter(tags=["catalog"])
 async def list_brands(_: UserPublic = Depends(get_current_user)):
     """Return every brand + its active product count. Counts drive the
     left-rail brand badges in the Quotation Builder V4."""
-    docs = await db.brands.find({}, {"_id": 0}).sort("name", 1).to_list(500)
-    # Single aggregation to count products by brand.
-    agg = await db.products.aggregate([
-        {"$match": {"active": True}},
-        {"$group": {"_id": "$brand_id", "count": {"$sum": 1}}},
-    ]).to_list(1000)
-    counts = {r["_id"]: r["count"] for r in agg}
-    for d in docs:
-        d["product_count"] = counts.get(d.get("id"), 0)
-    return docs
+    return await catalog_service.list_brands_with_counts()
 
 
 @router.get("/categories")
@@ -40,25 +31,7 @@ async def list_categories(
     When `brand_id` is passed, counts reflect ONLY that brand — this is what
     powers the left-rail "Categories under Hansgrohe" list.
     """
-    docs = await db.categories.find({}, {"_id": 0}).sort("name", 1).to_list(500)
-    match: dict = {"active": True}
-    if brand_id:
-        match["brand_id"] = brand_id
-    agg = await db.products.aggregate([
-        {"$match": match},
-        {"$group": {"_id": "$category_id", "count": {"$sum": 1}}},
-    ]).to_list(1000)
-    counts = {r["_id"]: r["count"] for r in agg}
-    out = []
-    for d in docs:
-        cnt = counts.get(d.get("id"), 0)
-        if brand_id and cnt == 0:
-            # Hide categories with zero products for the selected brand — the
-            # builder's brand→category tree should show only what's shoppable.
-            continue
-        d["product_count"] = cnt
-        out.append(d)
-    return out
+    return await catalog_service.list_categories_with_counts(brand_id)
 
 
 
@@ -126,107 +99,20 @@ async def list_products(
     skip: int = 0,
     user: UserPublic = Depends(get_current_user),
 ):
-    query: dict = {"active": True}
-    if brand_id:
-        query["brand_id"] = brand_id
-    if category_id:
-        query["category_id"] = category_id
-    if subcategory:
-        query["subcategory"] = subcategory
-    if series:
-        query["series"] = series
-    if family_key:
-        query["family_key"] = family_key
-    if finish:
-        query["finish"] = finish
-    if colour:
-        query["colour"] = colour
-    if q:
-        query["$or"] = [
-            {"name":        {"$regex": q, "$options": "i"}},
-            {"sku":         {"$regex": q, "$options": "i"}},
-            {"description": {"$regex": q, "$options": "i"}},
-            {"series":      {"$regex": q, "$options": "i"}},
-            {"family_name": {"$regex": q, "$options": "i"}},
-            {"subcategory": {"$regex": q, "$options": "i"}},
-            {"collection":  {"$regex": q, "$options": "i"}},
-            {"finish":      {"$regex": q, "$options": "i"}},
-            {"colour":      {"$regex": q, "$options": "i"}},
-            {"dimensions":  {"$regex": q, "$options": "i"}},
-            {"tags":        {"$regex": q, "$options": "i"}},
-        ]
-    # ----- Count + global/per-user usage lookups run concurrently — all three
-    # are independent of each other, so there is no reason to pay their
-    # Atlas round-trip latency sequentially on every single catalog request.
-    total, global_usage_agg, my_usage_rows = await asyncio.gather(
-        db.products.count_documents(query),
-        db.product_usage.aggregate([
-            {"$group": {"_id": "$product_id", "total": {"$sum": "$count"}}},
-        ]).to_list(20000),
-        db.product_usage.find(
-            {"user_id": user.id}, {"_id": 0, "product_id": 1, "count": 1, "last_used_at": 1}
-        ).to_list(20000),
+    return await catalog_service.list_products_page(
+        user_id=user.id,
+        q=q,
+        brand_id=brand_id,
+        category_id=category_id,
+        subcategory=subcategory,
+        series=series,
+        family_key=family_key,
+        finish=finish,
+        colour=colour,
+        sort=sort,
+        limit=limit,
+        skip=skip,
     )
-    global_usage = {r["_id"]: int(r["total"]) for r in global_usage_agg}
-    my_usage = {r["product_id"]: int(r.get("count", 0)) for r in my_usage_rows}
-    my_recent_at = {r["product_id"]: r.get("last_used_at") for r in my_usage_rows}
-
-    # "Popular" = product is in the top 15% globally by aggregated usage.
-    popular_ids: set[str] = set()
-    if global_usage:
-        sorted_counts = sorted(global_usage.values(), reverse=True)
-        cutoff_idx = max(0, min(len(sorted_counts) - 1, int(len(sorted_counts) * 0.15)))
-        threshold = sorted_counts[cutoff_idx] if sorted_counts else 0
-        if threshold > 0:
-            popular_ids = {pid for pid, cnt in global_usage.items() if cnt >= threshold}
-
-    # ----- Sort -----
-    if sort == "recent":
-        ranked_ids = {pid for pid, at in my_recent_at.items() if at}
-        docs = await _usage_ranked_product_page(
-            query=query,
-            ranked_ids=ranked_ids,
-            rank_key=lambda d: (
-                -(datetime.fromisoformat(my_recent_at[d["id"]].replace("Z", "+00:00")).timestamp()
-                  if isinstance(my_recent_at.get(d["id"]), str) else 0),
-                d.get("name") or "",
-                d["id"],
-            ),
-            skip=skip,
-            limit=limit,
-        )
-    elif sort == "price_asc":
-        docs = await db.products.find(query, {"_id": 0}).sort([("price", 1), ("id", 1)]).skip(skip).limit(limit).to_list(limit)
-    elif sort == "price_desc":
-        docs = await db.products.find(query, {"_id": 0}).sort([("price", -1), ("id", 1)]).skip(skip).limit(limit).to_list(limit)
-    elif sort == "name":
-        docs = await db.products.find(query, {"_id": 0}).sort([("name", 1), ("id", 1)]).skip(skip).limit(limit).to_list(limit)
-    else:  # popular / most_used (default)
-        ranked_ids = {pid for pid, count in global_usage.items() if count > 0}
-        docs = await _usage_ranked_product_page(
-            query=query,
-            ranked_ids=ranked_ids,
-            rank_key=lambda d: (
-                -global_usage.get(d["id"], 0),
-                -my_usage.get(d["id"], 0),
-                d.get("name") or "",
-                d["id"],
-            ),
-            skip=skip,
-            limit=limit,
-        )
-
-    docs = strip_ids(docs)
-    await media_service.hydrate_media_batch(docs)
-    for d in docs:
-        pid = d.get("id")
-        d["usage_count"] = global_usage.get(pid, 0)
-        d["my_usage_count"] = my_usage.get(pid, 0)
-        d["popular"] = pid in popular_ids
-        d["frequently_used"] = my_usage.get(pid, 0) >= 3
-        d["recently_used"] = bool(my_recent_at.get(pid))
-    await media_service.hydrate_variants_batch(docs)
-    return {"total": total, "items": docs}
 
 
 # ---------- Hierarchy + family-grouped views ----------
@@ -254,9 +140,7 @@ async def catalog_hierarchy(_: UserPublic = Depends(get_current_user)):
             "image_quality": {"$first": "$image_quality"},
         }},
     ]
-    rows = await db.products.aggregate(pipeline).to_list(5000)
-    brands = {b["id"]: b for b in await db.brands.find({}, {"_id": 0}).to_list(500)}
-    cats = {c["id"]: c for c in await db.categories.find({}, {"_id": 0}).to_list(500)}
+    rows, brands, cats = await catalog_service.hierarchy_rows()
 
     # Fold into brand → category → subcategory → series → family tree
     tree: dict = {}
@@ -345,99 +229,15 @@ async def list_families(
     """Return products grouped by family_key — one card per family, variants
     collapsed underneath. Ideal for the premium grouped catalog view.
     """
-    match: dict = {"active": True, "family_key": {"$ne": None}}
-    if brand_id:
-        match["brand_id"] = brand_id
-    if category_id:
-        match["category_id"] = category_id
-    if subcategory:
-        match["subcategory"] = subcategory
-    if series:
-        match["series"] = series
-    if q:
-        match["$or"] = [
-            {"name":        {"$regex": q, "$options": "i"}},
-            {"family_name": {"$regex": q, "$options": "i"}},
-            {"series":      {"$regex": q, "$options": "i"}},
-            {"subcategory": {"$regex": q, "$options": "i"}},
-            {"finish":      {"$regex": q, "$options": "i"}},
-            {"colour":      {"$regex": q, "$options": "i"}},
-            {"sku":         {"$regex": q, "$options": "i"}},
-        ]
-
-    pipeline = [
-        {"$match": match},
-        {"$sort": {"family_name": 1, "colour": 1, "sku": 1}},
-        {"$group": {
-            "_id": "$family_key",
-            "family_key":  {"$first": "$family_key"},
-            "family_name": {"$first": "$family_name"},
-            "brand_id":    {"$first": "$brand_id"},
-            "category_id": {"$first": "$category_id"},
-            "subcategory": {"$first": "$subcategory"},
-            "series":      {"$first": "$series"},
-            "min_price":   {"$min": "$price"},
-            "max_price":   {"$max": "$price"},
-            "product_count": {"$sum": 1},
-            "sample_image": {"$first": {"$arrayElemAt": ["$images", 0]}},
-            "sample_image_quality": {"$first": "$image_quality"},
-            "variants": {"$push": {
-                "id": "$id", "sku": "$sku", "variant_label": "$variant_label",
-                "colour": "$colour", "finish": "$finish", "finish_code": "$finish_code",
-                "price": "$price", "mrp": "$mrp",
-                "image": {"$arrayElemAt": ["$images", 0]},
-                "image_quality": "$image_quality",
-            }},
-        }},
-        {"$sort": {"family_name": 1}},
-        {"$skip": skip}, {"$limit": limit},
-    ]
-    fams = await db.products.aggregate(pipeline).to_list(limit)
-    # One batched media lookup for the whole page. The old implementation did
-    # one Atlas query per family (60 sequential round trips ≈ 14.3 seconds).
-    family_keys = [f.get("family_key") for f in fams if f.get("family_key")]
-    sample_ids = [
-        (f.get("variants") or [{}])[0].get("id") for f in fams
-        if (f.get("variants") or [{}])[0].get("id")
-    ]
-    media_rows = await db.product_media.find(
-        {"$or": [
-            {"family_key": {"$in": family_keys}},
-            {"product_id": {"$in": sample_ids}},
-        ]},
-        {
-            "_id": 0, "family_key": 1, "product_id": 1, "public_url": 1,
-            "quality": 1, "source_type": 1, "is_primary": 1, "sort_order": 1,
-        },
-    ).to_list(max(1000, limit * 20))
-    media_rows.sort(key=lambda row: (
-        0 if row.get("is_primary") else 1,
-        int(row.get("sort_order", 100)),
-    ))
-    media_by_family: dict[str, dict] = {}
-    media_by_product: dict[str, dict] = {}
-    for row in media_rows:
-        if row.get("family_key") and row["family_key"] not in media_by_family:
-            media_by_family[row["family_key"]] = row
-        if row.get("product_id") and row["product_id"] not in media_by_product:
-            media_by_product[row["product_id"]] = row
-
-    for f in fams:
-        f.pop("_id", None)
-        sample_id = (f.get("variants") or [{}])[0].get("id")
-        hero = media_by_family.get(f.get("family_key")) or media_by_product.get(sample_id)
-        if hero and hero.get("public_url"):
-            f["sample_image"] = hero["public_url"]
-            f["sample_image_quality"] = hero.get("quality") or f.get("sample_image_quality")
-            f["sample_image_source"] = hero.get("source_type")
-    # total distinct families for this query
-    total_pipeline = [
-        {"$match": match}, {"$group": {"_id": "$family_key"}}, {"$count": "n"},
-    ]
-    total = 0
-    async for r in db.products.aggregate(total_pipeline):
-        total = r.get("n", 0)
-    return {"total": total, "items": fams}
+    return await catalog_service.list_family_groups(
+        brand_id=brand_id,
+        category_id=category_id,
+        subcategory=subcategory,
+        series=series,
+        q=q,
+        limit=limit,
+        skip=skip,
+    )
 
 
 # ---------- Ranked search (Iteration 2A) ----------
@@ -463,153 +263,15 @@ async def catalog_search(
     Results are grouped by `family_key` by default so callers don't see 6
     duplicates of the same product with different finishes.
     """
-    q = (q or "").strip()
-    filters: dict = {"active": True}
-    if brand_id:
-        filters["brand_id"] = brand_id
-    if category_id:
-        filters["category_id"] = category_id
-    if subcategory:
-        filters["subcategory"] = subcategory
-    if series:
-        filters["series"] = series
-
-    if not q:
-        # No query — return a lightweight top families list respecting filters.
-        docs = await db.products.find(filters, {"_id": 0}).limit(limit * 3).to_list(limit * 3)
-    else:
-        # Try Mongo text search first
-        text_query = {**filters, "$text": {"$search": q}}
-        try:
-            docs = await db.products.find(
-                text_query,
-                {"_id": 0, "score": {"$meta": "textScore"}},
-            ).sort([("score", {"$meta": "textScore"})]).limit(limit * 3).to_list(limit * 3)
-        except Exception:  # noqa: BLE001
-            docs = []
-        # Fallback / augment with regex on SKU + name (catches partial matches
-        # that Mongo's text index misses like "7040" → "70405L003-...").
-        if len(docs) < limit:
-            regex_query = {
-                **filters,
-                "$or": [
-                    {"sku": {"$regex": q, "$options": "i"}},
-                    {"name": {"$regex": q, "$options": "i"}},
-                    {"family_name": {"$regex": q, "$options": "i"}},
-                    {"series": {"$regex": q, "$options": "i"}},
-                    {"finish": {"$regex": q, "$options": "i"}},
-                    {"colour": {"$regex": q, "$options": "i"}},
-                    {"dimensions": {"$regex": q, "$options": "i"}},
-                ],
-            }
-            more = await db.products.find(regex_query, {"_id": 0}).limit(limit * 3).to_list(limit * 3)
-            seen = {d["id"] for d in docs}
-            for m in more:
-                if m["id"] not in seen:
-                    docs.append(m)
-
-    # ----- Scoring -----
-    q_lower = q.lower()
-
-    def score(p: dict) -> float:
-        s = float(p.get("score") or 0.0) * 2.0   # baseline from text score
-        sku = (p.get("sku") or "").lower()
-        name = (p.get("name") or "").lower()
-        family = (p.get("family_name") or "").lower()
-        series_l = (p.get("series") or "").lower()
-        subcat = (p.get("subcategory") or "").lower()
-        finish = (p.get("finish") or "").lower()
-        colour = (p.get("colour") or "").lower()
-        dims = (p.get("dimensions") or "").lower()
-        desc = (p.get("description") or "").lower()
-
-        if q_lower:
-            if sku == q_lower:
-                s += 100
-            elif sku.startswith(q_lower):
-                s += 60
-            elif q_lower in sku:
-                s += 30
-            if q_lower in name:
-                s += 12
-            if q_lower in family:
-                s += 10
-            if q_lower in series_l:
-                s += 6
-            if q_lower in subcat:
-                s += 4
-            if q_lower in finish:
-                s += 3
-            if q_lower in colour:
-                s += 3
-            if q_lower in dims:
-                s += 1
-            if q_lower in desc:
-                s += 1
-        return s
-
-    for p in docs:
-        p["_score"] = score(p)
-    docs.sort(key=lambda p: p["_score"], reverse=True)
-
-    if not group:
-        top = docs[:limit]
-        await media_service.hydrate_media_batch(top)
-        return {"query": q, "total": len(docs), "grouped": False, "items": top}
-
-    # ----- Group by family_key -----
-    groups: dict = {}
-    order: list[str] = []
-    for p in docs:
-        key = p.get("family_key") or f"solo:{p['id']}"
-        if key not in groups:
-            groups[key] = {
-                "family_key": p.get("family_key"),
-                "family_name": p.get("family_name") or p.get("name"),
-                "brand_id": p.get("brand_id"),
-                "category_id": p.get("category_id"),
-                "subcategory": p.get("subcategory"),
-                "series": p.get("series"),
-                "score": p["_score"],
-                "product_count": 0,
-                "min_price": p.get("price"),
-                "max_price": p.get("price"),
-                "variants": [],
-                "sample_product_id": p["id"],
-            }
-            order.append(key)
-        g = groups[key]
-        g["product_count"] += 1
-        g["min_price"] = min(g["min_price"], p.get("price") or g["min_price"])
-        g["max_price"] = max(g["max_price"], p.get("price") or g["max_price"])
-        g["variants"].append({
-            "id": p["id"], "sku": p["sku"], "colour": p.get("colour"),
-            "finish": p.get("finish"), "price": p.get("price"),
-        })
-
-    grouped = [groups[k] for k in order][:limit]
-
-    # Attach hero image per group (from product_media)
-    for g in grouped:
-        hero = None
-        if g.get("family_key"):
-            hero = await db.product_media.find_one(
-                {"family_key": g["family_key"]},
-                {"_id": 0, "public_url": 1, "quality": 1, "source_type": 1},
-                sort=[("is_primary", -1), ("sort_order", 1)],
-            )
-        if not hero:
-            hero = await db.product_media.find_one(
-                {"product_id": g["sample_product_id"]},
-                {"_id": 0, "public_url": 1, "quality": 1, "source_type": 1},
-                sort=[("is_primary", -1), ("sort_order", 1)],
-            )
-        if hero:
-            g["hero_image_url"] = hero.get("public_url")
-            g["image_quality"] = hero.get("quality")
-            g["image_source"] = hero.get("source_type")
-
-    return {"query": q, "total": len(order), "grouped": True, "items": grouped}
+    return await catalog_service.search_catalog(
+        q=q,
+        brand_id=brand_id,
+        category_id=category_id,
+        subcategory=subcategory,
+        series=series,
+        limit=limit,
+        group=group,
+    )
 
 
 @router.get("/catalog/facets")
@@ -623,42 +285,12 @@ async def catalog_facets(
     """Return the facet buckets (brands, categories, finishes, colours,
     price range) for the current selection. Powers the multi-facet filter UI.
     """
-    match: dict = {"active": True}
-    if brand_id:
-        match["brand_id"] = brand_id
-    if category_id:
-        match["category_id"] = category_id
-    if subcategory:
-        match["subcategory"] = subcategory
-    if series:
-        match["series"] = series
-
-    async def _bucket(field: str) -> list[dict]:
-        pipeline = [
-            {"$match": {**match, field: {"$nin": [None, ""]}}},
-            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
-            {"$sort": {"count": -1, "_id": 1}},
-            {"$limit": 100},
-        ]
-        rows = await db.products.aggregate(pipeline).to_list(100)
-        return [{"value": r["_id"], "count": r["count"]} for r in rows]
-
-    price_stats = await db.products.aggregate([
-        {"$match": match},
-        {"$group": {"_id": None, "min": {"$min": "$price"}, "max": {"$max": "$price"}}},
-    ]).to_list(1)
-    price = price_stats[0] if price_stats else {"min": 0, "max": 0}
-
-    return {
-        "brands":        await _bucket("brand_id"),
-        "categories":    await _bucket("category_id"),
-        "subcategories": await _bucket("subcategory"),
-        "series":        await _bucket("series"),
-        "finishes":      await _bucket("finish"),
-        "colours":       await _bucket("colour"),
-        "materials":     await _bucket("material"),
-        "price":         {"min": price.get("min", 0) or 0, "max": price.get("max", 0) or 0},
-    }
+    return await catalog_service.facet_buckets(
+        brand_id=brand_id,
+        category_id=category_id,
+        subcategory=subcategory,
+        series=series,
+    )
 
 
 # ---------- Family-first canonical page (Iteration 2A shell — used by 2B) ----------
