@@ -12,8 +12,8 @@
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { BottomSheet } from "@/src/components/BottomSheet";
@@ -106,6 +106,9 @@ export default function Catalog() {
   const [families, setFamilies] = useState<Family[] | null>(null);
   const [products, setProducts] = useState<Product[] | null>(null);
   const [total, setTotal] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const loadingMoreRef = useRef(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [q, setQ] = useState("");
@@ -166,33 +169,86 @@ export default function Catalog() {
     })();
   }, [cat, brandId, subcat]);
 
-  const load = useCallback(async () => {
-    setProducts(null); setFamilies(null); setTotal(null);
+  const PAGE_SIZE = 60;
+  const requestIdRef = useRef(0);
+  const buildParams = useCallback((skip: number) => {
     const params = new URLSearchParams();
     if (q)         params.set("q", q);
     if (cat)       params.set("category_id", cat);
     if (brandId)   params.set("brand_id", brandId);
     if (subcat)    params.set("subcategory", subcat);
     if (series)    params.set("series", series);
-    params.set("limit", "60");
+    params.set("limit", String(PAGE_SIZE));
+    params.set("skip", String(skip));
+    return params;
+  }, [q, cat, brandId, subcat, series]);
+
+  // A filter/search/mode change replaces the current query result with page 1.
+  // Subsequent pages are appended exclusively by `loadMore`, never simulated.
+  const load = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    setProducts(null); setFamilies(null); setTotal(null); setHasMore(false);
+    const params = buildParams(0);
     try {
       if (mode === "families") {
         const res = await api.get<{ total: number; items: Family[] }>(`/products/families?${params}`);
-        setFamilies(res.items); setTotal(res.total);
+        if (requestId !== requestIdRef.current) return;
+        const items = res.items || [];
+        setFamilies(items); setTotal(res.total); setHasMore(items.length < res.total);
       } else {
         const res = await api.get<{ total: number; items: Product[] }>(`/products?${params}`);
-        setProducts(res.items); setTotal(res.total);
+        if (requestId !== requestIdRef.current) return;
+        const items = res.items || [];
+        setProducts(items); setTotal(res.total); setHasMore(items.length < res.total);
       }
     } catch {
+      if (requestId !== requestIdRef.current) return;
       if (mode === "families") setFamilies([]); else setProducts([]);
-      setTotal(0);
+      setTotal(0); setHasMore(false);
     }
-  }, [q, cat, brandId, subcat, series, mode]);
+  }, [buildParams, mode]);
 
   useEffect(() => {
     const t = setTimeout(load, 250);
     return () => clearTimeout(t);
   }, [load]);
+
+  const loadMore = useCallback(async () => {
+    const currentItems = mode === "families" ? (families || []) : (products || []);
+    if (loadingMoreRef.current || total === null || !hasMore) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    const requestId = requestIdRef.current;
+    const params = buildParams(currentItems.length);
+    try {
+      if (mode === "families") {
+        const res = await api.get<{ total: number; items: Family[] }>(`/products/families?${params}`);
+        if (requestId !== requestIdRef.current) return;
+        const incoming = res.items || [];
+        const known = new Set(currentItems.map((item) => item.family_key));
+        const appended = incoming.filter((item) => !known.has(item.family_key));
+        const merged = [...currentItems, ...appended];
+        setFamilies(merged); setTotal(res.total); setHasMore(merged.length < res.total && incoming.length > 0);
+      } else {
+        const res = await api.get<{ total: number; items: Product[] }>(`/products?${params}`);
+        if (requestId !== requestIdRef.current) return;
+        const incoming = res.items || [];
+        const known = new Set(currentItems.map((item) => item.id));
+        const appended = incoming.filter((item) => !known.has(item.id));
+        const merged = [...currentItems, ...appended];
+        setProducts(merged); setTotal(res.total); setHasMore(merged.length < res.total && incoming.length > 0);
+      }
+    } catch {
+      // Preserve the loaded page and leave the user able to retry by scrolling.
+    } finally {
+      if (requestId === requestIdRef.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    }
+  }, [buildParams, families, hasMore, mode, products, total]);
 
   const brandById: Record<string, string> = useMemo(
     () => Object.fromEntries(brands.map((b) => [b.id, b.name])), [brands],
@@ -223,157 +279,162 @@ export default function Catalog() {
   );
 
   const gridItems = mode === "families" ? families : products;
+  const catalogItems = gridItems || [];
   const showSkeleton = gridItems === null;
-  const showEmpty = !showSkeleton && (gridItems?.length === 0);
+  const showEmpty = !showSkeleton && catalogItems.length === 0;
+
+  const renderCatalogItem = ({ item }: { item: Family | Product }) => (
+    <View style={{ width: `${100 / productCols}%`, paddingHorizontal: gap / 2, paddingBottom: gap }}>
+      {mode === "families" ? (
+        <FamilyCard
+          family={item as Family}
+          brandName={brandById[(item as Family).brand_id] || ""}
+          onPress={() => router.push(`/(admin)/catalog/${(item as Family).variants[0]?.id}` as any)}
+        />
+      ) : (
+        <ProductCard
+          product={item as Product}
+          brandName={brandById[(item as Product).brand_id] || ""}
+          onPress={() => router.push(`/(admin)/catalog/${(item as Product).id}` as any)}
+        />
+      )}
+    </View>
+  );
+
+  const catalogHeader = (
+    <View style={{ paddingTop: spacing.md, paddingBottom: spacing.md, gap: spacing.md }}>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={styles.searchWrap}>
+          <Feather name="search" size={16} color={colors.onSurfaceMuted} />
+          <TextInput
+            testID="catalog-search"
+            value={q}
+            onChangeText={setQ}
+            placeholder="Search products, series, SKU…"
+            placeholderTextColor={colors.onSurfaceMuted}
+            style={styles.searchInput}
+            returnKeyType="search"
+          />
+          {q ? (
+            <Pressable onPress={() => setQ("")} hitSlop={8}>
+              <Feather name="x" size={16} color={colors.onSurfaceMuted} />
+            </Pressable>
+          ) : null}
+        </View>
+        <Pressable testID="catalog-filter-btn" onPress={() => setFiltersOpen(true)} style={styles.filterBtn}>
+          <Feather name="sliders" size={16} color={colors.onSurface} />
+          {activeFilterCount > 0 ? <View style={styles.filterDot}><Text style={styles.filterDotText}>{activeFilterCount}</Text></View> : null}
+        </Pressable>
+      </View>
+
+      <ScrollView
+        horizontal showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 8, paddingRight: gridPadding, paddingVertical: 2 }}
+        style={{ marginHorizontal: -gridPadding, paddingHorizontal: gridPadding }}
+      >
+        <BrandPill
+          label="All brands"
+          count={brands.reduce((sum, b) => sum + (brandCounts[b.id] || 0), 0)}
+          active={!brandId}
+          onPress={() => { setBrandId(null); setCat(null); setSubcat(null); setSeries(null); }}
+          testID="brand-pill-all"
+        />
+        {brands.map((b) => (
+          <BrandPill
+            key={b.id}
+            label={b.name}
+            logo={supplierLogoFor(b.name)}
+            count={brandCounts[b.id]}
+            active={brandId === b.id}
+            onPress={() => { setBrandId(brandId === b.id ? null : b.id); setCat(null); setSubcat(null); setSeries(null); }}
+            testID={`brand-pill-${b.id}`}
+          />
+        ))}
+      </ScrollView>
+
+      <ScrollView
+        horizontal showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: 8, paddingRight: gridPadding, paddingVertical: 2 }}
+        style={{ marginHorizontal: -gridPadding, paddingHorizontal: gridPadding }}
+      >
+        <CategoryPill label="All categories" icon="grid" active={!cat} onPress={() => { setCat(null); setSubcat(null); setSeries(null); }} testID="cat-all" />
+        {(categoriesForBrand ?? categories).map((c) => (
+          <CategoryPill
+            key={c.id}
+            label={c.name}
+            icon={iconFor(c.name)}
+            active={cat === c.id}
+            onPress={() => { setCat(cat === c.id ? null : c.id); setSubcat(null); setSeries(null); }}
+            testID={`cat-${c.id}`}
+          />
+        ))}
+      </ScrollView>
+
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <View style={{ flex: 1, flexShrink: 1 }}>
+          {(subcat || series) ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingRight: 8 }}>
+              {subcat ? <ActiveChip label={subcat} onClose={() => { setSubcat(null); setSeries(null); }} /> : null}
+              {series ? <ActiveChip label={series} onClose={() => setSeries(null)} /> : null}
+              <Pressable onPress={resetFilters} style={styles.clearAll}><Text style={styles.clearAllText}>Clear</Text></Pressable>
+            </ScrollView>
+          ) : null}
+        </View>
+        <SegmentedControl<ViewMode>
+          testID="mode-toggle"
+          size="sm"
+          value={mode}
+          options={[{ value: "families", label: "Families", icon: "layers" }, { value: "products", label: "Variants", icon: "grid" }]}
+          onChange={setMode}
+        />
+      </View>
+    </View>
+  );
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <ScreenTitle title="Catalog" subtitle={subtitle} right={HeaderRight} />
-      <ScrollView
+      <FlatList
+        key={`catalog-${mode}-${productCols}`}
+        data={catalogItems}
+        numColumns={productCols}
+        keyExtractor={(item) => mode === "families" ? (item as Family).family_key : (item as Product).id}
+        renderItem={renderCatalogItem}
+        ListHeaderComponent={catalogHeader}
+        ListHeaderComponentStyle={{ paddingHorizontal: gridPadding }}
+        columnWrapperStyle={productCols > 1 && catalogItems.length ? { marginHorizontal: gridPadding - gap / 2 } : undefined}
+        contentContainerStyle={{ paddingBottom: 32 }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: gridPadding, paddingBottom: 32 }}
-      >
-        {/* Header block */}
-        <View style={{ paddingTop: spacing.md, paddingBottom: spacing.md, gap: spacing.md }}>
-          {/* Search + filter button */}
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <View style={styles.searchWrap}>
-              <Feather name="search" size={16} color={colors.onSurfaceMuted} />
-              <TextInput
-                testID="catalog-search"
-                value={q}
-                onChangeText={setQ}
-                placeholder="Search products, series, SKU…"
-                placeholderTextColor={colors.onSurfaceMuted}
-                style={styles.searchInput}
-                returnKeyType="search"
-              />
-              {q ? (
-                <Pressable onPress={() => setQ("")} hitSlop={8}>
-                  <Feather name="x" size={16} color={colors.onSurfaceMuted} />
-                </Pressable>
-              ) : null}
-            </View>
-            <Pressable
-              testID="catalog-filter-btn"
-              onPress={() => setFiltersOpen(true)}
-              style={styles.filterBtn}
-            >
-              <Feather name="sliders" size={16} color={colors.onSurface} />
-              {activeFilterCount > 0 ? (
-                <View style={styles.filterDot}><Text style={styles.filterDotText}>{activeFilterCount}</Text></View>
-              ) : null}
-            </Pressable>
-          </View>
-
-          {/* Brand strip — same tap-to-filter pattern + real logos as the Quotation Builder */}
-          <ScrollView
-            horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 8, paddingRight: gridPadding, paddingVertical: 2 }}
-            style={{ marginHorizontal: -gridPadding, paddingHorizontal: gridPadding }}
-          >
-            <BrandPill
-              label="All brands"
-              count={brands.reduce((sum, b) => sum + (brandCounts[b.id] || 0), 0)}
-              active={!brandId}
-              onPress={() => { setBrandId(null); setCat(null); setSubcat(null); setSeries(null); }}
-              testID="brand-pill-all"
-            />
-            {brands.map((b) => (
-              <BrandPill
-                key={b.id}
-                label={b.name}
-                logo={supplierLogoFor(b.name)}
-                count={brandCounts[b.id]}
-                active={brandId === b.id}
-                onPress={() => { setBrandId(brandId === b.id ? null : b.id); setCat(null); setSubcat(null); setSeries(null); }}
-                testID={`brand-pill-${b.id}`}
-              />
-            ))}
-          </ScrollView>
-
-          {/* Category strip with icons — scoped to the selected brand once one is active */}
-          <ScrollView
-            horizontal showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ gap: 8, paddingRight: gridPadding, paddingVertical: 2 }}
-            style={{ marginHorizontal: -gridPadding, paddingHorizontal: gridPadding }}
-          >
-            <CategoryPill label="All categories" icon="grid" active={!cat} onPress={() => { setCat(null); setSubcat(null); setSeries(null); }} testID="cat-all" />
-            {(categoriesForBrand ?? categories).map((c) => (
-              <CategoryPill
-                key={c.id}
-                label={c.name}
-                icon={iconFor(c.name)}
-                active={cat === c.id}
-                onPress={() => { setCat(cat === c.id ? null : c.id); setSubcat(null); setSeries(null); }}
-                testID={`cat-${c.id}`}
-              />
-            ))}
-          </ScrollView>
-
-          {/* Mode toggle + active filter summary row */}
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <View style={{ flex: 1, flexShrink: 1 }}>
-              {(subcat || series) ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingRight: 8 }}>
-                  {subcat ? <ActiveChip label={subcat} onClose={() => { setSubcat(null); setSeries(null); }} /> : null}
-                  {series ? <ActiveChip label={series} onClose={() => setSeries(null)} /> : null}
-                  <Pressable onPress={resetFilters} style={styles.clearAll}>
-                    <Text style={styles.clearAllText}>Clear</Text>
-                  </Pressable>
-                </ScrollView>
-              ) : null}
-            </View>
-            <SegmentedControl<ViewMode>
-              testID="mode-toggle"
-              size="sm"
-              value={mode}
-              options={[{ value: "families", label: "Families", icon: "layers" }, { value: "products", label: "Variants", icon: "grid" }]}
-              onChange={setMode}
-            />
-          </View>
-        </View>
-
-        {/* Grid */}
-        {showEmpty ? (
-          <EmptyState
-            icon="package"
-            title="Nothing matches"
-            subtitle="Try clearing filters or adjusting your search."
-            action={<Button label="Reset filters" variant="secondary" onPress={clearAll} />}
-          />
-        ) : (
-          <View style={{ flexDirection: "row", flexWrap: "wrap", marginHorizontal: -gap / 2 }}>
-            {(showSkeleton ? Array.from({ length: 8 }) : gridItems)!.map((it: any, i: number) => (
-              <View
-                key={showSkeleton ? `sk-${i}` : (it.family_key || it.id)}
-                style={{
-                  width: `${100 / productCols}%`,
-                  paddingHorizontal: gap / 2,
-                  paddingBottom: gap,
-                }}
-              >
-                {showSkeleton ? (
+        removeClippedSubviews
+        initialNumToRender={24}
+        maxToRenderPerBatch={24}
+        windowSize={11}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.45}
+        ListEmptyComponent={
+          showSkeleton ? (
+            <View style={[styles.skeletonGrid, { paddingHorizontal: gridPadding - gap / 2, flexDirection: "row", flexWrap: "wrap" }]}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <View key={`sk-${i}`} style={{ width: `${100 / productCols}%`, paddingHorizontal: gap / 2, paddingBottom: gap }}>
                   <SkeletonCard tall={mode === "families"} />
-                ) : mode === "families" ? (
-                  <FamilyCard
-                    family={it as Family}
-                    brandName={brandById[(it as Family).brand_id] || ""}
-                    onPress={() => router.push(`/(admin)/catalog/${(it as Family).variants[0]?.id}` as any)}
-                  />
-                ) : (
-                  <ProductCard
-                    product={it as Product}
-                    brandName={brandById[(it as Product).brand_id] || ""}
-                    onPress={() => router.push(`/(admin)/catalog/${(it as Product).id}` as any)}
-                  />
-                )}
-              </View>
-            ))}
-          </View>
-        )}
-      </ScrollView>
+                </View>
+              ))}
+            </View>
+          ) : showEmpty ? (
+            <View style={{ paddingHorizontal: gridPadding }}>
+              <EmptyState icon="package" title="Nothing matches" subtitle="Try clearing filters or adjusting your search." action={<Button label="Reset filters" variant="secondary" onPress={clearAll} />} />
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          loadingMore ? (
+            <View style={styles.listFooter}><ActivityIndicator size="small" color={colors.brand} /><Text style={type.caption}>Loading more…</Text></View>
+          ) : total !== null && catalogItems.length > 0 && !hasMore ? (
+            <Text testID="catalog-end-of-list" style={styles.endOfList}>Showing all {catalogItems.length.toLocaleString("en-IN")} {mode === "families" ? "families" : "products"}</Text>
+          ) : null
+        }
+      />
 
       <FiltersSheet
         visible={filtersOpen}
@@ -687,4 +748,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary,
   },
   swatchDot: { width: 16, height: 16, borderRadius: 8 },
+  listFooter: { paddingVertical: 20, alignItems: "center", justifyContent: "center", gap: 8 },
+  endOfList: { textAlign: "center", paddingVertical: 24, color: colors.onSurfaceMuted, fontSize: 12, fontWeight: "600" },
 });
