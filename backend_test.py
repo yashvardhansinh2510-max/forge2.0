@@ -21,7 +21,7 @@ import httpx
 # Backend URL from environment
 BACKEND_URL = os.getenv("REACT_APP_BACKEND_URL", "").rstrip("/") + "/api"
 if not BACKEND_URL.startswith("http"):
-    BACKEND_URL = "https://frontend-auth-trace.preview.emergentagent.com/api"
+    BACKEND_URL = "https://buildcon-sprint.preview.emergentagent.com/api"
 
 print(f"🔗 Backend URL: {BACKEND_URL}")
 

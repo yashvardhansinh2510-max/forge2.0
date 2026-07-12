@@ -10,7 +10,7 @@ import json
 from typing import Optional
 
 # Backend URL
-BASE_URL = "https://frontend-auth-trace.preview.emergentagent.com/api"
+BASE_URL = "https://buildcon-sprint.preview.emergentagent.com/api"
 
 # Test credentials
 OWNER_EMAIL = "owner@forge.app"

@@ -8,7 +8,7 @@ import os
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://frontend-auth-trace.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://buildcon-sprint.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 PASSWORD = "Forge@2026"
 OWNER_EMAIL = "owner@forge.app"
