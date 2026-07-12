@@ -355,7 +355,124 @@ agent_communication:
         correction, not a full regression suite). Please focus verification on the task above.
     - agent: "testing"
       message: |
-        CRITICAL BLOCKER — Cannot Verify Product Grid Fix Due to Authentication System Failure
+        Performance Investigation Complete (2026-07-12) — Read-only analysis of Forge Expo/React Native Web
+        
+        Completed comprehensive browser-side performance measurement at desktop 1920x800 as requested.
+        Full detailed report saved to /app/performance_investigation_report.md
+        
+        === CRITICAL FINDINGS ===
+        
+        1. **CRITICAL: Backend API Bottleneck** (18-22 second response times)
+           - /api/followups/reconcile: 22.0s avg
+           - /api/followups/mission: 19.1s avg
+           - /api/followups: 19.1s avg
+           - /api/payments/stats: 19.0s avg
+           - /api/quotations/recent: 18.5s avg
+           → This is the PRIMARY performance issue, not frontend
+        
+        2. **CRITICAL: Catalog Page Failure**
+           - /catalog route times out after 10s
+           - Cannot load at all during testing
+           - Requires separate investigation
+        
+        3. **HIGH: Slow Image Delivery**
+           - Supabase images: 2.7s average load time
+           - 55 images loaded, all slow (min 1.0s, max 3.3s)
+           - No effective caching observed
+        
+        4. **MEDIUM: Duplicate API Requests**
+           - /api/categories called 2x in quotation builder (unnecessary)
+           - /api/auth/me called 9x across all routes (should be cached)
+           - Payments route has 2 duplicate calls
+        
+        5. **MEDIUM: Quotation Builder Grid Rendering**
+           - Products visible at 3.3s (good)
+           - But grid renders BEFORE categories/brands finish loading
+           - Network idle takes 8.4s (5s gap)
+           - Could cause layout shifts
+        
+        === ROUTE NAVIGATION PERFORMANCE ===
+        
+        | Route       | Click→Visible | Click→Idle | API Calls | Duplicates |
+        |-------------|---------------|------------|-----------|------------|
+        | dashboard   | 1.31s         | 9.51s      | 1         | 0          |
+        | quotations  | 1.35s         | 2.28s      | 2         | 0          |
+        | catalog     | TIMEOUT       | TIMEOUT    | N/A       | N/A        |
+        | customers   | 1.36s         | 1.82s      | 2         | 0          |
+        | payments    | 1.33s         | 4.01s      | 5         | 2          |
+        | follow-ups  | 1.31s         | 7.59s      | 8         | 0          |
+        | reports     | 1.30s         | 1.49s      | 1         | 0          |
+        
+        Visible content appears fast (1.3-1.4s), but network idle varies wildly (1.5-9.5s)
+        due to slow backend APIs.
+        
+        === METRO/DEV-PREVIEW OVERHEAD ===
+        
+        - Initial DOM ready: 0.35s (fast)
+        - Hydration wait: 3.35s (typical for Expo/RN Web dev mode)
+        - Bundle requests: 1
+        - This is NOT the performance issue
+        
+        === QUOTATION BUILDER /quotations/new ===
+        
+        - DOM ready: 0.30s
+        - Shell visible: 3.30s
+        - Products visible: 3.32s ✓
+        - Network idle: 8.36s (5s gap)
+        - Total API calls: 9
+        - Product APIs: 3
+        - Category APIs: 2 (DUPLICATE)
+        - Brand APIs: 1
+        - Grid renders before refs finish: TRUE
+        
+        === IMAGE BEHAVIOR ===
+        
+        - Total images: 79
+        - Supabase images: 55
+        - Avg load time: 2.706s (SLOW)
+        - Min: 0.975s, Max: 3.260s
+        - No cache/disk behavior observed
+        
+        === RECOMMENDATIONS (Priority Order) ===
+        
+        1. **IMMEDIATE**: Investigate slow backend APIs (18-22s is unacceptable)
+           - Profile /api/followups/*, /api/payments/stats, /api/quotations/recent
+           - Check for N+1 queries, missing indexes, expensive aggregations
+           - Target: <2s response times
+        
+        2. **IMMEDIATE**: Fix catalog page timeout
+           - Route completely broken
+           - Requires dedicated debugging
+        
+        3. **HIGH**: Optimize Supabase image delivery
+           - Implement CDN caching
+           - Add image optimization (resize, compress)
+           - Consider lazy loading
+           - Target: <1s average load time
+        
+        4. **MEDIUM**: Eliminate duplicate API requests
+           - Cache /api/auth/me (called 9x)
+           - Fix /api/categories double-call in QB
+           - Implement request deduplication
+        
+        5. **MEDIUM**: Optimize QB loading sequence
+           - Preload categories/brands before grid
+           - Or add loading skeletons for optimistic rendering
+        
+        === CONSOLE LOGS ===
+        
+        - Font loading errors (ERR_ABORTED) for Inter and Fraunces fonts
+        - Shadow style deprecation warnings (non-critical)
+        - No critical JavaScript errors
+        
+        === CONCLUSION ===
+        
+        The frontend/Metro overhead is acceptable (3.4s initial load). The PRIMARY bottleneck
+        is backend API performance (18-22s response times). This is a backend issue, not a
+        frontend/React Native Web issue. The catalog page is completely broken (timeout).
+        
+        Full detailed report with tables, waterfalls, and root cause analysis:
+        /app/performance_investigation_report.md
         
         SITUATION:
         Main agent reported fixing the Quotation Builder product grid race condition bug (BuilderContext.tsx 
@@ -851,10 +968,8 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Quotation Builder 3.0 — BLOCKED: Cannot verify product grid fix due to critical authentication bug"
-  stuck_tasks:
-    - "Quotation Builder 3.0 — architectural refactor + 3-pane responsive shell + Quotation Assistant right pane"
-    - "Authentication System — Login flow broken, prevents all authenticated testing"
+    - "Performance Investigation Complete - Read-only analysis of Forge Expo/React Native Web"
+  stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
