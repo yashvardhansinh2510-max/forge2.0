@@ -15,6 +15,7 @@ import {
   SegmentedControl, StatTile, StatusBadge,
 } from "@/src/components/ui";
 import { api } from "@/src/api/client";
+import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
 import { colors, icon as iconSize, money, radius, spacing, type } from "@/src/theme/tokens";
 import {
@@ -411,12 +412,14 @@ export default function CustomerDetail() {
                     }}
                   >
                     <Pressable onPress={() => router.push(`/(admin)/purchase-orders/${p.po_id}` as any)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
-                      <View style={styles.prodThumb}>
-                        {p.image ? (
-                          // @ts-ignore
-                          <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 6 }} />
-                        ) : <Feather name="image" size={13} color={colors.onSurfaceMuted} />}
-                      </View>
+                      <ProductImage
+                        source={p.image}
+                        style={styles.prodThumb}
+                        contentFit="cover"
+                        disableSkeleton
+                        fallbackLabel={p.sku}
+                        borderRadius={6}
+                      />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
                         <Text style={type.caption} numberOfLines={1}>

@@ -8,7 +8,7 @@
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator, KeyboardAvoidingView, Linking, Modal, Platform, Pressable,
   ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View,
@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api, ApiError } from "@/src/api/client";
+import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import { color as ds, font as dsFont } from "@/src/design/tokens";
@@ -125,6 +126,7 @@ export default function PurchasesScreen() {
   const [blockedCount, setBlockedCount] = useState(0);
   const [slaDays, setSlaDays] = useState(7);
   const [brands, setBrands] = useState<BrandFacet[]>([]);
+  const [customers, setCustomers] = useState<CustomerFacet[]>([]);
   const [brandsTotal, setBrandsTotal] = useState(0);
   const [stages, setStages] = useState<StageMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -159,12 +161,12 @@ export default function PurchasesScreen() {
   // -----------------------------------
   const loadFacets = useCallback(async () => {
     try {
-      const [b, s] = await Promise.all([
+      const [b, s, c] = await Promise.all([
         api.get<{ all: number; brands: BrandFacet[] }>("/purchases/brands"),
         api.get<StageMeta[]>("/purchases/stages"),
+        api.get<CustomerFacet[]>("/purchases/customers"),
       ]);
-      setBrands(b.brands); setBrandsTotal(b.all);
-      setStages(s);
+      setBrands(b.brands); setBrandsTotal(b.all); setStages(s); setCustomers(c);
     } catch (e) { /* silent */ }
   }, []);
 
@@ -405,110 +407,47 @@ export default function PurchasesScreen() {
             </View>
           </View>
 
-          {/* MAIN */}
+          {/* MAIN — each tab is an operational workspace, not one table with a renamed filter. */}
           <View style={{ flex: 1, minWidth: 0, gap: spacing.lg }}>
-            {/* Today view: BLOCKED section */}
-            {view === "today" && blockedRows.length > 0 ? (
-              <View style={styles.blockedBox}>
-                <View style={styles.blockedHeader}>
-                  <Feather name="alert-triangle" size={14} color={colors.error} />
-                  <Text style={styles.blockedTitle}>BLOCKED — cannot dispatch today</Text>
-                  <View style={{ marginLeft: "auto" }}>
-                    <Text style={{ color: colors.error, fontSize: 12, fontWeight: "600" }}>
-                      {blockedRows.length} item{blockedRows.length === 1 ? "" : "s"} · aged &gt; {slaDays}d
-                    </Text>
-                  </View>
-                </View>
-                {blockedByCustomer.map(([customerName, rows]) => (
-                  <View key={customerName} style={{ marginTop: 12 }}>
-                    <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary, marginBottom: 6 }}>
-                      {customerName}
-                    </Text>
-                    {rows.map((r) => (
-                      <BlockedCard
-                        key={r.item_id} row={r}
-                        onOpenMove={() => setRowMoveTarget(r)}
-                        onTransfer={() => setTransferItem(r)}
-                        onHistory={() => setHistoryItemId(r.item_id)}
-                      />
-                    ))}
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
-            {/* Header for main table */}
             {view === "today" ? (
-              <View>
-                <Text style={styles.overline}>Today</Text>
-                {regularRows.length === 0 && blockedRows.length > 0 ? (
-                  <Text style={[type.caption, { marginTop: 4 }]}>
-                    No units packed and ready — check blocked items above.
-                  </Text>
-                ) : null}
-              </View>
-            ) : null}
-
-            {/* Table */}
-            <View style={styles.tableCard}>
-              {loading ? (
-                <View style={{ padding: spacing.xxl, alignItems: "center" }}><ActivityIndicator /></View>
-              ) : regularRows.length === 0 ? (
-                <View style={{ padding: spacing.xxl, alignItems: "center", gap: 8 }}>
-                  <Feather name="inbox" size={22} color={colors.onSurfaceMuted} />
-                  <Text style={type.bodyMuted}>No items match this view.</Text>
-                </View>
-              ) : (
-                <>
-                  {/* Table header */}
-                  {isTablet ? (
-                    <View style={styles.tHead}>
-                      <View style={{ width: 30 }}>
-                        <BulkChk
-                          checked={regularRows.length > 0 && regularRows.every((r) => selected.has(r.item_id))}
-                          onToggle={() => {
-                            setSelected((prev) => {
-                              const next = new Set(prev);
-                              const allSelected = regularRows.every((r) => next.has(r.item_id));
-                              if (allSelected) regularRows.forEach((r) => next.delete(r.item_id));
-                              else regularRows.forEach((r) => next.add(r.item_id));
-                              return next;
-                            });
-                          }}
-                        />
-                      </View>
-                      <Text style={[styles.th, { flex: 2 }]}>PRODUCT / SKU</Text>
-                      <Text style={[styles.th, { flex: 1.2 }]}>CUSTOMER</Text>
-                      <Text style={[styles.th, { width: 96 }]}>BRAND</Text>
-                      <Text style={[styles.th, { width: 130 }]}>STAGE</Text>
-                      <Text style={[styles.th, { width: 44, textAlign: "right" }]}>QTY</Text>
-                      <Text style={[styles.th, { flex: 1.1 }]}>LAST MOVE / BY</Text>
-                      <Text style={[styles.th, { width: 118, textAlign: "right" }]}>ACTION</Text>
-                    </View>
-                  ) : null}
-
-                  {regularRows.map((r) => (
-                    <ItemRow
-                      key={r.item_id}
-                      row={r}
-                      isTablet={isTablet}
-                      checked={selected.has(r.item_id)}
-                      onToggle={() => {
-                        setSelected((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(r.item_id)) next.delete(r.item_id); else next.add(r.item_id);
-                          return next;
-                        });
-                      }}
-                      onOpenMove={() => setRowMoveTarget(r)}
-                      onTransfer={() => setTransferItem(r)}
-                      onHistory={() => setHistoryItemId(r.item_id)}
-                      onOpenPo={() => router.push(`/(admin)/purchase-orders/${r.po_id}` as any)}
-                    />
-                  ))}
-                </>
-              )}
-            </View>
+              <TodayWorkspace
+                loading={loading}
+                rows={items}
+                blockedRows={blockedRows}
+                slaDays={slaDays}
+                onMove={setRowMoveTarget}
+                onTransfer={setTransferItem}
+                onHistory={setHistoryItemId}
+              />
+            ) : view === "stock" ? (
+              <StockWorkspace
+                loading={loading}
+                rows={items}
+                shortages={shortages}
+                stages={stages}
+                isTablet={isTablet}
+                selected={selected}
+                setSelected={setSelected}
+                onMove={setRowMoveTarget}
+                onTransfer={setTransferItem}
+                onHistory={setHistoryItemId}
+                onOpenPo={(poId) => router.push(`/(admin)/purchase-orders/${poId}` as any)}
+              />
+            ) : view === "customers" ? (
+              <CustomerNavigator
+                loading={loading}
+                customers={customers}
+                rows={items}
+                onOpen={(customerId) => router.push(`/(admin)/customers/${customerId}` as any)}
+              />
+            ) : (
+              <DispatchWorkspace
+                loading={loading}
+                rows={items}
+                onHistory={setHistoryItemId}
+                onOpenPo={(poId) => router.push(`/(admin)/purchase-orders/${poId}` as any)}
+              />
+            )}
           </View>
         </View>
       </ScrollView>
@@ -559,6 +498,155 @@ export default function PurchasesScreen() {
 }
 
 // -----------------------------------------------------------------------------
+// Operational workspaces — intentionally distinct views over the accepted
+// tracker contracts. The Today page prioritises actions; Stock is inventory;
+// Customers is navigation; Dispatch is the delivery history.
+// -----------------------------------------------------------------------------
+function isToday(iso?: string | null) {
+  if (!iso) return false;
+  const date = new Date(iso); const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+}
+
+function OpsMetric({ label, value, icon, tone = "neutral" }: { label: string; value: number; icon: keyof typeof Feather.glyphMap; tone?: "neutral" | "warn" | "risk" | "ok" }) {
+  const color = tone === "risk" ? colors.error : tone === "warn" ? ds.warn : tone === "ok" ? ds.ok : colors.onSurface;
+  return (
+    <View style={styles.opsMetric}>
+      <Feather name={icon} size={14} color={color} />
+      <Text style={[styles.opsMetricValue, { color }]}>{value}</Text>
+      <Text style={styles.opsMetricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function TodayWorkspace({ loading, rows, blockedRows, slaDays, onMove, onTransfer, onHistory }: {
+  loading: boolean; rows: Item[]; blockedRows: Item[]; slaDays: number;
+  onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void;
+}) {
+  const arrivals = rows.filter((r) => r.stage === "delivered" && isToday(r.last_moved_at));
+  const dispatches = rows.filter((r) => ["dispatched", "in_transit"].includes(r.stage) && isToday(r.last_moved_at));
+  const delayedSuppliers = Array.from(new Set(blockedRows.map((r) => r.supplier_name).filter(Boolean)));
+  const urgent = [...blockedRows, ...rows.filter((r) => r.stage === "company_billing" || r.stage === "in_box")]
+    .filter((row, index, list) => list.findIndex((candidate) => candidate.item_id === row.item_id) === index)
+    .slice(0, 6);
+  if (loading) return <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Preparing today’s operations…</Text></View>;
+  return (
+    <View style={{ gap: spacing.lg }}>
+      <View>
+        <Text style={styles.overline}>TODAY’S CONTROL TOWER</Text>
+        <Text style={type.bodyMuted}>Arrivals, dispatches and the actions preventing customer delivery.</Text>
+      </View>
+      <View style={styles.opsMetrics}>
+        <OpsMetric label="Today’s arrivals" value={arrivals.length} icon="package" tone="ok" />
+        <OpsMetric label="Today’s dispatches" value={dispatches.length} icon="truck" tone="neutral" />
+        <OpsMetric label="Delayed suppliers" value={delayedSuppliers.length} icon="clock" tone={delayedSuppliers.length ? "warn" : "ok"} />
+        <OpsMetric label="Blocked orders" value={blockedRows.length} icon="alert-triangle" tone={blockedRows.length ? "risk" : "ok"} />
+      </View>
+      <View style={styles.workspaceCard}>
+        <Text style={styles.workspaceTitle}>High-priority actions</Text>
+        {urgent.length === 0 ? <Text style={type.bodyMuted}>No operational blockers require action today.</Text> : urgent.map((row) => (
+          <View key={row.item_id} style={styles.actionRow}>
+            <ProductImage source={row.image} style={styles.actionThumb} fallbackLabel={row.sku} disableSkeleton borderRadius={8} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.actionTitle} numberOfLines={1}>{row.name}</Text>
+              <Text style={type.caption} numberOfLines={1}>{row.customer_name} · {row.supplier_name || "Supplier not assigned"} · {row.age_days}d in flow</Text>
+            </View>
+            <Pressable testID={`today-move-${row.item_id}`} onPress={() => onMove(row)} style={styles.workspaceAction}><Text style={styles.workspaceActionText}>Move</Text></Pressable>
+          </View>
+        ))}
+      </View>
+      {blockedRows.length > 0 ? (
+        <View style={styles.blockedBox}>
+          <View style={styles.blockedHeader}><Feather name="alert-triangle" size={14} color={colors.error} /><Text style={styles.blockedTitle}>BLOCKED ORDERS · past {slaDays}d SLA</Text></View>
+          {blockedRows.slice(0, 8).map((row) => <BlockedCard key={row.item_id} row={row} onOpenMove={() => onMove(row)} onTransfer={() => onTransfer(row)} onHistory={() => onHistory(row.item_id)} />)}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function StockWorkspace({ loading, rows, shortages, stages, isTablet, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo }: {
+  loading: boolean; rows: Item[]; shortages: Shortage[]; stages: StageMeta[]; isTablet: boolean; selected: Set<string>;
+  setSelected: Dispatch<SetStateAction<Set<string>>>; onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void;
+}) {
+  const pending = rows.filter((r) => ["order_in_company", "company_billing", "in_box"].includes(r.stage));
+  const receiving = rows.filter((r) => ["company_billing", "in_box"].includes(r.stage));
+  const ready = rows.filter((r) => ["dispatched", "in_transit"].includes(r.stage));
+  if (loading) return <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading inventory movement…</Text></View>;
+  return (
+    <View style={{ gap: spacing.lg }}>
+      <View><Text style={styles.overline}>STOCK CONTROL</Text><Text style={type.bodyMuted}>Receiving, pending receipts and stock ready for customer dispatch.</Text></View>
+      <View style={styles.opsMetrics}>
+        <OpsMetric label="Inventory movement" value={rows.length} icon="repeat" />
+        <OpsMetric label="Pending receipts" value={pending.length} icon="clock" tone={pending.length ? "warn" : "ok"} />
+        <OpsMetric label="Receiving" value={receiving.length} icon="inbox" />
+        <OpsMetric label="Ready for dispatch" value={ready.length} icon="truck" tone="ok" />
+        <OpsMetric label="Stock shortages" value={shortages.length} icon="alert-triangle" tone={shortages.length ? "risk" : "ok"} />
+      </View>
+      {shortages.length > 0 ? <View style={styles.shortageBanner}><Feather name="alert-triangle" size={15} color={colors.error} /><Text style={{ color: colors.error, fontWeight: "700" }}>{shortages.length} shortage{shortages.length === 1 ? "" : "s"} awaiting reorder</Text></View> : null}
+      <TrackerRows rows={rows} isTablet={isTablet} selected={selected} setSelected={setSelected} onMove={onMove} onTransfer={onTransfer} onHistory={onHistory} onOpenPo={onOpenPo} />
+    </View>
+  );
+}
+
+function CustomerNavigator({ loading, customers, rows, onOpen }: { loading: boolean; customers: CustomerFacet[]; rows: Item[]; onOpen: (id: string) => void }) {
+  const rowCount = useMemo(() => new Map(rows.map((row) => [row.customer_id, (rows.filter((candidate) => candidate.customer_id === row.customer_id)).length])), [rows]);
+  if (loading) return <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading customer workspaces…</Text></View>;
+  return (
+    <View style={{ gap: spacing.lg }}>
+      <View><Text style={styles.overline}>CUSTOMER WORKSPACES</Text><Text style={type.bodyMuted}>Select a customer to open their live purchases, shortages, payments and timeline.</Text></View>
+      <View style={styles.workspaceCard}>
+        {customers.length === 0 ? <Text style={type.bodyMuted}>No customer purchase workspaces yet.</Text> : customers.map((customer, index) => (
+          <Pressable key={customer.id} testID={`customer-workspace-${customer.id}`} onPress={() => onOpen(customer.id)} style={({ pressed }) => [styles.customerNavRow, index > 0 && styles.customerNavDivider, pressed && { backgroundColor: colors.surfaceTertiary }]}>
+            <View style={styles.customerAvatar}><Text style={styles.customerAvatarText}>{customer.name.slice(0, 1).toUpperCase()}</Text></View>
+            <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.actionTitle} numberOfLines={1}>{customer.name}</Text><Text style={type.caption}>{customer.open} open · {customer.count} tracked · {rowCount.get(customer.id) || 0} in current view</Text></View>
+            <View style={[styles.openPill, customer.open > 0 && { backgroundColor: ds.brassTint }]}><Text style={styles.openPillText}>{customer.open} open</Text></View>
+            <Feather name="chevron-right" size={16} color={colors.onSurfaceMuted} />
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function DispatchWorkspace({ loading, rows, onHistory, onOpenPo }: { loading: boolean; rows: Item[]; onHistory: (id: string) => void; onOpenPo: (id: string) => void }) {
+  const dispatched = rows.filter((r) => r.stage === "dispatched");
+  const transit = rows.filter((r) => r.stage === "in_transit");
+  const delivered = rows.filter((r) => r.stage === "delivered");
+  if (loading) return <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading dispatch history…</Text></View>;
+  return (
+    <View style={{ gap: spacing.lg }}>
+      <View><Text style={styles.overline}>DISPATCH & DELIVERY</Text><Text style={type.bodyMuted}>Customer-bound dispatch history and live delivery stages.</Text></View>
+      <View style={styles.opsMetrics}>
+        <OpsMetric label="Dispatched" value={dispatched.length} icon="truck" />
+        <OpsMetric label="In transit" value={transit.length} icon="navigation" tone="warn" />
+        <OpsMetric label="Delivered" value={delivered.length} icon="check-circle" tone="ok" />
+        <OpsMetric label="Returned" value={0} icon="corner-up-left" />
+      </View>
+      <View style={styles.workspaceCard}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm }}><Text style={styles.workspaceTitle}>Dispatch history</Text><Text style={type.caption}>Carrier status uses the linked supplier until a carrier is recorded.</Text></View>
+        {rows.length === 0 ? <Text style={type.bodyMuted}>No dispatched or delivered items recorded.</Text> : rows.map((row, index) => (
+          <Pressable key={row.item_id} onPress={() => onOpenPo(row.po_id)} style={({ pressed }) => [styles.dispatchRow, index > 0 && styles.customerNavDivider, pressed && { backgroundColor: colors.surfaceTertiary }]}>
+            <ProductImage source={row.image} style={styles.actionThumb} fallbackLabel={row.sku} disableSkeleton borderRadius={8} />
+            <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.actionTitle} numberOfLines={1}>{row.name}</Text><Text style={type.caption} numberOfLines={1}>{row.customer_name} · {row.supplier_name || "Carrier pending"} · {fmtDate(row.last_moved_at)}</Text></View>
+            <StageBadge stage={row.stage} tone={row.stage_tone} label={row.stage_label} />
+            <Pressable testID={`dispatch-history-${row.item_id}`} onPress={() => onHistory(row.item_id)} style={styles.transferBtn}><Feather name="clock" size={12} color={colors.onSurface} /></Pressable>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function TrackerRows({ rows, isTablet, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo }: {
+  rows: Item[]; isTablet: boolean; selected: Set<string>; setSelected: Dispatch<SetStateAction<Set<string>>>;
+  onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void;
+}) {
+  if (rows.length === 0) return <View style={styles.workspaceCard}><Text style={type.bodyMuted}>No inventory items match this stock view.</Text></View>;
+  return <View style={styles.tableCard}>{rows.map((row) => <ItemRow key={row.item_id} row={row} isTablet={isTablet} checked={selected.has(row.item_id)} onToggle={() => setSelected((current) => { const next = new Set(current); next.has(row.item_id) ? next.delete(row.item_id) : next.add(row.item_id); return next; })} onOpenMove={() => onMove(row)} onTransfer={() => onTransfer(row)} onHistory={() => onHistory(row.item_id)} onOpenPo={() => onOpenPo(row.po_id)} />)}</View>;
+}
+
+// -----------------------------------------------------------------------------
 // Row + card components
 // -----------------------------------------------------------------------------
 function ItemRow(props: {
@@ -597,20 +685,14 @@ function ItemRow(props: {
       </View>
       {/* Product */}
       <Pressable onPress={onOpenPo} style={{ flex: 2, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
-        <View style={styles.thumb}>
-          {row.image ? (
-            // eslint-disable-next-line jsx-a11y/alt-text
-            <View style={{ ...StyleSheet.absoluteFillObject, overflow: "hidden", borderRadius: 6 }}>
-              {/* Use native <img> on web for base64/URL images; Expo Image on native would be better */}
-              {Platform.OS === "web" ? (
-                // @ts-ignore
-                <img src={row.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              ) : null}
-            </View>
-          ) : (
-            <Feather name="image" size={14} color={colors.onSurfaceMuted} />
-          )}
-        </View>
+        <ProductImage
+          source={row.image}
+          style={styles.thumb}
+          contentFit="cover"
+          disableSkeleton
+          fallbackLabel={row.sku}
+          borderRadius={8}
+        />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{row.name}</Text>
           <Text style={styles.mono}>{row.sku}</Text>
@@ -660,12 +742,14 @@ function BlockedCard({ row, onOpenMove, onTransfer, onHistory }: {
 }) {
   return (
     <View style={styles.blockedCard}>
-      <View style={styles.blockedThumb}>
-        {row.image && Platform.OS === "web" ? (
-          // @ts-ignore
-          <img src={row.image} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
-        ) : <Feather name="image" size={16} color={colors.onSurfaceMuted} />}
-      </View>
+      <ProductImage
+        source={row.image}
+        style={styles.blockedThumb}
+        contentFit="cover"
+        disableSkeleton
+        fallbackLabel={row.sku}
+        borderRadius={8}
+      />
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{row.name}</Text>
         <Text style={styles.mono} numberOfLines={1}>{row.sku} · {row.brand_name}{row.supplier_name ? ` · ${row.supplier_name}` : ""}</Text>
@@ -1100,4 +1184,24 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 10,
     paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border,
   },
+  loadingCard: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: 10, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md },
+  opsMetrics: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
+  opsMetric: { minWidth: 132, flexGrow: 1, gap: 4, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md },
+  opsMetricValue: { fontSize: 24, fontWeight: "700", fontVariant: ["tabular-nums"] },
+  opsMetricLabel: { fontSize: 11, color: colors.onSurfaceMuted, fontWeight: "600" },
+  workspaceCard: { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md },
+  workspaceTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.sm },
+  actionRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  actionThumb: { width: 40, height: 40 },
+  actionTitle: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  workspaceAction: { height: 32, paddingHorizontal: 10, borderRadius: radius.sm, justifyContent: "center", backgroundColor: colors.brand },
+  workspaceActionText: { color: colors.onBrand, fontSize: 12, fontWeight: "700" },
+  shortageBanner: { flexDirection: "row", alignItems: "center", gap: 8, padding: spacing.md, borderRadius: radius.md, backgroundColor: ds.riskTint, borderWidth: 1, borderColor: "rgba(174,74,61,0.22)" },
+  customerNavRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, paddingHorizontal: 4 },
+  customerNavDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  customerAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: ds.brassTint, alignItems: "center", justifyContent: "center" },
+  customerAvatarText: { color: ds.brassDeep, fontWeight: "800", fontSize: 14 },
+  openPill: { minWidth: 46, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, alignItems: "center", backgroundColor: colors.surfaceTertiary },
+  openPillText: { color: colors.onSurfaceSecondary, fontSize: 10.5, fontWeight: "700" },
+  dispatchRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 4 },
 });

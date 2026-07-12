@@ -12,6 +12,7 @@ import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
+import { ProductImage } from "@/src/components/ProductImage";
 import { Button, Field, Input, Sheet, Tabs, Txt } from "@/src/design/components";
 import { color as ds, radius, space } from "@/src/design/tokens";
 import { api, ApiError } from "@/src/api/client";
@@ -80,17 +81,14 @@ export function fmtDateTime(iso?: string | null): string {
 
 export function Thumb({ image, size = 40 }: { image?: string | null; size?: number }) {
   return (
-    <View style={{
-      width: size, height: size, borderRadius: 8, backgroundColor: ds.sunken,
-      alignItems: "center", justifyContent: "center", overflow: "hidden",
-    }}>
-      {image && Platform.OS === "web" ? (
-        // @ts-ignore — web-only <img> for base64/URL product images
-        <img src={image} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-      ) : (
-        <Feather name="image" size={Math.round(size * 0.4)} color={ds.inkFaint} />
-      )}
-    </View>
+    <ProductImage
+      source={image}
+      fallbackLabel="SKU"
+      contentFit="cover"
+      disableSkeleton
+      borderRadius={8}
+      style={{ width: size, height: size }}
+    />
   );
 }
 
