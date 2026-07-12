@@ -308,7 +308,7 @@ Every measured backend catalog read is below 200 ms after startup.
 
 ## Remaining bottlenecks and limits
 
-1. Atlas RTT remains ~228–230 ms. Writes and non-cached backend modules still pay that network floor.
+1. Atlas RTT remains ~228–230 ms. Writes and non-cached backend modules still pay that network floor. The testing agent observed one 286 ms first `/brands` call from the known cold auth-principal lookup; subsequent catalog reads were 42–48 ms, so this is not catalog-query work.
 2. Snapshot preload/refresh takes 2.4–4.6 seconds and uses roughly 5.6 MB serialized source data (more as Python objects). It is intentionally moved out of request latency.
 3. State is per process. A multi-worker deployment would hold one snapshot per worker; routed writes refresh only the current worker. A shared version signal would be needed before scaling workers.
 4. Offline/direct database writes can be visible for up to 300 seconds; routed writes refresh immediately in the background, and usage changes update immediately.
