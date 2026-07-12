@@ -4699,13 +4699,14 @@ backend:
             Backend catalog query optimization is production-ready.
 
 metadata:
-  test_sequence: 17
+  test_sequence: 18
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Performance Sprint 2 — backend catalog query optimization"
-  stuck_tasks: []
+    - "Performance Sprint 3 — READ-ONLY authenticated baseline (BLOCKED by auth)"
+  stuck_tasks:
+    - "Frontend authentication system (login flow)"
   test_all: false
   test_priority: "high_first"
 
@@ -4762,3 +4763,100 @@ agent_communication:
         NO ISSUES FOUND. Backend catalog optimization is production-ready.
         
         RECOMMENDATION: Main agent should summarize and finish. All verification requirements met.
+    - agent: "testing"
+      message: |
+        ❌ PERFORMANCE SPRINT 3 — COMPLETELY BLOCKED BY AUTHENTICATION FAILURE (2026-07-12)
+        
+        Attempted to run READ-ONLY authenticated baseline performance testing across desktop (1920x800),
+        tablet (1024x768), and mobile (390x844) viewports for routes /catalog, /quotations/new, and
+        /purchases as requested. CANNOT PROCEED due to complete authentication system failure.
+        
+        === AUTHENTICATION FAILURE DETAILS ===
+        
+        **Backend API:** ✅ WORKING PERFECTLY
+        • POST /api/auth/login returns 200 OK with valid JWT token
+        • Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        • User: Aarav Kapoor (owner@forge.app, role=owner)
+        • Session ID: c6f38c3d-b9b8-4bc2-8a27-aa87f65ca8c5
+        
+        **Frontend Login UI:** ❌ COMPLETELY BROKEN
+        • Login page loads correctly at /login
+        • Email/password fields accept credentials (owner@forge.app / Forge@2026)
+        • "Sign in" button is VISIBLE but NOT CLICKABLE via Playwright
+        • Tried 5 different selectors: button[data-testid="login-submit"], button[type="submit"],
+          button:has-text("Sign in"), button >> text="Sign in", button (generic)
+        • ALL selectors timeout after 5000ms - button exists but Playwright cannot interact with it
+        • This is a React Native Web + Expo Router compatibility issue with Playwright
+        
+        **Token Injection Attempt:** ❌ ALSO FAILED
+        • Obtained valid JWT token from backend API: ✅ Success
+        • Injected token into localStorage: localStorage.setItem('forge.jwt', token) ✅ Success
+        • Injected token kind: localStorage.setItem('forge.jwt.kind', 'staff') ✅ Success
+        • Navigated to /dashboard: ❌ REDIRECTED BACK TO /login
+        • Even with valid token in localStorage, app still redirects to login page
+        • This confirms the auth issue is in the frontend routing/AuthGate logic, not just UI
+        
+        === ROOT CAUSE (FROM CODE REVIEW & HISTORY) ===
+        
+        This is a KNOWN RECURRING ISSUE documented extensively in test_result.md:
+        
+        **Lines 4106-4177:** "CRITICAL BLOCKER — Mobile testing completely blocked by authentication failure"
+        **Lines 4127-4134:** "Backend API works perfectly... BUT: After clicking 'Sign in', page stays
+        stuck on /login indefinitely"
+        **Lines 4136-4142:** "ROOT CAUSE (Code Review):
+        • login.tsx line 75-76: After loginStaff() succeeds, calls router.replace('/(admin)/dashboard')
+        • auth.tsx line 154-156: loginStaff() sets token and updates state
+        • _layout.tsx line 29-42: AuthGate component watches auth state and redirects
+        • RACE CONDITION: router.replace() doesn't complete before AuthGate redirects back to /login"
+        
+        **Previous Testing Agent Recommendation (Lines 4151-4159):**
+        1. Fix the authentication/routing race condition FIRST (highest priority)
+        2. Debug why router.replace() in login.tsx doesn't work after successful loginStaff()
+        3. Check if AuthGate in _layout.tsx is redirecting back to login before auth state fully updates
+        4. Consider using websearch to find solutions for Expo Router + auth redirect issues
+        5. This is a RECURRING issue (increment stuck_count)
+        6. Once login works, call testing agent again to verify features
+        
+        === IMPACT ===
+        
+        **CANNOT TEST ANY OF THE FOLLOWING:**
+        ❌ /catalog route performance (requires authentication)
+        ❌ /quotations/new route performance (requires authentication)
+        ❌ /purchases route performance (requires authentication)
+        ❌ Network waterfalls and API request counts
+        ❌ Catalog Families vs Variants mode switching
+        ❌ Scroll behavior to product #2966
+        ❌ Search and filter functionality
+        ❌ Quotation Builder infinite scroll
+        ❌ DOM growth measurements
+        ❌ Image loading and caching behavior
+        ❌ Console errors/warnings on authenticated routes
+        ❌ Route navigation and click-to-content timings
+        ❌ Mobile/tablet/desktop viewport comparisons
+        
+        **100% OF SPRINT 3 PERFORMANCE TESTING IS BLOCKED**
+        
+        === EVIDENCE ===
+        
+        Screenshots saved:
+        • .screenshots/login_failed.png - Login page with credentials filled, button not clickable
+        • .screenshots/auth_failed.png - Still on login page after token injection
+        
+        Console logs: /root/.emergent/automation_output/*/console_*.log
+        
+        === RECOMMENDATION ===
+        
+        **CRITICAL PRIORITY:** Main agent MUST fix the authentication system before ANY Sprint 3
+        performance testing can proceed. This is not a minor issue - it's a complete blocker.
+        
+        **Suggested Fix Approach:**
+        1. Review login.tsx lines 75-82 (the auth unblock fix from earlier)
+        2. Review _layout.tsx lines 29-44 (AuthGate component)
+        3. The previous fix (removing router.replace() from submit handler) may have regressed
+        4. Use WEBSEARCH to find solutions for "Expo Router authentication redirect race condition"
+        5. Consider alternative auth flow: set token first, THEN let AuthGate handle ALL navigation
+        6. Test the fix manually in browser before calling testing agent again
+        
+        **DO NOT ATTEMPT** to run Sprint 3 performance testing until authentication is verified working.
+        
+        **STUCK COUNT:** Incrementing authentication task stuck_count to reflect this recurring failure.
