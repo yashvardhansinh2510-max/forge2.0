@@ -287,12 +287,14 @@ export function TransferSheet({
   const [qty, setQty] = useState("1");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [commandKey, setCommandKey] = useState("");
 
   useEffect(() => {
     if (!visible || !item) return;
     setMode("existing"); setPick(""); setCustSearch("");
     setNewName(""); setNewPhone(""); setNewEmail("");
     setQty(String(item.qty)); setReason("");
+    setCommandKey(`transfer-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
     api.get<CustomerLite[]>("/customers").then((list) => {
       setCustomers((list || []).filter((c) => c.id !== item.customer_id));
     }).catch(() => {});
@@ -313,16 +315,12 @@ export function TransferSheet({
     if (!n || n <= 0 || n > item.qty + 1e-6) { toast.error(`Enter a qty up to ${item.qty}`); return; }
     setBusy(true);
     try {
-      let destId = pick;
-      if (mode === "new") {
-        const created = await api.post<{ id: string }>("/customers", {
-          name: newName.trim(), phone: newPhone || undefined, email: newEmail || undefined,
-        });
-        destId = created.id;
-      }
+      const payload = mode === "new"
+        ? { new_customer: { name: newName.trim(), phone: newPhone || undefined, email: newEmail || undefined }, qty: n, reason: reason || undefined, idempotency_key: commandKey }
+        : { destination_customer_id: pick, qty: n, reason: reason || undefined, idempotency_key: commandKey };
       const r = await api.post<{ destination: { po_number: string; customer_name: string } }>(
         `/purchases/items/${item.item_id}/transfer`,
-        { new_customer_id: destId, qty: n, reason: reason || undefined },
+        payload,
       );
       toast.success(`Transferred to ${r.destination.customer_name} · new PO ${r.destination.po_number}`);
       await onSuccess(r);
