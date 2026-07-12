@@ -4861,6 +4861,48 @@ agent_communication:
         5. Consider alternative auth flow: set token first, THEN let AuthGate handle ALL navigation
         6. Test the fix manually in browser before calling testing agent again
         
+
+
+backend:
+  - task: "Production Workflow — official quotation PDF + transactional outbox + idempotent order automation"
+    implemented: true
+    working: "NA"
+    file: "backend/pdf_generator.py, backend/routes/quotation_routes.py, backend/services/domain_outbox.py, backend/models.py, backend/db.py, backend/server.py"
+    stuck_count: 0
+    priority: "critical"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Implemented the approved production workflow. The primary PDF command journals QuotationGenerated with idempotency key quotation_id+revision, and the primary Place Order command sets quotation=ordered plus journals OrderPlaced with idempotency key quotation_id in a Mongo transaction. The dispatcher executes only after commit; its handlers own idempotent timeline, follow-up, payment (pending outstanding equal to quotation grand total), PO, and purchase-line creation. Existing staff portal PDF remains read-only. The PDF renderer now follows the supplied BuildCon House A4 layout: summary cover followed by a new page for each room, room-only items, product images/fallbacks, discount-effective rates, terms/signature and repeat footer. Backend health is 200 against buildcon_house and valid Supabase storage configuration. Request focused API/PDF/idempotency verification only; do not start Purchases/mobile/UI/performance work.
+
+frontend:
+  - task: "Production Workflow — builder quotation and place-order command controls"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/quotation/context/BuilderContext.tsx, frontend/src/components/quotation/layout/BuilderTopbar.tsx"
+    stuck_count: 0
+    priority: "critical"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Added only the approved Builder controls: Quotation and Place Order sit together in the existing topbar. They persist the current quote then invoke backend commands; no workflow logic runs in UI. Quotation opens the official authenticated PDF; Place Order invokes the idempotent command and navigates to the existing detail screen. Also corrected new-quote finalize persistence to use the created quotation id rather than stale component state.
+
+test_plan:
+  current_focus:
+    - "Production Workflow — quotation PDF and transactional outbox automation"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Focused production workflow verification requested. Use owner credentials from /app/memory/test_credentials.md. Exercise a new, isolated quotation with rooms/discounts; verify generated PDF is A4, summary-first then one room-per-page and has expected metadata, product data, totals, terms/footer. Generate same PDF twice and assert exactly one QuotationGenerated outbox entry, one generated timeline entry and one generated follow-up for its quotation/revision. Confirm same quotation twice and assert exactly one OrderPlaced outbox entry, one pending payment equal grand_total, POs/purchase lines totaling the quote quantities by brand, one order timeline and one order follow-up. Also validate 1 room, 5 rooms, 50 lines and 200 lines PDF generation where feasible. Do NOT run Performance Sprint 3 or redesign testing.
+
         **DO NOT ATTEMPT** to run Sprint 3 performance testing until authentication is verified working.
         
         **STUCK COUNT:** Incrementing authentication task stuck_count to reflect this recurring failure.

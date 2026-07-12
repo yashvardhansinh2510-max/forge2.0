@@ -17,6 +17,12 @@ from models import (
 from pdf_generator import build_quotation_pdf
 from services import catalog_service
 from services.activity_log import log_event
+from services.domain_outbox import (
+    EVENT_ORDER_PLACED,
+    EVENT_QUOTATION_GENERATED,
+    dispatch_event,
+    enqueue_after_primary_commit,
+)
 from services.followup_engine import reconcile_followups
 
 router = APIRouter(prefix="/quotations", tags=["quotations"])
@@ -528,24 +534,41 @@ def _enriched_items_for_pdf(doc: dict) -> list[dict]:
     return [{**row["raw"], "discount_pct": round(row["pct"], 2)} for row in rows]
 
 
-# --- PDF (staff) ---
+# --- Official PDF command (staff) ---
 @router.get("/{quotation_id}/pdf")
 async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_current_user)):
+    """Build the PDF, then journal QuotationGenerated before dispatching automation.
+
+    The PDF is the primary output. Its outbox record is committed first; timeline
+    and follow-up handlers only run after that commit succeeds.
+    """
     doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
     pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
     pdf_bytes = build_quotation_pdf(pdf_doc, customer)
-    await log_event(
-        event_type="quotation.pdf_generated",
-        entity_type="quotation",
-        entity_id=quotation_id,
-        actor=user,
-        customer_id=doc.get("customer_id"),
-        quotation_id=quotation_id,
-        summary="Quotation PDF generated",
-    )
+    revision = len(doc.get("revisions") or [])
+    key = f"quotation-generated:{quotation_id}:revision:{revision}"
+    event = await db.event_outbox.find_one({"idempotency_key": key}, {"_id": 0})
+    if not event:
+        from db import client
+        try:
+            async with await client.start_session() as session:
+                async with session.start_transaction():
+                    event = await enqueue_after_primary_commit(
+                        event_type=EVENT_QUOTATION_GENERATED,
+                        idempotency_key=key,
+                        payload={"quotation_id": quotation_id, "revision": revision},
+                        actor=user,
+                        session=session,
+                    )
+        except Exception as exc:
+            # A unique-index collision is an idempotent duplicate request.
+            event = await db.event_outbox.find_one({"idempotency_key": key}, {"_id": 0})
+            if not event:
+                raise HTTPException(status_code=500, detail=f"Could not journal quotation generation: {exc}") from exc
+    await dispatch_event(event["id"])
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
@@ -553,7 +576,7 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     )
 
 
-# --- PDF (customer portal) ---
+# --- PDF (customer portal; intentionally read-only) ---
 @router.get("/{quotation_id}/portal-pdf")
 async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_current_customer)):
     doc = await db.quotations.find_one({"id": quotation_id, "customer_id": cust.id}, {"_id": 0})
@@ -561,99 +584,42 @@ async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_curre
         raise HTTPException(status_code=404, detail="Quotation not found")
     pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
     pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict())
-    return StreamingResponse(
-        iter([pdf_bytes]),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{doc["number"]}.pdf"'},
-    )
+    return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{doc["number"]}.pdf"'})
 
 
 # =============================================================================
-# Place Order — brand-grouped preview + confirmation → seeds Purchase Orders.
+# Place Order command — primary quotation state + EventOutbox; no side effects.
 # =============================================================================
 class PlaceOrderConfirmPayload(BaseModel):
-    """Optional supplier assignment + notes when confirming the order."""
-    supplier_by_brand: dict[str, str] = {}          # {brand_id: supplier_id}
-    notes_by_brand: dict[str, str] = {}             # {brand_id: internal_notes}
+    """Retained API shape; downstream defaults are selected by the OrderPlaced handler."""
+    supplier_by_brand: dict[str, str] = {}
+    notes_by_brand: dict[str, str] = {}
     expected_delivery_at: str | None = None
     project_name: str | None = None
 
 
 async def _brand_grouped_preview(doc: dict) -> dict:
-    """Group quotation lines by BRAND. Returns cards ready for the review screen."""
     items = doc.get("items", [])
     if not items:
         return {"quotation_id": doc["id"], "quotation_number": doc.get("number"), "brands": []}
-
-    # Fetch products (once) so we can enrich items with brand info + supplier hint.
-    product_ids = list({i["product_id"] for i in items})
-    products = await db.products.find(
-        {"id": {"$in": product_ids}}, {"_id": 0, "id": 1, "brand_id": 1, "mrp": 1, "price": 1},
-    ).to_list(len(product_ids) + 5)
-    product_map = {p["id"]: p for p in products}
-
-    brand_ids = list({product_map.get(i["product_id"], {}).get("brand_id") for i in items if product_map.get(i["product_id"])})
+    product_ids = list({item["product_id"] for item in items})
+    products = await db.products.find({"id": {"$in": product_ids}}, {"_id": 0, "id": 1, "brand_id": 1}).to_list(len(product_ids) + 5)
+    product_map = {product["id"]: product for product in products}
+    brand_ids = list({product.get("brand_id") for product in products if product.get("brand_id")})
     brands = await db.brands.find({"id": {"$in": brand_ids}}, {"_id": 0}).to_list(len(brand_ids) + 5)
-    brand_map = {b["id"]: b for b in brands}
-
-    # Pick a default supplier per brand (first active one).
-    suppliers = await db.suppliers.find({"brand_id": {"$in": brand_ids}, "active": True}, {"_id": 0}).to_list(200)
-    default_supplier_by_brand: dict[str, dict] = {}
-    for s in suppliers:
-        if s.get("brand_id") and s["brand_id"] not in default_supplier_by_brand:
-            default_supplier_by_brand[s["brand_id"]] = s
-
-    grouped: dict[str, dict] = defaultdict(lambda: {
-        "brand_id": None, "brand_name": "Unassigned", "items": [], "subtotal": 0.0,
-        "default_supplier": None,
-    })
-    for it in items:
-        prod = product_map.get(it["product_id"], {})
-        brand_id = prod.get("brand_id") or "__unassigned__"
-        brand_name = brand_map.get(brand_id, {}).get("name", "Unassigned") if brand_id != "__unassigned__" else "Unassigned"
-        # Cost = quotation unit_price by default (dealer margin adjusted later)
-        unit_cost = float(it.get("unit_price", 0))
-        grouped[brand_id]["brand_id"] = brand_id if brand_id != "__unassigned__" else None
-        grouped[brand_id]["brand_name"] = brand_name
-        grouped[brand_id]["items"].append({
-            "line_id": it.get("id"),
-            "product_id": it["product_id"],
-            "sku": it["sku"],
-            "name": it["name"],
-            "image": it.get("image"),
-            "category_id": it.get("category_id"),
-            "room": it.get("room"),
-            "qty": float(it.get("qty", 1)),
-            "unit_cost": unit_cost,
-        })
-        grouped[brand_id]["subtotal"] += unit_cost * float(it.get("qty", 1))
-        if default_supplier_by_brand.get(brand_id) and not grouped[brand_id]["default_supplier"]:
-            s = default_supplier_by_brand[brand_id]
-            grouped[brand_id]["default_supplier"] = {"id": s["id"], "name": s["name"]}
-
-    cards = []
-    for b in grouped.values():
-        b["subtotal"] = round(b["subtotal"], 2)
-        b["item_count"] = len(b["items"])
-        cards.append(b)
-    cards.sort(key=lambda c: c["brand_name"])
-
-    return {
-        "quotation_id": doc["id"],
-        "quotation_number": doc.get("number"),
-        "customer_id": doc.get("customer_id"),
-        "customer_name": doc.get("customer_name"),
-        "brands": cards,
-        "total_value": round(sum(c["subtotal"] for c in cards), 2),
-    }
+    brand_map = {brand["id"]: brand for brand in brands}
+    grouped: dict[str, dict] = {}
+    for item in items:
+        brand_id = product_map.get(item["product_id"], {}).get("brand_id") or "__unassigned__"
+        group = grouped.setdefault(brand_id, {"brand_id": None if brand_id == "__unassigned__" else brand_id, "brand_name": brand_map.get(brand_id, {}).get("name", "Unassigned"), "items": [], "subtotal": 0.0})
+        group["items"].append(item)
+        group["subtotal"] += float(item.get("qty") or 0) * float(item.get("unit_price") or 0)
+    cards = [{**group, "subtotal": round(group["subtotal"], 2), "item_count": len(group["items"])} for group in grouped.values()]
+    return {"quotation_id": doc["id"], "quotation_number": doc.get("number"), "customer_id": doc.get("customer_id"), "customer_name": doc.get("customer_name"), "brands": sorted(cards, key=lambda card: card["brand_name"]), "total_value": round(sum(card["subtotal"] for card in cards), 2)}
 
 
 @router.get("/{quotation_id}/place-order/preview")
-async def place_order_preview(
-    quotation_id: str,
-    _: UserPublic = Depends(require_min_role("sales")),
-):
-    """Preview brand-grouped POs before creating them. Non-mutating."""
+async def place_order_preview(quotation_id: str, _: UserPublic = Depends(require_min_role("sales"))):
     doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
@@ -662,153 +628,35 @@ async def place_order_preview(
     return await _brand_grouped_preview(doc)
 
 
-async def _next_po_number_local() -> str:
-    year = datetime.now(timezone.utc).year
-    prefix = f"FPO-{year}-"
-    n = await db.purchase_orders.count_documents({"number": {"$regex": f"^{prefix}"}})
-    return f"{prefix}{n + 1:04d}"
-
-
 @router.post("/{quotation_id}/place-order/confirm")
-async def place_order_confirm(
-    quotation_id: str,
-    body: PlaceOrderConfirmPayload,
-    user: UserPublic = Depends(require_min_role("sales")),
-):
-    """Create Draft POs (one per brand), mark quotation as ordered."""
-    doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Quotation not found")
-    if doc.get("status") == "ordered":
-        raise HTTPException(status_code=400, detail="Order already placed for this quotation")
-
-    preview = await _brand_grouped_preview(doc)
-    if not preview["brands"]:
-        raise HTTPException(status_code=400, detail="Quotation has no items")
-
-    created_pos: list[dict] = []
-    for card in preview["brands"]:
-        brand_id = card.get("brand_id")
-        supplier_id = body.supplier_by_brand.get(brand_id or "") or None
-        supplier_name = None
-        if supplier_id:
-            s = await db.suppliers.find_one({"id": supplier_id}, {"_id": 0, "name": 1})
-            if s:
-                supplier_name = s["name"]
-        elif card.get("default_supplier"):
-            supplier_id = card["default_supplier"]["id"]
-            supplier_name = card["default_supplier"]["name"]
-
-        # Build PO items — each carries denormalized customer + brand info so
-        # the material tracker can filter without joins.
-        now = now_iso()
-        po_items = [
-            PurchaseOrderItem(
-                product_id=it["product_id"], sku=it["sku"], name=it["name"],
-                image=it.get("image"), category_id=it.get("category_id"),
-                room=it.get("room"), qty=it["qty"], unit_cost=it["unit_cost"],
-                quotation_line_id=it.get("line_id"),
-                stage="order_in_company",
-                customer_id=doc["customer_id"],
-                customer_name=doc.get("customer_name", ""),
-                brand_id=brand_id,
-                brand_name=card.get("brand_name"),
-                last_moved_at=now,
-                last_moved_by=user.id,
-                last_moved_by_name=user.full_name,
-                stage_history=[
-                    PurchaseStageEvent(
-                        from_stage=None, to_stage="order_in_company",
-                        by_user_id=user.id, by_user_name=user.full_name,
-                        note=f"Created from {doc.get('number')}",
-                        action="create",
+async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload, user: UserPublic = Depends(require_min_role("sales"))):
+    """Commit OrderPlaced once, then dispatch idempotent secondary automation."""
+    key = f"order-placed:{quotation_id}"
+    event = await db.event_outbox.find_one({"idempotency_key": key}, {"_id": 0})
+    if not event:
+        from db import client
+        try:
+            async with await client.start_session() as session:
+                async with session.start_transaction():
+                    doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0}, session=session)
+                    if not doc:
+                        raise HTTPException(status_code=404, detail="Quotation not found")
+                    if not doc.get("items"):
+                        raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
+                    await db.quotations.update_one({"id": quotation_id}, {"$set": {"status": "ordered", "updated_at": now_iso()}}, session=session)
+                    event = await enqueue_after_primary_commit(
+                        event_type=EVENT_ORDER_PLACED,
+                        idempotency_key=key,
+                        payload={"quotation_id": quotation_id, "project_name": body.project_name, "expected_delivery_at": body.expected_delivery_at},
+                        actor=user,
+                        session=session,
                     )
-                ],
-            )
-            for it in card["items"]
-        ]
-        subtotal = sum(i.qty * i.unit_cost for i in po_items)
-
-        number = await _next_po_number_local()
-        po = PurchaseOrder(
-            number=number,
-            quotation_id=quotation_id,
-            quotation_number=doc.get("number"),
-            customer_id=doc["customer_id"],
-            customer_name=doc.get("customer_name", ""),
-            project_name=body.project_name,
-            brand_id=brand_id,
-            brand_name=card.get("brand_name"),
-            supplier_id=supplier_id,
-            supplier_name=supplier_name,
-            status="draft",
-            items=po_items,
-            internal_notes=body.notes_by_brand.get(brand_id or "") if body.notes_by_brand else None,
-            expected_delivery_at=body.expected_delivery_at,
-            subtotal=round(subtotal, 2),
-            grand_total=round(subtotal, 2),
-            created_by=user.id,
-            created_by_name=user.full_name,
-            status_history=[
-                PurchaseStatusEvent(
-                    from_status=None, to_status="draft",
-                    by_user_id=user.id, by_user_name=user.full_name,
-                    note=f"Auto-generated from {doc.get('number')}",
-                ).dict()
-            ],
-        )
-        await db.purchase_orders.insert_one(po.dict())
-        created_pos.append(po.dict())
-
-        # Activity events
-        await log_event(
-            event_type="purchase.created",
-            entity_type="purchase",
-            entity_id=po.id,
-            actor=user,
-            customer_id=doc["customer_id"],
-            quotation_id=quotation_id,
-            purchase_id=po.id,
-            summary=f"{po.number} · {po.brand_name} · {len(po_items)} items",
-            payload={"brand_id": brand_id, "supplier_id": supplier_id, "item_count": len(po_items)},
-        )
-
-    # Mark quotation ordered
-    await db.quotations.update_one(
-        {"id": quotation_id},
-        {"$set": {
-            "status": "ordered",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }},
-    )
-    await log_event(
-        event_type="quotation.order_placed",
-        entity_type="quotation",
-        entity_id=quotation_id,
-        actor=user,
-        customer_id=doc["customer_id"],
-        quotation_id=quotation_id,
-        summary=f"Order placed — {len(created_pos)} Purchase Orders generated",
-        payload={"po_count": len(created_pos), "po_ids": [p["id"] for p in created_pos]},
-    )
-    await log_event(
-        event_type="quotation.status_changed",
-        entity_type="quotation",
-        entity_id=quotation_id,
-        actor=user,
-        customer_id=doc["customer_id"],
-        quotation_id=quotation_id,
-        summary="Status changed to ordered",
-        payload={"from": doc.get("status"), "to": "ordered"},
-    )
-
-    # Order created + POs generated — the exact moment quotation reminders
-    # should auto-close and dispatch reminders can start (event-triggered,
-    # not a cron job).
+        except HTTPException:
+            raise
+        except Exception as exc:
+            event = await db.event_outbox.find_one({"idempotency_key": key}, {"_id": 0})
+            if not event:
+                raise HTTPException(status_code=500, detail=f"Could not journal order placement: {exc}") from exc
+    result = await dispatch_event(event["id"])
     asyncio.create_task(reconcile_followups())
-
-    return {
-        "quotation_id": quotation_id,
-        "purchase_orders": created_pos,
-        "count": len(created_pos),
-    }
+    return {"quotation_id": quotation_id, "idempotent": event.get("status") == "completed", **result}

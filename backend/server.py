@@ -23,6 +23,7 @@ from routes.activity_routes import router as activity_router  # noqa: E402
 from routes.followup_routes import router as followup_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
 from services import catalog_service  # noqa: E402
+from services.domain_outbox import dispatch_pending, ensure_outbox_indexes  # noqa: E402
 from services.followup_engine import reconcile_followups  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -82,6 +83,8 @@ async def _startup():
 
     await seed_if_empty()
     await resync_catalog_if_needed()
+    await ensure_outbox_indexes()
+    await dispatch_pending()
     snapshot = await catalog_service.refresh_catalog_snapshot()
     logger.info("Catalog read model ready: %d products.", len(snapshot.products))
     try:

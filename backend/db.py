@@ -4,6 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from settings import settings
 
 _client = AsyncIOMotorClient(settings.mongo_url)
+client = _client
 db = _client[settings.db_name]
 
 

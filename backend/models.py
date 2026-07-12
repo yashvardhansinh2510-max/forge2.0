@@ -240,6 +240,8 @@ class QuotationLineItem(BaseModel):
     sku: str
     name: str
     image: Optional[str] = None
+    finish: Optional[str] = None
+    colour: Optional[str] = None
     category_id: Optional[str] = None      # denormalized for category-level discounts
     room: Optional[str] = None
     qty: float = 1

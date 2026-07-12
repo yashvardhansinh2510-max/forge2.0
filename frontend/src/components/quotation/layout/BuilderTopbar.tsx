@@ -101,6 +101,28 @@ export function BuilderTopbar({ onBack }: { onBack: () => void }) {
       ) : null}
 
       <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
+        {!isPhone ? (
+          <>
+            <Pressable
+              testID="generate-quotation"
+              onPress={b.generateOfficialQuotation}
+              disabled={b.workflowBusy || b.s.lines.length === 0}
+              style={({ pressed }) => [styles.workflowBtn, styles.quotationBtn, { opacity: b.workflowBusy || b.s.lines.length === 0 ? 0.45 : pressed ? 0.76 : 1 }]}
+            >
+              <Feather name="file-text" size={14} color={colors.onSurface} />
+              <Text style={styles.workflowText}>Quotation</Text>
+            </Pressable>
+            <Pressable
+              testID="place-order"
+              onPress={b.placeOrder}
+              disabled={b.workflowBusy || b.s.lines.length === 0}
+              style={({ pressed }) => [styles.workflowBtn, styles.orderBtn, { opacity: b.workflowBusy || b.s.lines.length === 0 ? 0.45 : pressed ? 0.76 : 1 }]}
+            >
+              <Feather name="shopping-cart" size={14} color={colors.onAction} />
+              <Text style={[styles.workflowText, { color: colors.onAction }]}>Place Order</Text>
+            </Pressable>
+          </>
+        ) : null}
         {isDesktop && Platform.OS === "web" ? (
           <View style={styles.hint} testID="shortcut-hint">
             <Text style={styles.hintKey}>⌘Z</Text>
@@ -202,6 +224,10 @@ const styles = StyleSheet.create({
   fieldValue: { fontSize: 12, fontWeight: "600", color: colors.onSurface, marginTop: 1 },
   fieldInput: { fontSize: 12, fontWeight: "600", color: colors.onSurface, padding: 0, marginTop: 1, borderWidth: 0 },
 
+  workflowBtn: { flexDirection: "row", alignItems: "center", gap: 6, height: 34, paddingHorizontal: 10, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth },
+  quotationBtn: { backgroundColor: colors.surface, borderColor: colors.border },
+  orderBtn: { backgroundColor: colors.brand, borderColor: colors.brand },
+  workflowText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
   iconBtn: {
     padding: 8, borderRadius: radius.md,
     backgroundColor: colors.surfaceTertiary,

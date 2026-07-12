@@ -14,7 +14,7 @@
 // -----------------------------------------------------------------------------
 import * as Haptics from "expo-haptics";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, TextInput } from "react-native";
+import { Linking, Platform, TextInput } from "react-native";
 
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
@@ -111,8 +111,11 @@ export type BuilderApi = {
   saveState: SaveState;
   savedAt: Date | null;
   saveLabel: string;
-  persist: () => Promise<void>;
+  persist: () => Promise<string | null>;
   finalize: () => Promise<void>;
+  workflowBusy: boolean;
+  generateOfficialQuotation: () => Promise<void>;
+  placeOrder: () => Promise<void>;
 
   // Mutations — customers/lines
   setCustomer: (id: string) => void;
@@ -219,6 +222,7 @@ export function BuilderProvider({ onFinalize, children }: {
   const [quotationNumber, setQuotationNumber] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [workflowBusy, setWorkflowBusy] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sheets
@@ -378,8 +382,8 @@ export function BuilderProvider({ onFinalize, children }: {
   }, [productLoading, productHasMore, products.length, q, selectedBrandId, selectedCategoryId, sortKey]);
 
   // ---------- Autosave ----------
-  const persist = useCallback(async () => {
-    if (!s.customerId) return;
+  const persist = useCallback(async (): Promise<string | null> => {
+    if (!s.customerId) return null;
     const payload = {
       customer_id: s.customerId,
       items: s.lines,
@@ -399,19 +403,23 @@ export function BuilderProvider({ onFinalize, children }: {
     };
     try {
       setSaveState("saving");
+      let persistedId = quotationId;
       if (!quotationId) {
         const created = await api.post<{ id: string; number: string }>("/quotations", payload);
         setQuotationId(created.id);
         setQuotationNumber(created.number);
+        persistedId = created.id;
       } else {
         const upd: any = { ...payload, silent: true, collapsed_rooms: Object.keys(s.collapsedRooms).filter((k) => s.collapsedRooms[k]) };
         await api.patch(`/quotations/${quotationId}`, upd);
       }
       setSaveState("saved");
       setSavedAt(new Date());
+      return persistedId;
     } catch (e: any) {
       setSaveState("error");
       toast.error(e?.detail || "Save failed");
+      return null;
     }
   }, [s, quotationId, selectedBrandId, selectedCategoryId, sortKey]);
 
@@ -792,10 +800,45 @@ export function BuilderProvider({ onFinalize, children }: {
 
   // Finalize
   const finalize = useCallback(async () => {
-    await persist();
-    if (!quotationId) return;
-    onFinalize?.(quotationId);
-  }, [persist, quotationId, onFinalize]);
+    const persistedId = await persist();
+    if (!persistedId) return;
+    onFinalize?.(persistedId);
+  }, [persist, onFinalize]);
+
+  // Builder controls issue commands only. The backend commits an EventOutbox
+  // record and dispatches QuotationGenerated / OrderPlaced after commit.
+  const generateOfficialQuotation = useCallback(async () => {
+    const persistedId = await persist();
+    if (!persistedId) return;
+    setWorkflowBusy(true);
+    try {
+      const url = await api.authenticatedUrl(`/quotations/${persistedId}/pdf`);
+      await Linking.openURL(url);
+      toast.success("Official quotation generated");
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not generate quotation PDF");
+    } finally {
+      setWorkflowBusy(false);
+    }
+  }, [persist]);
+
+  const placeOrder = useCallback(async () => {
+    const persistedId = await persist();
+    if (!persistedId) return;
+    setWorkflowBusy(true);
+    try {
+      const result = await api.post<{ count?: number; idempotent?: boolean }>(`/quotations/${persistedId}/place-order/confirm`, {
+        project_name: s.header.projectName || null,
+      });
+      await refreshRecentQuotations();
+      toast.success(result.idempotent ? "Existing order opened safely" : `Order placed · ${result.count || 0} purchase order(s)`);
+      onFinalize?.(persistedId);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not place order");
+    } finally {
+      setWorkflowBusy(false);
+    }
+  }, [persist, s.header.projectName, refreshRecentQuotations, onFinalize]);
 
   // Web-only: cmd/ctrl+K focuses search
   useEffect(() => {
@@ -829,6 +872,7 @@ export function BuilderProvider({ onFinalize, children }: {
     recentQuotations, refreshRecentQuotations, restoreQuotation, startNewQuotation,
     totals, usedCategoryIds, flatRows,
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
+    workflowBusy, generateOfficialQuotation, placeOrder,
     setCustomer, createCustomer, customerSwitcherOpen, setCustomerSwitcherOpen,
     addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,
     addRoom, renameRoom, duplicateRoom, deleteRoom, toggleCollapse, setActiveRoom, onRoomDragEnd, onLinesDragEnd,
