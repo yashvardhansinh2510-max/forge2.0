@@ -300,77 +300,10 @@ async def get_family(family_key: str, _: UserPublic = Depends(get_current_user))
     call: family metadata + variants + gallery + specs union. Missing data
     is honestly reported (nulls / empty arrays), never fabricated.
     """
-    prods = await db.products.find(
-        {"family_key": family_key, "active": True}, {"_id": 0},
-    ).sort([("colour", 1), ("finish", 1), ("sku", 1)]).to_list(200)
-    if not prods:
+    doc = await catalog_service.family_detail(family_key)
+    if not doc:
         raise HTTPException(status_code=404, detail="Family not found")
-
-    brand = await db.brands.find_one({"id": prods[0].get("brand_id")}, {"_id": 0})
-    category = await db.categories.find_one({"id": prods[0].get("category_id")}, {"_id": 0})
-
-    # Aggregate gallery: family-level media first, then union of variant media.
-    family_media = await db.product_media.find(
-        {"family_key": family_key}, {"_id": 0},
-    ).sort([("is_primary", -1), ("sort_order", 1)]).to_list(200)
-    variant_ids = [p["id"] for p in prods]
-    variant_media = await db.product_media.find(
-        {"product_id": {"$in": variant_ids}}, {"_id": 0},
-    ).sort([("is_primary", -1), ("sort_order", 1)]).to_list(1000)
-
-    def _pack_media(m: dict) -> dict:
-        return {
-            "id": m["id"], "url": m.get("public_url"),
-            "role": m.get("role"), "source_type": m.get("source_type"),
-            "width": m.get("width"), "height": m.get("height"),
-            "quality": m.get("quality"), "is_primary": m.get("is_primary"),
-            "product_id": m.get("product_id"), "family_key": m.get("family_key"),
-        }
-
-    gallery = [_pack_media(m) for m in family_media if m.get("public_url")]
-    for m in variant_media:
-        if m.get("public_url"):
-            gallery.append(_pack_media(m))
-
-    # Union of specs across variants (variant-specific fields kept in per-variant list).
-    variants_out = []
-    all_specs: dict = {}
-    for p in prods:
-        variants_out.append({
-            "id": p["id"], "sku": p["sku"], "name": p.get("name"),
-            "colour": p.get("colour"), "finish": p.get("finish"),
-            "finish_code": p.get("finish_code"), "variant_label": p.get("variant_label"),
-            "price": p.get("price"), "mrp": p.get("mrp"), "stock": p.get("stock", 0),
-            "dimensions": p.get("dimensions"), "material": p.get("material"),
-            "warranty": p.get("warranty"), "specs": p.get("specs") or {},
-            "hero_image": next(
-                (m["public_url"] for m in variant_media
-                 if m.get("product_id") == p["id"] and m.get("public_url")), None,
-            ),
-        })
-        for k, v in (p.get("specs") or {}).items():
-            all_specs.setdefault(k, v)
-
-    return {
-        "family_key": family_key,
-        "family_name": prods[0].get("family_name") or prods[0].get("name"),
-        "brand": brand,
-        "category": category,
-        "subcategory": prods[0].get("subcategory"),
-        "series": prods[0].get("series"),
-        "description": prods[0].get("description"),
-        "min_price": min(p.get("price", 0) for p in prods),
-        "max_price": max(p.get("price", 0) for p in prods),
-        "variant_count": len(prods),
-        "variants": variants_out,
-        "gallery": gallery,
-        "specs_union": all_specs,
-        "hero_image_url": next((g["url"] for g in gallery if g.get("is_primary")), (gallery[0]["url"] if gallery else None)),
-        "downloads": [],   # Populated in Phase 2B via product_media role=spec-sheet
-        "compatible_ids": prods[0].get("compatible_ids") or [],
-        "accessory_ids":  prods[0].get("accessory_ids") or [],
-        "related_ids":    prods[0].get("related_ids") or [],
-    }
+    return doc
 
 
 @router.get("/products/recent")
@@ -379,19 +312,9 @@ async def recent_products(
     user: UserPublic = Depends(get_current_user),
 ):
     """Products this user has recently added to a quotation."""
-    usages = await db.product_usage.find(
-        {"user_id": user.id}, {"_id": 0}
-    ).sort("last_used_at", -1).limit(limit).to_list(limit)
-    if not usages:
-        return []
-    ids = [u["product_id"] for u in usages]
-    docs = await db.products.find({"id": {"$in": ids}, "active": True}, {"_id": 0}).to_list(limit)
-    by_id = {d["id"]: d for d in docs}
-    # preserve recent order
-    ordered = [by_id[i] for i in ids if i in by_id]
-    await media_service.hydrate_media_batch(ordered)
-    await media_service.hydrate_variants_batch(ordered)
-    return ordered
+    return await catalog_service.recent_or_frequent_products(
+        user.id, limit=limit, recent=True,
+    )
 
 
 @router.get("/products/frequent")
@@ -400,28 +323,17 @@ async def frequent_products(
     user: UserPublic = Depends(get_current_user),
 ):
     """Products this user adds most often."""
-    usages = await db.product_usage.find(
-        {"user_id": user.id}, {"_id": 0}
-    ).sort("count", -1).limit(limit).to_list(limit)
-    if not usages:
-        return []
-    ids = [u["product_id"] for u in usages]
-    docs = await db.products.find({"id": {"$in": ids}, "active": True}, {"_id": 0}).to_list(limit)
-    by_id = {d["id"]: d for d in docs}
-    ordered = [by_id[i] for i in ids if i in by_id]
-    await media_service.hydrate_media_batch(ordered)
-    await media_service.hydrate_variants_batch(ordered)
-    return ordered
+    return await catalog_service.recent_or_frequent_products(
+        user.id, limit=limit, recent=False,
+    )
 
 
-@router.get("/products/{product_id}", response_model=Product)
+@router.get("/products/{product_id}")
 async def get_product(product_id: str, _: UserPublic = Depends(get_current_user)):
-    doc = await db.products.find_one({"id": product_id}, {"_id": 0})
+    doc = await catalog_service.product_by_id(product_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Product not found")
-    await media_service.hydrate_product_media(doc)
-    await media_service.hydrate_variants_batch([doc])
-    return Product(**doc)
+    return doc
 
 
 @router.get("/products/{product_id}/alternates")
@@ -441,56 +353,10 @@ async def product_alternates(
     the salesperson sees products they actually reach for. The current product
     itself is always excluded.
     """
-    src = await db.products.find_one({"id": product_id}, {"_id": 0})
-    if not src:
+    result = await catalog_service.alternate_products(product_id, user.id, limit)
+    if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
-
-    # First two words of the name (case-insensitive) form our family bucket.
-    name_prefix = " ".join((src.get("name") or "").split()[:2]).strip().lower()
-
-    # Pull per-user usage counts so we can rank tiers by "products this user likes".
-    usages = await db.product_usage.find({"user_id": user.id}, {"_id": 0}).to_list(2000)
-    usage_by_id = {u["product_id"]: int(u.get("count", 0)) for u in usages}
-
-    # Pull a wide pool once, then classify in Python — keeps the query index-friendly
-    # and lets us score across tiers in a single pass without triple round-trips.
-    pool = await db.products.find(
-        {
-            "active": True,
-            "category_id": src.get("category_id"),
-            "id": {"$ne": product_id},
-        },
-        {"_id": 0},
-    ).limit(400).to_list(400)
-
-    def tier(p: dict) -> int:
-        p_name_prefix = " ".join((p.get("name") or "").split()[:2]).strip().lower()
-        same_brand = p.get("brand_id") == src.get("brand_id")
-        same_prefix = bool(name_prefix) and p_name_prefix == name_prefix
-        if same_brand and same_prefix:
-            return 1
-        if same_brand:
-            return 2
-        return 3
-
-    scored = []
-    for p in pool:
-        t = tier(p)
-        scored.append((t, -usage_by_id.get(p["id"], 0), float(p.get("price", 0)), p))
-    scored.sort(key=lambda x: (x[0], x[1], x[2]))
-
-    out = [p for _t, _u, _pr, p in scored[:limit]]
-    await media_service.hydrate_media_batch(out)
-    await media_service.hydrate_variants_batch(out)
-    return {
-        "source_product_id": product_id,
-        "items": out,
-        "tiers": {
-            "family": sum(1 for t, *_ in scored if t == 1),
-            "brand_category": sum(1 for t, *_ in scored if t == 2),
-            "category": sum(1 for t, *_ in scored if t == 3),
-        },
-    }
+    return result
 
 
 @router.get("/products/{product_id}/complete-the-set")
@@ -503,36 +369,10 @@ async def complete_the_set(
     category. E.g. viewing a Talis E basin mixer suggests the Talis E shower
     valve, spout, robe hook — the classic bathroom cross-sell.
     """
-    src = await db.products.find_one({"id": product_id}, {"_id": 0})
-    if not src:
+    result = await catalog_service.complete_set_products(product_id, limit)
+    if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
-
-    match: dict = {"active": True, "id": {"$ne": product_id}, "category_id": {"$ne": src.get("category_id")}}
-    fam_key = src.get("family_key")
-    series = src.get("series")
-    collection = src.get("collection")
-    ors = []
-    if fam_key:
-        ors.append({"family_key": fam_key})
-    if series:
-        ors.append({"series": series, "brand_id": src.get("brand_id")})
-    if collection:
-        ors.append({"collection": collection, "brand_id": src.get("brand_id")})
-    if not ors:
-        return {"source_product_id": product_id, "items": []}
-    match["$or"] = ors
-
-    docs = await db.products.find(match, {"_id": 0}).limit(limit).to_list(limit)
-    # Group by category so we show one representative per companion category.
-    by_cat: dict[str, dict] = {}
-    for d in docs:
-        cid = d.get("category_id") or "_"
-        if cid not in by_cat:
-            by_cat[cid] = d
-    items = list(by_cat.values())[:limit]
-    await media_service.hydrate_media_batch(items)
-    await media_service.hydrate_variants_batch(items)
-    return {"source_product_id": product_id, "items": items}
+    return result
 
 
 @router.post("/products/custom", response_model=Product)
@@ -562,6 +402,7 @@ async def create_custom_product(
     payload["tags"] = list(set([*(payload.get("tags") or []), "custom"]))
     prod = Product(**payload)
     await db.products.insert_one(prod.dict())
+    catalog_service.schedule_catalog_refresh()
     return prod
 
 
@@ -574,6 +415,7 @@ async def create_product(
         raise HTTPException(status_code=409, detail="SKU already exists")
     prod = Product(**body.dict())
     await db.products.insert_one(prod.dict())
+    catalog_service.schedule_catalog_refresh()
     return prod
 
 

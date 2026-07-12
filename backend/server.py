@@ -22,6 +22,7 @@ from routes.payment_routes import router as payment_router  # noqa: E402
 from routes.activity_routes import router as activity_router  # noqa: E402
 from routes.followup_routes import router as followup_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
+from services import catalog_service  # noqa: E402
 from services.followup_engine import reconcile_followups  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
@@ -81,6 +82,8 @@ async def _startup():
 
     await seed_if_empty()
     await resync_catalog_if_needed()
+    snapshot = await catalog_service.refresh_catalog_snapshot()
+    logger.info("Catalog read model ready: %d products.", len(snapshot.products))
     try:
         await reconcile_followups()
     except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load

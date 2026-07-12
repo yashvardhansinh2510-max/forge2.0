@@ -41,6 +41,28 @@ async def ensure_all() -> None:
         name="products_hierarchy",
     )
     await db.products.create_index([("active", 1), ("brand_id", 1)], name="products_active_brand")
+    await db.products.create_index(
+        [("active", 1), ("name", 1), ("id", 1)],
+        name="products_active_name_id",
+    )
+    await db.products.create_index(
+        [("active", 1), ("price", 1), ("id", 1)],
+        name="products_active_price_id",
+    )
+    await db.products.create_index(
+        [("active", 1), ("price", -1), ("id", 1)],
+        name="products_active_price_desc_id",
+    )
+
+    # product_usage: per-user recent/frequent tabs.
+    await db.product_usage.create_index("user_id", name="usage_user")
+    await db.product_usage.create_index("product_id", name="usage_product")
+    await db.product_usage.create_index(
+        [("user_id", 1), ("last_used_at", -1)], name="usage_user_recent",
+    )
+    await db.product_usage.create_index(
+        [("user_id", 1), ("count", -1)], name="usage_user_count",
+    )
 
     # product_media: lookup by product/family, plus sha1 dedupe
     await db.product_media.create_index("id", unique=True, name="pm_id")

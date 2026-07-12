@@ -14,6 +14,8 @@ from catalog_pipeline.orchestrator import import_accepted, rollback_job, run_pip
 from db import db
 from models import CatalogImportJob, UserPublic
 
+from services import catalog_service
+
 router = APIRouter(prefix="/catalog/imports", tags=["catalog-import"])
 logger = logging.getLogger("forge.catalog_import")
 
@@ -145,6 +147,7 @@ async def approve_and_import(
         pass
 
     stats = await import_accepted(doc, user.id)
+    catalog_service.schedule_catalog_refresh()
     await db.catalog_imports.update_one(
         {"id": job_id},
         {"$set": {
@@ -162,6 +165,7 @@ async def rollback(
     _: UserPublic = Depends(require_min_role("manager")),
 ):
     n = await rollback_job(job_id)
+    catalog_service.schedule_catalog_refresh()
     return {"products_deactivated": n}
 
 

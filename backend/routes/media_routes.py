@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from auth import get_current_user, require_min_role
 from db import db
 from models import ProductMedia, UserPublic
-from services import media_service
+from services import catalog_service, media_service
 
 logger = logging.getLogger("forge.media_routes")
 router = APIRouter(tags=["media"])
@@ -61,6 +61,7 @@ async def upload_product_media(
         is_primary=is_primary, sort_order=sort_order,
         uploaded_by=user.id, notes=notes,
     )
+    catalog_service.schedule_catalog_refresh()
     return doc
 
 
@@ -94,6 +95,7 @@ async def upload_family_media(
         is_primary=is_primary, sort_order=sort_order,
         uploaded_by=user.id, notes=notes,
     )
+    catalog_service.schedule_catalog_refresh()
     return doc
 
 
@@ -102,6 +104,7 @@ async def delete_media(media_id: str, _: UserPublic = Depends(require_min_role("
     ok = await media_service.delete_media(media_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Media not found")
+    catalog_service.schedule_catalog_refresh()
     return {"ok": True}
 
 
@@ -125,4 +128,5 @@ async def patch_media(
             family_key=doc.get("family_key"),
             keep_id=media_id,
         )
+    catalog_service.schedule_catalog_refresh()
     return {"ok": True}

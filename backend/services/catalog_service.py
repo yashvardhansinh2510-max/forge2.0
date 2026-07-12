@@ -145,20 +145,42 @@ def schedule_catalog_refresh() -> None:
         _background_refresh = asyncio.create_task(refresh_catalog_snapshot())
 
 
-def note_product_usage(user_id: str, product_ids: list[str], at: str) -> None:
+async def note_product_usage(user_id: str, product_ids: list[str], at: str) -> None:
     """Keep popularity/recent/frequent reads coherent with a completed write."""
-    if _snapshot is None:
-        return
-    mine = _snapshot.usage_by_user.setdefault(user_id, {})
-    for product_id in set(product_ids):
-        previous = mine.get(product_id, {})
-        mine[product_id] = {
-            "user_id": user_id,
-            "product_id": product_id,
-            "count": int(previous.get("count", 0)) + 1,
-            "last_used_at": at,
+    global _snapshot
+    async with _refresh_lock:
+        if _snapshot is None:
+            return
+        snapshot = _snapshot
+        global_usage = dict(snapshot.global_usage)
+        usage_by_user = {
+            uid: {pid: dict(row) for pid, row in rows.items()}
+            for uid, rows in snapshot.usage_by_user.items()
         }
-        _snapshot.global_usage[product_id] = _snapshot.global_usage.get(product_id, 0) + 1
+        mine = usage_by_user.setdefault(user_id, {})
+        for product_id in set(product_ids):
+            previous = mine.get(product_id, {})
+            mine[product_id] = {
+                "user_id": user_id,
+                "product_id": product_id,
+                "count": int(previous.get("count", 0)) + 1,
+                "last_used_at": at,
+            }
+            global_usage[product_id] = global_usage.get(product_id, 0) + 1
+        _snapshot = CatalogSnapshot(
+            products=snapshot.products,
+            product_by_id=snapshot.product_by_id,
+            products_by_family=snapshot.products_by_family,
+            media_by_product=snapshot.media_by_product,
+            media_by_family=snapshot.media_by_family,
+            media_rows_by_product=snapshot.media_rows_by_product,
+            media_rows_by_family=snapshot.media_rows_by_family,
+            brands=snapshot.brands,
+            categories=snapshot.categories,
+            global_usage=global_usage,
+            usage_by_user=usage_by_user,
+            loaded_at=snapshot.loaded_at,
+        )
 
 
 def _dedup_media(rows: list[ProductMedia]) -> list[ProductMedia]:
@@ -647,3 +669,155 @@ async def search_catalog(
             family["image_quality"] = hero.get("quality")
             family["image_source"] = hero.get("source_type")
     return {"query": query, "total": len(order), "grouped": True, "items": grouped}
+
+
+
+async def family_detail(family_key: str) -> dict | None:
+    snapshot = await get_catalog_snapshot()
+    products = sorted(
+        snapshot.products_by_family.get(family_key, ()),
+        key=lambda row: (row.get("colour") or "", row.get("finish") or "", row.get("sku") or ""),
+    )
+    if not products:
+        return None
+    first = products[0]
+    brand = next((copy.deepcopy(row) for row in snapshot.brands if row.get("id") == first.get("brand_id")), None)
+    category = next((copy.deepcopy(row) for row in snapshot.categories if row.get("id") == first.get("category_id")), None)
+
+    media_rows = list(snapshot.media_rows_by_family.get(family_key, ()))
+    for product in products:
+        media_rows.extend(snapshot.media_rows_by_product.get(product["id"], ()))
+    seen_media: set[str] = set()
+    gallery = []
+    for media in media_rows:
+        media_id = media.get("id")
+        if not media.get("public_url") or media_id in seen_media:
+            continue
+        if media_id:
+            seen_media.add(media_id)
+        gallery.append({
+            "id": media_id, "url": media.get("public_url"), "role": media.get("role"),
+            "source_type": media.get("source_type"), "width": media.get("width"),
+            "height": media.get("height"), "quality": media.get("quality"),
+            "is_primary": media.get("is_primary"), "product_id": media.get("product_id"),
+            "family_key": media.get("family_key"),
+        })
+
+    variants = []
+    specs_union: dict = {}
+    for product in products:
+        variants.append({
+            "id": product["id"], "sku": product["sku"], "name": product.get("name"),
+            "colour": product.get("colour"), "finish": product.get("finish"),
+            "finish_code": product.get("finish_code"), "variant_label": product.get("variant_label"),
+            "price": product.get("price"), "mrp": product.get("mrp"),
+            "stock": product.get("stock", 0), "dimensions": product.get("dimensions"),
+            "material": product.get("material"), "warranty": product.get("warranty"),
+            "specs": product.get("specs") or {},
+            "hero_image": _primary_product_image(snapshot, product["id"]),
+        })
+        for key, value in (product.get("specs") or {}).items():
+            specs_union.setdefault(key, value)
+
+    return {
+        "family_key": family_key,
+        "family_name": first.get("family_name") or first.get("name"),
+        "brand": brand, "category": category, "subcategory": first.get("subcategory"),
+        "series": first.get("series"), "description": first.get("description"),
+        "min_price": min(product.get("price", 0) for product in products),
+        "max_price": max(product.get("price", 0) for product in products),
+        "variant_count": len(products), "variants": variants, "gallery": gallery,
+        "specs_union": specs_union,
+        "hero_image_url": next(
+            (item["url"] for item in gallery if item.get("is_primary")),
+            gallery[0]["url"] if gallery else None,
+        ),
+        "downloads": [],
+        "compatible_ids": first.get("compatible_ids") or [],
+        "accessory_ids": first.get("accessory_ids") or [],
+        "related_ids": first.get("related_ids") or [],
+    }
+
+
+async def alternate_products(product_id: str, user_id: str, limit: int) -> dict | None:
+    snapshot = await get_catalog_snapshot()
+    source = snapshot.product_by_id.get(product_id)
+    if not source:
+        return None
+    name_prefix = " ".join((source.get("name") or "").split()[:2]).strip().lower()
+    my_usage = snapshot.usage_by_user.get(user_id, {})
+    pool = [
+        row for row in snapshot.products
+        if row["id"] != product_id and row.get("category_id") == source.get("category_id")
+    ][:400]
+
+    def tier(product: dict) -> int:
+        prefix = " ".join((product.get("name") or "").split()[:2]).strip().lower()
+        same_brand = product.get("brand_id") == source.get("brand_id")
+        if same_brand and name_prefix and prefix == name_prefix:
+            return 1
+        return 2 if same_brand else 3
+
+    scored = [
+        (
+            tier(product),
+            -int(my_usage.get(product["id"], {}).get("count", 0)),
+            float(product.get("price") or 0),
+            product,
+        )
+        for product in pool
+    ]
+    scored.sort(key=lambda row: (row[0], row[1], row[2]))
+    return {
+        "source_product_id": product_id,
+        "items": [hydrate_product(row[3], snapshot) for row in scored[:limit]],
+        "tiers": {
+            "family": sum(1 for row in scored if row[0] == 1),
+            "brand_category": sum(1 for row in scored if row[0] == 2),
+            "category": sum(1 for row in scored if row[0] == 3),
+        },
+    }
+
+
+async def complete_set_products(product_id: str, limit: int) -> dict | None:
+    snapshot = await get_catalog_snapshot()
+    source = snapshot.product_by_id.get(product_id)
+    if not source:
+        return None
+    candidates = []
+    for product in snapshot.products:
+        if product["id"] == product_id or product.get("category_id") == source.get("category_id"):
+            continue
+        matches = (
+            (source.get("family_key") and product.get("family_key") == source.get("family_key"))
+            or (
+                source.get("series") and product.get("series") == source.get("series")
+                and product.get("brand_id") == source.get("brand_id")
+            )
+            or (
+                source.get("collection") and product.get("collection") == source.get("collection")
+                and product.get("brand_id") == source.get("brand_id")
+            )
+        )
+        if matches:
+            candidates.append(product)
+        if len(candidates) >= limit:
+            break
+    by_category: dict[str, dict] = {}
+    for product in candidates:
+        by_category.setdefault(product.get("category_id") or "_", product)
+    return {
+        "source_product_id": product_id,
+        "items": [hydrate_product(product, snapshot) for product in list(by_category.values())[:limit]],
+    }
+
+
+async def media_for_product(product_id: str) -> list[ProductMedia] | None:
+    snapshot = await get_catalog_snapshot()
+    product = snapshot.product_by_id.get(product_id)
+    if not product:
+        return None
+    rows = list(snapshot.media_by_product.get(product_id, ()))
+    if product.get("family_key"):
+        rows.extend(snapshot.media_by_family.get(product["family_key"], ()))
+    return _dedup_media(rows)

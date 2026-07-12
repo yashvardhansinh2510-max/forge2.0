@@ -15,6 +15,7 @@ from models import (
     QuotationUpdate, RoomDiscountCfg, UserPublic, now_iso,
 )
 from pdf_generator import build_quotation_pdf
+from services import catalog_service
 from services.activity_log import log_event
 from services.followup_engine import reconcile_followups
 
@@ -108,12 +109,15 @@ async def _next_number() -> str:
 async def _track_product_usage(user_id: str, product_ids: list[str]):
     """Bump usage counters for the picker's Recent/Frequent tabs."""
     now = datetime.now(timezone.utc).isoformat()
-    for pid in set(product_ids):
-        await db.product_usage.update_one(
+    await asyncio.gather(*[
+        db.product_usage.update_one(
             {"user_id": user_id, "product_id": pid},
             {"$inc": {"count": 1}, "$set": {"last_used_at": now}},
             upsert=True,
         )
+        for pid in set(product_ids)
+    ])
+    await catalog_service.note_product_usage(user_id, product_ids, now)
 
 
 @router.get("")
