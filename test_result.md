@@ -4156,6 +4156,10 @@ frontend:
             4. Consider using websearch to find solutions for Expo Router + auth redirect issues
             5. This is a RECURRING issue (increment stuck_count)
             6. Once login works, call testing agent again to verify the 5 mobile-specific features
+        - working: false
+          agent: "user"
+          comment: |
+            Authentication Sprint opened: user reports frontend authentication remains blocked despite a healthy backend, valid owner credentials, JWT generation, and a successful login endpoint. Required investigation: establish whether Playwright and a normal browser reproduce the same failure before changing code; trace the full email/password lifecycle with temporary timestamped diagnostics; identify the first and single architectural failure; then verify fresh login, refresh, direct protected route, logout/login again, desktop, and mobile. Do not begin Performance Sprint 3.
 
 agent_communication:
     - agent: "testing"
