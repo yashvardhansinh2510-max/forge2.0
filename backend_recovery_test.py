@@ -8,7 +8,7 @@ import json
 from typing import Dict, Optional
 
 # Configuration
-BASE_URL = "https://forge-hardening-prod.preview.emergentagent.com/api"
+BASE_URL = "https://product-query-opt.preview.emergentagent.com/api"
 PRIMARY_EMAIL = "owner@forge.app"
 PRIMARY_PASSWORD = "Forge@2026"
 

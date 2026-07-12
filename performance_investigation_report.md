@@ -1,7 +1,7 @@
 # Forge Expo/React Native Web - Performance Investigation Report
 **Date**: 2026-07-12  
 **Environment**: Desktop 1920x800  
-**URL**: https://d4683980-385a-4da4-a14c-51d0f65a2f2b.preview.emergentagent.com  
+**URL**: https://product-query-opt.preview.emergentagent.com  
 **Credentials**: owner@forge.app / Forge@2026 (staff owner)
 
 ---
