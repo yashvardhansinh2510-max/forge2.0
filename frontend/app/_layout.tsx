@@ -1,4 +1,4 @@
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, useRootNavigationState, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
@@ -25,9 +25,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const { loading, kind } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const navigationState = useRootNavigationState();
+  const isNavigationReady = navigationState?.key !== undefined;
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || !isNavigationReady) return;
     const inAuth = segments[0] === "(auth)";
     const inAdmin = segments[0] === "(admin)";
     const inCustomer = segments[0] === "(customer)";
@@ -39,7 +41,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     } else if (kind === "customer" && !inCustomer) {
       if (inAuth || segments.length === 0) router.replace("/(customer)/home");
     }
-  }, [kind, loading, segments, router]);
+  }, [kind, loading, isNavigationReady, segments, router]);
 
   return <>{children}</>;
 }
