@@ -10,12 +10,12 @@ import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator, KeyboardAvoidingView, Linking, Modal, Platform, Pressable,
+  ActivityIndicator, Linking, Modal, Platform, Pressable,
   ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { api, ApiError } from "@/src/api/client";
+import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, shadow, spacing, type } from "@/src/theme/tokens";
@@ -167,7 +167,7 @@ export default function PurchasesScreen() {
         api.get<CustomerFacet[]>("/purchases/customers"),
       ]);
       setBrands(b.brands); setBrandsTotal(b.all); setStages(s); setCustomers(c);
-    } catch (e) { /* silent */ }
+    } catch { /* Purchases remains usable when a secondary facet cannot load. */ }
   }, []);
 
   const loadItems = useCallback(async () => {
@@ -231,7 +231,7 @@ export default function PurchasesScreen() {
         await Linking.openURL(url);
       }
       toast.success("Excel export ready");
-    } catch (e: any) {
+    } catch {
       toast.error("Export failed");
     }
   }, [view, brand, q, stage]);
@@ -240,15 +240,6 @@ export default function PurchasesScreen() {
   // Derived
   // -----------------------------------
   const blockedRows = useMemo(() => items.filter((i) => i.blocked), [items]);
-  const regularRows = useMemo(() => (view === "today" ? items.filter((i) => !i.blocked) : items), [items, view]);
-  const blockedByCustomer = useMemo(() => {
-    const map = new Map<string, Item[]>();
-    blockedRows.forEach((r) => {
-      const k = r.customer_name || "—";
-      const list = map.get(k) || []; list.push(r); map.set(k, list);
-    });
-    return Array.from(map.entries());
-  }, [blockedRows]);
 
   const activeStageCount = stages.reduce((acc, s) => acc + s.count, 0);
 
@@ -643,7 +634,7 @@ function TrackerRows({ rows, isTablet, selected, setSelected, onMove, onTransfer
   onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void;
 }) {
   if (rows.length === 0) return <View style={styles.workspaceCard}><Text style={type.bodyMuted}>No inventory items match this stock view.</Text></View>;
-  return <View style={styles.tableCard}>{rows.map((row) => <ItemRow key={row.item_id} row={row} isTablet={isTablet} checked={selected.has(row.item_id)} onToggle={() => setSelected((current) => { const next = new Set(current); next.has(row.item_id) ? next.delete(row.item_id) : next.add(row.item_id); return next; })} onOpenMove={() => onMove(row)} onTransfer={() => onTransfer(row)} onHistory={() => onHistory(row.item_id)} onOpenPo={() => onOpenPo(row.po_id)} />)}</View>;
+  return <View style={styles.tableCard}>{rows.map((row) => <ItemRow key={row.item_id} row={row} isTablet={isTablet} checked={selected.has(row.item_id)} onToggle={() => setSelected((current) => { const next = new Set(current); if (next.has(row.item_id)) next.delete(row.item_id); else next.add(row.item_id); return next; })} onOpenMove={() => onMove(row)} onTransfer={() => onTransfer(row)} onHistory={() => onHistory(row.item_id)} onOpenPo={() => onOpenPo(row.po_id)} />)}</View>;
 }
 
 // -----------------------------------------------------------------------------
@@ -924,9 +915,7 @@ function ShortagesModal({ visible, shortages, onClose, onChanged }: {
             <Text style={type.titleMd}>Awaiting Reorder</Text>
             <Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={16} color={colors.onSurfaceMuted} /></Pressable>
           </View>
-          <Text style={[type.caption, { marginTop: 2, marginBottom: 10 }]}>
-            Opened automatically when a transfer left a customer's original order short.
-          </Text>
+          <Text style={[type.caption, { marginTop: 2, marginBottom: 10 }]}>Opened automatically when a transfer leaves a customer’s original order short.</Text>
           <ScrollView style={{ maxHeight: 420 }}>
             {shortages.length === 0 ? (
               <Text style={type.caption}>Nothing outstanding — nice.</Text>
