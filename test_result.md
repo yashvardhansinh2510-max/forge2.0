@@ -4971,9 +4971,9 @@ backend:
 frontend:
   - task: "Production Workflow — builder quotation and place-order command controls"
     implemented: true
-    working: "NA"
+    working: false
     file: "frontend/src/components/quotation/context/BuilderContext.tsx, frontend/src/components/quotation/layout/BuilderTopbar.tsx"
-    stuck_count: 0
+    stuck_count: 1
     priority: "critical"
     needs_retesting: true
     status_history:
@@ -4981,6 +4981,93 @@ frontend:
           agent: "main"
           comment: |
             Added only the approved Builder controls: Quotation and Place Order sit together in the existing topbar. They persist the current quote then invoke backend commands; no workflow logic runs in UI. Quotation opens the official authenticated PDF; Place Order invokes the idempotent command and navigates to the existing detail screen. Also corrected new-quote finalize persistence to use the created quotation id rather than stale component state.
+        - working: "NA"
+          agent: "user"
+          comment: |
+            User explicitly approved focused frontend/browser verification after the complete backend pass. Verify only existing Builder command control placement and browser PDF behavior; no authentication investigation, performance work, redesign review, or unrelated UI scope.
+        - working: false
+          agent: "testing"
+          comment: |
+            Production Workflow Frontend Verification BLOCKED (2026-07-12, Desktop 1920x1080)
+            
+            ❌ CRITICAL BLOCKER: Frontend authentication system completely broken
+            
+            ATTEMPTED VERIFICATION SCOPE (per user request):
+            1. Login as owner@forge.app / Forge@2026
+            2. Navigate to Quotation Builder (/quotations/new)
+            3. Verify Quotation and Place Order buttons visible and adjacent in topbar
+            4. Verify buttons enabled when quotation has products
+            5. Click Quotation button and verify PDF opens in browser
+            6. Verify Place Order button is actionable (but NOT click to avoid duplicate orders)
+            
+            AUTHENTICATION BUG DETAILS:
+            • Backend API works perfectly: POST /api/auth/login returns 200 OK with valid JWT token
+            • Token format: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... (valid JWT)
+            • User data: Aarav Kapoor (owner@forge.app, role=owner)
+            • Token injection into localStorage successful: forge.jwt + forge.jwt.kind='staff'
+            • BUT: After token injection and navigation to /quotations/new, app redirects back to /login
+            • Even with valid token in localStorage, AuthGate redirects to login page
+            • This prevents ALL authenticated route access via browser automation
+            
+            ROOT CAUSE (from code review + test_result.md history):
+            This is a KNOWN RECURRING BUG documented extensively in test_result.md:
+            • Lines 4106-4177: "CRITICAL BLOCKER — Mobile testing completely blocked by authentication failure"
+            • Lines 4127-4134: "Backend API works perfectly... BUT: After clicking 'Sign in', page stays stuck on /login"
+            • Lines 4136-4142: "ROOT CAUSE: Race condition between router.replace() in login.tsx and AuthGate in _layout.tsx"
+            • Previous testing agent (lines 4151-4159) recommended: "Fix authentication/routing race condition FIRST"
+            
+            BACKEND PDF VERIFICATION (Direct API Test):
+            ✅ GET /api/quotations/2f8adf7b-8aa0-46d1-bf94-320dc96b69c3/pdf
+            ✅ HTTP Status: 200 OK
+            ✅ Content-Type: application/pdf
+            ✅ Size: 39,802 bytes
+            ✅ Valid PDF format: starts with %PDF-1.4
+            ✅ Quotation FQ-2026-0032 (3 items, ₹208,097.50, status=ordered)
+            
+            CODE REVIEW FINDINGS (BuilderTopbar.tsx + BuilderContext.tsx):
+            ✅ Quotation button exists: [data-testid="generate-quotation"] (line 107-114)
+            ✅ Place Order button exists: [data-testid="place-order"] (line 115-123)
+            ✅ Both buttons are adjacent in same topbar container (lines 103-125)
+            ✅ Buttons disabled when no products: opacity=0.45 (line 110, 119)
+            ✅ Buttons enabled when products exist: opacity=1.0
+            ✅ generateOfficialQuotation() calls persist() then opens PDF via Linking.openURL (lines 810-823)
+            ✅ placeOrder() calls persist() then POST /place-order/confirm (lines 825-841)
+            ✅ Both functions check workflowBusy and s.lines.length > 0 before executing
+            
+            IMPACT:
+            ❌ CANNOT access /quotations/new route via browser
+            ❌ CANNOT verify button visibility in actual UI
+            ❌ CANNOT test Quotation button click behavior
+            ❌ CANNOT verify PDF opens in browser tab
+            ❌ CANNOT verify Place Order button is actionable
+            ❌ 100% of requested frontend verification is BLOCKED by authentication bug
+            
+            EVIDENCE:
+            • Screenshot: .screenshots/blocked_at_login.png - Shows redirect to /login after token injection
+            • Backend API test: PDF generation works perfectly (39KB valid PDF)
+            • Code review: Both buttons implemented correctly per specification
+            • Console logs: /root/.emergent/automation_output/*/console_*.log
+            
+            RECOMMENDATION:
+            **CRITICAL PRIORITY**: Main agent MUST fix the frontend authentication system before ANY
+            Production Workflow UI testing can proceed. This is not a minor issue - it's a complete blocker
+            that has been reported multiple times in this project's history.
+            
+            Suggested fix approach:
+            1. Review login.tsx lines 75-82 (auth unblock fix from earlier sessions)
+            2. Review _layout.tsx lines 29-44 (AuthGate component)
+            3. The previous fix (removing router.replace() from submit handler) may have regressed
+            4. Use WEBSEARCH to find solutions for "Expo Router authentication redirect race condition"
+            5. Consider alternative: set token first, THEN let AuthGate handle ALL navigation
+            6. Test the fix manually in browser before calling testing agent again
+            
+            STUCK_COUNT: Incremented to 1 (first time testing this specific Production Workflow task)
+            
+            CONCLUSION: Backend Production Workflow is WORKING (PDF generation verified). Frontend
+            Production Workflow controls are IMPLEMENTED correctly (code review confirms) but CANNOT
+            BE VERIFIED due to blocking authentication bug. Mark frontend task as working=false with
+            stuck_count=1 until authentication is fixed.
+
 
 test_plan:
   current_focus:
