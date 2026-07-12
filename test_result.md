@@ -5245,16 +5245,86 @@ agent_communication:
 frontend:
   - task: "Production Sprint Objective 2 — Catalog full pagination and virtualized rendering"
     implemented: true
-    working: "NA"
+    working: false
     file: "frontend/app/(admin)/catalog/index.tsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
         comment: |
           Root cause traced end-to-end: Mongo/API pagination was already correct (2,966 rows, stable 60-row pages); the standalone Catalog frontend always requested only skip=0/limit=60 and rendered it in a non-virtualized ScrollView. Replaced it with FlatList virtualization and real skip/limit append pagination for both Families and Variants. Query generation changes atomically reset the loaded data; append responses are request-scoped and de-duplicated by family_key/id; final page exposes an end-of-list indicator. No page-size increase, fabricated rows, API contract changes, or backend product changes.
+      - working: false
+        agent: "testing"
+        comment: |
+          Production Sprint Objective 2 Frontend Testing FAILED (2026-07-12, Desktop 1920x800)
+          
+          ❌ CRITICAL BUG: Infinite scroll completely non-functional - only 60 products accessible out of 2,966
+          
+          TESTED REQUIREMENTS:
+          ✅ Login with owner@forge.app / Forge@2026: SUCCESS
+          ✅ Navigate to /catalog: SUCCESS
+          ✅ Switch to Variants mode: SUCCESS
+          ✅ Count displays "2,966 products": SUCCESS
+          ❌ Infinite scroll to end marker: FAILED - End marker never appears after 100 scroll attempts
+          ❌ All 2,966 products reachable: FAILED - Only 60 products rendered in DOM
+          ✅ Product IDs unique: SUCCESS (60 unique IDs, no duplicates)
+          ✅ Search for "basin": SUCCESS (shows "475 products" but only loads 60)
+          ✅ Brand filter (Axor): SUCCESS (shows "448 products" but only loads 60)
+          ✅ Category filter: SUCCESS (shows "205 products" but only loads 60)
+          
+          ROOT CAUSE ANALYSIS:
+          The FlatList's onEndReached callback is NEVER triggered because the page has no scrollbar.
+          
+          Evidence from browser automation:
+          • Window scrollHeight: 800px
+          • Window clientHeight: 800px
+          • scrollHeight === clientHeight → NO SCROLLBAR EXISTS
+          • Only 3 API requests made, all with skip=0 (no pagination)
+          • 100 scroll attempts using 4 different methods (window.scrollTo, scrollIntoView, FlatList.scrollTop, mouse wheel) - all failed
+          • Product card count remained stuck at 60 throughout all tests
+          
+          Technical Issue:
+          The FlatList with removeClippedSubviews + virtualization (lines 409-412 in index.tsx) does not create
+          a tall enough container on React Native Web. The virtualization only renders items that fit in the
+          viewport (60 products), and the container height equals viewport height (800px), preventing any
+          scrolling. The onEndReached callback cannot fire because there is no "end" to reach - the user
+          physically cannot scroll.
+          
+          This is a known React Native Web limitation: FlatList virtualization doesn't properly calculate
+          total content height on web, so the scrollable area is never created.
+          
+          IMPACT:
+          • Users can ONLY access first 60 products (2% of catalog)
+          • Remaining 2,906 products (98%) are completely inaccessible
+          • Search/filter results are also limited to first 60 items regardless of actual count
+          • The "Showing all X products" end marker never appears
+          • This completely breaks the Production Sprint Objective 2 requirement
+          
+          SCREENSHOTS CAPTURED:
+          • 01_login_success.png - Login successful
+          • 02_catalog_initial.png - Initial catalog load (Families mode)
+          • 03_variants_mode_2966.png - Variants mode showing "2,966 products" count
+          • 04_scroll_10.png through 04_scroll_100.png - Multiple scroll attempts (every 10 scrolls)
+          • 05_end_of_list.png - No end marker after 100 scrolls
+          • 06_last_product.png - Last visible product (only #60 of 2,966)
+          • 07_search_basin.png - Search shows "475 products" but only 60 loaded
+          • 08_search_scrolled.png - Search scroll attempt failed
+          • 09_brand_filter.png - Brand filter shows "448 products" but only 60 loaded
+          • 10_brand_scrolled.png - Brand scroll attempt failed
+          • 11_category_filter.png - Category filter shows "205 products" but only 60 loaded
+          • 12_category_scrolled.png - Category scroll attempt failed
+          • debug_scroll_state.png - Final debug state showing 60 products stuck
+          
+          RECOMMENDED FIXES (in priority order):
+          1. Remove removeClippedSubviews on web platform (Platform.OS === 'web')
+          2. Significantly increase initialNumToRender on web (e.g., 120+ items to force scrollbar)
+          3. Use platform-specific scroll container (ScrollView on web, FlatList on native)
+          4. Consider react-window or @tanstack/react-virtual for web-optimized virtualization
+          5. Add explicit container height calculation to force scrollable area
+          
+          NO MUTATIONS MADE: Read-only testing as requested. No catalog, quotations, purchases, or auth changes.
 
 test_plan:
   current_focus:
@@ -5363,9 +5433,9 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Production Sprint Objective 2 — Catalog full pagination and virtualized rendering (FRONTEND - NOT TESTED)"
-  stuck_tasks: []
+  current_focus: []
+  stuck_tasks:
+    - "Production Sprint Objective 2 — Catalog full pagination and virtualized rendering"
   test_all: false
   test_priority: "high_first"
 
@@ -5395,3 +5465,24 @@ agent_communication:
         remains needs_retesting=true and requires separate frontend/UI testing with user permission.
         
         RECOMMENDATION: Main agent should summarize backend verification results and finish.
+    - agent: "testing"
+      message: |
+        ❌ PRODUCTION SPRINT OBJECTIVE 2 FRONTEND TESTING FAILED (2026-07-12)
+        
+        Completed comprehensive browser testing at desktop 1920x800 per review request. The catalog
+        infinite scroll implementation is COMPLETELY BROKEN - only 60 products are accessible out of 2,966.
+        
+        CRITICAL BUG FOUND:
+        The FlatList's onEndReached callback never fires because the page has no scrollbar. The virtualization
+        settings (removeClippedSubviews + windowSize=11 + initialNumToRender=24) cause React Native Web to
+        only render items that fit in the viewport (60 products), and the container height equals viewport
+        height (800px), preventing any scrolling. Users physically cannot scroll because scrollHeight === clientHeight.
+        
+        Evidence: 100 scroll attempts using 4 different methods (window.scrollTo, scrollIntoView, FlatList.scrollTop,
+        mouse wheel) all failed. Only 3 API requests made, all with skip=0. Product count remained stuck at 60.
+        
+        This is a known React Native Web limitation with FlatList virtualization on web.
+        
+        IMPACT: 98% of catalog (2,906 products) is completely inaccessible to users.
+        
+        See full technical analysis in task status_history above.
