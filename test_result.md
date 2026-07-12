@@ -5486,3 +5486,171 @@ agent_communication:
         IMPACT: 98% of catalog (2,906 products) is completely inaccessible to users.
         
         See full technical analysis in task status_history above.
+
+
+frontend:
+  - task: "Production Sprint Objective 2 — Catalog infinite-scroll web regression fix"
+    implemented: true
+    working: false
+    file: "frontend/app/(admin)/catalog/index.tsx"
+    stuck_count: 2
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: "Initial Catalog retest exposed React Native Web FlatList with zero scrollable height; only skip=0 was requested."
+      - working: "NA"
+        agent: "main"
+        comment: "Scoped repair: FlatList is explicitly constrained with flex:1/minHeight:0 inside the Shell and retains clipping only on native. Web uses a larger initial/batch window to establish a real scroll extent without changing backend page size (still 60) or fabricating products. Request-scoped append/dedupe logic is unchanged. Retest must prove skip>0 calls, final 2,966 end marker, and no duplicates."
+      - working: false
+        agent: "testing"
+        comment: |
+          CRITICAL BLOCKER: Cannot Test Catalog Regression — Authentication System Completely Broken (2026-07-12, Desktop 1920x800)
+          
+          Attempted comprehensive testing of catalog infinite-scroll fix but encountered SHOWSTOPPER authentication issues that prevent ANY catalog testing.
+          
+          ❌ CRITICAL ISSUE 1: Login Flow Completely Broken
+          • Frontend login form accepts credentials (owner@forge.app / Forge@2026)
+          • Backend API works perfectly: curl POST /api/auth/login returns 200 OK with valid JWT
+          • BUT frontend receives HTML response instead of JSON: "Unexpected token '<', "<!DOCTYPE "... is not valid JSON"
+          • Error visible in UI: "Unexpected token '<', "<!DOCTYPE "... is not valid JSON"
+          • User remains stuck on /login page after clicking "Sign in"
+          • This suggests frontend is making requests to wrong URL or proxy/routing is broken
+          
+          ❌ CRITICAL ISSUE 2: Auth State Not Persisting
+          • Attempted workaround: manually injected valid JWT token into localStorage
+          • Token injection confirmed: localStorage.setItem('forge.jwt', token) + localStorage.setItem('forge.jwt.kind', 'staff')
+          • BUT app still redirects to /login when navigating to /catalog
+          • AuthGate component is rejecting the session
+          • Auth hydration process is not working correctly
+          
+          ❌ CRITICAL ISSUE 3: Catalog Page Not Rendering
+          • When navigating to /catalog (even with valid token), page shows login screen
+          • No product cards rendered (0 products found)
+          • No API calls made to /api/products (0 network requests captured)
+          • Page not scrollable: scrollHeight = clientHeight = 800 (REGRESSION STILL PRESENT)
+          • No Variants button found, no search input found, no brand pills found
+          • Catalog UI completely non-functional
+          
+          ROOT CAUSE ANALYSIS:
+          The main agent's fix (FlatList flex:1/minHeight:0 + larger web window) CANNOT BE TESTED because:
+          1. Frontend cannot communicate with backend API (wrong URL or proxy issue)
+          2. Authentication system is completely broken
+          3. Catalog page is inaccessible
+          
+          EVIDENCE:
+          • Backend logs show successful API calls from other sources (10.208.128.x IPs)
+          • Backend logs show: POST /api/auth/login HTTP/1.1" 200 OK
+          • Direct curl to http://localhost:8001/api/auth/login works perfectly
+          • Frontend Playwright test shows HTML response instead of JSON
+          • Screenshots confirm: stuck on login page with error message visible
+          • Test attempted both normal login flow AND token injection workaround - both failed
+          
+          IMPACT:
+          • CANNOT verify if catalog infinite-scroll fix works
+          • CANNOT test skip=60, skip=2940 pagination
+          • CANNOT verify 2,966 unique products
+          • CANNOT test basin search or brand filter pagination
+          • CANNOT verify end marker "Showing all 2,966 products"
+          • This is a SHOWSTOPPER that blocks ALL catalog testing
+          
+          RECOMMENDATION:
+          Main agent must fix authentication system BEFORE catalog regression can be tested. Likely issues:
+          1. Frontend API client configuration (EXPO_PUBLIC_BACKEND_URL)
+          2. Proxy/routing configuration for /api/* requests
+          3. CORS configuration
+          4. Auth state hydration logic
+          
+          Once authentication works, catalog infinite-scroll test can be re-run to verify the fix.
+
+test_plan:
+  current_focus:
+    - "Production Sprint Objective 2 — Catalog infinite-scroll web regression fix"
+  stuck_tasks:
+    - "Production Sprint Objective 2 — Catalog full pagination and virtualized rendering"
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Retest Catalog at 1920x800 after the web FlatList layout repair. Login owner@forge.app / Forge@2026, switch /catalog to Variants, assert page is genuinely scrollable, track network calls for skip=60 through skip=2940, reach `catalog-end-of-list` with exactly `Showing all 2,966 products`, and assert accumulated unique product IDs = 2966. Recheck q=basin and a >60-result brand filter append pages without duplicate IDs. No writes.
+    - agent: "testing"
+      message: |
+        CRITICAL BLOCKER: Catalog Infinite-Scroll Test FAILED — Authentication System Broken (2026-07-12)
+        
+        Attempted to test Production Sprint Objective 2 catalog infinite-scroll regression fix but encountered SHOWSTOPPER that prevents ALL catalog testing.
+        
+        === CRITICAL ISSUES ===
+        
+        1. **Login Flow Completely Broken**
+           - Frontend login form submits owner@forge.app / Forge@2026
+           - Backend API works: curl POST /api/auth/login → 200 OK with valid JWT
+           - Frontend receives HTML instead of JSON: "Unexpected token '<', "<!DOCTYPE "... is not valid JSON"
+           - User stuck on /login page, error message visible in UI
+           - This suggests frontend making requests to wrong URL or proxy/routing broken
+        
+        2. **Auth State Not Persisting**
+           - Workaround attempted: manually injected valid JWT into localStorage
+           - Token injection confirmed but app still redirects to /login
+           - AuthGate component rejecting session
+           - Auth hydration process not working
+        
+        3. **Catalog Page Not Rendering**
+           - Navigating to /catalog shows login screen (even with valid token)
+           - 0 products rendered, 0 API calls made
+           - Page not scrollable: scrollHeight = clientHeight = 800
+           - No UI elements found: no Variants button, no search, no brand pills
+           - REGRESSION STILL PRESENT: page has zero scrollable height
+        
+        === TEST RESULTS ===
+        
+        ❌ Login: FAILED (HTML response instead of JSON)
+        ❌ Token injection: FAILED (redirects to login)
+        ❌ Catalog access: FAILED (shows login screen)
+        ❌ Page scrollable: FAILED (scrollHeight = clientHeight = 800)
+        ❌ Product rendering: FAILED (0 products)
+        ❌ API pagination: FAILED (0 API calls)
+        ❌ skip=60: NOT TESTED (cannot access catalog)
+        ❌ skip=2940: NOT TESTED (cannot access catalog)
+        ❌ End marker: NOT TESTED (cannot access catalog)
+        ❌ Basin search: NOT TESTED (cannot access catalog)
+        ❌ Brand filter: NOT TESTED (cannot access catalog)
+        
+        === EVIDENCE ===
+        
+        • Backend logs: POST /api/auth/login HTTP/1.1" 200 OK (backend working)
+        • Direct curl test: successful authentication with valid JWT returned
+        • Frontend Playwright: HTML response instead of JSON
+        • Screenshots: stuck on login page with error message
+        • Test attempted: normal login flow + token injection workaround (both failed)
+        
+        === ROOT CAUSE ===
+        
+        Frontend cannot communicate with backend API. Likely issues:
+        1. EXPO_PUBLIC_BACKEND_URL misconfigured or empty
+        2. Proxy/routing for /api/* requests not working
+        3. CORS configuration issue
+        4. Same-origin policy blocking requests
+        
+        === RECOMMENDATION ===
+        
+        **IMMEDIATE ACTION REQUIRED**: Main agent must fix authentication system before catalog regression can be tested.
+        
+        Priority fixes:
+        1. Verify EXPO_PUBLIC_BACKEND_URL configuration in frontend
+        2. Check proxy/routing for /api/* requests (should route to backend:8001)
+        3. Test login flow manually in browser
+        4. Verify CORS headers on backend
+        5. Check auth state hydration logic
+        
+        Once authentication works, re-run catalog infinite-scroll test to verify:
+        - Page is scrollable (scrollHeight > clientHeight)
+        - skip=60, skip=120, ..., skip=2940 API calls occur
+        - End marker shows "Showing all 2,966 products"
+        - 2,966 unique product IDs collected
+        - No duplicates
+        - Basin search and brand filter pagination work
+        
+        **STATUS**: Catalog infinite-scroll fix CANNOT BE VERIFIED due to authentication blocker.

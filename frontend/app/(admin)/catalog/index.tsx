@@ -13,7 +13,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { BottomSheet } from "@/src/components/BottomSheet";
@@ -400,16 +400,17 @@ export default function Catalog() {
         numColumns={productCols}
         keyExtractor={(item) => mode === "families" ? (item as Family).family_key : (item as Product).id}
         renderItem={renderCatalogItem}
+        style={{ flex: 1, minHeight: 0 }}
         ListHeaderComponent={catalogHeader}
         ListHeaderComponentStyle={{ paddingHorizontal: gridPadding }}
         columnWrapperStyle={productCols > 1 && catalogItems.length ? { marginHorizontal: gridPadding - gap / 2 } : undefined}
         contentContainerStyle={{ paddingBottom: 32 }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews
-        initialNumToRender={24}
-        maxToRenderPerBatch={24}
-        windowSize={11}
+        removeClippedSubviews={Platform.OS !== "web"}
+        initialNumToRender={Platform.OS === "web" ? 120 : 24}
+        maxToRenderPerBatch={Platform.OS === "web" ? 60 : 24}
+        windowSize={Platform.OS === "web" ? 21 : 11}
         onEndReached={loadMore}
         onEndReachedThreshold={0.45}
         ListEmptyComponent={
