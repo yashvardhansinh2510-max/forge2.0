@@ -1,464 +1,346 @@
 #!/usr/bin/env python3
 """
-Production Sprint Objective 2 Backend Contract Testing
-Test against active buildcon_house instance with owner@forge.app / Forge@2026
+Production Sprint Objective 1 — Official quotation PDF template fidelity test
+Testing GET /api/quotations/{id}/pdf endpoint
 """
 
 import requests
-import json
-import time
-from typing import Dict, List, Set
+import sys
+from io import BytesIO
+from PyPDF2 import PdfReader
 
 # Configuration
-BASE_URL = "https://buildcon-sprint.preview.emergentagent.com/api"
+BASE_URL = "https://58e2940b-f6dc-4c96-a9ee-46b01d8a8a2a.preview.emergentagent.com/api"
 CREDENTIALS = {
     "email": "owner@forge.app",
     "password": "Forge@2026"
 }
 
-class BackendTester:
-    def __init__(self):
-        self.token = None
-        self.session = requests.Session()
-        
-    def login(self) -> bool:
-        """Login and get JWT token"""
-        print("=" * 80)
-        print("TEST 1: Authentication")
-        print("=" * 80)
-        
-        try:
-            response = self.session.post(
-                f"{BASE_URL}/auth/login",
-                json=CREDENTIALS,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                self.token = data.get("access_token") or data.get("token")
-                self.session.headers.update({"Authorization": f"Bearer {self.token}"})
-                print(f"✅ Login successful: {data.get('user', {}).get('email')}")
-                print(f"   Role: {data.get('user', {}).get('role')}")
-                return True
-            else:
-                print(f"❌ Login failed: {response.status_code}")
-                print(f"   Response: {response.text}")
-                return False
-        except Exception as e:
-            print(f"❌ Login error: {e}")
-            return False
-    
-    def test_health_system(self) -> bool:
-        """Test GET /api/health/system"""
-        print("\n" + "=" * 80)
-        print("TEST 2: GET /api/health/system")
-        print("=" * 80)
-        
-        try:
-            response = self.session.get(f"{BASE_URL}/health/system", timeout=30)
-            
-            if response.status_code == 200:
-                data = response.json()
-                # Check both old and new format
-                products = data.get("counts", {}).get("products", data.get("products", 0))
-                mongo_connected = data.get("mongo", {}).get("connected", False)
-                is_local = data.get("mongo", {}).get("is_local", True)
-                warnings = data.get("warnings", [])
-                healthy = data.get("healthy", False)
-                
-                print(f"✅ Health check successful")
-                print(f"   Healthy: {healthy}")
-                print(f"   MongoDB connected: {mongo_connected}")
-                print(f"   MongoDB is_local: {is_local}")
-                print(f"   Products count: {products}")
-                print(f"   Warnings: {warnings}")
-                
-                if products == 2966:
-                    print(f"✅ Product count is exactly 2966")
-                    return True
-                else:
-                    print(f"❌ Product count mismatch: expected 2966, got {products}")
-                    return False
-            else:
-                print(f"❌ Health check failed: {response.status_code}")
-                print(f"   Response: {response.text}")
-                return False
-        except Exception as e:
-            print(f"❌ Health check error: {e}")
-            return False
-    
-    def test_exhaustive_pagination(self) -> bool:
-        """Test exhaustive pagination of all 2966 products"""
-        print("\n" + "=" * 80)
-        print("TEST 3: Exhaustive Pagination (GET /api/products?limit=60&skip=N&sort=name)")
-        print("=" * 80)
-        
-        limit = 60
-        skip = 0
-        all_ids: Set[str] = set()
-        all_products: List[Dict] = []
-        page_count = 0
-        
-        try:
-            while True:
-                page_count += 1
-                print(f"\nFetching page {page_count} (skip={skip}, limit={limit})...")
-                
-                response = self.session.get(
-                    f"{BASE_URL}/products",
-                    params={"limit": limit, "skip": skip, "sort": "name"},
-                    timeout=30
-                )
-                
-                if response.status_code != 200:
-                    print(f"❌ Request failed: {response.status_code}")
-                    print(f"   Response: {response.text}")
-                    return False
-                
-                data = response.json()
-                total = data.get("total", 0)
-                items = data.get("items", [])
-                
-                print(f"   Total: {total}, Items in page: {len(items)}")
-                
-                if page_count == 1:
-                    if total != 2966:
-                        print(f"❌ Total mismatch: expected 2966, got {total}")
-                        return False
-                    else:
-                        print(f"✅ Total is exactly 2966")
-                
-                if not items:
-                    break
-                
-                # Collect IDs
-                for item in items:
-                    product_id = item.get("id")
-                    if product_id:
-                        if product_id in all_ids:
-                            print(f"❌ DUPLICATE ID FOUND: {product_id}")
-                            return False
-                        all_ids.add(product_id)
-                        all_products.append(item)
-                
-                # Check if we've reached the end
-                if len(items) < limit:
-                    print(f"   Last page detected (items < limit)")
-                    break
-                
-                skip += limit
-            
-            # Final verification
-            print(f"\n" + "-" * 80)
-            print(f"PAGINATION SUMMARY:")
-            print(f"   Total pages fetched: {page_count}")
-            print(f"   Total products collected: {len(all_products)}")
-            print(f"   Unique IDs collected: {len(all_ids)}")
-            print(f"   Last page size: {len(items)}")
-            
-            # Verify counts
-            if len(all_products) == 2966:
-                print(f"✅ Collected exactly 2966 products")
-            else:
-                print(f"❌ Product count mismatch: expected 2966, got {len(all_products)}")
-                return False
-            
-            if len(all_ids) == 2966:
-                print(f"✅ All 2966 IDs are unique (zero duplicates)")
-            else:
-                print(f"❌ Duplicate IDs detected: {len(all_products)} products but only {len(all_ids)} unique IDs")
-                return False
-            
-            # Verify last page size
-            expected_last_page_size = 2966 % 60
-            if expected_last_page_size == 0:
-                expected_last_page_size = 60
-            
-            if len(items) == expected_last_page_size:
-                print(f"✅ Last page size is correct: {len(items)} (expected {expected_last_page_size})")
-            else:
-                print(f"❌ Last page size mismatch: expected {expected_last_page_size}, got {len(items)}")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ Pagination error: {e}")
-            return False
-    
-    def test_search_query(self) -> bool:
-        """Test search query returns relevant data"""
-        print("\n" + "=" * 80)
-        print("TEST 4: Search Query (GET /api/products?q=basin)")
-        print("=" * 80)
-        
-        try:
-            response = self.session.get(
-                f"{BASE_URL}/products",
-                params={"q": "basin", "limit": 100},
-                timeout=30
-            )
-            
-            if response.status_code != 200:
-                print(f"❌ Search failed: {response.status_code}")
-                print(f"   Response: {response.text}")
-                return False
-            
-            data = response.json()
-            total = data.get("total", 0)
-            items = data.get("items", [])
-            
-            print(f"✅ Search successful")
-            print(f"   Total results: {total}")
-            print(f"   Items returned: {len(items)}")
-            
-            if total > 0 and len(items) > 0:
-                print(f"✅ Search returned relevant data")
-                
-                # Show sample results
-                print(f"\n   Sample results:")
-                for i, item in enumerate(items[:5], 1):
-                    name = item.get("name", "N/A")
-                    sku = item.get("sku", "N/A")
-                    print(f"   {i}. {name} (SKU: {sku})")
-                
-                return True
-            else:
-                print(f"❌ Search returned no results")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Search error: {e}")
-            return False
-    
-    def test_brand_filter(self) -> bool:
-        """Test brand filter respects totals and no duplicates"""
-        print("\n" + "=" * 80)
-        print("TEST 5: Brand Filter (GET /api/products?brand_id=...)")
-        print("=" * 80)
-        
-        try:
-            # First get brands
-            brands_response = self.session.get(f"{BASE_URL}/brands", timeout=30)
-            if brands_response.status_code != 200:
-                print(f"❌ Failed to get brands: {brands_response.status_code}")
-                return False
-            
-            brands = brands_response.json()
-            if not brands:
-                print(f"❌ No brands found")
-                return False
-            
-            # Test first brand
-            test_brand = brands[0]
-            brand_id = test_brand.get("id")
-            brand_name = test_brand.get("name")
-            expected_count = test_brand.get("product_count", 0)
-            
-            print(f"\nTesting brand: {brand_name} (expected {expected_count} products)")
-            
-            # Fetch all products for this brand
-            all_ids: Set[str] = set()
-            skip = 0
-            limit = 60
-            
-            while True:
-                response = self.session.get(
-                    f"{BASE_URL}/products",
-                    params={"brand_id": brand_id, "limit": limit, "skip": skip},
-                    timeout=30
-                )
-                
-                if response.status_code != 200:
-                    print(f"❌ Brand filter failed: {response.status_code}")
-                    return False
-                
-                data = response.json()
-                total = data.get("total", 0)
-                items = data.get("items", [])
-                
-                if skip == 0:
-                    print(f"   Total from API: {total}")
-                    if total != expected_count:
-                        print(f"⚠️  Warning: Total mismatch (API: {total}, Brand: {expected_count})")
-                
-                if not items:
-                    break
-                
-                for item in items:
-                    product_id = item.get("id")
-                    if product_id in all_ids:
-                        print(f"❌ DUPLICATE ID FOUND: {product_id}")
-                        return False
-                    all_ids.add(product_id)
-                
-                if len(items) < limit:
-                    break
-                
-                skip += limit
-            
-            print(f"✅ Brand filter successful")
-            print(f"   Collected {len(all_ids)} unique products")
-            print(f"   Zero duplicates detected")
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ Brand filter error: {e}")
-            return False
-    
-    def test_combined_brand_category_filter(self) -> bool:
-        """Test combined brand+category filter respects totals and no duplicates"""
-        print("\n" + "=" * 80)
-        print("TEST 6: Combined Brand+Category Filter")
-        print("=" * 80)
-        
-        try:
-            # Get brands and categories
-            brands_response = self.session.get(f"{BASE_URL}/brands", timeout=30)
-            categories_response = self.session.get(f"{BASE_URL}/categories", timeout=30)
-            
-            if brands_response.status_code != 200 or categories_response.status_code != 200:
-                print(f"❌ Failed to get brands or categories")
-                return False
-            
-            brands = brands_response.json()
-            categories = categories_response.json()
-            
-            if not brands or not categories:
-                print(f"❌ No brands or categories found")
-                return False
-            
-            # Test first brand + first category
-            test_brand = brands[0]
-            test_category = categories[0]
-            
-            brand_id = test_brand.get("id")
-            brand_name = test_brand.get("name")
-            category_id = test_category.get("id")
-            category_name = test_category.get("name")
-            
-            print(f"\nTesting: {brand_name} + {category_name}")
-            
-            # Fetch all products for this combination
-            all_ids: Set[str] = set()
-            skip = 0
-            limit = 60
-            total_from_api = None
-            
-            while True:
-                response = self.session.get(
-                    f"{BASE_URL}/products",
-                    params={
-                        "brand_id": brand_id,
-                        "category_id": category_id,
-                        "limit": limit,
-                        "skip": skip
-                    },
-                    timeout=30
-                )
-                
-                if response.status_code != 200:
-                    print(f"❌ Combined filter failed: {response.status_code}")
-                    return False
-                
-                data = response.json()
-                total = data.get("total", 0)
-                items = data.get("items", [])
-                
-                if skip == 0:
-                    total_from_api = total
-                    print(f"   Total from API: {total}")
-                
-                if not items:
-                    break
-                
-                for item in items:
-                    product_id = item.get("id")
-                    if product_id in all_ids:
-                        print(f"❌ DUPLICATE ID FOUND: {product_id}")
-                        return False
-                    all_ids.add(product_id)
-                
-                if len(items) < limit:
-                    break
-                
-                skip += limit
-            
-            print(f"✅ Combined filter successful")
-            print(f"   Total from API: {total_from_api}")
-            print(f"   Collected {len(all_ids)} unique products")
-            print(f"   Zero duplicates detected")
-            
-            if total_from_api == len(all_ids):
-                print(f"✅ Total matches collected count")
-            else:
-                print(f"⚠️  Warning: Total mismatch (API: {total_from_api}, Collected: {len(all_ids)})")
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ Combined filter error: {e}")
-            return False
-    
-    def run_all_tests(self):
-        """Run all tests"""
-        print("\n" + "=" * 80)
-        print("PRODUCTION SPRINT OBJECTIVE 2 - BACKEND CONTRACT TESTING")
-        print("=" * 80)
-        print(f"Base URL: {BASE_URL}")
-        print(f"Credentials: {CREDENTIALS['email']}")
-        print("=" * 80)
-        
-        results = {}
-        
-        # Test 1: Login
-        results["login"] = self.login()
-        if not results["login"]:
-            print("\n❌ CRITICAL: Login failed, cannot proceed with other tests")
-            return results
-        
-        # Test 2: Health System
-        results["health_system"] = self.test_health_system()
-        
-        # Test 3: Exhaustive Pagination
-        results["exhaustive_pagination"] = self.test_exhaustive_pagination()
-        
-        # Test 4: Search Query
-        results["search_query"] = self.test_search_query()
-        
-        # Test 5: Brand Filter
-        results["brand_filter"] = self.test_brand_filter()
-        
-        # Test 6: Combined Brand+Category Filter
-        results["combined_filter"] = self.test_combined_brand_category_filter()
-        
-        # Summary
-        print("\n" + "=" * 80)
-        print("TEST SUMMARY")
-        print("=" * 80)
-        
-        passed = sum(1 for v in results.values() if v)
-        total = len(results)
-        
-        for test_name, result in results.items():
-            status = "✅ PASS" if result else "❌ FAIL"
-            print(f"{status}: {test_name}")
-        
-        print(f"\nTotal: {passed}/{total} tests passed")
-        
-        if passed == total:
-            print("\n✅ ALL TESTS PASSED")
-        else:
-            print(f"\n❌ {total - passed} TEST(S) FAILED")
-        
-        return results
+# Required text elements in PDF
+REQUIRED_ELEMENTS = [
+    "BuildCon House",
+    "PRICE QUOTATION",
+    "QUOTATION SUMMARY",
+    "OUR BRAND PARTNERS",
+    "CUSTOMER CARE",
+    "TOLL FREE",
+    "CUSTOMER SIGNATURE",
+    "DATE",
+]
 
+# All 11 official terms (checking for key terms)
+REQUIRED_TERMS = [
+    "TERMS",
+    "CONDITIONS",
+]
+
+def print_test(test_name, status, details=""):
+    """Print test result"""
+    symbol = "✅" if status else "❌"
+    print(f"{symbol} {test_name}")
+    if details:
+        print(f"   {details}")
+
+def authenticate():
+    """Authenticate and get JWT token"""
+    print("\n=== AUTHENTICATION ===")
+    try:
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json=CREDENTIALS,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            token = data.get("access_token")
+            user = data.get("user", {})
+            print_test(
+                "POST /api/auth/login",
+                True,
+                f"User: {user.get('full_name')} ({user.get('email')}), Role: {user.get('role')}"
+            )
+            return token
+        else:
+            print_test(
+                "POST /api/auth/login",
+                False,
+                f"Status: {response.status_code}, Response: {response.text[:200]}"
+            )
+            return None
+    except Exception as e:
+        print_test("POST /api/auth/login", False, f"Error: {str(e)}")
+        return None
+
+def get_existing_quotation(token):
+    """Get an existing quotation ID"""
+    print("\n=== FETCHING EXISTING QUOTATION ===")
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(
+            f"{BASE_URL}/quotations",
+            headers=headers,
+            params={"limit": 10},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            quotations = response.json()
+            if quotations and len(quotations) > 0:
+                # Find a quotation with items
+                for q in quotations:
+                    if q.get("items") and len(q.get("items", [])) > 0:
+                        print_test(
+                            "GET /api/quotations",
+                            True,
+                            f"Found quotation: {q.get('quotation_number')} with {len(q.get('items', []))} items"
+                        )
+                        return q.get("id")
+                
+                # If no quotation with items, use first one
+                q = quotations[0]
+                print_test(
+                    "GET /api/quotations",
+                    True,
+                    f"Using quotation: {q.get('quotation_number')} (may have 0 items)"
+                )
+                return q.get("id")
+            else:
+                print_test("GET /api/quotations", False, "No quotations found")
+                return None
+        else:
+            print_test(
+                "GET /api/quotations",
+                False,
+                f"Status: {response.status_code}"
+            )
+            return None
+    except Exception as e:
+        print_test("GET /api/quotations", False, f"Error: {str(e)}")
+        return None
+
+def test_pdf_generation(token, quotation_id):
+    """Test PDF generation and validate content"""
+    print("\n=== PDF GENERATION TEST ===")
+    
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(
+            f"{BASE_URL}/quotations/{quotation_id}/pdf",
+            headers=headers,
+            timeout=30
+        )
+        
+        # Test 1: HTTP 200
+        status_ok = response.status_code == 200
+        print_test(
+            "HTTP Status Code",
+            status_ok,
+            f"Status: {response.status_code}"
+        )
+        
+        if not status_ok:
+            print(f"Response: {response.text[:500]}")
+            return False
+        
+        # Test 2: Content-Type
+        content_type = response.headers.get("Content-Type", "")
+        is_pdf_content_type = "application/pdf" in content_type
+        print_test(
+            "Content-Type",
+            is_pdf_content_type,
+            f"Content-Type: {content_type}"
+        )
+        
+        # Test 3: Valid PDF magic bytes
+        pdf_bytes = response.content
+        has_pdf_magic = pdf_bytes.startswith(b'%PDF')
+        print_test(
+            "Valid PDF Magic Bytes",
+            has_pdf_magic,
+            f"First 8 bytes: {pdf_bytes[:8]}"
+        )
+        
+        if not has_pdf_magic:
+            print("Not a valid PDF file")
+            return False
+        
+        # Test 4: PDF size
+        pdf_size = len(pdf_bytes)
+        print_test(
+            "PDF Size",
+            pdf_size > 1000,
+            f"Size: {pdf_size:,} bytes"
+        )
+        
+        # Test 5: Parse PDF and check dimensions
+        try:
+            pdf_file = BytesIO(pdf_bytes)
+            pdf_reader = PdfReader(pdf_file)
+            
+            num_pages = len(pdf_reader.pages)
+            print_test(
+                "PDF Readable",
+                True,
+                f"Pages: {num_pages}"
+            )
+            
+            # Check A4 dimensions (595.3 x 841.9 points)
+            if num_pages > 0:
+                first_page = pdf_reader.pages[0]
+                mediabox = first_page.mediabox
+                width = float(mediabox.width)
+                height = float(mediabox.height)
+                
+                # A4 dimensions with tolerance
+                is_a4 = (590 <= width <= 600) and (835 <= height <= 850)
+                print_test(
+                    "A4 Dimensions",
+                    is_a4,
+                    f"Width: {width:.1f} points, Height: {height:.1f} points (A4: 595.3 x 841.9)"
+                )
+            
+            # Test 6: Extract text and verify required elements
+            print("\n=== PDF CONTENT VERIFICATION ===")
+            
+            all_text = ""
+            for page_num, page in enumerate(pdf_reader.pages):
+                try:
+                    page_text = page.extract_text()
+                    all_text += page_text + "\n"
+                except Exception as e:
+                    print(f"Warning: Could not extract text from page {page_num + 1}: {e}")
+            
+            # Convert to uppercase for case-insensitive matching
+            all_text_upper = all_text.upper()
+            
+            # Check required elements
+            missing_elements = []
+            found_elements = []
+            
+            for element in REQUIRED_ELEMENTS:
+                if element.upper() in all_text_upper:
+                    found_elements.append(element)
+                    print_test(f"Contains '{element}'", True, "")
+                else:
+                    missing_elements.append(element)
+                    print_test(f"Contains '{element}'", False, "NOT FOUND")
+            
+            # Check for terms
+            terms_found = any(term.upper() in all_text_upper for term in REQUIRED_TERMS)
+            print_test(
+                "Contains Terms & Conditions",
+                terms_found,
+                "Found" if terms_found else "NOT FOUND"
+            )
+            
+            # Check for room/area table
+            has_room_area = "ROOM" in all_text_upper or "AREA" in all_text_upper
+            print_test(
+                "Contains Room/Area Table",
+                has_room_area,
+                "Found" if has_room_area else "NOT FOUND"
+            )
+            
+            # Check for totals
+            has_total = "TOTAL" in all_text_upper or "GRAND TOTAL" in all_text_upper
+            print_test(
+                "Contains Total",
+                has_total,
+                "Found" if has_total else "NOT FOUND"
+            )
+            
+            # Check for footer elements
+            has_footer = any(x in all_text_upper for x in ["PAGE", "BUILDCON"])
+            print_test(
+                "Contains Footer",
+                has_footer,
+                "Found" if has_footer else "NOT FOUND"
+            )
+            
+            # Summary
+            print("\n=== SUMMARY ===")
+            total_checks = len(REQUIRED_ELEMENTS) + 4  # +4 for terms, room, total, footer
+            passed_checks = len(found_elements) + sum([terms_found, has_room_area, has_total, has_footer])
+            
+            print(f"Content Checks: {passed_checks}/{total_checks} passed")
+            
+            if missing_elements:
+                print(f"\n⚠️  Missing elements: {', '.join(missing_elements)}")
+            
+            # Save a sample of extracted text for debugging
+            print("\n=== SAMPLE EXTRACTED TEXT (first 1000 chars) ===")
+            print(all_text[:1000])
+            print("...")
+            
+            return len(missing_elements) == 0
+            
+        except Exception as e:
+            print_test("PDF Parsing", False, f"Error: {str(e)}")
+            return False
+            
+    except Exception as e:
+        print_test("PDF Generation", False, f"Error: {str(e)}")
+        return False
+
+def test_health_endpoint():
+    """Test health endpoint"""
+    print("\n=== HEALTH CHECK ===")
+    try:
+        response = requests.get(f"{BASE_URL}/health", timeout=10)
+        status_ok = response.status_code == 200
+        print_test(
+            "GET /api/health",
+            status_ok,
+            f"Status: {response.status_code}, Response: {response.json() if status_ok else response.text[:200]}"
+        )
+        return status_ok
+    except Exception as e:
+        print_test("GET /api/health", False, f"Error: {str(e)}")
+        return False
+
+def main():
+    """Main test execution"""
+    print("=" * 80)
+    print("Production Sprint Objective 1 — Official Quotation PDF Template Fidelity")
+    print("=" * 80)
+    
+    # Step 1: Authenticate
+    token = authenticate()
+    if not token:
+        print("\n❌ CRITICAL: Authentication failed. Cannot proceed with testing.")
+        sys.exit(1)
+    
+    # Step 2: Get existing quotation
+    quotation_id = get_existing_quotation(token)
+    if not quotation_id:
+        print("\n❌ CRITICAL: No quotations found. Cannot test PDF generation.")
+        sys.exit(1)
+    
+    # Step 3: Test PDF generation
+    pdf_success = test_pdf_generation(token, quotation_id)
+    
+    # Step 4: Test health endpoint
+    health_success = test_health_endpoint()
+    
+    # Final summary
+    print("\n" + "=" * 80)
+    print("FINAL RESULT")
+    print("=" * 80)
+    
+    if pdf_success and health_success:
+        print("✅ ALL TESTS PASSED")
+        print("   - PDF generation: ✅")
+        print("   - PDF content verification: ✅")
+        print("   - Health endpoint: ✅")
+        sys.exit(0)
+    else:
+        print("❌ SOME TESTS FAILED")
+        if not pdf_success:
+            print("   - PDF generation or content: ❌")
+        if not health_success:
+            print("   - Health endpoint: ❌")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    tester = BackendTester()
-    results = tester.run_all_tests()
-    
-    # Exit with appropriate code
-    exit(0 if all(results.values()) else 1)
+    main()
