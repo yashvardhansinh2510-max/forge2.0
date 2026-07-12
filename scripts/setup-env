@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Forge bootstrap — recreate .env files after they are lost between sessions.
+# Forge bootstrap — create OPTIONAL local fallback files for preview/development.
+# Production must inject persistent process environment variables instead.
 #
 # Usage:
 #   scripts/setup-env                 # interactive prompts for secrets
@@ -51,14 +52,14 @@ else
     need MONGO_URL             "MongoDB URL"                    "mongodb://localhost:27017"
     need DB_NAME               "MongoDB database name"          "forge"
     need JWT_SECRET            "JWT signing secret"             "$(openssl rand -hex 32 2>/dev/null || echo change-me)"
-    echo "JWT_ALG=HS256"
-    echo "JWT_TTL_HOURS=720"
-    echo "MEDIA_STORAGE_DRIVER=supabase"
+    echo "JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}"
+    echo "JWT_EXP_MINUTES=${JWT_EXP_MINUTES:-43200}"
+    echo "MEDIA_STORAGE_DRIVER=${MEDIA_STORAGE_DRIVER:-supabase}"
     need SUPABASE_URL              "Supabase project URL"       "https://vburaxruvbnbahegtbya.supabase.co"
     need SUPABASE_SERVICE_ROLE_KEY "Supabase service role key"
     need SUPABASE_ANON_KEY         "Supabase anon key"
-    echo "SUPABASE_PUBLIC_BUCKET=forge-products"
-    echo "SUPABASE_PRIVATE_BUCKET=forge-private"
+    echo "SUPABASE_PUBLIC_BUCKET=${SUPABASE_PUBLIC_BUCKET:-forge-products}"
+    echo "SUPABASE_PRIVATE_BUCKET=${SUPABASE_PRIVATE_BUCKET:-forge-private}"
   } > "$BACKEND_ENV"
   chmod 600 "$BACKEND_ENV"
 fi
@@ -68,7 +69,7 @@ if [[ -f "$FRONTEND_ENV" && "$FORCE" -ne 1 ]]; then
 else
   echo "==> Writing $FRONTEND_ENV"
   cat > "$FRONTEND_ENV" <<EOF
-EXPO_PUBLIC_BACKEND_URL=http://localhost:8001
+EXPO_PUBLIC_BACKEND_URL=${EXPO_PUBLIC_BACKEND_URL:-}
 EOF
 fi
 

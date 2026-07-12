@@ -83,6 +83,9 @@ android-sdk/
 .env
 .env.*
 *.env
+# Placeholder-only templates are safe and must survive workspace recreation.
+!.env.example
+!**/.env.example
 credentials.json
 *.key
 .credentials

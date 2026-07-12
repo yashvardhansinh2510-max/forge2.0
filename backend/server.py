@@ -1,13 +1,10 @@
 """Forge backend entrypoint. Wires routes and boots demo data on first run."""
 import logging
-from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
+from bootstrap import run_bootstrap
 
 from db import db  # noqa: E402
 from routes.auth_routes import router as auth_router  # noqa: E402
@@ -77,36 +74,18 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def _startup():
+    # Validate external infrastructure before any seed/reconciliation writes.
+    # Uvicorn does not report the application ready until this preflight passes.
+    preflight = await run_bootstrap()
+    preflight.require_healthy()
+
     await seed_if_empty()
     await resync_catalog_if_needed()
-    try:
-        await db.user_sessions.create_index("id", unique=True)
-        await db.user_sessions.create_index([("user_type", 1), ("user_id", 1)])
-    except Exception as e:  # noqa: BLE001
-        logger.warning("user_sessions index creation skipped: %s", e)
-    try:
-        # Catalog indexes — the Quotation Builder's /products list is hit on
-        # every keystroke/filter change; these keep count_documents(), the
-        # ranking-pool find(), and the id-in page re-fetch all index-backed
-        # instead of falling back to a collection scan on the Atlas cluster.
-        await db.products.create_index("id", unique=True)
-        await db.products.create_index([("active", 1), ("brand_id", 1)])
-        await db.products.create_index([("active", 1), ("category_id", 1)])
-        await db.products.create_index([("active", 1), ("name", 1)])
-        await db.products.create_index([("active", 1), ("price", 1)])
-        await db.products.create_index("family_key")
-        await db.products.create_index("sku")
-        await db.product_media.create_index("product_id")
-        await db.product_media.create_index("family_key")
-        await db.product_usage.create_index([("user_id", 1)])
-        await db.product_usage.create_index([("product_id", 1)])
-    except Exception as e:  # noqa: BLE001
-        logger.warning("catalog index creation skipped: %s", e)
     try:
         await reconcile_followups()
     except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load
         logger.warning("Initial follow-up reconciliation skipped: %s", e)
-    logger.info("Forge API ready.")
+    logger.info("Forge API ready; infrastructure preflight passed.")
 
 
 @app.on_event("shutdown")

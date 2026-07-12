@@ -3982,3 +3982,138 @@ agent_communication:
         
         Recommend using websearch to find solutions for Expo Router + auth redirect race conditions.
 
+
+
+
+backend:
+  - task: "Infrastructure hardening — persistent runtime configuration and startup preflight"
+    implemented: true
+    working: true
+    file: "backend/settings.py, backend/bootstrap.py, backend/db.py, backend/auth.py, backend/server.py, backend/media_storage/factory.py, backend/media_storage/supabase_driver.py, backend/routes/misc_routes.py, scripts/setup-env, .env.example, backend/.env.example, frontend/.env.example, RECOVERY.md, STARTUP_CHECK.md"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            User-reported recurring bug: ignored backend/frontend .env files disappear when the ephemeral
+            Emergent preview container is recreated, leaving the backend in a KeyError crash loop. Root cause
+            confirmed: custom secrets are not injected/persisted by preview; only deployed runtime environment
+            settings are persistent. Implemented process-environment-first centralized Settings validation with
+            optional non-overriding local .env fallback; descriptive fail-fast errors; bootstrap.py validating
+            MongoDB, Supabase, required buckets, collections, required index signatures, and optional post-start
+            /api/health; FastAPI startup now gates readiness on preflight before seed/reconciliation writes.
+            Removed silent startup index creation; bootstrap reports missing indexes without adding them.
+            Added placeholder-only tracked templates and RECOVERY/STARTUP_CHECK documentation. Corrected local
+            preview recovery to the existing production database name buildcon_house after discovery showed
+            buildcon contains only 20 demo rows while buildcon_house contains 2,966 products/2,970 media.
+            Main-agent checks: settings unit tests 10/10 pass; bootstrap healthy against Atlas/Supabase; both
+            buckets present; all 14 required collections and existing index signatures present; health endpoint
+            reachable after restart. Backend dependencies were reinstalled from pinned requirements because
+            reportlab was missing from the recycled environment. Requires mandatory backend testing-agent
+            verification before this reported bug can be marked working.
+        - working: true
+          agent: "testing"
+          comment: |
+            ✅ INFRASTRUCTURE HARDENING VERIFICATION COMPLETE — ALL 7 TESTS PASSED (100% success rate)
+            
+            TEST 1: Settings Unit Tests (10/10 PASSED)
+            ✅ Complete process environment accepted
+            ✅ All 8 required variables fail-fast when missing (MONGO_URL, DB_NAME, JWT_SECRET, SUPABASE_URL, 
+               SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY, SUPABASE_PUBLIC_BUCKET, SUPABASE_PRIVATE_BUCKET)
+            ✅ Placeholder values rejected (e.g., "eyJ...truncated")
+            ✅ Whitespace in MONGO_URL rejected
+            
+            TEST 2: Bootstrap Healthy (python bootstrap.py)
+            ✅ healthy=true
+            ✅ MongoDB connected to database: buildcon_house
+            ✅ Supabase connected
+            ✅ Both required buckets present: forge-products, forge-private
+            ✅ All 14 required collections present (brands, categories, customers, followups, notifications, 
+               payments, product_media, product_usage, products, purchase_orders, quotations, suppliers, 
+               user_sessions, users)
+            ✅ All required indexes present (no missing_indexes)
+            
+            TEST 3: Post-start Health Check (python bootstrap.py --health-url http://127.0.0.1:8001/api/health)
+            ✅ healthy=true
+            ✅ All infrastructure checks passed
+            ✅ Health endpoint reachable: status_code=200
+            
+            TEST 4: GET /api/health/system
+            ✅ MongoDB connected: true, is_local: false, database: buildcon_house
+            ✅ Supabase configured: true, connected: true
+            ✅ Product count: exactly 2,966 (production catalog)
+            ✅ No secret values in response (verified no MongoDB credentials, JWT tokens, or hex secrets)
+            ✅ warnings: [] (empty, no red flags)
+            
+            TEST 5: Regression Smoke
+            ✅ Login successful with owner@forge.app / Forge@2026
+            ✅ GET /api/brands: 5 brands (Hansgrohe, Axor, Grohe, Geberit, Vitra) — production data confirmed
+            ✅ GET /api/categories: 26 categories
+            ✅ GET /api/products?limit=20: total=2966, items=20 with valid production brand references
+            
+            TEST 6: Fail-fast Behavior
+            ✅ Missing MONGO_URL raises ConfigurationError with descriptive message
+            ✅ Error message mentions the missing variable name (MONGO_URL)
+            ✅ Error message references STARTUP_CHECK.md
+            ✅ Error message does NOT expose secret values
+            
+            TEST 7: Startup Preflight Order
+            ✅ run_bootstrap() executes BEFORE seed_if_empty() and resync_catalog_if_needed()
+            ✅ require_healthy() is called to enforce preflight
+            ✅ bootstrap.py does NOT silently create indexes
+            ✅ bootstrap.py reports missing_indexes without creating them
+            
+            CRITICAL FINDINGS:
+            • Infrastructure hardening is fully operational and production-ready
+            • Fail-fast configuration prevents silent failures with descriptive errors
+            • Bootstrap validates all external dependencies before any writes
+            • No secret values leak through health endpoints
+            • Startup preflight correctly gates application readiness
+            • Production catalog (2,966 products) intact and accessible
+            
+            RECOMMENDATION: Mark infrastructure hardening task as WORKING. The recurring environment-loss 
+            bug is now hardened with proper fail-fast validation, descriptive errors, and startup preflight 
+            that prevents the backend from entering a crash loop.
+
+metadata:
+  test_sequence: 14
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Infrastructure hardening — verify fail-fast configuration and green bootstrap"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Please verify the new infrastructure hardening only. Read this appended task and use credentials from
+        /app/memory/test_credentials.md. Test: (1) settings unit tests; (2) bootstrap.py returns healthy with
+        MongoDB database buildcon_house, Supabase connected, both buckets present, no missing collections/indexes;
+        (3) post-start health check passes; (4) /api/health/system reports 2,966 products and no secret values;
+        (5) login and core catalog smoke endpoints still work; (6) fail-fast behavior with an isolated incomplete
+        environment produces a descriptive ConfigurationError and does not expose secrets. Do not modify the
+        Testing Protocol section.
+    - agent: "testing"
+      message: |
+        ✅ INFRASTRUCTURE HARDENING VERIFICATION COMPLETE — ALL TESTS PASSED
+        
+        Verified the recurring environment-loss bug hardening implementation. All 7 test requirements passed:
+        
+        1. ✅ Settings unit tests: 10/10 passed (fail-fast for all 8 required variables)
+        2. ✅ Bootstrap healthy: MongoDB buildcon_house connected, Supabase connected, both buckets present, 
+           all 14 collections present, all required indexes present
+        3. ✅ Post-start health check: Passes with --health-url flag
+        4. ✅ GET /api/health/system: Reports 2,966 products, Mongo+Supabase connected, no secret values exposed
+        5. ✅ Regression smoke: Login works, brands/categories/products endpoints return production data
+        6. ✅ Fail-fast behavior: Missing MONGO_URL raises descriptive ConfigurationError mentioning 
+           STARTUP_CHECK.md without exposing secrets
+        7. ✅ Startup preflight order: run_bootstrap() executes before seed/reconciliation, require_healthy() 
+           enforces preflight, bootstrap does NOT silently create indexes
+        
+        The infrastructure hardening is production-ready. The recurring bug where missing .env files caused 
+        crash loops is now prevented with proper fail-fast validation and startup preflight.

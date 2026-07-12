@@ -2,13 +2,13 @@
 by the full module at routes/purchase_routes.py. The /payments scaffold has been
 REMOVED and replaced by routes/payment_routes.py. /followups has been REMOVED and
 replaced by the full Sales Command Center module at routes/followup_routes.py."""
-import os
 
 from fastapi import APIRouter, Depends
 
 from auth import get_current_user, require_min_role
 from db import db
 from models import UserPublic
+from settings import settings
 
 router = APIRouter(tags=["ops"])
 
@@ -23,7 +23,7 @@ async def health_system():
     reachability, data counts, and which required secrets are actually loaded
     in this session's environment.
     """
-    mongo_url = os.environ.get("MONGO_URL", "")
+    mongo_url = settings.mongo_url
     is_local_mongo = ("localhost" in mongo_url) or ("127.0.0.1" in mongo_url) or (not mongo_url)
 
     mongo_ok = False
@@ -45,8 +45,8 @@ async def health_system():
             except Exception:  # noqa: BLE001
                 counts[name] = None
 
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    supabase_url = settings.supabase_url
+    supabase_key = settings.supabase_service_role_key
     supabase_configured = bool(supabase_url and supabase_key)
     supabase_ok = None
     supabase_error = None
@@ -65,14 +65,7 @@ async def health_system():
             supabase_ok = False
             supabase_error = str(exc)
 
-    secrets_loaded = {
-        "MONGO_URL": bool(mongo_url),
-        "DB_NAME": bool(os.environ.get("DB_NAME")),
-        "JWT_SECRET": bool(os.environ.get("JWT_SECRET")),
-        "SUPABASE_URL": bool(supabase_url),
-        "SUPABASE_SERVICE_ROLE_KEY": bool(supabase_key),
-        "SUPABASE_ANON_KEY": bool(os.environ.get("SUPABASE_ANON_KEY")),
-    }
+    secrets_loaded = settings.readiness_flags()
 
     warnings = []
     if is_local_mongo:

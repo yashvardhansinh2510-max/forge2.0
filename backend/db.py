@@ -1,13 +1,10 @@
 """MongoDB connection + helpers. Central place so routes don't reconnect."""
-import os
 from motor.motor_asyncio import AsyncIOMotorClient
-from dotenv import load_dotenv
-from pathlib import Path
 
-load_dotenv(Path(__file__).parent / ".env")
+from settings import settings
 
-_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-db = _client[os.environ["DB_NAME"]]
+_client = AsyncIOMotorClient(settings.mongo_url)
+db = _client[settings.db_name]
 
 
 def strip_id(doc: dict | None) -> dict | None:

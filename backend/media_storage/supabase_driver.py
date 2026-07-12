@@ -8,10 +8,11 @@ when sent as both `apikey` and `Authorization: Bearer` headers.
 from __future__ import annotations
 import hashlib
 import logging
-import os
 from typing import Optional
 
 import httpx
+
+from settings import settings
 
 from .base import MediaStorage, StoredObject, StorageError
 
@@ -27,9 +28,9 @@ class SupabaseStorageDriver(MediaStorage):
         anon_key: Optional[str] = None,
         timeout: float = 30.0,
     ) -> None:
-        self.url = (url or os.environ["SUPABASE_URL"]).rstrip("/")
-        self.service_role_key = service_role_key or os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-        self.anon_key = anon_key or os.environ.get("SUPABASE_ANON_KEY") or self.service_role_key
+        self.url = (url or settings.supabase_url).rstrip("/")
+        self.service_role_key = service_role_key or settings.supabase_service_role_key
+        self.anon_key = anon_key or settings.supabase_anon_key
         self.timeout = timeout
 
     # ---- internal helpers ------------------------------------------------
@@ -145,7 +146,7 @@ class SupabaseStorageDriver(MediaStorage):
         # Cache bucket visibility on first check
         if bucket in self._PUBLIC_BUCKETS:
             return True
-        pub = os.environ.get("SUPABASE_PUBLIC_BUCKET", "forge-products")
+        pub = settings.supabase_public_bucket
         if bucket == pub:
             self._PUBLIC_BUCKETS.add(bucket)
             return True

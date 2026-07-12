@@ -5,18 +5,14 @@ Pipeline (via `catalog_pipeline/`):
 """
 from __future__ import annotations
 import logging
-from pathlib import Path
 
 import httpx
-from dotenv import load_dotenv
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 
 from auth import get_current_user, require_min_role
 from catalog_pipeline.orchestrator import import_accepted, rollback_job, run_pipeline
 from db import db
 from models import CatalogImportJob, UserPublic
-
-load_dotenv(Path(__file__).parent.parent / ".env")
 
 router = APIRouter(prefix="/catalog/imports", tags=["catalog-import"])
 logger = logging.getLogger("forge.catalog_import")

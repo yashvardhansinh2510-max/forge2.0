@@ -1,7 +1,6 @@
 """JWT + password hashing + role-based dependencies."""
 from __future__ import annotations
 import asyncio
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
@@ -13,10 +12,11 @@ from fastapi import Depends, Header, HTTPException, Query, Request
 
 from db import db
 from models import Role, UserPublic, CustomerPublic
+from settings import settings
 
-JWT_SECRET = os.environ["JWT_SECRET"]
-JWT_ALG = os.environ.get("JWT_ALGORITHM", "HS256")
-JWT_EXP_MIN = int(os.environ.get("JWT_EXP_MINUTES", "1440"))
+JWT_SECRET = settings.jwt_secret
+JWT_ALG = settings.jwt_algorithm
+JWT_EXP_MIN = settings.jwt_exp_minutes
 
 GOOGLE_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
 
