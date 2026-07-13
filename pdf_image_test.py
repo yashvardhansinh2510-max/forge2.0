@@ -10,7 +10,7 @@ import sys
 from io import BytesIO
 from PyPDF2 import PdfReader
 
-BASE_URL = "https://secure-then-ship.preview.emergentagent.com/api"
+BASE_URL = "https://forge-ui-audit.preview.emergentagent.com/api"
 CREDENTIALS = {"email": "owner@forge.app", "password": "Forge@2026"}
 
 def authenticate():
