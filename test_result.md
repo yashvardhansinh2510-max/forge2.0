@@ -7218,3 +7218,107 @@ agent_communication:
         /app/memory/test_credentials.md. Please do NOT mutate/delete real catalog or quotation
         data beyond what's needed for the 4 hardening checks above (upload/import tests can use
         small throwaway test files).
+
+frontend:
+  - task: "Phase 4 · Batch 1 — Production UI Consistency & UX Audit (Button sizing unification + danger-color unification; logo fix attempted then explicitly reverted by user)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/design/components.tsx, frontend/src/theme/tokens.ts"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Renamed Phase 4 to "Production UI Consistency & UX Audit" per user instruction.
+            Same ephemeral-preview .env wipe as prior sessions — recreated backend/.env +
+            frontend/.env from fresh user-supplied MongoDB Atlas + Supabase credentials, caught
+            the same known DB_NAME gotcha again (buildcon=stale 20-product demo DB vs
+            buildcon_house=real 2,966-product catalog, same cluster) — used buildcon_house.
+            Reinstalled backend pip deps. Backend verified healthy via /api/health/system.
+
+            Audited all 14 requested screens at code level + live screenshots (desktop 1440x900,
+            phone 390x844). Found the color language already unified at the token layer from
+            prior sessions (brass primary everywhere, zero hardcoded black/blue). User approved
+            "Batch 1 only" (3 items) from my findings, explicitly declining the Modal->Sheet
+            migration in Purchases/Follow-ups/Purchase-Orders (Batch 2) until remaining
+            functional modules are complete.
+
+            DELIVERED (2 of the original 3 Batch 1 items — see reversal note below):
+            1. Button sizing was measurably different between the app's two component systems
+               for the same size name ("md" = 44px in src/components/ui.tsx vs 40px in
+               src/design/components.tsx, plus different padding/icon size). Aligned
+               design/components.tsx's Button height/padding/fontSize/iconSize/radius constants
+               to exactly match ui.tsx's, per size (sm/md/lg).
+            2. The two token files defined different exact reds for "danger" (colors.error =
+               #9A3E34 in theme/tokens.ts vs color.risk = #AE4A3D in design/tokens.ts). Changed
+               theme/tokens.ts's palette.red700 to #AE4A3D (matches design/tokens.ts) — single
+               source of truth now for colors.error/errorFg and the rejected/lost/due/overdue
+               status-badge foregrounds across both systems.
+
+            REVERSED (per explicit user instruction, do NOT treat as done): I had also replaced
+            the BuildCon House logo image (assets/brands/buildcon-logo.png, which I assessed as a
+            corrupted asset — a garbled "O"/disc overlapping artifact pixels into the "N",
+            visible on every screen) with a temporary plain-text fallback in BrandLogo.tsx. The
+            user overruled this: they want the existing logo image kept exactly as-is, not
+            replaced with text. Fully reverted BrandLogo.tsx, app/(auth)/login.tsx, and
+            app/(customer)/home.tsx to their exact original pre-session state — verified via
+            restart + fresh screenshots that the original image renders again with no errors.
+            No logo change shipped this session.
+
+            ADDITIONAL DELIVERABLES (read-only audit, no code changes, as requested):
+            - /app/memory/design_system_inventory.md — Component Consistency Matrix (Button,
+              IconButton, Sheet/Modal, Card, TextField, Badge, Table, SearchField, EmptyState,
+              LoadingState, Skeleton, ProductImage, PageHeader, BrandLogo, AdminPage): canonical
+              implementation / duplicates / current usage / recommended future consolidation
+              order (NOT executed this sprint). ProductImage and Table confirmed as already
+              fully consolidated (single implementation, used consistently everywhere). Found
+              14 orphan components (defined, zero usages anywhere) across ui.tsx, ds.tsx,
+              design/components.tsx — listed only, not deleted.
+            - /app/memory/phase4_batch1_ui_audit_report.md — files modified, before/after,
+              remaining UI inconsistencies, remaining technical debt, production-readiness score
+              (7.5/10 for UI consistency specifically), updated to reflect the logo reversal.
+
+            Ran eslint on every touched file after the final state — zero new warnings from my
+            edits (2 pre-existing unused-import warnings in files I touched are unrelated).
+            Restarted expo, verified via live screenshots: Login, Dashboard (real data, no
+            regressions), Customers, Quotations, Purchases all render correctly with the
+            original (unchanged) logo and the two token-level fixes in place, no console errors.
+
+            NOT started (explicitly deferred): Batch 2 (raw native Modal -> shared Sheet
+            migration in purchases.tsx/followups.tsx/purchase-orders/[id].tsx), and no
+            consolidation of the duplicate components listed in the inventory doc.
+
+            REQUEST: no backend changes this session, backend testing not needed. Frontend
+            changes are narrow (1 button-sizing file + 1 color-token file, both touch every
+            screen indirectly since every screen renders Buttons and status badges) — awaiting
+            user decision on whether to run a frontend visual-regression pass, per protocol
+            (must ask before invoking frontend testing agent).
+
+metadata:
+  created_by: "main_agent"
+  version: "3.3"
+  test_sequence: 15
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Phase 4 · Batch 1 - Production UI Consistency & UX Audit"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Phase 4 renamed to "Production UI Consistency & UX Audit" per user instruction. Batch 1
+        scoped by the user to exactly 2 shipped changes (Button-sizing unification + danger-red
+        unification) after they reviewed my audit and explicitly overruled the 3rd item (logo
+        fix) — reverted in full, original logo image is back untouched. Batch 2 (Modal->Sheet
+        consolidation in Purchases/Follow-ups/Purchase-Orders) explicitly deferred by the user
+        until remaining functional modules are complete — do NOT start it without new
+        instruction. Component Consistency Matrix + orphan-component list delivered at
+        /app/memory/design_system_inventory.md for a future cleanup sprint (not this one).
+        Credentials unchanged: owner@forge.app / Forge@2026 (staff), customer@forge.app /
+        Forge@2026 (customer portal) — also now recorded in /app/memory/test_credentials.md.
