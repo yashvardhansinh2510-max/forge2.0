@@ -480,7 +480,7 @@ function RecordPaymentSheet(props: {
         </>
       }
     >
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }}>
           <FormField label="Amount Received (₹)" required>
             <TextInput

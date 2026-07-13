@@ -1675,7 +1675,7 @@ function NewFollowupSheet({ visible, onClose, customers, assignees, defaultAssig
         <Button label="Create Follow-up" variant="primary" icon="plus" loading={saving} onPress={submit} size="md" testID="create-followup" />
       </>}
     >
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: isPhone ? spacing.lg : spacing.xl, gap: spacing.lg, paddingBottom: isPhone ? 120 : spacing.xl }}>
         <FormField label="Customer" required>
           <SearchField value={selectedCustomer ? (selectedCustomer.company || selectedCustomer.name) : customerQuery}

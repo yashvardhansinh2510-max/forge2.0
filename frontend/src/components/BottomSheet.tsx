@@ -26,7 +26,7 @@ export function BottomSheet({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose} testID={`${testID}-backdrop`}>
         <Pressable style={{ maxHeight: height * maxHeight, width: targetWidth, marginTop: "auto" }} onPress={(e) => e.stopPropagation()}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"}>
             <SafeAreaView edges={["bottom"]} style={styles.sheet}>
               <View style={styles.grabber} />
               <View style={styles.head}>
