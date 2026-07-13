@@ -82,21 +82,40 @@ async def scan_catalog(baseline_snapshot_dir: Optional[str] = None) -> Integrity
     # 1) SKU uniqueness - scoped by brand. Same-brand dupes are a hard fail;
     #    cross-brand collisions are expected (different manufacturers reuse
     #    short numeric codes) and only reported informationally.
-    by_sku: dict[str, list[dict]] = defaultdict(list)
+    #
+    # BUG FIXED (Data Integrity Audit, Phase 2, 2026-08): the previous version
+    # grouped products by `sku` alone and only checked whether the group
+    # spanned a single brand_id. That meant a SKU appearing under BOTH one
+    # brand twice (a real same-brand duplicate) AND a second brand once would
+    # have `len(brands_in_group) == 2` and get silently classified as an
+    # "informational" cross-brand collision — completely hiding the real
+    # same-brand duplicate inside it. Found live: SKU "26456000" existed as
+    # 2 distinct Hansgrohe products (a real duplicate) plus 1 Axor product
+    # sharing the same code; the old logic reported 0 same-brand duplicates
+    # because it only ever looked at `len(brands_in_group)`. Fixed by
+    # grouping on (sku, brand_id) directly — same-brand duplicates and
+    # cross-brand collisions are now independent checks, not mutually
+    # exclusive ones.
+    by_sku_brand: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    by_sku: dict[str, set[str]] = defaultdict(set)
     for p in products:
-        if p.get("sku"):
-            by_sku[p["sku"]].append(p)
-    for sku, group in by_sku.items():
-        if len(group) < 2:
+        sku = p.get("sku")
+        if not sku:
             continue
-        brands_in_group = {p["brand_id"] for p in group}
-        if len(brands_in_group) == 1:
+        by_sku_brand[(sku, p.get("brand_id"))].append(p)
+        by_sku[sku].add(p.get("brand_id"))
+
+    for (sku, brand_id), group in by_sku_brand.items():
+        if len(group) > 1:
             report.same_brand_duplicate_skus.append({
-                "sku": sku, "brand_id": group[0]["brand_id"],
+                "sku": sku, "brand_id": brand_id,
                 "product_ids": [p["id"] for p in group],
                 "names": [p["name"] for p in group],
             })
-        else:
+
+    for sku, brand_id_set in by_sku.items():
+        if len(brand_id_set) > 1:
+            group = [p for p in products if p.get("sku") == sku]
             report.cross_brand_sku_collisions.append({
                 "sku": sku,
                 "products": [{"id": p["id"], "brand_id": p["brand_id"], "name": p["name"]} for p in group],

@@ -274,6 +274,88 @@ backend:
             All security hardening changes are working correctly with zero regressions.
             Backend is stable, secure, and ready for production use.
 
+  - task: "Production Hardening Phase 2 — Data Integrity Audit (referential integrity, duplicate SKU bug fix, DB-level unique indexes, backup/DR drill)"
+    implemented: true
+    working: true
+    file: "backend/catalog_pipeline/integrity_guard.py, backend/scripts/ensure_indexes.py, backend/scripts/data_integrity_audit.py (new), backend/bootstrap.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            User-approved roadmap: Security -> Data Integrity -> Cross-Platform -> UI/UX ->
+            Mobile Polish -> Store Readiness -> Beta -> Launch. This is Phase 2.
+
+            1. Ran existing scripts/catalog_verify.py (integrity_guard.py) against the live
+               restored buildcon_house DB: 0 invalid brand/category refs, 0 orphaned media,
+               0 brand/media mismatches, 12 cross-brand SKU collisions (expected/legitimate),
+               8 products missing images (informational), reported "same_brand_duplicate_skus: 0".
+
+            2. BUG FOUND AND FIXED in integrity_guard.py itself: the same-brand-duplicate check
+               grouped products by `sku` alone and only inspected whether the group spanned
+               exactly one brand_id. A SKU that exists twice under Brand A (real duplicate) AND
+               once under Brand B got `len(brands_in_group) == 2` and was silently filed as an
+               "informational cross-brand collision" — completely hiding the real same-brand
+               duplicate. Rewrote to group by (sku, brand_id) directly so same-brand duplicates
+               and cross-brand collisions are independent, non-masking checks.
+               REAL DUPLICATE FOUND BY THE FIX: SKU "26456000" exists as 2 distinct Hansgrohe
+               products (id 639c8d2e "HG FixFit S wall outlet DN15 chr.NRV metal connection" and
+               id 811a1b0f "HG FixFit Porter 300 Schlauchanschl.chr") plus 1 unrelated Axor
+               product sharing the same numeric code (the legitimate cross-brand collision that
+               was masking it). NOT auto-resolved — renaming/merging either product without the
+               original Hansgrohe source file would be fabricating data; flagged for the user.
+
+            3. New read-only script backend/scripts/data_integrity_audit.py: full cross-collection
+               referential-integrity sweep (customers<->quotations<->purchase_orders<->payments<->
+               followups<->products<->users<->brands<->categories). Result: 0 hard errors. One
+               real, low-severity finding: 8 legacy seed-time quotations (FQ-2026-0001..0008,
+               created before the real 2,966-catalog import replaced the original demo product
+               IDs) contain 30 line items referencing product_ids that no longer exist. Cosmetic
+               risk only (line items snapshot their own sku/name/price at creation time) — any
+               live product lookup on those specific lines (variant swap, live stock) would no-op
+               rather than crash. Did not delete/modify — flagged for user decision (archive vs
+               keep as historical demo data). Also verified: 0 duplicate quotation/PO numbers,
+               0 duplicate user emails, 0 automation_key idempotency violations across
+               payments/followups/purchase_orders.
+
+            4. Added real DB-level unique indexes (previously these were enforced ONLY by
+               application code — the exact gap that caused 2 documented real data-corruption
+               incidents during the Hansgrohe/AXOR recovery per /app/memory/PRD.md history):
+               users.email (created OK), quotations.number (created OK), purchase_orders.number
+               (created OK). products (sku, brand_id) compound unique: attempted, blocked by the
+               live duplicate found in step 2 — wrapped in try/except in ensure_indexes.py so the
+               script stays safe to re-run, will auto-succeed once the duplicate is resolved.
+               Added the 3 successful indexes to bootstrap.py REQUIRED_INDEXES so every future
+               preflight verifies they still exist; deliberately did NOT add the products one yet
+               (would block every future startup until the duplicate is resolved). Verified
+               backend restarts clean and /api/health/system still reports healthy=true after
+               these changes.
+
+            5. Backup / Disaster-Recovery drill against the live restored Atlas connection:
+               scripts/backup_db.py -> fresh snapshot of all core collections, pushed to Supabase
+               private bucket successfully. scripts/restore_db.py --dry-run -> computed exact
+               upsert counts matching live data (idempotent-by-id, safe). scripts/
+               pull_backup_from_supabase.py --list -> confirmed 7 historical snapshots retrievable
+               (back to 2026-07-07) plus the new one — full backup chain survives session resets.
+
+            6. Ran full backend pytest suite (105 tests): 96 passed, 9 failed. Investigated all 9
+               failures individually — confirmed ALL are pre-existing test-suite staleness fully
+               unrelated to this session's changes: (a) test_forge_backend.py asserts a
+               `tax_total` field that was intentionally removed from the business model in an
+               earlier session (Forge has no taxes anywhere, per payment_routes.py's own
+               comment) — 6 of the 9 failures cascade from this one root failure via a
+               `pytest.qid` cross-test-file sharing pattern; (b) test_quotation_v2.py
+               ::TestDiscountCreate asserts 18% GST tax math that no longer applies for the same
+               reason; (c) test_followups_v2.py expects a `purchase_orders` key in the
+               place-order/confirm response that evolved to a different shape. None of these
+               relate to security or data-integrity work — did not fix (out of this phase's
+               scope; business-logic test debt, not a hardening item), flagging for awareness.
+
+            OUTSTANDING (needs human decision, not auto-resolved): the SKU "26456000" Hansgrohe
+            duplicate, and the 8 legacy demo quotations with dangling line-item product refs.
+
 user_problem_statement: "BuildCon House — complete product design reboot ('Showroom' design language). Phase 1: design system foundation, navigation shell, command palette, Today (dashboard), authentication. Later phases migrate Quotation Builder, Customers, Catalogue, Purchases, Payments, Follow-ups, Reports, Settings onto the new system. Catalog restoration (2,872 supplier products) is a separate parallel workstream — blocked on user-provided Supabase credentials + supplier source files."
 
 frontend:

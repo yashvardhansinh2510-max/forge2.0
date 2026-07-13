@@ -1,9 +1,22 @@
 {
   "total_products": 2966,
-  "total_media": 2970,
+  "total_media": 2971,
   "total_brands": 5,
   "total_categories": 26,
-  "same_brand_duplicate_skus": [],
+  "same_brand_duplicate_skus": [
+    {
+      "sku": "26456000",
+      "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+      "product_ids": [
+        "639c8d2e-95e6-406b-a117-f18155b9519d",
+        "811a1b0f-1b20-401b-9f36-e8134b63bbf2"
+      ],
+      "names": [
+        "HG FixFit S wall outlet DN15 chr.NRV metal connection",
+        "HG FixFit Porter 300 Schlauchanschl.chr"
+      ]
+    }
+  ],
   "cross_brand_sku_collisions": [
     {
       "sku": "24400000",
@@ -197,5 +210,5 @@
   "media_brand_mismatches": [],
   "missing_images": 8,
   "unexpected_modifications": [],
-  "ok": true
+  "ok": false
 }

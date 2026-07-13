@@ -62,6 +62,16 @@ REQUIRED_INDEXES: dict[str, list[tuple[tuple[str, Any], ...]]] = {
         (("user_id", 1), ("count", -1)),
     ],
     "user_sessions": [(("id", 1),), (("user_type", 1), ("user_id", 1))],
+    # Data Integrity Audit (Phase 2, 2026-08) — duplicate-prevention indexes.
+    # `products` (sku, brand_id) unique index is deliberately NOT listed here
+    # yet: a real pre-existing same-brand duplicate SKU was found live and
+    # must be resolved by a human decision before that constraint can be
+    # applied catalog-wide; adding it to this required list before it exists
+    # would block every future startup. See ensure_indexes.py for the
+    # already-attempted (and currently skipped) creation of that one index.
+    "users": [(("email", 1),)],
+    "quotations": [(("number", 1),)],
+    "purchase_orders": [(("number", 1),)],
 }
 
 
