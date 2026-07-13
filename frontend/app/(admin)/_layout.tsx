@@ -28,7 +28,6 @@ const PRIMARY: NavItem[] = [
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
   { href: "/(admin)/followups", label: "Follow-ups", icon: "phone-call", match: "followups" },
-  { href: "/(admin)/reports", label: "Reports", icon: "bar-chart-2", match: "reports" },
 ];
 
 const SECONDARY: NavItem[] = [
@@ -221,7 +220,6 @@ const MORE_ITEMS: NavItem[] = [
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
-  { href: "/(admin)/reports", label: "Reports", icon: "bar-chart-2", match: "reports" },
   { href: "/(admin)/notifications", label: "Notifications", icon: "bell", match: "notifications" },
   { href: "/(admin)/team", label: "Team", icon: "user-check", match: "team", roles: ["owner", "admin", "manager"] },
   { href: "/(admin)/settings", label: "Settings", icon: "settings", match: "settings" },

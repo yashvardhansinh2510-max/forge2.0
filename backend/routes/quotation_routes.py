@@ -587,6 +587,73 @@ async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_curre
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{doc["number"]}.pdf"'})
 
 
+# --- PDF of a previous revision snapshot (customer portal; read-only) ---
+@router.get("/{quotation_id}/portal-pdf/revision/{revision_no}")
+async def portal_pdf_revision(
+    quotation_id: str, revision_no: int, cust: CustomerPublic = Depends(get_current_customer),
+):
+    doc = await db.quotations.find_one({"id": quotation_id, "customer_id": cust.id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    rev = next((r for r in (doc.get("revisions") or []) if r.get("revision_no") == revision_no), None)
+    if not rev:
+        raise HTTPException(status_code=404, detail="Revision not found")
+    snapshot = rev.get("snapshot") or {}
+    merged = {**doc, **snapshot}
+    room_discs = {k: RoomDiscountCfg(**v) for k, v in (merged.get("room_discounts") or {}).items()}
+    totals = _recalc(
+        [QuotationLineItem(**i) for i in merged.get("items", [])],
+        merged.get("project_discount_pct", 0),
+        merged.get("category_discounts", {}) or {},
+        room_discs,
+    )
+    pdf_doc = {**merged, **totals, "items": _enriched_items_for_pdf(merged)}
+    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict())
+    filename = f'{doc["number"]}-rev{revision_no}.pdf'
+    return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
+
+# --- Brand-filtered PDF (customer portal; read-only) ---
+@router.get("/{quotation_id}/portal-pdf/brand/{brand_id}")
+async def portal_pdf_brand(
+    quotation_id: str, brand_id: str, cust: CustomerPublic = Depends(get_current_customer),
+):
+    doc = await db.quotations.find_one({"id": quotation_id, "customer_id": cust.id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    items = doc.get("items", [])
+    product_ids = list({item["product_id"] for item in items})
+    products = await db.products.find(
+        {"id": {"$in": product_ids}}, {"_id": 0, "id": 1, "brand_id": 1},
+    ).to_list(len(product_ids) + 5)
+    brand_by_product = {p["id"]: p.get("brand_id") for p in products}
+    is_unassigned = brand_id == "unassigned"
+    filtered = [
+        it for it in items
+        if (
+            brand_by_product.get(it["product_id"]) is None
+            if is_unassigned
+            else brand_by_product.get(it["product_id"]) == brand_id
+        )
+    ]
+    if not filtered:
+        raise HTTPException(status_code=404, detail="No items for this brand on this quotation")
+    room_discs = {k: RoomDiscountCfg(**v) for k, v in (doc.get("room_discounts") or {}).items()}
+    totals = _recalc(
+        [QuotationLineItem(**i) for i in filtered],
+        doc.get("project_discount_pct", 0),
+        doc.get("category_discounts", {}) or {},
+        room_discs,
+    )
+    filtered_doc = {**doc, "items": filtered}
+    pdf_doc = {**filtered_doc, **totals, "items": _enriched_items_for_pdf(filtered_doc)}
+    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict())
+    brand_doc = None if is_unassigned else await db.brands.find_one({"id": brand_id}, {"_id": 0, "name": 1})
+    brand_label = (brand_doc or {}).get("name") or "Other"
+    filename = f'{doc["number"]}-{brand_label}.pdf'.replace(" ", "-")
+    return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
+
 # =============================================================================
 # Place Order command — primary quotation state + EventOutbox; no side effects.
 # =============================================================================

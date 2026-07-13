@@ -35,7 +35,6 @@ const NAV: { label: string; icon: FeatherName; href: string; kw?: string }[] = [
   { label: "Purchases", icon: "shopping-cart", href: "/(admin)/purchases", kw: "material orders" },
   { label: "Payments", icon: "credit-card", href: "/(admin)/payments", kw: "collections outstanding" },
   { label: "Follow-ups", icon: "phone-call", href: "/(admin)/followups", kw: "tasks calls reminders" },
-  { label: "Reports", icon: "bar-chart-2", href: "/(admin)/reports", kw: "analytics" },
   { label: "Notifications", icon: "bell", href: "/(admin)/notifications", kw: "alerts" },
   { label: "Team", icon: "user-check", href: "/(admin)/team", kw: "staff roles" },
   { label: "Settings", icon: "settings", href: "/(admin)/settings", kw: "preferences" },

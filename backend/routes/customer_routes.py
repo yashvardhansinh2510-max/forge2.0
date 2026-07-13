@@ -56,3 +56,23 @@ async def get_customer(customer_id: str, _: UserPublic = Depends(get_current_use
 async def portal_quotations(cust: CustomerPublic = Depends(get_current_customer)):
     docs = await db.quotations.find({"customer_id": cust.id}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return docs
+
+
+@router.get("/portal/quotations/{quotation_id}")
+async def portal_quotation_detail(quotation_id: str, cust: CustomerPublic = Depends(get_current_customer)):
+    """Read-only detail view for the customer portal — full line items plus a
+    lightweight revision index (metadata only, not the full historical
+    snapshot) and a per-brand breakdown so the portal can offer brand-wise
+    PDF download buttons without a second round trip."""
+    doc = await db.quotations.find_one({"id": quotation_id, "customer_id": cust.id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    from routes.quotation_routes import _brand_grouped_preview
+    brands_preview = await _brand_grouped_preview(doc)
+    revisions = [
+        {"revision_no": r.get("revision_no"), "created_at": r.get("created_at"), "reason": r.get("reason")}
+        for r in (doc.get("revisions") or [])
+    ]
+    doc["revisions"] = revisions
+    doc["brands"] = brands_preview.get("brands", [])
+    return doc
