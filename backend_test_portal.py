@@ -10,7 +10,7 @@ from typing import Optional
 import requests
 
 # Backend URL - use public URL from frontend/.env
-BASE_URL = "https://294b8e40-78de-4b0c-ae70-e1a4c735ea44.preview.emergentagent.com/api"
+BASE_URL = "https://role-admin-1.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 CUSTOMER_EMAIL = "customer@forge.app"

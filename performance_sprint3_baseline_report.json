@@ -90,7 +90,7 @@
         "api_requests_count": 7,
         "image_requests_count": 3,
         "duplicate_api_urls": {
-          "https://forge-ui-audit.preview.emergentagent.com/api/categories": 2
+          "https://role-admin-1.preview.emergentagent.com/api/categories": 2
         },
         "unique_api_endpoints": [
           "categories",
