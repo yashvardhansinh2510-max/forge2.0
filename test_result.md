@@ -7581,3 +7581,139 @@ agent_communication:
         /app/memory/design_system_inventory.md for a future cleanup sprint (not this one).
         Credentials unchanged: owner@forge.app / Forge@2026 (staff), customer@forge.app /
         Forge@2026 (customer portal) — also now recorded in /app/memory/test_credentials.md.
+
+backend:
+  - task: "Phase 5 — Customer Portal backend: quotation detail, revision PDF, brand-wise PDF endpoints"
+    implemented: true
+    working: true
+    file: "backend/routes/quotation_routes.py, backend/routes/customer_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            User revised the roadmap: Customer Portal will be intentionally minimal (login,
+            dashboard, quotations list, view quotation, download PDF, download previous
+            revisions, brand-wise PDF where applicable) — read-only, no purchases/payments/
+            reports/inventory. Reports module removed from nav entirely (no placeholders).
+            Added 3 new endpoints:
+            - GET /api/portal/quotations/{quotation_id} — customer-scoped detail (items, totals,
+              revisions metadata list, brands breakdown via existing _brand_grouped_preview
+              helper). 404 for wrong-owner/nonexistent, 401 unauthenticated.
+            - GET /api/quotations/{quotation_id}/portal-pdf/revision/{revision_no} — rebuilds a
+              PDF from a historical revision snapshot (merges snapshot items/discounts over the
+              base doc, recomputes totals via existing _recalc). 404 for bad revision_no/wrong
+              owner, 401 unauthenticated.
+            - GET /api/quotations/{quotation_id}/portal-pdf/brand/{brand_id} — filters items to
+              one brand (via product->brand_id lookup), recomputes totals for the subset, builds
+              PDF. Handles "unassigned" brand bucket. 404 for invalid brand/wrong owner, 401
+              unauthenticated.
+            Verified manually via curl (real PDF bytes, %PDF header, correct 404/401s, cross-
+            customer ownership enforced) before handing to testing agent.
+        - working: true
+          agent: "testing"
+          comment: |
+            5/5 test groups passed (100%). All new endpoints return correct data shapes, enforce
+            customer-scoped auth (404 cross-customer, 401 unauthenticated), produce valid PDFs
+            (%PDF magic bytes). No regressions in staff auth, health check, staff quotations
+            list/detail, or the pre-existing (unmodified) portal-pdf endpoint. DB still correctly
+            buildcon_house (2966 products). Backend endpoints are production-ready.
+
+frontend:
+  - task: "Phase 5 — Customer Portal (minimal, read-only): Dashboard split from Quotations List + new Quotation Detail screen with revision/brand-wise downloads; Reports removed from all navigation"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(customer)/home.tsx, frontend/app/(customer)/quotes/index.tsx, frontend/app/(customer)/quotes/[id].tsx, frontend/src/utils/portalPdf.ts, frontend/app/(admin)/_layout.tsx, frontend/app/(admin)/reports.tsx, frontend/src/design/CommandPalette.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Rebuilt (customer)/home.tsx as a true minimal Dashboard (name, phone, email fetched
+            from /api/auth/customer/me, latest-quotation card, "View all quotations (N)" CTA,
+            Contact card) — removed the old inline full quotations list + the previously
+            non-functional/placeholder "Catalog" button (dead onPress={()=>{}}, matches the
+            "no placeholders" instruction).
+
+            New (customer)/quotes/index.tsx — full quotations list, status badge, date,
+            revision count, expiry, tap-through to detail.
+
+            New (customer)/quotes/[id].tsx — read-only detail: summary + primary "Download
+            quotation PDF" button, line items, a "Previous revisions" section (only rendered if
+            revisions exist) with a Download button per revision, and a "Download by brand"
+            section (only rendered if 2+ distinct brands on the quotation, to avoid a redundant
+            duplicate-of-the-main-PDF button when there's only one brand).
+
+            New src/utils/portalPdf.ts — single shared fetch/blob/open helper used by all 3
+            download buttons (main/revision/brand), replacing what would otherwise have been
+            3 copy-pasted implementations.
+
+            IMPORTANT BUG FOUND AND FIXED DURING THIS SESSION: initially built the new routes at
+            (customer)/quotations/* — expo-router strips group parens from the public URL, and
+            (admin)/quotations/[id]/* already occupies that exact path. This caused a real,
+            reproducible crash: a customer refreshing their browser on their own quotation page
+            resolved to the STAFF quotation detail route instead and crashed with "Not a staff
+            token" (confirmed via screenshot before and after the fix). Renamed the customer
+            route folder to (customer)/quotes/* (no collision) and verified via repeated
+            goto+reload that the customer's own detail page now survives a hard refresh
+            correctly. This is the kind of thing that would only show up in production on a
+            customer's phone/browser, not through normal in-app taps — flagging clearly here in
+            case any other future route additions need the same collision check.
+
+            Reports removed from all 3 navigation entry points: PRIMARY nav array, phone
+            MORE_ITEMS sheet, and CommandPalette (Cmd+K) NAV list, in (admin)/_layout.tsx and
+            src/design/CommandPalette.tsx. The /reports route itself now silently
+            <Redirect href="/(admin)/dashboard" /> instead of showing the old ScaffoldScreen
+            "Coming Soon" placeholder — verified via direct navigation to /reports redirecting
+            to /dashboard with no broken page. No backend report code existed to begin with
+            (nothing to preserve/hide there).
+
+            Verified end-to-end via live screenshots (customer login -> Dashboard showing real
+            name/phone/email/latest-quotation/count -> Quotations List with 13 real quotations,
+            status badges, revision indicators -> Quotation Detail with items, PDF download
+            button, and (on a quotation with 2 revisions) the Previous Revisions section
+            rendering both revisions with working Download buttons). Backend confirmed via
+            deep_testing_backend_v2: 5/5 test groups passed, including the new endpoints this
+            frontend calls.
+
+            Lint clean on every touched/new file. Restarted expo after every change.
+
+            NOT done yet (next requested phase, not started): Settings — user wants every
+            section (Company/Branding/PDF, Team, Notifications, Catalog import/export/backup,
+            System health, Account/security/sessions) fully functional with zero placeholders.
+            Awaiting go-ahead before starting, per "ask before each frontend testing + confirm
+            plan before large execution" protocol, and because Settings is its own
+            multi-section undertaking that deserves its own scoping pass (need to audit which
+            sub-sections already have real backend support vs. need new endpoints).
+
+            REQUEST: frontend changes touch a real user-facing flow (customer portal) —
+            awaiting user decision on whether to run the frontend testing agent now, per
+            protocol (must ask before invoking it).
+
+metadata:
+  created_by: "main_agent"
+  version: "3.4"
+  test_sequence: 16
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Phase 5 - Customer Portal (minimal) + Reports removal"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Phase 5 (minimal Customer Portal) + Reports removal delivered and backend-tested
+        (5/5 passed). Found and fixed a real route-collision bug (customer quotation detail
+        page crashed on browser refresh) before handing off — details in status_history above.
+        customer@forge.app / Forge@2026 remains the test customer account; test_credentials.md
+        already has this. Awaiting user go-ahead on (a) frontend testing agent for this batch,
+        and (b) starting the Settings phase next (every section functional, no placeholders) —
+        this is a large enough scope that I want to confirm before diving in.
