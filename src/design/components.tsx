@@ -103,9 +103,17 @@ export function Button({
   full?: boolean;
   testID?: string;
 }) {
-  const h = size === "sm" ? 34 : size === "lg" ? 48 : 40;
-  const px = size === "sm" ? 14 : size === "lg" ? 22 : 18;
+  // Phase 4 · Batch 1 (Production UI Consistency & UX Audit): sizing values
+  // below are intentionally identical to src/components/ui.tsx's Button —
+  // previously this system used h=34/40/48 vs ui.tsx's 34/44/52, so a "md"
+  // button rendered a different height depending only on which screen it
+  // was on. Every button in the app now shares one height/padding/icon-size
+  // per size name, regardless of which component file renders it.
+  const h = size === "sm" ? 34 : size === "lg" ? 52 : 44;
+  const px = size === "sm" ? 12 : size === "lg" ? 20 : 16;
   const fs = size === "sm" ? 13 : size === "lg" ? 15 : 14;
+  const iconPx = size === "sm" ? 14 : size === "lg" ? 18 : 16;
+  const btnRadius = size === "sm" ? 8 : 12;
   const dim = disabled || loading;
 
   const face = (pressed: boolean, hovered: boolean): ViewStyle => {
@@ -133,7 +141,7 @@ export function Button({
       disabled={dim}
       style={({ pressed, hovered }: any) => [
         {
-          height: h, paddingHorizontal: px, borderRadius: radius.md,
+          height: h, paddingHorizontal: px, borderRadius: btnRadius,
           flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
           opacity: dim ? 0.45 : 1,
           alignSelf: full ? "stretch" : "auto",
@@ -146,7 +154,7 @@ export function Button({
       {loading ? (
         <ActivityIndicator size="small" color={fg} />
       ) : icon ? (
-        <Feather name={icon} size={fs + 1} color={fg} />
+        <Feather name={icon} size={iconPx} color={fg} />
       ) : null}
       <Text style={{ fontFamily: font.semibold, fontWeight: "600", fontSize: fs, color: fg, letterSpacing: -0.1 }}>
         {label}

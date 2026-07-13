@@ -52,7 +52,13 @@ const palette = {
   red50:  "#F7ECE9",
   red100: "#F0DAD4",
   red600: "#AE4A3D",
-  red700: "#9A3E34",
+  // Phase 4 · Batch 1 (Production UI Consistency & UX Audit): was "#9A3E34"
+  // — a slightly different red than src/design/tokens.ts's `pal.risk`
+  // ("#AE4A3D"), so the "danger" color rendered two different shades
+  // depending on which design system drew it (Button danger variant vs.
+  // Showroom's danger button, status badges, etc). Unified to one value —
+  // single source of truth for every danger/error/rejected/overdue surface.
+  red700: "#AE4A3D",
 
   sky50:  "#EEF0F1",
   sky100: "#DEE2E4",
