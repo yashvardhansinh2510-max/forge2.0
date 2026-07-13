@@ -534,6 +534,26 @@ def _enriched_items_for_pdf(doc: dict) -> list[dict]:
     return [{**row["raw"], "discount_pct": round(row["pct"], 2)} for row in rows]
 
 
+# --- PDF branding (Settings > Company + Settings > PDF, merged) -----------
+async def _pdf_branding() -> dict:
+    """Merge Settings > Company + Settings > PDF into the flat dict
+    pdf_generator.build_quotation_pdf expects. Every key falls back to the
+    same value that used to be hardcoded in pdf_generator.py, so a quotation
+    PDF renders identically until someone actually edits these in Settings."""
+    company = await db.settings.find_one({"key": "company"}, {"_id": 0}) or {}
+    pdf = await db.settings.find_one({"key": "pdf"}, {"_id": 0}) or {}
+    return {
+        "footer_company_name": pdf.get("footer_company_name") or company.get("name") or "Buildcon House",
+        "footer_phone": pdf.get("footer_phone") or company.get("phone") or "+91 99099 06652",
+        "footer_email": pdf.get("footer_email") or company.get("email") or "buildconhouse10@gmail.com",
+        "footer_tagline": pdf.get("footer_tagline") or company.get("tagline") or "One Destination. Infinite Possibilities.",
+        "terms_text": pdf.get("terms_text"),
+        "signature_name": pdf.get("signature_name"),
+        "signature_title": pdf.get("signature_title"),
+        "show_watermark": pdf.get("show_watermark", True),
+    }
+
+
 # --- Official PDF command (staff) ---
 @router.get("/{quotation_id}/pdf")
 async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_current_user)):
@@ -547,7 +567,7 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
         raise HTTPException(status_code=404, detail="Quotation not found")
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
     pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
-    pdf_bytes = build_quotation_pdf(pdf_doc, customer)
+    pdf_bytes = build_quotation_pdf(pdf_doc, customer, await _pdf_branding())
     revision = len(doc.get("revisions") or [])
     key = f"quotation-generated:{quotation_id}:revision:{revision}"
     event = await db.event_outbox.find_one({"idempotency_key": key}, {"_id": 0})
@@ -583,7 +603,7 @@ async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_curre
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
-    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict())
+    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict(), await _pdf_branding())
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{doc["number"]}.pdf"'})
 
 
@@ -608,7 +628,7 @@ async def portal_pdf_revision(
         room_discs,
     )
     pdf_doc = {**merged, **totals, "items": _enriched_items_for_pdf(merged)}
-    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict())
+    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict(), await _pdf_branding())
     filename = f'{doc["number"]}-rev{revision_no}.pdf'
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
@@ -647,7 +667,7 @@ async def portal_pdf_brand(
     )
     filtered_doc = {**doc, "items": filtered}
     pdf_doc = {**filtered_doc, **totals, "items": _enriched_items_for_pdf(filtered_doc)}
-    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict())
+    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict(), await _pdf_branding())
     brand_doc = None if is_unassigned else await db.brands.find_one({"id": brand_id}, {"_id": 0, "name": 1})
     brand_label = (brand_doc or {}).get("name") or "Other"
     filename = f'{doc["number"]}-{brand_label}.pdf'.replace(" ", "-")

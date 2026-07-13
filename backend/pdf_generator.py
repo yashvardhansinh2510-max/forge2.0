@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
+import functools
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
@@ -65,40 +66,44 @@ def _img(url: str | None, width_mm: float = 10, height_mm: float = 10) -> Flowab
     return Paragraph("<i><font color='#999999' size='7'>[image]</font></i>", ParagraphStyle("image-placeholder", alignment=1, leading=8))
 
 
-def _draw_footer(canvas, doc) -> None:
-    canvas.saveState()
+def _draw_footer(cv, doc, branding: dict | None = None) -> None:
+    b = branding or {}
+    cv.saveState()
     page_width, _ = A4
-    canvas.setStrokeColor(LINE)
-    canvas.setLineWidth(0.45)
-    canvas.line(0, 15 * mm, page_width, 15 * mm)
-    canvas.setFillColor(INK)
-    canvas.setFont("Helvetica-Bold", 8)
-    canvas.drawString(doc.leftMargin, 10.5 * mm, "Buildcon House")
-    canvas.setFillColor(INK)
-    canvas.setFont("Helvetica", 7)
-    canvas.drawString(doc.leftMargin, 6.5 * mm, "M: +91 99099 06652   |   buildconhouse10@gmail.com")
+    cv.setStrokeColor(LINE)
+    cv.setLineWidth(0.45)
+    cv.line(0, 15 * mm, page_width, 15 * mm)
+    cv.setFillColor(INK)
+    cv.setFont("Helvetica-Bold", 8)
+    cv.drawString(doc.leftMargin, 10.5 * mm, b.get("footer_company_name") or "Buildcon House")
+    cv.setFillColor(INK)
+    cv.setFont("Helvetica", 7)
+    cv.drawString(doc.leftMargin, 6.5 * mm, f"M: {b.get('footer_phone') or '+91 99099 06652'}   |   {b.get('footer_email') or 'buildconhouse10@gmail.com'}")
     right = page_width - doc.rightMargin
-    canvas.setFont("Helvetica", 7)
-    canvas.drawRightString(right, 10.5 * mm, f"Page {doc.page}")
-    canvas.setFillColor(BLUE)
-    canvas.setFont("Helvetica-Oblique", 7)
-    canvas.drawRightString(right, 6.5 * mm, "One Destination. Infinite Possibilities.")
-    canvas.restoreState()
+    cv.setFont("Helvetica", 7)
+    cv.drawRightString(right, 10.5 * mm, f"Page {doc.page}")
+    cv.setFillColor(BLUE)
+    cv.setFont("Helvetica-Oblique", 7)
+    cv.drawRightString(right, 6.5 * mm, b.get("footer_tagline") or "One Destination. Infinite Possibilities.")
+    cv.restoreState()
 
 
-def _draw_room_watermark(canvas, doc) -> None:
-    _draw_footer(canvas, doc)
+def _draw_room_watermark(cv, doc, branding: dict | None = None) -> None:
+    _draw_footer(cv, doc, branding)
+    b = branding or {}
+    if not b.get("show_watermark", True):
+        return
     if not LOGO_PATH.exists():
         return
-    canvas.saveState()
-    if hasattr(canvas, "setFillAlpha"):
-        canvas.setFillAlpha(0.10)
-    canvas.translate(A4[0] / 2, A4[1] / 2 - 8 * mm)
-    canvas.rotate(26)
+    cv.saveState()
+    if hasattr(cv, "setFillAlpha"):
+        cv.setFillAlpha(0.10)
+    cv.translate(A4[0] / 2, A4[1] / 2 - 8 * mm)
+    cv.rotate(26)
     watermark_w = 87 * mm
     watermark_h = watermark_w / (1913 / 474)
-    canvas.drawImage(str(LOGO_PATH), -watermark_w / 2, -watermark_h / 2, width=watermark_w, height=watermark_h, mask="auto")
-    canvas.restoreState()
+    cv.drawImage(str(LOGO_PATH), -watermark_w / 2, -watermark_h / 2, width=watermark_w, height=watermark_h, mask="auto")
+    cv.restoreState()
 
 
 def _brand_header(right_title: str, styles: dict) -> Table:
@@ -123,19 +128,26 @@ def _room_totals(items: Iterable[dict]) -> tuple[float, float, float]:
     return subtotal, discount, subtotal - discount
 
 
-def build_quotation_pdf(quotation: dict, customer: dict) -> bytes:
+def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
     """Render the supplied BuildCon House A4 quotation template exactly.
 
     Page one is the commercial summary / contractual page. Each room starts on
     its own itemised page and is divided into 16-line blocks, matching the
     official printed form. Long rooms therefore continue predictably without
     changing the column geometry or dropping the footer.
+
+    `branding` (optional) is the merged Settings > Company + Settings > PDF
+    dict — footer text, watermark on/off, an appended "additional terms" line,
+    and an appended signatory line. Every key has a fallback identical to what
+    was hardcoded here before Settings > PDF existed, so passing None (or a
+    partial dict) renders byte-for-byte the same document as before.
     """
+    b = branding or {}
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
         topMargin=13 * mm, bottomMargin=22 * mm, title=quotation.get("number", "Quotation"),
-        author="Buildcon House",
+        author=b.get("footer_company_name") or "Buildcon House",
     )
     base = getSampleStyleSheet()
     styles = {
@@ -233,16 +245,23 @@ def build_quotation_pdf(quotation: dict, customer: dict) -> bytes:
         "11. GST and other applicable taxes will be charged extra as per government norms.",
     ]
     story.extend([Paragraph(term, styles["small"]) for term in terms])
+    if b.get("terms_text"):
+        story.extend([Spacer(1, 1 * mm), Paragraph(f"<b>Additional terms:</b> {_escape(b['terms_text'])}", styles["small"])])
     story.extend([Spacer(1, 2 * mm), Paragraph("CUSTOMER CARE — TOLL FREE NUMBERS", styles["section"]), Spacer(1, 0.5 * mm)])
     care_rows = [[Paragraph("BRAND", styles["tableHead"]), Paragraph("TOLL FREE", styles["tableHead"])]] + [[brand, number] for brand, number in [
         ("GEBERIT", "1800 102 4323"), ("GROHE", "1800 102 4475"), ("HANSGROHE", "1800 209 3246"), ("VITRA", "70451 32132"), ("OYSTER", "1800 120 8999"),
     ]]
     care = Table(care_rows, colWidths=[48 * mm, 48 * mm], rowHeights=[5 * mm] * 6, hAlign="CENTER")
     care.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.3, GRID), ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY), ("FONTNAME", (0, 1), (-1, -1), "Helvetica"), ("FONTSIZE", (0, 1), (-1, -1), 6.5), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 4)]))
-    story.extend([care, Spacer(1, 1.7 * mm), Paragraph("For general enquiries: <b>M: +91 99099 06652</b>  |  <b>Email: buildconhouse10@gmail.com</b>", styles["small"]), Spacer(1, 2 * mm)])
+    enquiry_phone = b.get("footer_phone") or "+91 99099 06652"
+    enquiry_email = b.get("footer_email") or "buildconhouse10@gmail.com"
+    story.extend([care, Spacer(1, 1.7 * mm), Paragraph(f"For general enquiries: <b>M: {enquiry_phone}</b>  |  <b>Email: {enquiry_email}</b>", styles["small"]), Spacer(1, 2 * mm)])
     signature = Table([[Paragraph("I/We have reviewed and agree to the terms and conditions mentioned in this quotation.", styles["small"]), Paragraph("CUSTOMER SIGNATURE &amp; DATE", styles["signature"])]], colWidths=[104 * mm, 66 * mm], rowHeights=[13 * mm])
     signature.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.45, GRID), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4)]))
     story.append(signature)
+    if b.get("signature_name"):
+        sig_line = _escape(b["signature_name"]) + (f", {_escape(b['signature_title'])}" if b.get("signature_title") else "")
+        story.append(Paragraph(f"For {_escape(b.get('footer_company_name') or 'Buildcon House')} — {sig_line}", ParagraphStyle("sigLine", parent=styles["small"], alignment=2, spaceBefore=2)))
 
     # --- PAGES 2+: 16 official item rows per area page ------------------------
     item_header = [
@@ -297,5 +316,9 @@ def build_quotation_pdf(quotation: dict, customer: dict) -> bytes:
             ]))
             story.append(table)
 
-    doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_room_watermark)
+    doc.build(
+        story,
+        onFirstPage=functools.partial(_draw_footer, branding=b),
+        onLaterPages=functools.partial(_draw_room_watermark, branding=b),
+    )
     return buf.getvalue()

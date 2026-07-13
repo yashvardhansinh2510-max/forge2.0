@@ -3,15 +3,19 @@ by the full module at routes/purchase_routes.py. The /payments scaffold has been
 REMOVED and replaced by routes/payment_routes.py. /followups has been REMOVED and
 replaced by the full Sales Command Center module at routes/followup_routes.py."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
-from auth import get_current_user, require_min_role
+from auth import get_current_user, hash_password, require_min_role
 from db import db
-from models import UserPublic
+from models import TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from settings import settings
 from typing import Optional
 
 router = APIRouter(tags=["ops"])
+
+# Settings > System > Version. Bump manually alongside meaningful releases —
+# there's no build pipeline yet to derive this automatically.
+FORGE_VERSION = "1.0.0"
 
 
 def _sanitize_error(err: Optional[str]) -> Optional[str]:
@@ -100,6 +104,7 @@ async def health_system():
 
     return {
         "backend": "running",
+        "version": FORGE_VERSION,
         "mongo": {"connected": mongo_ok, "is_local": is_local_mongo, "error": _sanitize_error(mongo_error)},
         "supabase": {"configured": supabase_configured, "connected": supabase_ok, "error": _sanitize_error(supabase_error)},
         "counts": counts,
@@ -117,6 +122,39 @@ async def list_notifications(user: UserPublic = Depends(get_current_user)):
 @router.get("/team")
 async def list_team(_: UserPublic = Depends(require_min_role("manager"))):
     return await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("full_name", 1).to_list(200)
+
+
+@router.post("/team")
+async def create_team_member(body: TeamCreatePayload, user: UserPublic = Depends(require_min_role("admin"))):
+    if await db.users.find_one({"email": body.email.lower()}, {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=409, detail="A team member with this email already exists")
+    doc = UserPublic(
+        email=body.email.lower(), full_name=body.full_name, role=body.role, phone=body.phone,
+    ).dict()
+    doc["password_hash"] = hash_password(body.password)
+    await db.users.insert_one(doc)
+    doc.pop("password_hash", None)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.patch("/team/{user_id}")
+async def update_team_member(
+    user_id: str, body: TeamUpdatePayload, user: UserPublic = Depends(require_min_role("admin")),
+):
+    if user_id == user.id and body.active is False:
+        raise HTTPException(status_code=400, detail="You can't deactivate your own account")
+    if user_id == user.id and body.role is not None and body.role != user.role:
+        raise HTTPException(status_code=400, detail="You can't change your own role")
+    patch = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
+    if not patch:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    patch["updated_at"] = now_iso()
+    result = await db.users.update_one({"id": user_id}, {"$set": patch})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    doc = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return doc
 
 
 @router.get("/reports/overview")

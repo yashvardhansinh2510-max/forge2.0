@@ -116,6 +116,65 @@ class GoogleSessionPayload(BaseModel):
     session_id: str
 
 
+class ChangePasswordPayload(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8)
+
+
+# ---------- Team management (Settings) ----------
+class TeamCreatePayload(BaseModel):
+    email: EmailStr
+    full_name: str
+    role: Role
+    phone: Optional[str] = None
+    password: str = Field(..., min_length=8)
+
+
+class TeamUpdatePayload(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[Role] = None
+    phone: Optional[str] = None
+    active: Optional[bool] = None
+
+
+# ---------- Settings: Company profile (Settings > Company) ----------
+# Persisted in db.settings with key="company" — same generic key/value
+# settings-store pattern already used by purchases_tracker.py's TrackerSettings.
+# Every field has a sensible default matching what was previously hardcoded
+# across the frontend (theme/tokens.ts `brand`) and pdf_generator.py, so
+# reading this before it has ever been saved behaves exactly like today.
+class CompanySettings(BaseModel):
+    name: str = "BuildCon House"
+    tagline: str = "One Destination. Infinite Possibilities."
+    phone: str = "+91 99099 06652"
+    email: EmailStr | str = "buildconhouse10@gmail.com"
+    address: Optional[str] = None
+    gstin: Optional[str] = None
+    logo_base64: Optional[str] = None  # data: URL, shown in-app + used on PDFs once set
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    updated_by_name: Optional[str] = None
+
+
+# ---------- Settings: PDF branding (Settings > PDF) ----------
+# Persisted in db.settings with key="pdf". Governs ONLY the branding chrome
+# of the quotation PDF (footer text, terms paragraph, signature line,
+# watermark on/off) — never the item table, discount math, or page layout.
+# Defaults match the previously-hardcoded pdf_generator.py output exactly.
+class PDFSettings(BaseModel):
+    footer_company_name: str = "Buildcon House"
+    footer_phone: str = "+91 99099 06652"
+    footer_email: str = "buildconhouse10@gmail.com"
+    footer_tagline: str = "One Destination. Infinite Possibilities."
+    terms_text: Optional[str] = None
+    signature_name: Optional[str] = None
+    signature_title: Optional[str] = None
+    show_watermark: bool = True
+    updated_at: Optional[str] = None
+    updated_by: Optional[str] = None
+    updated_by_name: Optional[str] = None
+
+
 class UserSession(BaseModel):
     """One device/browser login — lets a user see & revoke their active
     sessions ('remember trusted devices' / 'logout from all devices')."""

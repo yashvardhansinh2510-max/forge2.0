@@ -424,3 +424,61 @@ async def create_product(
 async def list_import_jobs(_: UserPublic = Depends(require_min_role("purchase"))):
     docs = await db.catalog_imports.find({}, {"_id": 0, "rows": 0}).sort("created_at", -1).to_list(200)
     return docs
+
+
+# ---------- Catalog export (Settings > Catalog > Export) ----------
+@router.get("/catalog/export.xlsx")
+async def export_catalog_xlsx(_: UserPublic = Depends(get_current_user)):
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    products = await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(10000)
+    brands = {b["id"]: b["name"] for b in await db.brands.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    categories = {c["id"]: c["name"] for c in await db.categories.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Catalog"
+    ws["A1"] = "Forge — Catalog Export"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:J1")
+    stamp = datetime.now(timezone.utc).strftime("%d %b %Y · %H:%M UTC")
+    ws["A2"] = f"{len(products)} products · Exported {stamp}"
+    ws["A2"].font = Font(color="6B7280", size=10)
+    ws.merge_cells("A2:J2")
+
+    headers = ["SKU", "Name", "Brand", "Category", "Series", "Finish", "MRP", "Trade Price", "Stock", "Warranty"]
+    header_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+    for col, h in enumerate(headers, start=1):
+        cell = ws.cell(row=4, column=col, value=h)
+        cell.font = Font(bold=True, color="374151", size=11)
+        cell.fill = header_fill
+
+    for i, p in enumerate(products, start=5):
+        ws.cell(row=i, column=1, value=p.get("sku"))
+        ws.cell(row=i, column=2, value=p.get("name"))
+        ws.cell(row=i, column=3, value=brands.get(p.get("brand_id"), ""))
+        ws.cell(row=i, column=4, value=categories.get(p.get("category_id"), ""))
+        ws.cell(row=i, column=5, value=p.get("series"))
+        ws.cell(row=i, column=6, value=p.get("finish"))
+        ws.cell(row=i, column=7, value=p.get("mrp"))
+        ws.cell(row=i, column=8, value=p.get("price"))
+        ws.cell(row=i, column=9, value=p.get("stock"))
+        ws.cell(row=i, column=10, value=p.get("warranty"))
+
+    widths = [16, 40, 16, 18, 16, 16, 10, 12, 8, 16]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A5"
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from fastapi.responses import StreamingResponse
+    filename = f"forge-catalog-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.xlsx"
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

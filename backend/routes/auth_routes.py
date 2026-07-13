@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from auth import (
     create_session, create_token, decode_token, get_current_customer, get_current_user,
-    invalidate_principal_cache, verify_google_session, verify_password,
+    hash_password, invalidate_principal_cache, verify_google_session, verify_password,
 )
 from db import db
 from models import (
-    CustomerLoginPayload, CustomerPublic, CustomerTokenResponse,
-    GoogleSessionPayload, LoginPayload, SessionInfo, TokenResponse, UserPublic,
+    ChangePasswordPayload, CustomerLoginPayload, CustomerPublic, CustomerTokenResponse,
+    GoogleSessionPayload, LoginPayload, SessionInfo, TokenResponse, UserPublic, now_iso,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -32,6 +32,22 @@ async def staff_login(body: LoginPayload, request: Request):
 @router.get("/me", response_model=UserPublic)
 async def staff_me(user: UserPublic = Depends(get_current_user)):
     return user
+
+
+@router.post("/change-password")
+async def staff_change_password(body: ChangePasswordPayload, user: UserPublic = Depends(get_current_user)):
+    """Settings > Account > Password. Staff-only for now — the customer
+    portal is intentionally read-only (Phase 5 decision) and has no account-
+    management surface yet."""
+    doc = await db.users.find_one({"id": user.id}, {"_id": 0, "password_hash": 1})
+    if not doc or not verify_password(body.current_password, doc.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    await db.users.update_one(
+        {"id": user.id},
+        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso()}},
+    )
+    invalidate_principal_cache("staff", user.id)
+    return {"changed": True}
 
 
 @router.post("/customer/login", response_model=CustomerTokenResponse)
