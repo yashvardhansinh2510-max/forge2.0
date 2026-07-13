@@ -14,6 +14,14 @@ launch and is dramatically better than no limiting at all. If Forge is ever
 horizontally scaled behind a load balancer, replace `_attempts` with a
 shared store (Redis `INCR`+`EXPIRE` is the standard swap) — the
 `check_rate_limit()` call site does not need to change.
+
+Load-balancer note (found during the Phase 9 audit's own testing): behind a
+reverse proxy/k8s ingress, `request.client.host` can report the proxy's
+internal per-pod IP rather than a stable client IP, so a single attacker can
+appear to come from a small rotating set of IPs and partially dilute the
+per-(ip,email) bucket. To close that gap without depending on IP at all, an
+IP-INDEPENDENT per-email ceiling is enforced as well (`_PER_EMAIL_LIMIT`) —
+an attacker cannot exceed this no matter how many source IPs they present.
 """
 from __future__ import annotations
 
@@ -23,8 +31,14 @@ from fastapi import HTTPException
 
 # 8 failed attempts per (ip, email) per 15 minutes, and a broader 40/15min per
 # IP across any email, to blunt both targeted guessing and distributed spray.
+# 8 failed attempts per (ip, email) per 15 minutes, and a broader 40/15min per
+# IP across any email, to blunt both targeted guessing and distributed spray.
+# PLUS a 15/15min ceiling keyed on email ALONE (no IP) — closes the gap where
+# a proxy/load balancer presents a rotating set of source IPs for the same
+# attacker (see module docstring).
 _PER_KEY_LIMIT = 8
 _PER_IP_LIMIT = 40
+_PER_EMAIL_LIMIT = 15
 _WINDOW_SECONDS = 15 * 60
 _MAX_TRACKED_KEYS = 20_000
 
@@ -49,15 +63,17 @@ def _register_failure(key: str, now: float) -> None:
 
 
 def check_login_rate_limit(ip: str | None, identifier: str) -> None:
-    """Call BEFORE attempting a password check. Raises 429 if either the
-    per-(ip,identifier) or per-ip ceiling is already exhausted. Does NOT
-    record an attempt itself — call `record_login_failure` after a failed
-    password check so successful logins never count against the limit."""
+    """Call BEFORE attempting a password check. Raises 429 if the
+    per-(ip,identifier), per-ip, OR the IP-independent per-email ceiling is
+    already exhausted. Does NOT record an attempt itself — call
+    `record_login_failure` after a failed password check so successful
+    logins never count against the limit."""
     ip = ip or "unknown"
     now = monotonic()
     key_hits = _prune(f"k:{ip}:{identifier.lower()}", now)
     ip_hits = _prune(f"ip:{ip}", now)
-    if len(key_hits) >= _PER_KEY_LIMIT or len(ip_hits) >= _PER_IP_LIMIT:
+    email_hits = _prune(f"email:{identifier.lower()}", now)
+    if len(key_hits) >= _PER_KEY_LIMIT or len(ip_hits) >= _PER_IP_LIMIT or len(email_hits) >= _PER_EMAIL_LIMIT:
         raise HTTPException(
             status_code=429,
             detail="Too many login attempts. Please wait a few minutes and try again.",
@@ -69,6 +85,7 @@ def record_login_failure(ip: str | None, identifier: str) -> None:
     now = monotonic()
     _register_failure(f"k:{ip}:{identifier.lower()}", now)
     _register_failure(f"ip:{ip}", now)
+    _register_failure(f"email:{identifier.lower()}", now)
 
 
 def clear_login_attempts(ip: str | None, identifier: str) -> None:
@@ -76,3 +93,4 @@ def clear_login_attempts(ip: str | None, identifier: str) -> None:
     password a few times isn't stuck waiting once they get it right."""
     ip = ip or "unknown"
     _attempts.pop(f"k:{ip}:{identifier.lower()}", None)
+    _attempts.pop(f"email:{identifier.lower()}", None)

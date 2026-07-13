@@ -8525,3 +8525,22 @@ agent_communication:
         
         RECOMMENDATION: Main agent should summarize Phase 9 as complete and production-ready.
         All security hardening and monitoring integration working correctly with zero regressions.
+
+
+    - working: true
+      agent: "main"
+      comment: |
+        FOLLOW-UP FIX (same session, post-testing): the testing agent's load-balancer note above
+        was a real finding worth closing, not just documenting — added an IP-INDEPENDENT
+        per-email ceiling (_PER_EMAIL_LIMIT=15/15min) alongside the existing per-(ip,email) and
+        per-ip ceilings in services/rate_limit.py, so an attacker cannot dilute the limit by
+        presenting a rotating set of source IPs (as can happen behind a k8s ingress/LB) — the
+        per-email bucket has no IP component at all. Manually re-verified after restart: (1) 8
+        wrong-password attempts against owner@forge.app -> 401 x8 then 429 on the 9th
+        (threshold now hits exactly at the documented number since the email-only bucket
+        increments on every failure regardless of apparent source IP); (2) a DIFFERENT,
+        unrelated email (nonexistent@forge.app) immediately after -> 401, NOT 429, confirming
+        the limiter is correctly scoped per-identifier and does not globally lock out the login
+        endpoint; (3) full backend restart -> GET /api/health/system healthy:true, owner login
+        200 with a clean (non-rate-limited) state. PRODUCTION.md's troubleshooting table and
+        rate_limit.py's own docstring updated to describe all three ceilings accurately.

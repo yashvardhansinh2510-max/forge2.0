@@ -167,7 +167,7 @@ first line of diagnostics even without Sentry/PostHog configured.
 | App won't boot, log says "Missing or placeholder configuration: X" | Required env var absent in this environment | Set it via deployment secrets, redeploy |
 | App won't boot, log says preflight/index error | Mongo migration didn't preserve indexes/collections | Run `python -m scripts.ensure_indexes` against the target DB |
 | Staff can log in, customer portal login always 403 | Customer's `portal_enabled` is false | Customers > Edit Customer > enable Portal access |
-| Login returns 429 | Rate limiter tripped (8 attempts/15min per email, 40/15min per IP) | Wait 15 minutes, or confirm it isn't a real brute-force attempt |
+| Login returns 429 | Rate limiter tripped (8 attempts/15min per email+IP, 40/15min per IP, 15/15min per email regardless of IP) | Wait 15 minutes, or confirm it isn't a real brute-force attempt |
 | "Temporary password has expired" | >72h since Team/Customer reset-password or send-invite | Issue a new one from Team or Customers > Edit Customer |
 | Backend up but `/api/health/system` shows `mongo.connected: false` | Atlas network allowlist / credentials | Check Atlas Network Access + `MONGO_URL` |
 | Images broken but PDFs fine (or vice versa) | Wrong bucket public/private mix-up | Confirm `SUPABASE_PUBLIC_BUCKET`/`SUPABASE_PRIVATE_BUCKET` match actual bucket visibility in Supabase dashboard |
