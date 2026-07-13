@@ -88,6 +88,16 @@ export default function Settings() {
     ] },
   ];
 
+  const workspaceRows: { icon: keyof typeof Feather.glyphMap; label: string; hint: string; href: string; testId: string }[] = [
+    { icon: "briefcase", label: "Company", hint: "Name, contact, logo", href: "/(admin)/settings-company", testId: "settings-nav-company" },
+    { icon: "file-text", label: "PDF branding", hint: "Footer, terms, watermark", href: "/(admin)/settings-pdf", testId: "settings-nav-pdf" },
+    { icon: "users", label: "Team", hint: "Add, edit roles, deactivate", href: "/(admin)/team", testId: "settings-nav-team" },
+    { icon: "shield", label: "Roles & permissions", hint: "What each role can do", href: "/(admin)/settings-permissions", testId: "settings-nav-permissions" },
+    { icon: "bell", label: "Notifications", hint: "Channels & follow-up rules", href: "/(admin)/settings-notifications", testId: "settings-nav-notifications" },
+    { icon: "database", label: "Catalog tools", hint: "Import, export, backup", href: "/(admin)/settings-catalog", testId: "settings-nav-catalog" },
+    { icon: "activity", label: "System", hint: "Health, version, storage", href: "/(admin)/settings-system", testId: "settings-nav-system" },
+  ];
+
   return (
     <AdminPage title="Settings" subtitle="Profile, organization & preferences">
       {/* Profile hero */}
@@ -126,18 +136,55 @@ export default function Settings() {
         </Card>
       ))}
 
+      {/* Workspace — every functional Settings section lives behind these rows */}
+      <Card style={{ padding: 0 }} variant="flat">
+        <Text style={[type.overline, { padding: spacing.md, paddingBottom: 8 }]}>Workspace</Text>
+        {workspaceRows.map((r, i) => (
+          <Pressable
+            key={r.href}
+            testID={r.testId}
+            onPress={() => router.push(r.href as any)}
+            style={({ pressed }) => [
+              styles.row,
+              i === 0 ? null : { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.divider },
+              { opacity: pressed ? 0.7 : 1 },
+            ]}
+          >
+            <View style={styles.itemIcon}>
+              <Feather name={r.icon} size={14} color={colors.onSurfaceMuted} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 14, fontFamily: type.bodyStrong.fontFamily, fontWeight: "500", color: colors.onSurface }}>{r.label}</Text>
+              <Text style={type.caption}>{r.hint}</Text>
+            </View>
+            <Feather name="chevron-right" size={16} color={colors.onSurfaceMuted} />
+          </Pressable>
+        ))}
+      </Card>
+
       {/* Security — active sessions / trusted devices */}
       <Card style={{ padding: 0 }} variant="flat">
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: spacing.md, paddingBottom: 8 }}>
           <Text style={type.overline}>Security · Active sessions</Text>
           {sessionsLoading ? <ActivityIndicator size="small" color={colors.onSurfaceMuted} /> : null}
         </View>
+        <Pressable
+          testID="settings-nav-password"
+          onPress={() => router.push("/(admin)/settings-password" as any)}
+          style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : 1 }]}
+        >
+          <View style={styles.itemIcon}>
+            <Feather name="lock" size={14} color={colors.onSurfaceMuted} />
+          </View>
+          <Text style={[type.bodyMuted, { flex: 1 }]}>Change password</Text>
+          <Feather name="chevron-right" size={16} color={colors.onSurfaceMuted} />
+        </Pressable>
         {!sessionsLoading && sessions.length === 0 ? (
           <Text style={[type.bodyMuted, { padding: spacing.md, paddingTop: 0 }]}>No active sessions found.</Text>
-        ) : sessions.map((s, i) => (
+        ) : sessions.map((s) => (
           <View
             key={s.id}
-            style={[styles.row, i === 0 ? null : { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.divider }]}
+            style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.divider }]}
           >
             <View style={styles.itemIcon}>
               <Feather name={s.login_method === "google" ? "smartphone" : "monitor"} size={14} color={colors.onSurfaceMuted} />

@@ -56,6 +56,7 @@ async function request<T>(method: string, path: string, body?: any): Promise<T> 
 export const api = {
   get: <T>(p: string) => request<T>("GET", p),
   post: <T>(p: string, b?: any) => request<T>("POST", p, b),
+  put: <T>(p: string, b?: any) => request<T>("PUT", p, b),
   patch: <T>(p: string, b?: any) => request<T>("PATCH", p, b),
   delete: <T>(p: string) => request<T>("DELETE", p),
   pdfUrl: (path: string, token: string) => `${BASE}/api${path}?_t=${encodeURIComponent(token)}`,

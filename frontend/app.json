@@ -10,7 +10,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.forgesanitaryware.x4kuaf"
+      "bundleIdentifier": "com.emergent.forgesanitaryware.x4kuaf",
+      "infoPlist": {
+        "NSPhotoLibraryUsageInfo": "Choose your company logo for quotations"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +21,8 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.forgesanitaryware.x4kuaf"
+      "package": "com.emergent.forgesanitaryware.x4kuaf",
+      "permissions": ["READ_MEDIA_IMAGES"]
     },
     "web": {
       "bundler": "metro",
@@ -34,6 +38,12 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#000000"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose your company logo for quotations"
         }
       ]
     ],
