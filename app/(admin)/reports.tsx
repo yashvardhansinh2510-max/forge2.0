@@ -1,16 +1,9 @@
-import { ScaffoldScreen } from "@/src/components/ScaffoldScreen";
+// Reports module removed from user-facing navigation per product decision
+// (Phase 5 roadmap revision) — the backend/report groundwork, if any, is
+// intentionally left untouched for a future release. This route is kept
+// only so a stale bookmark/deep-link doesn't 404 or show a "Coming Soon"
+// placeholder — it silently redirects to the dashboard instead.
+import { Redirect } from "expo-router";
 export default function ReportsScreen() {
-  return (
-    <ScaffoldScreen
-      title="Reports"
-      subtitle="Deep dashboards. Sales, purchase, stock, receivables — all in one place."
-      icon="bar-chart-2"
-      features={[
-        "Sales conversion & pipeline velocity",
-        "Product & brand performance",
-        "Salesperson leaderboard with target attainment",
-        "Receivables ledger + P&L snapshot",
-      ]}
-    />
-  );
+  return <Redirect href="/(admin)/dashboard" />;
 }
