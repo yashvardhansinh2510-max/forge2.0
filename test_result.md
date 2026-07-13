@@ -812,7 +812,8 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Phase 3 Mobile Testing - Keyboard avoidance, Back navigation, Pull-to-refresh"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -825,6 +826,86 @@ agent_communication:
         Credentials: owner@forge.app / Forge@2026 (staff), customer@forge.app / Forge@2026 (customer portal).
         Catalog restoration is BLOCKED on user: needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY and the 4
         supplier source files; do NOT seed replacement demo catalog data beyond the existing 20 demo products.
+    - agent: "testing"
+      message: |
+        Phase 3 Mobile Testing (Phone Viewport 390x844) - PARTIAL COMPLETION (2026-07-13)
+        
+        Attempted comprehensive testing of 4 critical mobile features at phone viewport (390x844).
+        Testing was limited by browser automation constraints and missing implementation.
+        
+        === CODE REVIEW FINDINGS ===
+        
+        1. KEYBOARD AVOIDANCE IN QUOTATION BUILDER:
+           • Implementation: BuilderShell.tsx uses KeyboardAvoidingView with behavior="padding" for iOS only
+           • Issue: behavior is undefined for Android/web, which means no keyboard avoidance on those platforms
+           • Line items have TextInput fields for quantity (line 71-78) and rate (line 82-89) in LineRow.tsx
+           • Discount field opens a sheet (DiscountSheet), not a direct input
+           • FINDING: Keyboard avoidance may not work properly on Android/web platforms
+        
+        2. ADD CUSTOMER FORM:
+           • CRITICAL ISSUE: Route /(admin)/customers/new does NOT exist
+           • customers/index.tsx has "Add Customer" button that navigates to this route (line 75)
+           • No new.tsx file exists in /app/frontend/app/(admin)/customers/ directory
+           • FINDING: "Add Customer" functionality is broken - clicking the button will navigate to a non-existent route
+        
+        3. BACK NAVIGATION:
+           • Implementation: PageHeader component uses router.back() (customers/[id].tsx line 143)
+           • Quotations detail page also has back button via PageHeader
+           • FINDING: Implementation looks correct, should work as expected
+        
+        4. PULL-TO-REFRESH:
+           • Implementation: Dashboard uses RefreshControl with onRefresh callback (dashboard.tsx line 352)
+           • FINDING: Implementation looks correct, but cannot be reliably tested in browser automation
+        
+        === BROWSER AUTOMATION TESTING RESULTS ===
+        
+        ❌ FAILED TESTS (due to automation limitations):
+        • Login automation failed - page stuck on login screen despite correct credentials
+        • Could not access quotations list or customers list to test navigation
+        • Could not test keyboard avoidance due to inability to access builder/forms
+        • Pull-to-refresh cannot be simulated (requires native touch events)
+        
+        === CRITICAL ISSUES FOUND ===
+        
+        🔴 HIGH PRIORITY:
+        1. Add Customer form route missing (/(admin)/customers/new does not exist)
+           → Button exists but navigates to non-existent route
+           → Users will see blank/error screen when trying to add customers
+        
+        2. Keyboard avoidance only works on iOS
+           → KeyboardAvoidingView behavior is undefined for Android/web
+           → Input fields may be hidden behind keyboard on Android/web
+        
+        ⚠️  MEDIUM PRIORITY:
+        3. Pull-to-refresh cannot be verified via automation
+           → Implementation exists but requires manual testing on real device
+        
+        === RECOMMENDATIONS FOR MAIN AGENT ===
+        
+        🔴 URGENT - Fix Add Customer Route:
+        1. Create /app/frontend/app/(admin)/customers/new.tsx with customer form
+        2. OR change "Add Customer" button to open a sheet/modal instead of navigating
+        3. Implement form with fields: name, email, phone, city, address, tier
+        4. Add KeyboardAvoidingView wrapper for the form
+        
+        🔴 URGENT - Fix Keyboard Avoidance:
+        1. Update BuilderShell.tsx KeyboardAvoidingView to work on all platforms:
+           behavior={Platform.OS === "ios" ? "padding" : "height"}
+        2. Test on Android/web to ensure input fields stay visible when keyboard appears
+        3. Consider using react-native-keyboard-aware-scroll-view for better cross-platform support
+        
+        ⚠️  RECOMMENDED - Manual Testing Required:
+        1. Test keyboard avoidance on real iOS and Android devices
+        2. Test pull-to-refresh on real devices (cannot be automated)
+        3. Test back navigation on real devices to ensure smooth transitions
+        
+        === NEXT STEPS ===
+        
+        Main agent should:
+        1. Fix the Add Customer route (create new.tsx or use sheet/modal)
+        2. Fix keyboard avoidance for Android/web platforms
+        3. Request manual testing on real devices for final verification
+        4. Consider using Expo Go app for quick mobile testing
     - agent: "testing"
       message: |
         Phase 3 Cross-Platform Functional Audit COMPLETED (2026-07-13)
