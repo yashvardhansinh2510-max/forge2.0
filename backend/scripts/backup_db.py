@@ -30,7 +30,21 @@ load_dotenv(ROOT / ".env")
 
 DEFAULT_COLLECTIONS = [
     "products", "product_media", "brands", "categories", "customers", "quotations",
-    "purchase_orders", "payments", "followups", "users", "activity", "suppliers",
+    "purchase_orders", "payments", "followups", "users", "suppliers",
+    # Production readiness audit (2026-08): this list previously said "activity" —
+    # that collection does not exist; the real audit-trail collection (see
+    # services/activity_log.py) is "activity_events" and had 254 real documents
+    # silently excluded from every backup taken before this fix. Also added
+    # "settings" (company/PDF config) and "notifications" and "catalog_imports",
+    # "purchase_shortages", "purchase_transfers" — all real business data that
+    # were similarly never backed up. Deliberately still excluding
+    # "user_sessions" (ephemeral login sessions, regenerate on next login),
+    # "event_outbox" (a self-draining dispatch queue, not source of truth), and
+    # "product_usage" (a derived "most used" cache that rebuilds from behavior)
+    # — these are safe to omit because nothing is lost if they're empty after a
+    # restore.
+    "activity_events", "settings", "notifications", "catalog_imports",
+    "purchase_shortages", "purchase_transfers",
 ]
 
 BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", ROOT / "backups"))

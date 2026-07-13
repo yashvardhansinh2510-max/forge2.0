@@ -10,6 +10,11 @@ import { useAppFonts } from "@/src/hooks/use-app-fonts";
 import { AuthProvider, useAuth } from "@/src/state/auth";
 import { colors, font } from "@/src/theme/tokens";
 import { ToastHost } from "@/src/components/Toast";
+import { initSentry } from "@/src/lib/monitoring";
+
+// Production monitoring — complete no-op unless EXPO_PUBLIC_SENTRY_DSN is set
+// (see src/lib/monitoring.ts). Safe to call unconditionally at module load.
+initSentry();
 
 // Global default: any Text without an explicit fontFamily inherits Inter-Regular.
 // This ensures every legacy screen automatically renders with our typographic voice.

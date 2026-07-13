@@ -14,22 +14,33 @@ from models import (
 )
 from services.activity_log import log_event
 from services.invite_service import is_temp_password_expired
+from services.rate_limit import check_login_rate_limit, clear_login_attempts, record_login_failure
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request and request.client else None
+
+
 @router.post("/login", response_model=TokenResponse)
 async def staff_login(body: LoginPayload, request: Request):
+    ip = _client_ip(request)
+    check_login_rate_limit(ip, body.email)
     doc = await db.users.find_one({"email": body.email.lower()}, {"_id": 0})
     if not doc or not verify_password(body.password, doc.get("password_hash", "")):
+        record_login_failure(ip, body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not doc.get("active", True):
+        record_login_failure(ip, body.email)
         raise HTTPException(status_code=403, detail="Account disabled")
     if doc.get("must_change_password") and is_temp_password_expired(doc.get("temp_password_expires_at")):
+        record_login_failure(ip, body.email)
         raise HTTPException(
             status_code=401,
             detail="This temporary password has expired. Ask an admin to reset it again.",
         )
+    clear_login_attempts(ip, body.email)
     sid = await create_session("staff", doc["id"], request, login_method="password")
     token = create_token(doc["id"], "staff", {"role": doc["role"], "session_id": sid})
     doc.pop("password_hash", None)
@@ -68,16 +79,22 @@ async def staff_change_password(body: ChangePasswordPayload, user: UserPublic = 
 
 @router.post("/customer/login", response_model=CustomerTokenResponse)
 async def customer_login(body: CustomerLoginPayload, request: Request):
+    ip = _client_ip(request)
+    check_login_rate_limit(ip, body.email)
     doc = await db.customers.find_one({"email": body.email.lower()}, {"_id": 0})
     if not doc or not doc.get("password_hash") or not verify_password(body.password, doc["password_hash"]):
+        record_login_failure(ip, body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not doc.get("portal_enabled"):
+        record_login_failure(ip, body.email)
         raise HTTPException(status_code=403, detail="Portal access is disabled for this account. Contact your account manager.")
     if doc.get("must_change_password") and is_temp_password_expired(doc.get("temp_password_expires_at")):
+        record_login_failure(ip, body.email)
         raise HTTPException(
             status_code=401,
             detail="This temporary password has expired. Ask your account manager to resend the invite.",
         )
+    clear_login_attempts(ip, body.email)
     sid = await create_session("customer", doc["id"], request, login_method="password")
     token = create_token(doc["id"], "customer", {"session_id": sid})
     doc.pop("password_hash", None)

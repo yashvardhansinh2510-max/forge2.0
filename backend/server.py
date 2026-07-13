@@ -5,6 +5,7 @@ from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from bootstrap import run_bootstrap
+from services.monitoring import init_monitoring
 
 from db import db  # noqa: E402
 from routes.auth_routes import router as auth_router  # noqa: E402
@@ -31,6 +32,11 @@ from services.followup_engine import reconcile_followups  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("forge")
+
+# Monitoring (Sentry + PostHog) — complete no-op until SENTRY_DSN/POSTHOG_API_KEY
+# are set (see services/monitoring.py + backend/.env.example). Called before app
+# construction so an unhandled exception anywhere downstream is captured.
+_monitoring_status = init_monitoring()
 
 app = FastAPI(title="Forge API", version="0.1.0")
 api = APIRouter(prefix="/api")
@@ -106,6 +112,7 @@ async def _startup():
     except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load
         logger.warning("Initial follow-up reconciliation skipped: %s", e)
     logger.info("Forge API ready; infrastructure preflight passed.")
+    logger.info("Monitoring status: sentry=%s posthog=%s", _monitoring_status["sentry"], _monitoring_status["posthog"])
 
 
 @app.on_event("shutdown")

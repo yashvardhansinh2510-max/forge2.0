@@ -5,6 +5,8 @@ replaced by the full Sales Command Center module at routes/followup_routes.py.""
 
 from fastapi import APIRouter, Depends, HTTPException
 
+import os
+
 from auth import get_current_user, hash_password, invalidate_principal_cache, require_min_role
 from db import db
 from models import TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
@@ -86,6 +88,10 @@ async def health_system():
             supabase_error = str(exc)
 
     secrets_loaded = settings.readiness_flags()
+    monitoring_status = {
+        "sentry_configured": bool((os.environ.get("SENTRY_DSN") or "").strip()),
+        "posthog_configured": bool((os.environ.get("POSTHOG_API_KEY") or "").strip()),
+    }
 
     warnings = []
     if is_local_mongo:
@@ -111,6 +117,7 @@ async def health_system():
         "supabase": {"configured": supabase_configured, "connected": supabase_ok, "error": _sanitize_error(supabase_error)},
         "counts": counts,
         "secrets_loaded": secrets_loaded,
+        "monitoring": monitoring_status,
         "warnings": warnings,
         "healthy": mongo_ok and (supabase_ok is not False),
     }
