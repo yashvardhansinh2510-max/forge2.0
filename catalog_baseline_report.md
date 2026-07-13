@@ -2,7 +2,7 @@
 
 **Date**: 2026-07-12  
 **Viewport Tested**: Desktop 1920x800  
-**URL**: https://buildcon-sprint.preview.emergentagent.com  
+**URL**: https://secure-then-ship.preview.emergentagent.com  
 **Credentials**: owner@forge.app / Forge@2026  
 
 ---

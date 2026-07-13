@@ -10,7 +10,7 @@ from io import BytesIO
 from PyPDF2 import PdfReader
 
 # Configuration
-BASE_URL = "https://58e2940b-f6dc-4c96-a9ee-46b01d8a8a2a.preview.emergentagent.com/api"
+BASE_URL = "https://secure-then-ship.preview.emergentagent.com/api"
 CREDENTIALS = {
     "email": "owner@forge.app",
     "password": "Forge@2026"
