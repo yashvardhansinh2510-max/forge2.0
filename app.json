@@ -47,7 +47,8 @@
         {
           "photosPermission": "Choose your company logo for quotations"
         }
-      ]
+      ],
+      "@sentry/react-native"
     ],
     "experiments": {
       "typedRoutes": true
