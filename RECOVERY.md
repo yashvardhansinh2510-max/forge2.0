@@ -37,6 +37,26 @@ sudo supervisorctl restart backend expo
 
 Then run both bootstrap commands above. Never commit the populated `.env` file.
 
+## Frontend recovery (`frontend/.env`)
+
+`frontend/.env` disappears for the same reason as the backend's. It needs exactly
+one line:
+
+```
+EXPO_PUBLIC_BACKEND_URL=<this session's public preview URL>
+```
+
+Find the current URL via `environment=APP_URL="..."` in
+`/etc/supervisor/conf.d/supervisord.conf` (under `[program:backend]`), or ask the
+user for the URL shown in their browser. Leaving this blank (relative/same-origin
+fetch) is the more portable long-term design and is what `src/api/client.ts`
+assumes, but empirically failed in this preview's browser-automation testing
+context in the 2026-08 session (requests fell through to the Metro dev server's
+HTML instead of being proxied to :8001) — set it explicitly to the live preview
+URL until that's re-investigated. Restart with `sudo supervisorctl restart expo`
+after changing it. This value WILL go stale on the next container recreation
+(new preview URL) — re-check it any time the app is inaccessible after a fork.
+
 ## Failure interpretation
 
 - `Missing or placeholder configuration`: deployment secret absent or local fallback incomplete.

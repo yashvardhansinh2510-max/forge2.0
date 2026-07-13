@@ -359,6 +359,83 @@ backend:
 user_problem_statement: "BuildCon House — complete product design reboot ('Showroom' design language). Phase 1: design system foundation, navigation shell, command palette, Today (dashboard), authentication. Later phases migrate Quotation Builder, Customers, Catalogue, Purchases, Payments, Follow-ups, Reports, Settings onto the new system. Catalog restoration (2,872 supplier products) is a separate parallel workstream — blocked on user-provided Supabase credentials + supplier source files."
 
 frontend:
+  - task: "Production Hardening Phase 3 — Cross-Platform Functional Audit (navigation, forms, keyboard avoidance, missing Add Customer screen)"
+    implemented: true
+    working: true
+    file: "frontend/.env, frontend/app/(admin)/customers/new.tsx (new), frontend/src/components/quotation/layout/BuilderShell.tsx, frontend/src/components/BottomSheet.tsx, frontend/src/design/CommandPalette.tsx, frontend/src/design/components.tsx, frontend/app/(auth)/login.tsx, frontend/app/(admin)/payments.tsx, frontend/app/(admin)/followups.tsx, RECOVERY.md"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Phase 3 of the user-approved roadmap: Security -> Data Integrity -> Cross-Platform ->
+            UI/UX -> Mobile Polish -> Store Readiness -> Beta -> Launch. Structured functional
+            audit, explicitly NOT a redesign — code review confirmed the app already has solid
+            responsive infra (useBp() breakpoint system driving phone bottom-bar / tablet icon
+            rail / desktop sidebar, safe-area-context used throughout).
+
+            BLOCKER HIT AND RESOLVED: frontend/.env had EXPO_PUBLIC_BACKEND_URL empty (same
+            session-reset wipe as backend/.env in Phase 1). client.ts's own comment documents
+            empty-string as "same-origin fetch, ingress routes /api/* to backend" — but this
+            empirically failed in the testing agent's browser context (API calls hit Metro's HTML
+            fallback instead of being proxied to :8001, cascading into "Catalog inaccessible" /
+            "Quotation Builder inaccessible" / "tablet nav broken" false-positive failures on the
+            first test pass). Found the real backend-side APP_URL value in supervisord.conf
+            (`environment=APP_URL="https://6b92eaa4-dd26-43fa-a66c-22b14ea64ca8.preview.
+            emergentagent.com"`), verified it correctly proxies /api/* via curl, set
+            EXPO_PUBLIC_BACKEND_URL to that value, restarted expo — full re-test then passed
+            10/10. Documented this clearly in RECOVERY.md (new "Frontend recovery" section) since
+            this value is session-specific and will go stale on the next container recreation,
+            same class of issue as the backend secrets.
+
+            FULL CROSS-VIEWPORT AUDIT (phone 390x844, tablet 810x1080, desktop 1440x900, large
+            desktop 1920x1080), via auto_frontend_testing_agent, after the URL fix: 10/10 pass —
+            login, dashboard with real data, phone bottom-bar + "More" sheet navigation, tablet
+            icon-only rail (not full sidebar), desktop/large-desktop full sidebar, Catalog (2,361
+            product families) reachable from both phone and desktop nav, Quotation Builder
+            reachable, portrait/landscape orientation stable. Back-navigation and pull-to-refresh
+            could not be automated (browser tooling limitation, not a bug) — deferred to real-
+            device/Expo Go manual testing per the roadmap's own "Phase 6 Beta" step.
+
+            REAL BUGS FOUND AND FIXED (functional, not cosmetic — in scope per "audit, not
+            redesign"):
+            1. "Add Customer" was completely non-functional: the button navigated to
+               `/(admin)/customers/new`, but no such screen existed (only `[id].tsx` and
+               `index.tsx` in that folder) — Expo Router's dynamic `[id]` route would have
+               silently tried to fetch a customer workspace for id="new" and failed. Backend
+               already fully supports `POST /customers` (only `name` is required) — this was a
+               dropped frontend screen, not a backend gap. Built
+               frontend/app/(admin)/customers/new.tsx matching the exact existing convention in
+               that folder (theme/tokens + components/ui: TextField/Button/Chip/PageHeader),
+               wired to POST /customers, with inline validation (empty name), toast feedback, and
+               proper KeyboardAvoidingView. Verified end-to-end by the testing agent: form loads,
+               validation blocks empty name, save succeeds with a real toast + navigates to the
+               new customer's detail page, keyboard does not cover the active field.
+            2. Keyboard avoidance was iOS-only in 7 places app-wide: `KeyboardAvoidingView
+               behavior={Platform.OS === "ios" ? "padding" : undefined}` — on Android/native the
+               `undefined` fallback means the input can be covered by the keyboard, silently
+               relying on the OS's own default resize behavior with no defensive fallback in the
+               code. Fixed to the officially-recommended cross-platform pattern
+               (`"padding"` / `"height"`) in: BuilderShell.tsx (Quotation Builder — the most
+               complex, highest-risk form), the shared BottomSheet.tsx and design/components.tsx
+               Sheet (used by many screens), CommandPalette.tsx, login.tsx, payments.tsx,
+               followups.tsx. Verified no regressions (sheets still open/close correctly, builder
+               still loads) and confirmed keyboard no longer covers active fields on the new
+               Add-Customer form (uses the same shared pattern).
+
+            Ran `npx tsc --noEmit` scoped to all touched files after every change — zero new type
+            errors introduced.
+
+            NOT fixed (correctly out of scope per "audit, not redesign" and "don't add features"):
+            customers/index.tsx list uses `.map()` in a ScrollView rather than a virtualized list
+            — fine at current scale (8 customers), flagged only if the customer base grows large.
+            Two parallel design systems coexist in the frontend (`src/design/*` for the shell/nav
+            vs `theme/tokens` + `components/ui` for most feature screens) — this is a Phase 4
+            (Design System Audit) concern, not a Phase 3 functional one; left untouched.
+
+frontend:
   - task: "Phase 1 · Showroom design reboot — tokens, primitives, shell, command palette, Today, Auth"
     implemented: true
     working: true
