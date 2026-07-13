@@ -22,6 +22,36 @@ logger = logging.getLogger("forge.catalog_import")
 SUPPORTED_BRANDS = ["Hansgrohe", "Axor", "Grohe", "Vitra", "Geberit"]
 MISSING = "[MISSING DATA]"
 
+# Security audit (Phase 1, 2026-08): supplier pricelists (PDF/XLSX) legitimately
+# run tens of MB with embedded imagery — cap generously but not unbounded.
+MAX_IMPORT_BYTES = 80 * 1024 * 1024
+
+
+def _guard_public_url(url: str) -> None:
+    """Block SSRF via /from-url: staff-only, but a fetched URL must never be
+    allowed to reach loopback/private/link-local network ranges (internal
+    services, cloud metadata endpoints like 169.254.169.254, etc.). Only
+    plain http(s) to a resolvable public hostname is allowed."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Only public http(s) URLs are supported")
+    host = parsed.hostname.lower()
+    if host in ("localhost", "0.0.0.0") or host.endswith(".local"):
+        raise HTTPException(status_code=400, detail="URL host is not allowed")
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror as e:
+        raise HTTPException(status_code=400, detail=f"Could not resolve host: {e}") from e
+    for info in infos:
+        addr = info[4][0]
+        ip = ipaddress.ip_address(addr)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise HTTPException(status_code=400, detail="URL resolves to a non-public network address")
+
 
 async def _persist_job(brand: str, filename: str, source_type: str, result: dict, user_id: str) -> dict:
     job = CatalogImportJob(
@@ -66,6 +96,8 @@ async def upload_and_extract(
     if brand not in SUPPORTED_BRANDS:
         raise HTTPException(status_code=400, detail=f"Unsupported brand. Choose from: {SUPPORTED_BRANDS}")
     data = await file.read()
+    if len(data) > MAX_IMPORT_BYTES:
+        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_IMPORT_BYTES // (1024 * 1024)}MB limit")
     filename = file.filename or "upload"
     lower = filename.lower()
     if not lower.endswith((".xlsx", ".xls", ".pdf", ".csv")):
@@ -92,6 +124,7 @@ async def import_from_url(
         raise HTTPException(status_code=400, detail=f"Unsupported brand. Choose from: {SUPPORTED_BRANDS}")
     if not url or not isinstance(url, str) or not url.startswith("http"):
         raise HTTPException(status_code=400, detail="Provide a valid public https URL")
+    _guard_public_url(url)
 
     async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
         try:
@@ -100,6 +133,9 @@ async def import_from_url(
             data = r.content
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Could not fetch file: {e}") from e
+
+    if len(data) > MAX_IMPORT_BYTES:
+        raise HTTPException(status_code=413, detail=f"Fetched file exceeds {MAX_IMPORT_BYTES // (1024 * 1024)}MB limit")
 
     lower = filename.lower()
     source_type = "excel" if lower.endswith((".xlsx", ".xls")) else ("pdf" if lower.endswith(".pdf") else "csv")

@@ -415,8 +415,14 @@ async def add_attachment(
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
-    # Basic size guard — base64 blobs > ~4MB will slow Mongo. We accept but log.
+    # Security audit (Phase 1, 2026-08): this was previously "accept but log" —
+    # a base64 data_url stored directly on the PO document has no hard ceiling
+    # elsewhere, so an oversized payload would bloat the document and slow
+    # every read of this PO. 15MB of base64 (~11MB binary) covers real
+    # delivery-note/invoice photos; enforce it instead of only logging it.
     size = len(body.data_url or "")
+    if size > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Attachment exceeds 15MB limit")
     att = PurchaseAttachment(
         by_user_id=user.id,
         by_user_name=user.full_name,

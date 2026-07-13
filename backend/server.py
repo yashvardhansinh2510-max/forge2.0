@@ -66,9 +66,17 @@ api.include_router(followup_router)
 
 app.include_router(api)
 
+# Security audit (Phase 1, 2026-08): Forge authenticates exclusively via a
+# Bearer JWT stored client-side (see frontend/src/api/client.ts) — it never
+# relies on cookies. `allow_credentials=True` combined with a wildcard origin
+# is therefore both unnecessary AND flagged by every CORS scanner as unsafe
+# (the two are mutually contradictory per the Fetch spec; browsers silently
+# ignore the wildcard when credentials are requested). Preview URLs are
+# dynamic per-session, so an allowlist of origins is not viable here — the
+# safe fix is to disable credentialed CORS entirely, not to restrict origins.
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],

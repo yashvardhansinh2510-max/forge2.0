@@ -17,6 +17,27 @@ from services import catalog_service, media_service
 logger = logging.getLogger("forge.media_routes")
 router = APIRouter(tags=["media"])
 
+# Security audit (Phase 1, 2026-08): uploads were previously unbounded —
+# `await file.read()` loads the entire body into process memory with no size
+# or MIME-type check, i.e. any "purchase" role could exhaust memory with a
+# single oversized request. 20MB comfortably covers real product photography
+# (largest legitimate assets seen in the catalog are a few MB) while blocking
+# abuse. MIME allowlist matches what `_ext_for_mime`/PIL actually understand.
+MAX_MEDIA_BYTES = 20 * 1024 * 1024
+ALLOWED_MEDIA_MIMES = {
+    "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/svg+xml",
+    "application/pdf",
+}
+
+
+def _validate_media_upload(data: bytes, mime: str) -> None:
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > MAX_MEDIA_BYTES:
+        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_MEDIA_BYTES // (1024 * 1024)}MB limit")
+    if mime not in ALLOWED_MEDIA_MIMES:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {mime}")
+
 
 async def _brand_slug_for_product(product_id: str) -> tuple[str, Optional[str], Optional[str]]:
     """Return (brand_slug, brand_id, family_key) for a product."""
@@ -51,9 +72,8 @@ async def upload_product_media(
         raise HTTPException(status_code=400, detail="source_type must be supplier|manufacturer|internal")
     slug, brand_id, family_key = await _brand_slug_for_product(product_id)
     data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty file")
     mime = file.content_type or "application/octet-stream"
+    _validate_media_upload(data, mime)
     doc = await media_service.upload_and_register(
         data=data, mime=mime, brand_slug=slug,
         product_id=product_id, family_key=family_key, brand_id=brand_id,
@@ -85,9 +105,8 @@ async def upload_family_media(
     brand = await db.brands.find_one({"id": sample["brand_id"]}, {"_id": 0, "slug": 1, "name": 1})
     slug = (brand or {}).get("slug") or (brand or {}).get("name") or "unknown"
     data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="Empty file")
     mime = file.content_type or "application/octet-stream"
+    _validate_media_upload(data, mime)
     doc = await media_service.upload_and_register(
         data=data, mime=mime, brand_slug=slug,
         family_key=family_key, brand_id=sample["brand_id"],

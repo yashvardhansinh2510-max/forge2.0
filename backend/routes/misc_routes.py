@@ -9,8 +9,22 @@ from auth import get_current_user, require_min_role
 from db import db
 from models import UserPublic
 from settings import settings
+from typing import Optional
 
 router = APIRouter(tags=["ops"])
+
+
+def _sanitize_error(err: Optional[str]) -> Optional[str]:
+    """Security audit (Phase 1, 2026-08): this endpoint is intentionally public
+    (no auth) for ops/curl diagnostics, but driver exceptions (pymongo/httpx)
+    can embed the connection string or internal hostnames in their message.
+    Strip any credentials-looking substring and cap the length — callers only
+    need the failure class, not a full stack-trace-grade string."""
+    if not err:
+        return err
+    import re
+    err = re.sub(r"://[^@/\s]+@", "://<redacted>@", err)
+    return err[:200]
 
 
 @router.get("/health/system")
@@ -86,8 +100,8 @@ async def health_system():
 
     return {
         "backend": "running",
-        "mongo": {"connected": mongo_ok, "is_local": is_local_mongo, "error": mongo_error},
-        "supabase": {"configured": supabase_configured, "connected": supabase_ok, "error": supabase_error},
+        "mongo": {"connected": mongo_ok, "is_local": is_local_mongo, "error": _sanitize_error(mongo_error)},
+        "supabase": {"configured": supabase_configured, "connected": supabase_ok, "error": _sanitize_error(supabase_error)},
         "counts": counts,
         "secrets_loaded": secrets_loaded,
         "warnings": warnings,
