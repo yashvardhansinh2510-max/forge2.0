@@ -1,0 +1,93 @@
+// Settings > PDF -- footer text, watermark on/off, an appended terms line,
+// and an appended signatory line. Deliberately does NOT touch the item
+// table, discount math, or page layout of the quotation PDF -- see the
+// comment block on pdf_generator.build_quotation_pdf for the exact scope.
+// Every default below matches what was previously hardcoded, so leaving
+// this screen untouched changes nothing about existing PDFs.
+import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { ScrollView, Switch, Text, View } from "react-native";
+
+import { api } from "@/src/api/client";
+import { AdminPage } from "@/src/components/AdminPage";
+import { toast } from "@/src/components/Toast";
+import { Button, Card, TextField } from "@/src/components/ui";
+import { useAuth } from "@/src/state/auth";
+import { colors, spacing, type } from "@/src/theme/tokens";
+
+type PDFSettings = {
+  footer_company_name: string; footer_phone: string; footer_email: string; footer_tagline: string;
+  terms_text?: string | null; signature_name?: string | null; signature_title?: string | null;
+  show_watermark: boolean;
+};
+
+export default function SettingsPDF() {
+  const router = useRouter();
+  const { staff } = useAuth();
+  const canEdit = staff?.role === "owner" || staff?.role === "admin";
+  const [form, setForm] = useState<PDFSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get<PDFSettings>("/settings/pdf").then(setForm).catch(() => setForm(null));
+  }, []);
+
+  const set = (k: keyof PDFSettings) => (v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
+
+  const save = async () => {
+    if (!form) return;
+    setSaving(true);
+    try {
+      const updated = await api.put<PDFSettings>("/settings/pdf", form);
+      setForm(updated);
+      toast.show("PDF settings saved");
+    } catch (e: any) {
+      toast.show(e?.message || "Couldn't save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!form) {
+    return <AdminPage title="PDF" back={() => router.back()}><View /></AdminPage>;
+  }
+
+  return (
+    <AdminPage title="PDF branding" subtitle={canEdit ? "Footer and terms shown on every quotation PDF" : "View only -- admin role required to edit"} back={() => router.back()}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: spacing.lg }}>
+        <Card style={{ gap: spacing.md }}>
+          <Text style={type.overline}>Footer</Text>
+          <TextField testID="pdf-footer-name-input" label="Company name" value={form.footer_company_name} onChangeText={set("footer_company_name")} editable={canEdit} />
+          <TextField testID="pdf-footer-phone-input" label="Phone" value={form.footer_phone} onChangeText={set("footer_phone")} editable={canEdit} keyboardType="phone-pad" />
+          <TextField testID="pdf-footer-email-input" label="Email" value={form.footer_email} onChangeText={set("footer_email")} editable={canEdit} keyboardType="email-address" autoCapitalize="none" />
+          <TextField testID="pdf-footer-tagline-input" label="Tagline" value={form.footer_tagline} onChangeText={set("footer_tagline")} editable={canEdit} />
+        </Card>
+
+        <Card style={{ gap: spacing.md }}>
+          <Text style={type.overline}>Terms and signature</Text>
+          <TextField testID="pdf-terms-input" label="Additional terms (optional)" helper="Appended below the existing standard terms -- doesn't replace them" value={form.terms_text || ""} onChangeText={set("terms_text")} editable={canEdit} multiline />
+          <TextField testID="pdf-signature-name-input" label="Authorized signatory name (optional)" value={form.signature_name || ""} onChangeText={set("signature_name")} editable={canEdit} />
+          <TextField testID="pdf-signature-title-input" label="Signatory title (optional)" value={form.signature_title || ""} onChangeText={set("signature_title")} editable={canEdit} />
+        </Card>
+
+        <Card style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <View style={{ flex: 1 }}>
+            <Text style={type.bodyStrong}>Show watermark</Text>
+            <Text style={type.caption}>The rotated logo watermark on itemised pages</Text>
+          </View>
+          <Switch
+            testID="pdf-watermark-switch"
+            value={form.show_watermark}
+            onValueChange={(v) => canEdit && setForm((f) => (f ? { ...f, show_watermark: v } : f))}
+            disabled={!canEdit}
+            trackColor={{ false: colors.border, true: colors.brand }}
+          />
+        </Card>
+
+        {canEdit ? (
+          <Button testID="save-pdf-settings-btn" label="Save changes" icon="check" loading={saving} onPress={save} fullWidth />
+        ) : null}
+      </ScrollView>
+    </AdminPage>
+  );
+}
