@@ -1,757 +1,805 @@
 #!/usr/bin/env python3
 """
-Backend Regression + Security Hardening Verification
-Production Hardening Phase 1 — Security Audit
-
-Tests PART A (Full regression) and PART B (Security hardening changes)
+Backend Testing for Team Management + Customer Portal Account Management
+Final pre-launch Administration session testing
 """
-import base64
-import json
-import sys
-from typing import Any, Dict, Optional
 
 import requests
+import json
+import time
+from datetime import datetime, timedelta
 
-# Backend URL (internal container access)
-BASE_URL = "http://localhost:8001/api"
-
-# Test credentials from /app/memory/test_credentials.md
+# Configuration
+BASE_URL = "https://ff330064-dcc2-4b25-b59c-dadba81bd1d4.preview.emergentagent.com/api"
 OWNER_EMAIL = "owner@forge.app"
 OWNER_PASSWORD = "Forge@2026"
 
-# Global token storage
-AUTH_TOKEN: Optional[str] = None
+# Test state
+test_results = []
+owner_token = None
+owner_user_id = None
+test_staff_id = None
+test_customer_id = None
+test_customer_email = None
+test_customer_temp_password = None
+test_staff_temp_password = None
 
 
-class Colors:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    RESET = '\033[0m'
+def log_test(test_name, passed, details=""):
+    """Log test result"""
+    status = "✅ PASS" if passed else "❌ FAIL"
+    test_results.append({
+        "test": test_name,
+        "passed": passed,
+        "details": details
+    })
+    print(f"{status}: {test_name}")
+    if details:
+        print(f"   {details}")
 
 
-def log_test(name: str):
-    print(f"\n{Colors.BLUE}▶ {name}{Colors.RESET}")
-
-
-def log_pass(msg: str):
-    print(f"  {Colors.GREEN}✓ {msg}{Colors.RESET}")
-
-
-def log_fail(msg: str):
-    print(f"  {Colors.RED}✗ {msg}{Colors.RESET}")
-
-
-def log_info(msg: str):
-    print(f"  {Colors.YELLOW}ℹ {msg}{Colors.RESET}")
-
-
-# =============================================================================
-# PART A — Full Regression Smoke Test
-# =============================================================================
-
-def test_a1_login():
-    """A1. POST /api/auth/login with owner@forge.app/Forge@2026 → valid JWT"""
-    global AUTH_TOKEN
-    log_test("A1. Login with owner@forge.app / Forge@2026")
+def login_as_owner():
+    """Login as owner and get JWT token"""
+    global owner_token, owner_user_id
+    print("\n" + "="*80)
+    print("AUTHENTICATION - Login as Owner")
+    print("="*80)
     
-    try:
-        resp = requests.post(
+    response = requests.post(
+        f"{BASE_URL}/auth/login",
+        json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        owner_token = data.get("access_token")
+        owner_user_id = data.get("user", {}).get("id")
+        log_test("Owner login", True, f"Token received, User ID: {owner_user_id}")
+        return True
+    else:
+        log_test("Owner login", False, f"Status: {response.status_code}, Response: {response.text}")
+        return False
+
+
+def get_headers(token=None):
+    """Get headers with authorization"""
+    if token is None:
+        token = owner_token
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+
+def test_get_roles():
+    """Test 1: GET /api/roles"""
+    print("\n" + "="*80)
+    print("TEST 1: GET /api/roles")
+    print("="*80)
+    
+    # Test without auth (should fail)
+    response = requests.get(f"{BASE_URL}/roles")
+    log_test("1.1 GET /api/roles without auth returns 401", 
+             response.status_code == 401,
+             f"Status: {response.status_code}")
+    
+    # Test with auth
+    response = requests.get(f"{BASE_URL}/roles", headers=get_headers())
+    
+    if response.status_code == 200:
+        roles = response.json()
+        
+        # Check it's a list
+        is_list = isinstance(roles, list)
+        log_test("1.2 GET /api/roles returns a list", is_list)
+        
+        if is_list:
+            # Check we have 8 roles
+            has_8_roles = len(roles) == 8
+            log_test("1.3 Returns exactly 8 roles", has_8_roles, f"Count: {len(roles)}")
+            
+            # Check each role has required fields
+            all_have_fields = all(
+                "role" in r and "label" in r and "level" in r and "capabilities" in r
+                for r in roles
+            )
+            log_test("1.4 Each role has role/label/level/capabilities", all_have_fields)
+            
+            # Check sorted by descending level (owner first, worker last)
+            if len(roles) > 0:
+                is_sorted = all(
+                    roles[i]["level"] >= roles[i+1]["level"] 
+                    for i in range(len(roles)-1)
+                )
+                log_test("1.5 Roles sorted by descending level", is_sorted,
+                        f"First: {roles[0].get('role')} (level {roles[0].get('level')}), Last: {roles[-1].get('role')} (level {roles[-1].get('level')})")
+                
+                # Check owner is first, worker is last
+                owner_first = roles[0].get("role") == "owner"
+                worker_last = roles[-1].get("role") == "worker"
+                log_test("1.6 Owner first, worker last", owner_first and worker_last)
+    else:
+        log_test("1.2 GET /api/roles with auth", False, 
+                f"Status: {response.status_code}, Response: {response.text}")
+
+
+def test_team_management():
+    """Test 2: Team Management"""
+    global test_staff_id, test_staff_temp_password
+    
+    print("\n" + "="*80)
+    print("TEST 2: TEAM MANAGEMENT")
+    print("="*80)
+    
+    # 2.1 Create a disposable staff member
+    timestamp = int(time.time())
+    test_staff_email = f"test.staff.{timestamp}@forge.app"
+    test_staff_password = "TestPass123!"
+    
+    response = requests.post(
+        f"{BASE_URL}/team",
+        headers=get_headers(),
+        json={
+            "full_name": "Test Staff Member",
+            "email": test_staff_email,
+            "phone": "+91 98765 43210",
+            "role": "worker",
+            "password": test_staff_password
+        }
+    )
+    
+    if response.status_code == 200:
+        staff_data = response.json()
+        test_staff_id = staff_data.get("id")
+        
+        # Check must_change_password is true
+        must_change = staff_data.get("must_change_password") == True
+        log_test("2.1 POST /api/team creates staff with must_change_password=true", 
+                must_change,
+                f"must_change_password: {staff_data.get('must_change_password')}")
+        
+        # Check temp_password_expires_at is ~72h in future
+        expires_at = staff_data.get("temp_password_expires_at")
+        if expires_at:
+            # Parse ISO timestamp
+            try:
+                expires_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                now = datetime.now(expires_dt.tzinfo)
+                hours_until_expiry = (expires_dt - now).total_seconds() / 3600
+                is_72h = 71 <= hours_until_expiry <= 73
+                log_test("2.2 temp_password_expires_at is ~72h in future", is_72h,
+                        f"Hours until expiry: {hours_until_expiry:.1f}")
+            except Exception as e:
+                log_test("2.2 temp_password_expires_at parsing", False, str(e))
+        else:
+            log_test("2.2 temp_password_expires_at present", False, "Field missing")
+        
+        # 2.3 Login as the new staff member
+        login_response = requests.post(
             f"{BASE_URL}/auth/login",
-            json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD},
-            timeout=10
+            json={"email": test_staff_email, "password": test_staff_password}
         )
         
-        if resp.status_code != 200:
-            log_fail(f"Login failed with status {resp.status_code}: {resp.text}")
-            return False
-        
-        data = resp.json()
-        # Backend returns 'access_token' not 'token'
-        token = data.get("access_token") or data.get("token")
-        if not token:
-            log_fail(f"No token in response: {data}")
-            return False
-        
-        AUTH_TOKEN = token
-        log_pass(f"Login successful, JWT token received (length: {len(AUTH_TOKEN)})")
-        log_pass(f"User: {data.get('user', {}).get('full_name')} ({data.get('user', {}).get('email')})")
-        log_pass(f"Role: {data.get('user', {}).get('role')}")
-        return True
-        
-    except Exception as e:
-        log_fail(f"Exception during login: {e}")
-        return False
-
-
-def test_a2_catalog_endpoints():
-    """A2. GET /api/brands, /api/categories, /api/products?limit=20 → 200, real data"""
-    log_test("A2. Catalog endpoints (brands, categories, products)")
-    
-    if not AUTH_TOKEN:
-        log_fail("No auth token available")
-        return False
-    
-    headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
-    all_passed = True
-    
-    # Test brands
-    try:
-        resp = requests.get(f"{BASE_URL}/brands", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            log_fail(f"GET /api/brands failed with status {resp.status_code}")
-            all_passed = False
-        else:
-            brands = resp.json()
-            if len(brands) == 5:
-                log_pass(f"GET /api/brands: 200 OK, {len(brands)} brands (expected 5)")
-            else:
-                log_fail(f"GET /api/brands: expected 5 brands, got {len(brands)}")
-                all_passed = False
-    except Exception as e:
-        log_fail(f"GET /api/brands exception: {e}")
-        all_passed = False
-    
-    # Test categories
-    try:
-        resp = requests.get(f"{BASE_URL}/categories", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            log_fail(f"GET /api/categories failed with status {resp.status_code}")
-            all_passed = False
-        else:
-            categories = resp.json()
-            if len(categories) == 26:
-                log_pass(f"GET /api/categories: 200 OK, {len(categories)} categories (expected 26)")
-            else:
-                log_fail(f"GET /api/categories: expected 26 categories, got {len(categories)}")
-                all_passed = False
-    except Exception as e:
-        log_fail(f"GET /api/categories exception: {e}")
-        all_passed = False
-    
-    # Test products
-    try:
-        resp = requests.get(f"{BASE_URL}/products?limit=20", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            log_fail(f"GET /api/products failed with status {resp.status_code}")
-            all_passed = False
-        else:
-            data = resp.json()
-            items = data.get("items", [])
-            total = data.get("total", 0)
+        if login_response.status_code == 200:
+            login_data = login_response.json()
+            staff_token = login_data.get("access_token")
+            user_obj = login_data.get("user", {})
             
-            if total == 2966:
-                log_pass(f"GET /api/products: 200 OK, total={total} (expected 2966)")
-            else:
-                log_fail(f"GET /api/products: expected total=2966, got {total}")
-                all_passed = False
+            log_test("2.3 Login as new staff member succeeds", True,
+                    f"Token received, must_change_password: {user_obj.get('must_change_password')}")
             
-            if len(items) == 20:
-                log_pass(f"GET /api/products: returned {len(items)} items (limit=20)")
+            # Verify must_change_password in login response
+            must_change_in_login = user_obj.get("must_change_password") == True
+            log_test("2.4 Login response shows must_change_password=true", must_change_in_login)
+        else:
+            log_test("2.3 Login as new staff member", False,
+                    f"Status: {login_response.status_code}")
+        
+        # 2.5 Reset password for that staff member
+        reset_response = requests.post(
+            f"{BASE_URL}/team/{test_staff_id}/reset-password",
+            headers=get_headers()
+        )
+        
+        if reset_response.status_code == 200:
+            reset_data = reset_response.json()
+            
+            # Check response shape
+            has_fields = all(k in reset_data for k in ["delivery_method", "temporary_password", "expires_at", "message"])
+            log_test("2.5 POST /api/team/{id}/reset-password returns correct shape", has_fields,
+                    f"Keys: {list(reset_data.keys())}")
+            
+            if has_fields:
+                delivery_method = reset_data.get("delivery_method")
+                test_staff_temp_password = reset_data.get("temporary_password")
+                
+                log_test("2.6 delivery_method is 'manual'", delivery_method == "manual",
+                        f"delivery_method: {delivery_method}")
+                
+                log_test("2.7 temporary_password is 12 chars", len(test_staff_temp_password) == 12,
+                        f"Length: {len(test_staff_temp_password)}")
+                
+                # 2.8 Login with NEW temp password
+                new_login_response = requests.post(
+                    f"{BASE_URL}/auth/login",
+                    json={"email": test_staff_email, "password": test_staff_temp_password}
+                )
+                
+                log_test("2.8 Login with NEW temp password succeeds", 
+                        new_login_response.status_code == 200,
+                        f"Status: {new_login_response.status_code}")
+        else:
+            log_test("2.5 POST /api/team/{id}/reset-password", False,
+                    f"Status: {reset_response.status_code}, Response: {reset_response.text}")
+        
+        # 2.9 Self-protection: try to reset own password
+        self_reset_response = requests.post(
+            f"{BASE_URL}/team/{owner_user_id}/reset-password",
+            headers=get_headers()
+        )
+        
+        log_test("2.9 Self-protection: Cannot reset own password (400)", 
+                self_reset_response.status_code == 400,
+                f"Status: {self_reset_response.status_code}")
+        
+        # 2.10 Deactivate the test staff member
+        deactivate_response = requests.patch(
+            f"{BASE_URL}/team/{test_staff_id}",
+            headers=get_headers(),
+            json={"active": False}
+        )
+        
+        log_test("2.10 PATCH /api/team/{id} to deactivate succeeds", 
+                deactivate_response.status_code == 200,
+                f"Status: {deactivate_response.status_code}")
+        
+        # 2.11 Try to login as deactivated user (use the temp password from reset)
+        if deactivate_response.status_code == 200:
+            deactivated_login = requests.post(
+                f"{BASE_URL}/auth/login",
+                json={"email": test_staff_email, "password": test_staff_temp_password}
+            )
+            
+            log_test("2.11 Deactivated user login fails with 403", 
+                    deactivated_login.status_code == 403,
+                    f"Status: {deactivated_login.status_code}")
+        
+        # 2.12 Self-protection: try to deactivate self
+        self_deactivate = requests.patch(
+            f"{BASE_URL}/team/{owner_user_id}",
+            headers=get_headers(),
+            json={"active": False}
+        )
+        
+        log_test("2.12 Self-protection: Cannot deactivate self (400)", 
+                self_deactivate.status_code == 400,
+                f"Status: {self_deactivate.status_code}")
+        
+        # 2.13 Self-protection: try to change own role
+        self_role_change = requests.patch(
+            f"{BASE_URL}/team/{owner_user_id}",
+            headers=get_headers(),
+            json={"role": "admin"}
+        )
+        
+        log_test("2.13 Self-protection: Cannot change own role (400)", 
+                self_role_change.status_code == 400,
+                f"Status: {self_role_change.status_code}")
+        
+        # 2.14 Check activity log for audit events
+        activity_response = requests.get(
+            f"{BASE_URL}/activity?limit=20",
+            headers=get_headers()
+        )
+        
+        if activity_response.status_code == 200:
+            events = activity_response.json()
+            
+            # Look for user.created, user.password_reset, user.disabled events
+            user_created = any(e.get("event_type") == "user.created" and 
+                             e.get("summary") == "Staff Account Created" and
+                             e.get("actor_name") == "Aarav Kapoor"
+                             for e in events)
+            
+            user_password_reset = any(e.get("event_type") == "user.password_reset" and 
+                                     e.get("summary") == "Staff Password Reset" and
+                                     e.get("actor_name") == "Aarav Kapoor"
+                                     for e in events)
+            
+            user_disabled = any(e.get("event_type") == "user.disabled" and 
+                               e.get("summary") == "Staff Account Disabled" and
+                               e.get("actor_name") == "Aarav Kapoor"
+                               for e in events)
+            
+            log_test("2.14 Activity log contains 'user.created' event", user_created)
+            log_test("2.15 Activity log contains 'user.password_reset' event", user_password_reset)
+            log_test("2.16 Activity log contains 'user.disabled' event", user_disabled)
+        else:
+            log_test("2.14 GET /api/activity", False,
+                    f"Status: {activity_response.status_code}")
+    else:
+        log_test("2.1 POST /api/team", False,
+                f"Status: {response.status_code}, Response: {response.text}")
+
+
+def test_customer_portal():
+    """Test 3: Customer Portal Account Management"""
+    global test_customer_id, test_customer_email, test_customer_temp_password
+    
+    print("\n" + "="*80)
+    print("TEST 3: CUSTOMER PORTAL ACCOUNT MANAGEMENT")
+    print("="*80)
+    
+    # 3.1 Create a test customer (name only, no email)
+    timestamp = int(time.time())
+    customer_name = f"Test Customer {timestamp}"
+    
+    response = requests.post(
+        f"{BASE_URL}/customers",
+        headers=get_headers(),
+        json={"name": customer_name}
+    )
+    
+    if response.status_code == 200:
+        customer_data = response.json()
+        test_customer_id = customer_data.get("id")
+        
+        log_test("3.1 POST /api/customers creates customer", True,
+                f"Customer ID: {test_customer_id}")
+        
+        # 3.2 Try to send invite without email
+        invite_no_email = requests.post(
+            f"{BASE_URL}/customers/{test_customer_id}/send-invite",
+            headers=get_headers()
+        )
+        
+        is_400 = invite_no_email.status_code == 400
+        has_message = "email" in invite_no_email.text.lower() if is_400 else False
+        
+        log_test("3.2 POST send-invite without email returns 400", is_400 and has_message,
+                f"Status: {invite_no_email.status_code}, Message: {invite_no_email.text[:100]}")
+        
+        # 3.3 Try to enable portal without email
+        enable_no_email = requests.patch(
+            f"{BASE_URL}/customers/{test_customer_id}",
+            headers=get_headers(),
+            json={"portal_enabled": True}
+        )
+        
+        is_400 = enable_no_email.status_code == 400
+        has_message = "email" in enable_no_email.text.lower() if is_400 else False
+        
+        log_test("3.3 PATCH portal_enabled=true without email returns 400", is_400 and has_message,
+                f"Status: {enable_no_email.status_code}")
+        
+        # 3.4 Add email and enable portal
+        test_customer_email = f"test.customer.{timestamp}@example.com"
+        
+        update_response = requests.patch(
+            f"{BASE_URL}/customers/{test_customer_id}",
+            headers=get_headers(),
+            json={
+                "email": test_customer_email,
+                "portal_enabled": True
+            }
+        )
+        
+        if update_response.status_code == 200:
+            updated_data = update_response.json()
+            portal_enabled = updated_data.get("portal_enabled") == True
+            
+            log_test("3.4 PATCH with email + portal_enabled=true succeeds", portal_enabled,
+                    f"portal_enabled: {updated_data.get('portal_enabled')}")
+            
+            # 3.5 Try to use duplicate email
+            # First create another customer
+            another_customer = requests.post(
+                f"{BASE_URL}/customers",
+                headers=get_headers(),
+                json={"name": "Another Customer"}
+            )
+            
+            if another_customer.status_code == 200:
+                another_id = another_customer.json().get("id")
+                
+                # Try to set the same email
+                duplicate_email = requests.patch(
+                    f"{BASE_URL}/customers/{another_id}",
+                    headers=get_headers(),
+                    json={"email": test_customer_email}
+                )
+                
+                log_test("3.5 PATCH with duplicate email returns 409", 
+                        duplicate_email.status_code == 409,
+                        f"Status: {duplicate_email.status_code}")
+            
+            # 3.6 Send invite (should work now)
+            invite_response = requests.post(
+                f"{BASE_URL}/customers/{test_customer_id}/send-invite",
+                headers=get_headers()
+            )
+            
+            if invite_response.status_code == 200:
+                invite_data = invite_response.json()
+                
+                has_fields = all(k in invite_data for k in ["delivery_method", "temporary_password", "expires_at", "message"])
+                log_test("3.6 POST send-invite succeeds with correct shape", has_fields,
+                        f"Keys: {list(invite_data.keys())}")
+                
+                if has_fields:
+                    test_customer_temp_password = invite_data.get("temporary_password")
+                    
+                    log_test("3.7 delivery_method is 'manual'", 
+                            invite_data.get("delivery_method") == "manual")
+                    
+                    log_test("3.8 temporary_password is 12 chars", 
+                            len(test_customer_temp_password) == 12,
+                            f"Length: {len(test_customer_temp_password)}")
+                    
+                    # 3.9 Login as customer with temp password
+                    customer_login = requests.post(
+                        f"{BASE_URL}/auth/customer/login",
+                        json={
+                            "email": test_customer_email,
+                            "password": test_customer_temp_password
+                        }
+                    )
+                    
+                    if customer_login.status_code == 200:
+                        customer_login_data = customer_login.json()
+                        customer_token = customer_login_data.get("access_token")
+                        customer_obj = customer_login_data.get("customer", {})
+                        
+                        portal_enabled_in_login = customer_obj.get("portal_enabled") == True
+                        must_change = customer_obj.get("must_change_password") == True
+                        
+                        log_test("3.9 Customer login with temp password succeeds", True,
+                                f"Token received")
+                        
+                        log_test("3.10 Login response shows portal_enabled=true", portal_enabled_in_login)
+                        log_test("3.11 Login response shows must_change_password=true", must_change)
+                        
+                        # 3.12 GET /api/auth/customer/me
+                        me_response = requests.get(
+                            f"{BASE_URL}/auth/customer/me",
+                            headers={"Authorization": f"Bearer {customer_token}"}
+                        )
+                        
+                        if me_response.status_code == 200:
+                            me_data = me_response.json()
+                            must_change_persists = me_data.get("must_change_password") == True
+                            
+                            log_test("3.12 GET /auth/customer/me shows must_change_password=true", 
+                                    must_change_persists)
+                            
+                            # 3.13 Change password
+                            new_password = "NewCustomerPass123!"
+                            
+                            change_pw_response = requests.post(
+                                f"{BASE_URL}/auth/customer/change-password",
+                                headers={"Authorization": f"Bearer {customer_token}"},
+                                json={
+                                    "current_password": test_customer_temp_password,
+                                    "new_password": new_password
+                                }
+                            )
+                            
+                            if change_pw_response.status_code == 200:
+                                change_data = change_pw_response.json()
+                                
+                                log_test("3.13 POST /auth/customer/change-password succeeds", 
+                                        change_data.get("changed") == True,
+                                        f"Response: {change_data}")
+                                
+                                # 3.14 Verify must_change_password is now false
+                                me_after_change = requests.get(
+                                    f"{BASE_URL}/auth/customer/me",
+                                    headers={"Authorization": f"Bearer {customer_token}"}
+                                )
+                                
+                                if me_after_change.status_code == 200:
+                                    me_after_data = me_after_change.json()
+                                    must_change_cleared = me_after_data.get("must_change_password") == False
+                                    temp_expires_cleared = me_after_data.get("temp_password_expires_at") is None
+                                    
+                                    log_test("3.14 After change, must_change_password=false", must_change_cleared)
+                                    log_test("3.15 After change, temp_password_expires_at=null", temp_expires_cleared)
+                                    
+                                    # 3.16 Disable portal
+                                    disable_portal = requests.patch(
+                                        f"{BASE_URL}/customers/{test_customer_id}",
+                                        headers=get_headers(),
+                                        json={"portal_enabled": False}
+                                    )
+                                    
+                                    if disable_portal.status_code == 200:
+                                        log_test("3.16 PATCH portal_enabled=false succeeds", True)
+                                        
+                                        # 3.17 Try to login with portal disabled
+                                        disabled_login = requests.post(
+                                            f"{BASE_URL}/auth/customer/login",
+                                            json={
+                                                "email": test_customer_email,
+                                                "password": new_password
+                                            }
+                                        )
+                                        
+                                        is_403 = disabled_login.status_code == 403
+                                        has_message = "portal" in disabled_login.text.lower() and "disabled" in disabled_login.text.lower()
+                                        
+                                        log_test("3.17 Login with portal_enabled=false returns 403", 
+                                                is_403 and has_message,
+                                                f"Status: {disabled_login.status_code}, Message: {disabled_login.text[:100]}")
+                                        
+                                        # 3.18 Re-enable portal
+                                        reenable_portal = requests.patch(
+                                            f"{BASE_URL}/customers/{test_customer_id}",
+                                            headers=get_headers(),
+                                            json={"portal_enabled": True}
+                                        )
+                                        
+                                        log_test("3.18 Re-enable portal succeeds", 
+                                                reenable_portal.status_code == 200)
+                                        
+                                        # 3.19 Reset password
+                                        reset_pw_response = requests.post(
+                                            f"{BASE_URL}/customers/{test_customer_id}/reset-password",
+                                            headers=get_headers()
+                                        )
+                                        
+                                        if reset_pw_response.status_code == 200:
+                                            reset_data = reset_pw_response.json()
+                                            new_temp_password = reset_data.get("temporary_password")
+                                            
+                                            log_test("3.19 POST reset-password succeeds", True,
+                                                    f"New temp password received")
+                                            
+                                            # 3.20 Verify old password no longer works
+                                            old_pw_login = requests.post(
+                                                f"{BASE_URL}/auth/customer/login",
+                                                json={
+                                                    "email": test_customer_email,
+                                                    "password": new_password
+                                                }
+                                            )
+                                            
+                                            log_test("3.20 Old password no longer works", 
+                                                    old_pw_login.status_code == 401,
+                                                    f"Status: {old_pw_login.status_code}")
+                                            
+                                            # 3.21 Verify new temp password works
+                                            new_temp_login = requests.post(
+                                                f"{BASE_URL}/auth/customer/login",
+                                                json={
+                                                    "email": test_customer_email,
+                                                    "password": new_temp_password
+                                                }
+                                            )
+                                            
+                                            log_test("3.21 New temp password works", 
+                                                    new_temp_login.status_code == 200,
+                                                    f"Status: {new_temp_login.status_code}")
+                                            
+                                            # 3.22 Check activity log
+                                            activity_response = requests.get(
+                                                f"{BASE_URL}/activity/customer/{test_customer_id}",
+                                                headers=get_headers()
+                                            )
+                                            
+                                            if activity_response.status_code == 200:
+                                                events = activity_response.json()
+                                                
+                                                # Look for specific events
+                                                portal_invite = any(
+                                                    e.get("summary") == "Customer Portal Invite Generated"
+                                                    for e in events
+                                                )
+                                                
+                                                password_reset = any(
+                                                    e.get("summary") == "Customer Password Reset"
+                                                    for e in events
+                                                )
+                                                
+                                                portal_enabled = any(
+                                                    e.get("summary") == "Customer Portal Enabled"
+                                                    for e in events
+                                                )
+                                                
+                                                portal_disabled = any(
+                                                    e.get("summary") == "Customer Portal Disabled"
+                                                    for e in events
+                                                )
+                                                
+                                                portal_login = any(
+                                                    e.get("summary") == "Customer Portal Login"
+                                                    for e in events
+                                                )
+                                                
+                                                log_test("3.22 Activity: 'Customer Portal Invite Generated'", portal_invite)
+                                                log_test("3.23 Activity: 'Customer Password Reset'", password_reset)
+                                                log_test("3.24 Activity: 'Customer Portal Enabled'", portal_enabled)
+                                                log_test("3.25 Activity: 'Customer Portal Disabled'", portal_disabled)
+                                                log_test("3.26 Activity: 'Customer Portal Login'", portal_login)
+                                            else:
+                                                log_test("3.22 GET /api/activity/customer/{id}", False,
+                                                        f"Status: {activity_response.status_code}")
+                                        else:
+                                            log_test("3.19 POST reset-password", False,
+                                                    f"Status: {reset_pw_response.status_code}")
+                                    else:
+                                        log_test("3.16 PATCH portal_enabled=false", False,
+                                                f"Status: {disable_portal.status_code}")
+                            else:
+                                log_test("3.13 POST /auth/customer/change-password", False,
+                                        f"Status: {change_pw_response.status_code}, Response: {change_pw_response.text}")
+                        else:
+                            log_test("3.12 GET /auth/customer/me", False,
+                                    f"Status: {me_response.status_code}")
+                    else:
+                        log_test("3.9 Customer login with temp password", False,
+                                f"Status: {customer_login.status_code}, Response: {customer_login.text}")
             else:
-                log_fail(f"GET /api/products: expected 20 items, got {len(items)}")
-                all_passed = False
-    except Exception as e:
-        log_fail(f"GET /api/products exception: {e}")
-        all_passed = False
-    
-    return all_passed
+                log_test("3.6 POST send-invite", False,
+                        f"Status: {invite_response.status_code}, Response: {invite_response.text}")
+        else:
+            log_test("3.4 PATCH with email + portal_enabled", False,
+                    f"Status: {update_response.status_code}, Response: {update_response.text}")
+    else:
+        log_test("3.1 POST /api/customers", False,
+                f"Status: {response.status_code}, Response: {response.text}")
 
 
-def test_a3_business_endpoints():
-    """A3. GET quotations, customers, payments/stats, purchase-orders, followups/stats → all 200"""
-    log_test("A3. Business endpoints (quotations, customers, payments, purchase-orders, followups)")
+def test_regression():
+    """Test 4: Regression sweep"""
+    print("\n" + "="*80)
+    print("TEST 4: REGRESSION SWEEP")
+    print("="*80)
     
-    if not AUTH_TOKEN:
-        log_fail("No auth token available")
-        return False
+    # 4.1 Health check
+    health_response = requests.get(f"{BASE_URL}/health/system")
     
-    headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
-    all_passed = True
+    if health_response.status_code == 200:
+        health_data = health_response.json()
+        
+        is_healthy = health_data.get("healthy") == True
+        mongo_connected = health_data.get("mongo", {}).get("connected") == True
+        mongo_not_local = health_data.get("mongo", {}).get("is_local") == False
+        supabase_connected = health_data.get("supabase", {}).get("connected") == True
+        products_count = health_data.get("counts", {}).get("products", 0)
+        
+        log_test("4.1 GET /api/health/system - healthy=true", is_healthy)
+        log_test("4.2 Mongo connected (not local)", mongo_connected and mongo_not_local,
+                f"connected: {mongo_connected}, is_local: {health_data.get('mongo', {}).get('is_local')}")
+        log_test("4.3 Supabase connected", supabase_connected)
+        log_test("4.4 Products count ~2966", 2900 <= products_count <= 3000,
+                f"Count: {products_count}")
+    else:
+        log_test("4.1 GET /api/health/system", False,
+                f"Status: {health_response.status_code}")
     
+    # 4.2 Test authenticated endpoints
     endpoints = [
-        "/quotations",
-        "/customers",
-        "/payments/stats",
-        "/purchase-orders",
-        "/followups/stats",
+        ("GET /api/customers", "get", f"{BASE_URL}/customers"),
+        ("GET /api/quotations", "get", f"{BASE_URL}/quotations"),
+        ("GET /api/purchase-orders", "get", f"{BASE_URL}/purchase-orders"),
+        ("GET /api/payments/stats", "get", f"{BASE_URL}/payments/stats"),
+        ("GET /api/followups/stats", "get", f"{BASE_URL}/followups/stats"),
     ]
     
-    for endpoint in endpoints:
-        try:
-            resp = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=10)
-            if resp.status_code != 200:
-                log_fail(f"GET {endpoint}: status {resp.status_code}")
-                all_passed = False
-            else:
-                log_pass(f"GET {endpoint}: 200 OK")
-        except Exception as e:
-            log_fail(f"GET {endpoint} exception: {e}")
-            all_passed = False
+    for name, method, url in endpoints:
+        # Test without auth (should be 401)
+        response = requests.request(method, url)
+        log_test(f"4.5 {name} without auth returns 401", 
+                response.status_code == 401,
+                f"Status: {response.status_code}")
+        
+        # Test with auth (should be 200)
+        response = requests.request(method, url, headers=get_headers())
+        log_test(f"4.6 {name} with auth returns 200", 
+                response.status_code == 200,
+                f"Status: {response.status_code}")
     
-    return all_passed
+    # 4.3 Test owner login still works
+    owner_login = requests.post(
+        f"{BASE_URL}/auth/login",
+        json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}
+    )
+    
+    if owner_login.status_code == 200:
+        owner_data = owner_login.json()
+        user_obj = owner_data.get("user", {})
+        
+        # Owner should NOT have must_change_password (it's an old account)
+        must_change = user_obj.get("must_change_password")
+        
+        log_test("4.7 Owner login still works", True)
+        log_test("4.8 Owner account has no must_change_password flag", 
+                must_change is None or must_change == False,
+                f"must_change_password: {must_change}")
+    else:
+        log_test("4.7 Owner login", False,
+                f"Status: {owner_login.status_code}")
 
 
-def test_a4_rbac_spot_check():
-    """A4. Spot-check RBAC: NO Authorization header → 401"""
-    log_test("A4. RBAC spot-check (401 without auth)")
+def print_summary():
+    """Print test summary"""
+    print("\n" + "="*80)
+    print("TEST SUMMARY")
+    print("="*80)
     
-    all_passed = True
+    passed = sum(1 for t in test_results if t["passed"])
+    failed = sum(1 for t in test_results if not t["passed"])
+    total = len(test_results)
     
-    # Test GET /api/customers without auth
-    try:
-        resp = requests.get(f"{BASE_URL}/customers", timeout=10)
-        if resp.status_code == 401:
-            log_pass(f"GET /api/customers without auth: 401 (correct)")
-        else:
-            log_fail(f"GET /api/customers without auth: expected 401, got {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        log_fail(f"GET /api/customers exception: {e}")
-        all_passed = False
+    print(f"\nTotal Tests: {total}")
+    print(f"✅ Passed: {passed}")
+    print(f"❌ Failed: {failed}")
+    print(f"Success Rate: {(passed/total*100):.1f}%")
     
-    # Test POST /api/payments without auth
-    try:
-        resp = requests.post(
-            f"{BASE_URL}/payments",
-            json={"amount": 1000},
-            timeout=10
-        )
-        if resp.status_code == 401:
-            log_pass(f"POST /api/payments without auth: 401 (correct)")
-        else:
-            log_fail(f"POST /api/payments without auth: expected 401, got {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        log_fail(f"POST /api/payments exception: {e}")
-        all_passed = False
+    if failed > 0:
+        print("\n" + "="*80)
+        print("FAILED TESTS")
+        print("="*80)
+        for t in test_results:
+            if not t["passed"]:
+                print(f"\n❌ {t['test']}")
+                if t["details"]:
+                    print(f"   {t['details']}")
     
-    return all_passed
+    print("\n" + "="*80)
+    print("DETAILED RESULTS BY CATEGORY")
+    print("="*80)
+    
+    # Group by test category
+    categories = {
+        "1. GET /api/roles": [],
+        "2. Team Management": [],
+        "3. Customer Portal": [],
+        "4. Regression": []
+    }
+    
+    for t in test_results:
+        test_name = t["test"]
+        if test_name.startswith("1."):
+            categories["1. GET /api/roles"].append(t)
+        elif test_name.startswith("2."):
+            categories["2. Team Management"].append(t)
+        elif test_name.startswith("3."):
+            categories["3. Customer Portal"].append(t)
+        elif test_name.startswith("4."):
+            categories["4. Regression"].append(t)
+    
+    for category, tests in categories.items():
+        if tests:
+            passed_in_cat = sum(1 for t in tests if t["passed"])
+            total_in_cat = len(tests)
+            print(f"\n{category}: {passed_in_cat}/{total_in_cat} passed")
+            for t in tests:
+                status = "✅" if t["passed"] else "❌"
+                print(f"  {status} {t['test']}")
 
-
-def test_a5_health_system():
-    """A5. GET /api/health/system → verify shape and values"""
-    log_test("A5. GET /api/health/system (shape and values)")
-    
-    try:
-        resp = requests.get(f"{BASE_URL}/health/system", timeout=10)
-        if resp.status_code != 200:
-            log_fail(f"GET /api/health/system failed with status {resp.status_code}")
-            return False
-        
-        data = resp.json()
-        all_passed = True
-        
-        # Check healthy=true
-        if data.get("healthy") is True:
-            log_pass("healthy=true")
-        else:
-            log_fail(f"healthy={data.get('healthy')} (expected true)")
-            all_passed = False
-        
-        # Check mongo.connected=true
-        mongo = data.get("mongo", {})
-        if mongo.get("connected") is True:
-            log_pass("mongo.connected=true")
-        else:
-            log_fail(f"mongo.connected={mongo.get('connected')} (expected true)")
-            all_passed = False
-        
-        # Check mongo.is_local=false
-        if mongo.get("is_local") is False:
-            log_pass("mongo.is_local=false (MongoDB Atlas)")
-        else:
-            log_fail(f"mongo.is_local={mongo.get('is_local')} (expected false)")
-            all_passed = False
-        
-        # Check supabase.connected=true
-        supabase = data.get("supabase", {})
-        if supabase.get("connected") is True:
-            log_pass("supabase.connected=true")
-        else:
-            log_fail(f"supabase.connected={supabase.get('connected')} (expected true)")
-            all_passed = False
-        
-        # Check counts.products=2966
-        counts = data.get("counts", {})
-        if counts.get("products") == 2966:
-            log_pass(f"counts.products=2966")
-        else:
-            log_fail(f"counts.products={counts.get('products')} (expected 2966)")
-            all_passed = False
-        
-        # Check error fields are null
-        if mongo.get("error") is None:
-            log_pass("mongo.error=null")
-        else:
-            log_fail(f"mongo.error={mongo.get('error')} (expected null)")
-            all_passed = False
-        
-        if supabase.get("error") is None:
-            log_pass("supabase.error=null")
-        else:
-            log_fail(f"supabase.error={supabase.get('error')} (expected null)")
-            all_passed = False
-        
-        # Check no secret values in response
-        response_text = json.dumps(data)
-        if "password" in response_text.lower() or "secret" in response_text.lower() or "key" in response_text.lower():
-            # Check if it's just field names or actual values
-            secrets_loaded = data.get("secrets_loaded", {})
-            # secrets_loaded is OK (just booleans), but check for actual credential strings
-            if "mongodb+srv://" in response_text or "eyJ" in response_text:
-                log_fail("Response contains potential secret values")
-                all_passed = False
-            else:
-                log_pass("No secret values in response body")
-        else:
-            log_pass("No secret values in response body")
-        
-        log_info(f"Full counts: products={counts.get('products')}, customers={counts.get('customers')}, "
-                 f"quotations={counts.get('quotations')}, purchase_orders={counts.get('purchase_orders')}, "
-                 f"payments={counts.get('payments')}, followups={counts.get('followups')}")
-        
-        return all_passed
-        
-    except Exception as e:
-        log_fail(f"Exception: {e}")
-        return False
-
-
-# =============================================================================
-# PART B — Security Hardening Changes
-# =============================================================================
-
-def test_b1_media_upload_limits():
-    """B1. Media upload size/MIME limits"""
-    log_test("B1. Media upload size/MIME limits (media_routes.py)")
-    
-    if not AUTH_TOKEN:
-        log_fail("No auth token available")
-        return False
-    
-    headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
-    all_passed = True
-    
-    # First, get a real product_id
-    try:
-        resp = requests.get(f"{BASE_URL}/products?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            log_fail("Could not fetch product for testing")
-            return False
-        
-        data = resp.json()
-        items = data.get("items", [])
-        if not items:
-            log_fail("No products available for testing")
-            return False
-        
-        product_id = items[0]["id"]
-        log_info(f"Using product_id: {product_id} ({items[0].get('name', 'N/A')})")
-        
-    except Exception as e:
-        log_fail(f"Exception fetching product: {e}")
-        return False
-    
-    # Test 1: Small valid JPEG (<1MB) should succeed (200)
-    try:
-        # Create a small fake JPEG (just a few bytes with JPEG magic number)
-        small_jpeg = b'\xff\xd8\xff\xe0\x00\x10JFIF' + b'\x00' * 100
-        files = {"file": ("test.jpg", small_jpeg, "image/jpeg")}
-        data_form = {
-            "source_type": "internal",
-            "role": "gallery",
-            "is_primary": "false",
-            "sort_order": "100"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/products/{product_id}/media",
-            headers=headers,
-            files=files,
-            data=data_form,
-            timeout=10
-        )
-        
-        if resp.status_code == 200:
-            log_pass(f"Small valid JPEG upload: 200 OK (accepted)")
-        else:
-            log_info(f"Small JPEG upload: status {resp.status_code} (may fail for other reasons, not size/MIME)")
-            # This is OK - the upload might fail for other reasons (e.g., invalid image data)
-            # but it should NOT be rejected for size/MIME
-    except Exception as e:
-        log_info(f"Small JPEG upload exception: {e} (may be expected)")
-    
-    # Test 2: >20MB file should return 413
-    try:
-        # Create a >20MB fake file
-        large_file = b'\xff\xd8\xff\xe0' + b'X' * (21 * 1024 * 1024)
-        files = {"file": ("large.jpg", large_file, "image/jpeg")}
-        data_form = {
-            "source_type": "internal",
-            "role": "gallery",
-            "is_primary": "false",
-            "sort_order": "100"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/products/{product_id}/media",
-            headers=headers,
-            files=files,
-            data=data_form,
-            timeout=30
-        )
-        
-        if resp.status_code == 413:
-            log_pass(f">20MB file upload: 413 (correctly rejected)")
-        else:
-            log_fail(f">20MB file upload: expected 413, got {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        log_fail(f">20MB file upload exception: {e}")
-        all_passed = False
-    
-    # Test 3: Disallowed MIME type (text/plain) should return 400
-    try:
-        text_file = b'This is a text file, not an image'
-        files = {"file": ("test.txt", text_file, "text/plain")}
-        data_form = {
-            "source_type": "internal",
-            "role": "gallery",
-            "is_primary": "false",
-            "sort_order": "100"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/products/{product_id}/media",
-            headers=headers,
-            files=files,
-            data=data_form,
-            timeout=10
-        )
-        
-        if resp.status_code == 400:
-            log_pass(f"Disallowed MIME (text/plain) upload: 400 (correctly rejected)")
-        else:
-            log_fail(f"Disallowed MIME upload: expected 400, got {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        log_fail(f"Disallowed MIME upload exception: {e}")
-        all_passed = False
-    
-    return all_passed
-
-
-def test_b2_ssrf_guard():
-    """B2. Catalog import SSRF guard"""
-    log_test("B2. Catalog import SSRF guard (catalog_import_routes.py)")
-    
-    if not AUTH_TOKEN:
-        log_fail("No auth token available")
-        return False
-    
-    headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
-    all_passed = True
-    
-    # Test 1: Loopback address (127.0.0.1) should return 400
-    try:
-        payload = {
-            "brand": "Grohe",
-            "url": "http://127.0.0.1:8001/api/health"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/catalog/imports/from-url",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
-        
-        if resp.status_code == 400:
-            log_pass(f"Loopback URL (127.0.0.1): 400 (correctly rejected)")
-        else:
-            log_fail(f"Loopback URL: expected 400, got {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        log_fail(f"Loopback URL test exception: {e}")
-        all_passed = False
-    
-    # Test 2: Link-local address (169.254.169.254) should return 400
-    try:
-        payload = {
-            "brand": "Grohe",
-            "url": "http://169.254.169.254/latest/meta-data/"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/catalog/imports/from-url",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
-        
-        if resp.status_code == 400:
-            log_pass(f"Link-local URL (169.254.169.254): 400 (correctly rejected)")
-        else:
-            log_fail(f"Link-local URL: expected 400, got {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        log_fail(f"Link-local URL test exception: {e}")
-        all_passed = False
-    
-    # Test 3: localhost by name should return 400
-    try:
-        payload = {
-            "brand": "Grohe",
-            "url": "http://localhost:8001/api/health"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/catalog/imports/from-url",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
-        
-        if resp.status_code == 400:
-            log_pass(f"localhost URL: 400 (correctly rejected)")
-        else:
-            log_fail(f"localhost URL: expected 400, got {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        log_fail(f"localhost URL test exception: {e}")
-        all_passed = False
-    
-    # Test 4: Normal public URL should NOT be blocked by SSRF guard
-    # (it may fail later for other reasons like 404/wrong format, but not SSRF guard)
-    try:
-        payload = {
-            "brand": "Grohe",
-            "url": "https://example.com/test.pdf"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/catalog/imports/from-url",
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        
-        # Should NOT be 400 with "network address" complaint
-        if resp.status_code == 400 and "network address" in resp.text.lower():
-            log_fail(f"Public URL blocked by SSRF guard (should not be): {resp.text}")
-            all_passed = False
-        else:
-            log_pass(f"Public URL not blocked by SSRF guard (status {resp.status_code}, may fail for other reasons)")
-    except Exception as e:
-        log_info(f"Public URL test exception: {e} (may be expected)")
-    
-    return all_passed
-
-
-def test_b3_purchase_attachment_size_cap():
-    """B3. Purchase order attachment size cap"""
-    log_test("B3. Purchase order attachment size cap (purchase_routes.py)")
-    
-    if not AUTH_TOKEN:
-        log_fail("No auth token available")
-        return False
-    
-    headers = {"Authorization": f"Bearer {AUTH_TOKEN}"}
-    all_passed = True
-    
-    # First, get a real purchase order ID
-    try:
-        resp = requests.get(f"{BASE_URL}/purchase-orders?limit=1", headers=headers, timeout=10)
-        if resp.status_code != 200:
-            log_fail("Could not fetch purchase order for testing")
-            return False
-        
-        pos = resp.json()
-        if not pos:
-            log_info("No purchase orders available, skipping attachment tests")
-            return True
-        
-        po_id = pos[0]["id"]
-        log_info(f"Using purchase_order_id: {po_id} ({pos[0].get('number', 'N/A')})")
-        
-    except Exception as e:
-        log_fail(f"Exception fetching purchase order: {e}")
-        return False
-    
-    # Test 1: Small base64 data_url (a few KB) should succeed (200)
-    try:
-        # Create a small fake image data URL
-        small_data = b'\x89PNG\r\n\x1a\n' + b'\x00' * 100
-        small_base64 = base64.b64encode(small_data).decode('utf-8')
-        small_data_url = f"data:image/png;base64,{small_base64}"
-        
-        payload = {
-            "filename": "small_test.png",
-            "mime": "image/png",
-            "data_url": small_data_url,
-            "note": "Test attachment"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/purchase-orders/{po_id}/attachments",
-            headers=headers,
-            json=payload,
-            timeout=10
-        )
-        
-        if resp.status_code == 200:
-            log_pass(f"Small attachment (<1KB): 200 OK (accepted)")
-        else:
-            log_info(f"Small attachment: status {resp.status_code} (may fail for other reasons)")
-    except Exception as e:
-        log_info(f"Small attachment exception: {e}")
-    
-    # Test 2: >15MB base64 data_url should return 413
-    try:
-        # Create a >15MB base64 string
-        large_data = b'X' * (16 * 1024 * 1024)
-        large_base64 = base64.b64encode(large_data).decode('utf-8')
-        large_data_url = f"data:image/png;base64,{large_base64}"
-        
-        payload = {
-            "filename": "large_test.png",
-            "mime": "image/png",
-            "data_url": large_data_url,
-            "note": "Test large attachment"
-        }
-        
-        resp = requests.post(
-            f"{BASE_URL}/purchase-orders/{po_id}/attachments",
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        
-        if resp.status_code == 413:
-            log_pass(f">15MB attachment: 413 (correctly rejected)")
-        else:
-            log_fail(f">15MB attachment: expected 413, got {resp.status_code}")
-            all_passed = False
-    except Exception as e:
-        log_fail(f">15MB attachment exception: {e}")
-        all_passed = False
-    
-    return all_passed
-
-
-def test_b4_cors_headers():
-    """B4. CORS headers verification"""
-    log_test("B4. CORS headers (server.py)")
-    
-    try:
-        # Try /health/system which is public and should have CORS
-        resp = requests.get(f"{BASE_URL}/health/system", timeout=10)
-        
-        if resp.status_code != 200:
-            log_fail(f"GET /api/health/system failed with status {resp.status_code}")
-            return False
-        
-        # Check for CORS headers
-        cors_headers = {
-            "Access-Control-Allow-Origin": resp.headers.get("Access-Control-Allow-Origin"),
-            "Access-Control-Allow-Credentials": resp.headers.get("Access-Control-Allow-Credentials"),
-        }
-        
-        if cors_headers["Access-Control-Allow-Origin"]:
-            log_pass(f"Access-Control-Allow-Origin present: {cors_headers['Access-Control-Allow-Origin']}")
-        else:
-            log_info("Access-Control-Allow-Origin header not present (may be added by middleware on actual requests)")
-            # CORS headers might only be added on actual browser requests with Origin header
-            # Let's try with an Origin header
-            resp2 = requests.get(f"{BASE_URL}/health/system", headers={"Origin": "https://example.com"}, timeout=10)
-            cors_origin = resp2.headers.get("Access-Control-Allow-Origin")
-            if cors_origin:
-                log_pass(f"Access-Control-Allow-Origin present with Origin header: {cors_origin}")
-            else:
-                log_info("CORS headers not present even with Origin header (may be OK if middleware handles it)")
-        
-        # Check that credentials is NOT true (per security audit fix)
-        if cors_headers["Access-Control-Allow-Credentials"] == "true":
-            log_info("Access-Control-Allow-Credentials=true (should be false per security audit)")
-        else:
-            log_pass("Access-Control-Allow-Credentials not set to true (correct)")
-        
-        log_pass("CORS configuration verified (not broken)")
-        return True
-        
-    except Exception as e:
-        log_fail(f"Exception: {e}")
-        return False
-
-
-# =============================================================================
-# Main Test Runner
-# =============================================================================
 
 def main():
-    print(f"\n{Colors.BLUE}{'='*80}{Colors.RESET}")
-    print(f"{Colors.BLUE}Backend Regression + Security Hardening Verification{Colors.RESET}")
-    print(f"{Colors.BLUE}Production Hardening Phase 1 — Security Audit{Colors.RESET}")
-    print(f"{Colors.BLUE}{'='*80}{Colors.RESET}")
+    """Main test execution"""
+    print("="*80)
+    print("BACKEND TESTING: Team Management + Customer Portal Account Management")
+    print("Final pre-launch Administration session")
+    print("="*80)
     
-    results = {}
+    # Login first
+    if not login_as_owner():
+        print("\n❌ CRITICAL: Owner login failed. Cannot proceed with tests.")
+        return
     
-    # PART A — Full Regression Smoke Test
-    print(f"\n{Colors.YELLOW}{'='*80}{Colors.RESET}")
-    print(f"{Colors.YELLOW}PART A — Full Regression Smoke Test{Colors.RESET}")
-    print(f"{Colors.YELLOW}{'='*80}{Colors.RESET}")
+    # Run all tests
+    test_get_roles()
+    test_team_management()
+    test_customer_portal()
+    test_regression()
     
-    results["A1_login"] = test_a1_login()
-    results["A2_catalog"] = test_a2_catalog_endpoints()
-    results["A3_business"] = test_a3_business_endpoints()
-    results["A4_rbac"] = test_a4_rbac_spot_check()
-    results["A5_health"] = test_a5_health_system()
-    
-    # PART B — Security Hardening Changes
-    print(f"\n{Colors.YELLOW}{'='*80}{Colors.RESET}")
-    print(f"{Colors.YELLOW}PART B — Security Hardening Changes{Colors.RESET}")
-    print(f"{Colors.YELLOW}{'='*80}{Colors.RESET}")
-    
-    results["B1_media_limits"] = test_b1_media_upload_limits()
-    results["B2_ssrf_guard"] = test_b2_ssrf_guard()
-    results["B3_attachment_cap"] = test_b3_purchase_attachment_size_cap()
-    results["B4_cors"] = test_b4_cors_headers()
-    
-    # Summary
-    print(f"\n{Colors.BLUE}{'='*80}{Colors.RESET}")
-    print(f"{Colors.BLUE}SUMMARY{Colors.RESET}")
-    print(f"{Colors.BLUE}{'='*80}{Colors.RESET}")
-    
-    passed = sum(1 for v in results.values() if v)
-    total = len(results)
-    
-    print(f"\n{Colors.YELLOW}PART A — Full Regression:{Colors.RESET}")
-    for key in ["A1_login", "A2_catalog", "A3_business", "A4_rbac", "A5_health"]:
-        status = "✓ PASS" if results[key] else "✗ FAIL"
-        color = Colors.GREEN if results[key] else Colors.RED
-        print(f"  {color}{status}{Colors.RESET} {key}")
-    
-    print(f"\n{Colors.YELLOW}PART B — Security Hardening:{Colors.RESET}")
-    for key in ["B1_media_limits", "B2_ssrf_guard", "B3_attachment_cap", "B4_cors"]:
-        status = "✓ PASS" if results[key] else "✗ FAIL"
-        color = Colors.GREEN if results[key] else Colors.RED
-        print(f"  {color}{status}{Colors.RESET} {key}")
-    
-    print(f"\n{Colors.BLUE}Total: {passed}/{total} tests passed{Colors.RESET}")
-    
-    if passed == total:
-        print(f"\n{Colors.GREEN}{'='*80}{Colors.RESET}")
-        print(f"{Colors.GREEN}ALL TESTS PASSED ✓{Colors.RESET}")
-        print(f"{Colors.GREEN}{'='*80}{Colors.RESET}\n")
-        return 0
-    else:
-        print(f"\n{Colors.RED}{'='*80}{Colors.RESET}")
-        print(f"{Colors.RED}SOME TESTS FAILED ✗{Colors.RESET}")
-        print(f"{Colors.RED}{'='*80}{Colors.RESET}\n")
-        return 1
+    # Print summary
+    print_summary()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

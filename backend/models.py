@@ -57,7 +57,10 @@ class UserCreate(UserBase):
 
 
 class UserPublic(UserBase, TimestampedModel):
-    pass
+    # Set when Team > Reset Password issues a temporary password — the staff
+    # member must set their own password before using the app further.
+    must_change_password: bool = False
+    temp_password_expires_at: Optional[str] = None
 
 
 class UserInDB(UserPublic):
@@ -87,14 +90,35 @@ class CustomerBase(BaseModel):
     tier: Literal["retail", "trade", "vip"] = "retail"
     notes: Optional[str] = None
     avatar_url: Optional[str] = None
+    # Customer Portal login gate — a customer can only sign into the portal
+    # when this is true, regardless of whether a password_hash exists.
+    portal_enabled: bool = False
 
 
 class CustomerCreate(CustomerBase):
     password: Optional[str] = None  # for portal login
 
 
+class CustomerUpdatePayload(BaseModel):
+    """Customers > Edit Customer. All fields optional — only supplied keys
+    are patched (see customer_routes.update_customer)."""
+    name: Optional[str] = None
+    company: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    gstin: Optional[str] = None
+    tier: Optional[Literal["retail", "trade", "vip"]] = None
+    notes: Optional[str] = None
+    portal_enabled: Optional[bool] = None
+
+
 class CustomerPublic(CustomerBase, TimestampedModel):
-    pass
+    # Set when Send Invite / Reset Password issues a temporary password — the
+    # customer must set their own password on first portal login.
+    must_change_password: bool = False
+    temp_password_expires_at: Optional[str] = None
 
 
 class CustomerInDB(CustomerPublic):
@@ -623,7 +647,7 @@ class PurchaseAttachmentCreate(BaseModel):
 
 
 # ---------- Activity Log (audit trail) ----------
-ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup"]
+ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup", "user"]
 
 
 class ActivityEvent(TimestampedModel):

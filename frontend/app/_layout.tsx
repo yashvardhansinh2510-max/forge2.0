@@ -22,7 +22,7 @@ LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
 
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { loading, kind } = useAuth();
+  const { loading, kind, staff, customer } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const navigationState = useRootNavigationState();
@@ -33,6 +33,25 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     const inAuth = segments[0] === "(auth)";
     const inAdmin = segments[0] === "(admin)";
     const inCustomer = segments[0] === "(customer)";
+    const onForceChange = inAuth && segments[1] === "set-new-password";
+
+    // Security requirement: a temporary password (Team > Reset Password,
+    // Customers > Send Invite/Reset Password) must force a real password
+    // before the user can reach anything else — checked before the normal
+    // staff/customer routing below so it wins regardless of destination.
+    const mustChangePassword =
+      (kind === "staff" && !!staff?.must_change_password) ||
+      (kind === "customer" && !!customer?.must_change_password);
+
+    if (kind && mustChangePassword && !onForceChange) {
+      router.replace("/(auth)/set-new-password");
+      return;
+    }
+    if (kind && !mustChangePassword && onForceChange) {
+      // Just finished the forced change — fall through to normal routing.
+      router.replace(kind === "staff" ? "/(admin)/dashboard" : "/(customer)/home");
+      return;
+    }
 
     if (!kind && !inAuth) {
       router.replace("/(auth)/login");
@@ -41,7 +60,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     } else if (kind === "customer" && !inCustomer) {
       if (inAuth || segments.length === 0) router.replace("/(customer)/home");
     }
-  }, [kind, loading, isNavigationReady, segments, router]);
+  }, [kind, loading, isNavigationReady, segments, router, staff, customer]);
 
   return <>{children}</>;
 }

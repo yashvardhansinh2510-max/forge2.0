@@ -12,6 +12,8 @@ from models import (
     ChangePasswordPayload, CustomerLoginPayload, CustomerPublic, CustomerTokenResponse,
     GoogleSessionPayload, LoginPayload, SessionInfo, TokenResponse, UserPublic, now_iso,
 )
+from services.activity_log import log_event
+from services.invite_service import is_temp_password_expired
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -23,9 +25,18 @@ async def staff_login(body: LoginPayload, request: Request):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not doc.get("active", True):
         raise HTTPException(status_code=403, detail="Account disabled")
+    if doc.get("must_change_password") and is_temp_password_expired(doc.get("temp_password_expires_at")):
+        raise HTTPException(
+            status_code=401,
+            detail="This temporary password has expired. Ask an admin to reset it again.",
+        )
     sid = await create_session("staff", doc["id"], request, login_method="password")
     token = create_token(doc["id"], "staff", {"role": doc["role"], "session_id": sid})
     doc.pop("password_hash", None)
+    await log_event(
+        event_type="user.login", entity_type="user", entity_id=doc["id"],
+        actor_id=doc["id"], actor_name=doc.get("full_name"), summary="Staff Login",
+    )
     return TokenResponse(access_token=token, user=UserPublic(**doc))
 
 
@@ -36,15 +47,20 @@ async def staff_me(user: UserPublic = Depends(get_current_user)):
 
 @router.post("/change-password")
 async def staff_change_password(body: ChangePasswordPayload, user: UserPublic = Depends(get_current_user)):
-    """Settings > Account > Password. Staff-only for now — the customer
-    portal is intentionally read-only (Phase 5 decision) and has no account-
-    management surface yet."""
+    """Settings > Account > Password. Also the exit path from a forced
+    password change after Team > Reset Password issued a temporary one —
+    clears must_change_password/temp_password_expires_at on success."""
     doc = await db.users.find_one({"id": user.id}, {"_id": 0, "password_hash": 1})
     if not doc or not verify_password(body.current_password, doc.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
     await db.users.update_one(
         {"id": user.id},
-        {"$set": {"password_hash": hash_password(body.new_password), "updated_at": now_iso()}},
+        {"$set": {
+            "password_hash": hash_password(body.new_password),
+            "must_change_password": False,
+            "temp_password_expires_at": None,
+            "updated_at": now_iso(),
+        }},
     )
     invalidate_principal_cache("staff", user.id)
     return {"changed": True}
@@ -55,10 +71,42 @@ async def customer_login(body: CustomerLoginPayload, request: Request):
     doc = await db.customers.find_one({"email": body.email.lower()}, {"_id": 0})
     if not doc or not doc.get("password_hash") or not verify_password(body.password, doc["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not doc.get("portal_enabled"):
+        raise HTTPException(status_code=403, detail="Portal access is disabled for this account. Contact your account manager.")
+    if doc.get("must_change_password") and is_temp_password_expired(doc.get("temp_password_expires_at")):
+        raise HTTPException(
+            status_code=401,
+            detail="This temporary password has expired. Ask your account manager to resend the invite.",
+        )
     sid = await create_session("customer", doc["id"], request, login_method="password")
     token = create_token(doc["id"], "customer", {"session_id": sid})
     doc.pop("password_hash", None)
+    await log_event(
+        event_type="customer.portal_login", entity_type="customer", entity_id=doc["id"],
+        customer_id=doc["id"], actor_id=doc["id"], actor_name=doc.get("name"),
+        summary="Customer Portal Login",
+    )
     return CustomerTokenResponse(access_token=token, customer=CustomerPublic(**doc))
+
+
+@router.post("/customer/change-password")
+async def customer_change_password(body: ChangePasswordPayload, cust: CustomerPublic = Depends(get_current_customer)):
+    """Customer Portal > exit path from a forced password change after
+    Send Invite / Reset Password issued a temporary one."""
+    doc = await db.customers.find_one({"id": cust.id}, {"_id": 0, "password_hash": 1})
+    if not doc or not doc.get("password_hash") or not verify_password(body.current_password, doc["password_hash"]):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    await db.customers.update_one(
+        {"id": cust.id},
+        {"$set": {
+            "password_hash": hash_password(body.new_password),
+            "must_change_password": False,
+            "temp_password_expires_at": None,
+            "updated_at": now_iso(),
+        }},
+    )
+    invalidate_principal_cache("customer", cust.id)
+    return {"changed": True}
 
 
 @router.get("/customer/me", response_model=CustomerPublic)
@@ -95,31 +143,34 @@ async def google_staff_login(body: GoogleSessionPayload, request: Request):
 
 @router.post("/google/customer", response_model=CustomerTokenResponse)
 async def google_customer_login(body: GoogleSessionPayload, request: Request):
+    """Security requirement (Team/Portal management session): 'Only customers
+    with portal_enabled = true may log in' applies to EVERY customer login
+    path, not just email/password — so this no longer auto-creates a
+    self-service account on first Google sign-in. A staff member must create
+    the customer record and turn Portal Enabled on (Customers > Edit
+    Customer) before Google sign-in works for them, exactly like staff
+    Google login already requires a pre-existing account below."""
     profile = await verify_google_session(body.session_id)
     email = profile["email"].lower()
     doc = await db.customers.find_one({"email": email}, {"_id": 0})
     if not doc:
-        # Frictionless self-service onboarding — first Google sign-in creates
-        # the portal account. Matching is strictly by email, so any customer
-        # record staff already created with this same email is reused
-        # instead of duplicated ("merge by email").
-        new_doc = {
-            "id": None, "name": profile.get("name") or email.split("@")[0],
-            "company": None, "email": email, "phone": None, "address": None,
-            "city": None, "gstin": None, "tier": "retail", "notes": None,
-            "avatar_url": profile.get("picture"),
-        }
-        from models import CustomerPublic as _CP
-        created = _CP(**{k: v for k, v in new_doc.items() if k != "id"})
-        to_store = created.dict()
-        await db.customers.insert_one(to_store)
-        doc = to_store
-    elif profile.get("picture") and not doc.get("avatar_url"):
+        raise HTTPException(
+            status_code=404,
+            detail="No customer account found for this email. Please contact your account manager for a portal invite.",
+        )
+    if not doc.get("portal_enabled"):
+        raise HTTPException(status_code=403, detail="Portal access is disabled for this account. Contact your account manager.")
+    if profile.get("picture") and not doc.get("avatar_url"):
         await db.customers.update_one({"id": doc["id"]}, {"$set": {"avatar_url": profile["picture"]}})
         doc["avatar_url"] = profile["picture"]
     sid = await create_session("customer", doc["id"], request, login_method="google")
     token = create_token(doc["id"], "customer", {"session_id": sid})
     doc.pop("password_hash", None)
+    await log_event(
+        event_type="customer.portal_login", entity_type="customer", entity_id=doc["id"],
+        customer_id=doc["id"], actor_id=doc["id"], actor_name=doc.get("name"),
+        summary="Customer Portal Login",
+    )
     return CustomerTokenResponse(access_token=token, customer=CustomerPublic(**doc))
 
 

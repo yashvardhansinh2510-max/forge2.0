@@ -7899,3 +7899,364 @@ agent_communication:
         
         CONCLUSION: All Settings backend endpoints are production-ready. Zero regressions.
         Backend is stable and ready for production use.
+
+
+backend:
+  - task: "Team Management + Customer Portal Account Management (final pre-launch admin session) — GET /api/roles, Team reset-password, Customer PATCH/send-invite/reset-password, portal_enabled login gate, forced password change, InviteService abstraction, audit trail"
+    implemented: true
+    working: true
+    file: "backend/models.py, backend/auth.py, backend/services/invite_service.py (new), backend/routes/roles_routes.py (new), backend/routes/auth_routes.py, backend/routes/misc_routes.py, backend/routes/customer_routes.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            SESSION START: backend/.env + frontend/.env were wiped again by the same
+            session-reset pattern documented in RECOVERY.md. User supplied fresh MongoDB Atlas
+            credentials (cluster0.vmc0rmr.mongodb.net) + Supabase project (vburaxruvbnbahegtbya)
+            anon/service-role keys. Reconstructed backend/.env via scripts/setup-env --from-env
+            using DB_NAME=buildcon_house (confirmed correct per prior session history) and the
+            known bucket names from /app/memory (forge-products public / forge-private private —
+            same Supabase project, unchanged). Reinstalled backend deps (reportlab/openpyxl had
+            been dropped from the venv again). Restarted backend+expo. Verified via
+            /api/health/system: mongo connected (Atlas, not local), supabase connected, healthy=true,
+            counts products=2966/customers=9/quotations=62/purchase_orders=37/payments=21/
+            followups=101/users=9 — real production data intact, zero data loss. Verified owner
+            login (owner@forge.app/Forge@2026) via curl.
+
+            FEATURE: "Final Administration capability" per user's explicit spec — Team Management
+            (Settings > Team, admin-only) + Customer Portal account management, with NO hardcoded
+            roles anywhere in the UI, manual-share invite/reset (architected for a future
+            EmailInviteService swap with zero UI/DB changes), forced password change on first use
+            of any temporary password, 72h temp-password expiry, and a full audit trail.
+
+            BACKEND CHANGES:
+            1. models.py: UserPublic += must_change_password/temp_password_expires_at. CustomerBase
+               += portal_enabled (default False). CustomerPublic += must_change_password/
+               temp_password_expires_at. New CustomerUpdatePayload (all-optional PATCH body).
+               ActivityEntity Literal += "user" (staff audit events reuse the existing
+               activity_events collection/timeline infra, never a new collection).
+            2. auth.py: added ROLE_LABELS + ROLE_CAPABILITIES dicts alongside the existing
+               ROLE_HIERARCHY (unchanged: owner100>admin90>manager70>accounts60>purchase50>
+               sales40>warehouse30>worker10) — single source of truth consumed by the new
+               GET /api/roles endpoint. No role added/removed/renamed.
+            3. NEW backend/services/invite_service.py: InviteService ABC + ManualInviteService
+               (today's driver — returns the plaintext temp password once, no email/SMS) +
+               EmailInviteService stub (raises NotImplementedError, selected via
+               INVITE_SERVICE_DRIVER=email env var later) + get_invite_service() factory.
+               generate_temp_password() (12-char, guaranteed upper/lower/digit),
+               temp_password_expiry_iso() (+72h), is_temp_password_expired(). DB fields written
+               are identical regardless of driver — swapping to email later requires zero schema
+               or frontend changes, only this file's factory + a real email call.
+            4. NEW backend/routes/roles_routes.py: GET /api/roles (any authenticated staff) —
+               returns [{role, label, level, capabilities}] from auth.py's dicts.
+            5. auth_routes.py: staff_login + customer_login both now reject with 401 if
+               must_change_password=true AND the temp password has expired (72h). customer_login
+               additionally requires portal_enabled=true (403 otherwise) — THIS IS THE NEW
+               SECURITY GATE ("only customers with portal_enabled=true may log in"). Added
+               POST /auth/customer/change-password (mirrors the existing staff endpoint) — the
+               customer portal previously had NO account-management surface; this is the exit path
+               from a forced password change. staff_change_password + the new customer one both
+               clear must_change_password/temp_password_expires_at on success. google_customer_login
+               changed from "frictionless self-service auto-create on first Google sign-in" to
+               requiring a pre-existing, portal_enabled=true customer record (404/403 otherwise) —
+               a deliberate behavior change to make the new portal_enabled gate apply to EVERY
+               customer login path, not just email/password (matches google_staff_login's existing
+               "no auto-create" pattern). Added user.login/customer.portal_login audit events on
+               successful login (best-effort, via services.activity_log.log_event).
+            6. misc_routes.py (Team): create_team_member now sets must_change_password=true +
+               72h expiry on every new staff account (their admin-supplied password is an
+               onboarding credential only) + logs "user.created". update_team_member now fetches
+               the pre-patch doc to diff role/active changes and logs "user.role_changed"/
+               "user.enabled"/"user.disabled" only when those specific fields actually changed.
+               NEW POST /team/{user_id}/reset-password (admin+; 400 if targeting self — must use
+               Settings > Change password instead) — generates+hashes a temp password via
+               invite_service, returns {delivery_method, temporary_password, expires_at, message},
+               logs "user.password_reset".
+            7. customer_routes.py: create_customer now logs "customer.created". NEW
+               PATCH /customers/{id} (sales+) — edits name/company/email/phone/address/city/gstin/
+               tier/notes/portal_enabled; rejects duplicate email (409), rejects enabling portal
+               without an email (400), logs "customer.portal_enabled"/"customer.portal_disabled"
+               specifically when that field flips, else a generic "customer.updated". NEW
+               POST /customers/{id}/send-invite and POST /customers/{id}/reset-password (both
+               sales+, share one internal _issue_temp_password() helper) — both require
+               portal_enabled=true AND an email already saved (400 otherwise, so the UI can
+               disable the buttons proactively instead of erroring after a tap), generate+hash a
+               temp password, log "customer.portal_invite_generated" (summary exactly
+               "Customer Portal Invite Generated" per spec) / "customer.password_reset" (summary
+               exactly "Customer Password Reset" per spec).
+            8. server.py: registered the new roles_router.
+
+            MANUAL END-TO-END VERIFICATION (curl, before handing to the testing agent):
+            • GET /api/roles → all 8 roles with correct labels/levels/capabilities.
+            • PATCH /customers/{id} email+portal_enabled=true → 200; send-invite before that
+              (no email/portal off) → 400 with the expected message; send-invite after → 200
+              with delivery_method="manual" + a 12-char temp password + 72h expiry.
+            • Customer login with the temp password → 200, must_change_password=true in the
+              response. GET /auth/customer/me confirms the flag persists across requests.
+              POST /auth/customer/change-password with that temp password as current_password →
+              {"changed":true}; GET /auth/customer/me afterward shows must_change_password=false,
+              temp_password_expires_at=null.
+            • Disabled portal_enabled → next customer login attempt → 403 "Portal access is
+              disabled for this account." (even with the correct new password).
+            • GET /api/activity/customer/{id} → full audit trail present in order: portal_enabled,
+              portal_invite_generated ("Customer Portal Invite Generated"), portal_login,
+              portal_disabled — actor_name correctly attributed (staff actor for admin actions,
+              the customer's own name for their login).
+            • Team: POST /team → new staff has must_change_password=true. Login with the initial
+              password succeeds (not expired) and returns must_change_password=true.
+              POST /team/{id}/reset-password → 200 with a fresh temp password.
+              POST /team/{self_id}/reset-password → 400 (self-protection).
+              PATCH /team/{id} {"active":false} → 200; GET /api/activity → "user.disabled"
+              ("Staff Account Disabled") logged with the correct actor.
+            • Test customer (fa9ecda6-...) left with portal_enabled=true / password already
+              rotated to a known-changed state for frontend testing continuity. Disposable test
+              staff (qa.staff@forge.app) left disabled (no DELETE endpoint by design, matches the
+              existing Team convention).
+
+            REQUEST: full regression + focused new-surface testing — (a) GET /api/roles shape and
+            auth requirement; (b) Team POST/PATCH/reset-password including all 3 self-protection
+            guards (can't deactivate self, can't change own role, can't reset own password via
+            this admin endpoint); (c) Customer PATCH validation (duplicate email 409, portal
+            without email 400); (d) send-invite/reset-password 400 guards (no email, portal off)
+            and success shape; (e) customer login gate (portal_enabled required, wrong/disabled
+            password rejected, temp-password login returns must_change_password=true); (f) new
+            POST /auth/customer/change-password happy path + wrong-current-password 401; (g) full
+            regression sweep (auth/login, catalog, quotations, payments, purchases, followups,
+            customers) to confirm zero regressions from the .env restore + these additive changes.
+        - working: true
+          agent: "testing"
+          comment: |
+            Team Management + Customer Portal Account Management Testing COMPLETE (2026-08)
+            
+            Comprehensive backend testing of final pre-launch Administration session completed.
+            ALL 65 TESTS PASSED (100% success rate).
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 1: GET /api/roles — ✅ 6/6 PASSED
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ 1.1 GET /api/roles without auth returns 401 (correct)
+            ✅ 1.2 Returns a list of roles
+            ✅ 1.3 Returns exactly 8 roles (owner, admin, manager, accounts, purchase, sales, warehouse, worker)
+            ✅ 1.4 Each role has role/label/level/capabilities fields
+            ✅ 1.5 Roles sorted by descending level (owner level 100 first, worker level 10 last)
+            ✅ 1.6 Owner first, worker last (correct order)
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 2: TEAM MANAGEMENT — ✅ 16/16 PASSED
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ 2.1 POST /api/team creates staff with must_change_password=true
+            ✅ 2.2 temp_password_expires_at is ~72h in future (verified: 71.9 hours)
+            ✅ 2.3 Login as new staff member succeeds with initial password
+            ✅ 2.4 Login response shows must_change_password=true
+            ✅ 2.5 POST /api/team/{id}/reset-password returns correct shape (delivery_method, temporary_password, expires_at, message)
+            ✅ 2.6 delivery_method is 'manual' (correct)
+            ✅ 2.7 temporary_password is 12 chars (correct length)
+            ✅ 2.8 Login with NEW temp password succeeds
+            ✅ 2.9 Self-protection: Cannot reset own password (400 as expected)
+            ✅ 2.10 PATCH /api/team/{id} to deactivate succeeds (200)
+            ✅ 2.11 Deactivated user login fails with 403 (correct)
+            ✅ 2.12 Self-protection: Cannot deactivate self (400 as expected)
+            ✅ 2.13 Self-protection: Cannot change own role (400 as expected)
+            ✅ 2.14 Activity log contains 'user.created' event with summary "Staff Account Created" and actor "Aarav Kapoor"
+            ✅ 2.15 Activity log contains 'user.password_reset' event with summary "Staff Password Reset" and actor "Aarav Kapoor"
+            ✅ 2.16 Activity log contains 'user.disabled' event with summary "Staff Account Disabled" and actor "Aarav Kapoor"
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 3: CUSTOMER PORTAL ACCOUNT MANAGEMENT — ✅ 26/26 PASSED
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ 3.1 POST /api/customers creates customer (name only, no email)
+            ✅ 3.2 POST send-invite without email returns 400 with message "Add an email address for this customer first"
+            ✅ 3.3 PATCH portal_enabled=true without email returns 400 (correct validation)
+            ✅ 3.4 PATCH with email + portal_enabled=true succeeds (200)
+            ✅ 3.5 PATCH with duplicate email returns 409 (correct conflict response)
+            ✅ 3.6 POST send-invite succeeds with correct shape (delivery_method, temporary_password, expires_at, message)
+            ✅ 3.7 delivery_method is 'manual' (correct)
+            ✅ 3.8 temporary_password is 12 chars (correct length)
+            ✅ 3.9 Customer login with temp password succeeds (200)
+            ✅ 3.10 Login response shows portal_enabled=true
+            ✅ 3.11 Login response shows must_change_password=true
+            ✅ 3.12 GET /auth/customer/me shows must_change_password=true (persists across requests)
+            ✅ 3.13 POST /auth/customer/change-password succeeds with {"changed": true}
+            ✅ 3.14 After change, must_change_password=false (flag cleared)
+            ✅ 3.15 After change, temp_password_expires_at=null (cleared)
+            ✅ 3.16 PATCH portal_enabled=false succeeds (200)
+            ✅ 3.17 Login with portal_enabled=false returns 403 with message "Portal access is disabled for this account"
+            ✅ 3.18 Re-enable portal succeeds (200)
+            ✅ 3.19 POST reset-password succeeds (new temp password generated)
+            ✅ 3.20 Old password no longer works (401 as expected)
+            ✅ 3.21 New temp password works (200)
+            ✅ 3.22 Activity log contains 'Customer Portal Invite Generated' event
+            ✅ 3.23 Activity log contains 'Customer Password Reset' event
+            ✅ 3.24 Activity log contains 'Customer Portal Enabled' event
+            ✅ 3.25 Activity log contains 'Customer Portal Disabled' event
+            ✅ 3.26 Activity log contains 'Customer Portal Login' event
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 4: REGRESSION SWEEP — ✅ 16/16 PASSED
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ 4.1 GET /api/health/system - healthy=true
+            ✅ 4.2 Mongo connected (Atlas, not local)
+            ✅ 4.3 Supabase connected
+            ✅ 4.4 Products count ~2966 (exact: 2966)
+            ✅ 4.5 GET /api/customers without auth returns 401 (correct)
+            ✅ 4.6 GET /api/customers with auth returns 200
+            ✅ 4.5 GET /api/quotations without auth returns 401 (correct)
+            ✅ 4.6 GET /api/quotations with auth returns 200
+            ✅ 4.5 GET /api/purchase-orders without auth returns 401 (correct)
+            ✅ 4.6 GET /api/purchase-orders with auth returns 200
+            ✅ 4.5 GET /api/payments/stats without auth returns 401 (correct)
+            ✅ 4.6 GET /api/payments/stats with auth returns 200
+            ✅ 4.5 GET /api/followups/stats without auth returns 401 (correct)
+            ✅ 4.6 GET /api/followups/stats with auth returns 200
+            ✅ 4.7 Owner login still works (owner@forge.app / Forge@2026)
+            ✅ 4.8 Owner account has no must_change_password flag (correct for existing account)
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            SUMMARY
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            • GET /api/roles: WORKING (8 roles, sorted by level, auth required)
+            • Team Management: WORKING (create, reset password, deactivate, all self-protections working)
+            • Customer Portal: WORKING (invite, reset password, portal_enabled gate, forced password change, audit trail)
+            • Regression: PASSED (all existing endpoints working, zero regressions)
+            • Activity Audit Trail: WORKING (all events logged with correct summaries and actors)
+            • Forced Password Change: WORKING (must_change_password flag, 72h expiry, change-password endpoint)
+            • Security Gates: WORKING (portal_enabled required for customer login, self-protection for team operations)
+            • InviteService: WORKING (manual delivery method, 12-char temp passwords, 72h expiry)
+            
+            CONCLUSION: Final pre-launch Administration session is COMPLETE and PRODUCTION-READY.
+            All Team Management and Customer Portal Account Management features working correctly.
+            Zero regressions detected. Backend is stable and ready for production use.
+
+frontend:
+  - task: "Team Management UI (Add/Edit/Disable/Reset password/Assign role) + Customer Edit UI (Portal Enabled/Send Invite/Reset Password) + forced password-change screen + dynamic roles (no hardcoded role arrays)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/team.tsx, frontend/app/(admin)/customers/[id]/edit.tsx (new), frontend/app/(admin)/settings-permissions.tsx, frontend/app/(auth)/set-new-password.tsx (new), frontend/app/_layout.tsx, frontend/src/state/auth.tsx, frontend/src/hooks/use-roles.ts (new), frontend/src/components/TempPasswordDialog.tsx (new), frontend/package.json (added expo-clipboard)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            NOT YET TESTED by the frontend testing agent — backend was verified first per
+            protocol; frontend testing is pending explicit user go-ahead per workflow rules.
+
+            1. NEW src/hooks/use-roles.ts: fetches GET /api/roles once (module-level cache),
+               exposes {roles, loading, error, refresh, labelFor}. Every screen that previously
+               had (or would have had) a hardcoded role array now uses this instead.
+            2. team.tsx REWRITE (was previously a read-only list — this session adds the entire
+               CRUD surface): "Add" header action opens an Add Staff sheet (name/email/phone/
+               initial password/role — role picker is a Chip row rendered from useRoles(), no
+               hardcoded strings). Tapping any row opens an Edit Staff sheet (name/phone editable;
+               role Chips + an Active Switch, both disabled with an inline note when editing your
+               own row, matching the backend's self-protection 400s so the UI never lets you
+               attempt a call that will fail); a "Reset password" button (also disabled for your
+               own row) calls the new endpoint and hands the result to TempPasswordDialog.
+            3. NEW app/(admin)/customers/[id]/edit.tsx: fixes the previously-dead "Edit" button on
+               the customer detail page (it already linked here; the screen didn't exist). Same
+               fields as Add Customer (name/company/email/phone/city/address/gstin/tier/notes)
+               plus a "Customer Portal" card: a Switch bound to portal_enabled, and Send
+               Invite / Reset Password buttons that are visibly disabled (not just erroring after
+               a tap) unless portal_enabled is on AND an email is present — mirrors the backend's
+               400 guards exactly. Send Invite auto-saves any pending edits first (so a
+               just-typed email + just-flipped toggle are persisted before the backend checks
+               them). Both actions open TempPasswordDialog.
+            4. NEW src/components/TempPasswordDialog.tsx: shared secure one-time-show dialog with
+               a Copy button (expo-clipboard) — the temp password is only ever held in local
+               component state, never persisted, never re-fetchable, and the dialog cannot be
+               reopened with the same value after closing. Branches on `delivery_method` from the
+               API response ("manual" shows the password box; a future "email" would show a plain
+               success message) — this is the concrete mechanism by which introducing
+               EmailInviteService later requires zero UI changes.
+            5. settings-permissions.tsx: replaced its hardcoded ROLES array with useRoles() —
+               capabilities text now comes from the backend's ROLE_CAPABILITIES dict.
+            6. Forced password change: StaffUser/CustomerUser types (+must_change_password),
+               new AuthProvider.markPasswordChanged() (clears the local flag without a full
+               re-hydrate round trip after a successful change). NEW app/(auth)/set-new-password.tsx
+               — single screen, works for both staff and customer (branches only on which
+               change-password endpoint to call; the two auth domains are never mixed). AuthGate
+               in app/_layout.tsx now checks must_change_password BEFORE its normal staff/customer
+               routing and redirects there first, unconditionally, until the flag clears.
+            7. Added expo-clipboard via `npx expo install` (SDK-compatible version pin).
+
+            Ran `npx tsc --noEmit` — zero new type errors from any file touched this session
+            (confirmed the pre-existing customers/[id].tsx and app/_layout.tsx segments-typing
+            warnings predate this session via `git diff`, not introduced by it). ESLint clean on
+            every new/edited file (fixed 2 unescaped-apostrophe warnings).
+
+            REQUEST (once user approves frontend testing): Team add/edit/disable/enable/reset
+            password/role-assign end-to-end on desktop + phone; Customer Edit screen incl. Portal
+            Enabled toggle gating Send Invite/Reset Password buttons; TempPasswordDialog copy
+            button + "shown once" behavior; forced-password-change screen reachable after a
+            reset (use the reset-password flow, then log in with the temp password, confirm
+            redirect to /set-new-password and successful hand-off to dashboard/home after
+            changing it); Settings > Roles & permissions renders from the API (not hardcoded).
+
+metadata:
+  created_by: "main_agent"
+  version: "3.5"
+  test_sequence: 17
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Team Management + Customer Portal Account Management (final pre-launch admin session)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Final pre-launch Administration feature this session: Team Management (Settings > Team)
+        + Customer Portal account management (Customers > Edit Customer), per user's explicit
+        spec choosing option (a) manual-share invites (no email provider), architected behind an
+        InviteService interface so EmailInviteService can be swapped in later with zero UI/DB
+        changes. Backend is fully implemented and I manually verified every flow end-to-end via
+        curl (roles list, customer edit + portal gate + send-invite + reset-password + login gate
+        + forced-password-change + audit trail; team create + reset-password + self-protection +
+        audit trail) before writing this up — see the detailed status_history above for exact
+        commands/results. Requesting deep_testing_backend_v2 now to formally verify this surface
+        plus a full regression sweep (the .env was also restored this session after another
+        session-reset wipe — real data confirmed intact: 2966 products, 9 customers, 62
+        quotations, etc.). Frontend (Team CRUD UI, Customer Edit UI, forced password-change
+        screen, dynamic roles) is implemented and typechecks/lints clean but NOT YET tested by
+        the frontend testing agent — will ask the user for explicit go-ahead before running that,
+        per workflow rules.
+    - agent: "testing"
+      message: |
+        Backend testing COMPLETE for Team Management + Customer Portal Account Management.
+        
+        ALL 65 TESTS PASSED (100% success rate):
+        • GET /api/roles: 6/6 passed (8 roles, sorted by level, auth required)
+        • Team Management: 16/16 passed (create, reset password, deactivate, all self-protections)
+        • Customer Portal: 26/26 passed (invite, reset password, portal_enabled gate, forced password change, audit trail)
+        • Regression: 16/16 passed (health check, all existing endpoints, owner login)
+        
+        VERIFIED FEATURES:
+        ✅ GET /api/roles returns 8 roles sorted by descending level (owner 100 → worker 10)
+        ✅ Team create sets must_change_password=true with 72h temp password expiry
+        ✅ Team reset-password generates 12-char temp password with delivery_method="manual"
+        ✅ Self-protection: cannot reset own password, deactivate self, or change own role (all return 400)
+        ✅ Deactivated staff login fails with 403
+        ✅ Customer PATCH validates: duplicate email returns 409, portal_enabled without email returns 400
+        ✅ Customer send-invite/reset-password require email + portal_enabled (400 otherwise)
+        ✅ Customer login gate: portal_enabled=false returns 403 "Portal access is disabled"
+        ✅ Customer login with temp password returns must_change_password=true
+        ✅ POST /auth/customer/change-password clears must_change_password and temp_password_expires_at
+        ✅ Activity audit trail: all events logged with correct summaries ("Staff Account Created", "Customer Portal Invite Generated", etc.) and correct actors
+        ✅ Regression: all existing endpoints (customers, quotations, purchase-orders, payments, followups) working with auth
+        ✅ Owner login still works with no must_change_password flag (correct for existing account)
+        
+        ZERO REGRESSIONS DETECTED. Backend is production-ready.
+        
+        Main agent can now proceed with frontend testing or summarize and finish.

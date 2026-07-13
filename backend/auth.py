@@ -241,6 +241,27 @@ ROLE_HIERARCHY = {
     "purchase": 50, "sales": 40, "warehouse": 30, "worker": 10,
 }
 
+# Single source of truth for display labels + human-readable capability blurbs
+# per role. Exposed to the frontend via GET /api/roles (routes/roles_routes.py)
+# so Team Management's "Assign role" picker and the Settings > Roles &
+# permissions screen never hardcode the role list — if a role is ever
+# renamed/added here, both screens update with zero frontend changes.
+ROLE_LABELS: dict[str, str] = {
+    "owner": "Owner", "admin": "Admin", "manager": "Manager", "accounts": "Accounts",
+    "purchase": "Purchase", "sales": "Sales", "warehouse": "Warehouse", "worker": "Worker",
+}
+
+ROLE_CAPABILITIES: dict[str, list[str]] = {
+    "owner": ["Everything, including team management and settings"],
+    "admin": ["Team management", "Company & PDF settings", "Catalog backup/export"],
+    "manager": ["View team", "Approve catalog imports", "Full sales & purchase access"],
+    "accounts": ["Payments & receivables", "Financial reporting"],
+    "purchase": ["Purchase orders", "Catalog imports", "Supplier management"],
+    "sales": ["Quotations", "Customers", "Follow-ups"],
+    "warehouse": ["Stock movements", "Purchase receiving"],
+    "worker": ["View-only access to assigned tasks"],
+}
+
 
 def require_roles(*allowed: Role):
     async def _dep(user: UserPublic = Depends(get_current_user)) -> UserPublic:

@@ -18,6 +18,7 @@ export type StaffUser = {
   role: "owner" | "admin" | "manager" | "sales" | "purchase" | "warehouse" | "accounts" | "worker";
   active: boolean;
   avatar_url?: string | null;
+  must_change_password?: boolean;
 };
 
 export type CustomerUser = {
@@ -27,6 +28,8 @@ export type CustomerUser = {
   company?: string | null;
   tier: "retail" | "trade" | "vip";
   avatar_url?: string | null;
+  portal_enabled?: boolean;
+  must_change_password?: boolean;
 };
 
 export type GoogleLoginMode = "staff" | "customer";
@@ -43,6 +46,7 @@ type AuthState = {
   googleError: string | null;
   clearGoogleError: () => void;
   logout: () => Promise<void>;
+  markPasswordChanged: () => void;
 };
 
 const AuthCtx = createContext<AuthState | null>(null);
@@ -192,6 +196,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const clearGoogleError = useCallback(() => setGoogleError(null), []);
 
+  // Called right after the "set new password" screen succeeds — avoids a
+  // full re-hydrate round trip, just clears the local force-change flag so
+  // AuthGate lets the user through to their normal destination.
+  const markPasswordChanged = useCallback(() => {
+    setStaff((cur) => (cur ? { ...cur, must_change_password: false } : cur));
+    setCustomer((cur) => (cur ? { ...cur, must_change_password: false } : cur));
+  }, []);
+
   const logout = useCallback(async () => {
     try { await api.post("/auth/logout"); } catch { /* best-effort */ }
     await clearToken();
@@ -201,9 +213,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       loading, kind, staff, customer, loginStaff, loginCustomer,
-      loginWithGoogle, googleBusy, googleError, clearGoogleError, logout,
+      loginWithGoogle, googleBusy, googleError, clearGoogleError, logout, markPasswordChanged,
     }),
-    [loading, kind, staff, customer, loginStaff, loginCustomer, loginWithGoogle, googleBusy, googleError, clearGoogleError, logout],
+    [loading, kind, staff, customer, loginStaff, loginCustomer, loginWithGoogle, googleBusy, googleError, clearGoogleError, logout, markPasswordChanged],
   );
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;

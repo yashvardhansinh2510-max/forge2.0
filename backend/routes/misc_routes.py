@@ -5,9 +5,11 @@ replaced by the full Sales Command Center module at routes/followup_routes.py.""
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from auth import get_current_user, hash_password, require_min_role
+from auth import get_current_user, hash_password, invalidate_principal_cache, require_min_role
 from db import db
 from models import TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
+from services.activity_log import log_event
+from services.invite_service import generate_temp_password, get_invite_service, temp_password_expiry_iso
 from settings import settings
 from typing import Optional
 
@@ -130,11 +132,20 @@ async def create_team_member(body: TeamCreatePayload, user: UserPublic = Depends
         raise HTTPException(status_code=409, detail="A team member with this email already exists")
     doc = UserPublic(
         email=body.email.lower(), full_name=body.full_name, role=body.role, phone=body.phone,
+        # New staff must set their own password on first login — the admin-
+        # supplied password here is only a onboarding credential, never a
+        # long-term secret someone else chose for them.
+        must_change_password=True, temp_password_expires_at=temp_password_expiry_iso(),
     ).dict()
     doc["password_hash"] = hash_password(body.password)
     await db.users.insert_one(doc)
     doc.pop("password_hash", None)
     doc.pop("_id", None)
+    await log_event(
+        event_type="user.created", entity_type="user", entity_id=doc["id"],
+        actor=user, summary="Staff Account Created",
+        payload={"role": body.role, "email": doc["email"]},
+    )
     return doc
 
 
@@ -146,15 +157,68 @@ async def update_team_member(
         raise HTTPException(status_code=400, detail="You can't deactivate your own account")
     if user_id == user.id and body.role is not None and body.role != user.role:
         raise HTTPException(status_code=400, detail="You can't change your own role")
+    before = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not before:
+        raise HTTPException(status_code=404, detail="Team member not found")
     patch = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
     if not patch:
         raise HTTPException(status_code=400, detail="Nothing to update")
     patch["updated_at"] = now_iso()
-    result = await db.users.update_one({"id": user_id}, {"$set": patch})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Team member not found")
+    await db.users.update_one({"id": user_id}, {"$set": patch})
     doc = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+
+    if "role" in patch and patch["role"] != before.get("role"):
+        await log_event(
+            event_type="user.role_changed", entity_type="user", entity_id=user_id, actor=user,
+            summary="Staff Role Changed",
+            payload={"from": before.get("role"), "to": patch["role"]},
+        )
+    if "active" in patch and patch["active"] != before.get("active", True):
+        await log_event(
+            event_type="user.enabled" if patch["active"] else "user.disabled",
+            entity_type="user", entity_id=user_id, actor=user,
+            summary="Staff Account Enabled" if patch["active"] else "Staff Account Disabled",
+        )
     return doc
+
+
+@router.post("/team/{user_id}/reset-password")
+async def reset_team_member_password(user_id: str, user: UserPublic = Depends(require_min_role("admin"))):
+    """Team > Reset Password. Generates a secure temporary password shown
+    ONCE to the admin (manual-share, no email/SMS integration yet — see
+    services/invite_service.py). The account is forced to change it on next
+    login and it self-expires in 72h if unused."""
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="Use Settings > Change password to reset your own password")
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    temp_pw = generate_temp_password()
+    expires_at = temp_password_expiry_iso()
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {
+            "password_hash": hash_password(temp_pw),
+            "must_change_password": True,
+            "temp_password_expires_at": expires_at,
+            "updated_at": now_iso(),
+        }},
+    )
+    invalidate_principal_cache("staff", user_id)
+    result = await get_invite_service().deliver(
+        recipient_email=target.get("email"), recipient_name=target.get("full_name", "this team member"),
+        temp_password=temp_pw, expires_at=expires_at, kind="staff_reset",
+    )
+    await log_event(
+        event_type="user.password_reset", entity_type="user", entity_id=user_id, actor=user,
+        summary="Staff Password Reset",
+    )
+    return {
+        "delivery_method": result.delivery_method,
+        "temporary_password": result.temporary_password,
+        "expires_at": result.expires_at,
+        "message": result.message,
+    }
 
 
 @router.get("/reports/overview")
