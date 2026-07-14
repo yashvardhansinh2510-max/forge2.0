@@ -506,6 +506,133 @@ backend:
 
 user_problem_statement: "BuildCon House — complete product design reboot ('Showroom' design language). Phase 1: design system foundation, navigation shell, command palette, Today (dashboard), authentication. Later phases migrate Quotation Builder, Customers, Catalogue, Purchases, Payments, Follow-ups, Reports, Settings onto the new system. Catalog restoration (2,872 supplier products) is a separate parallel workstream — blocked on user-provided Supabase credentials + supplier source files."
 
+## Launch Candidate 1 (LC-1) — Mobile, Customer Portal & Store Readiness (2026-08, in progress)
+
+User moved the app into a Launch Candidate phase covering 5 priorities: (1) Mobile Quotation
+Builder parity with desktop — HIGHEST PRIORITY, (2) Cross-platform functional audit, (3) Customer
+Portal phone+OTP auth (replacing Google/email), (4) Product image management in Admin, (5) App
+Store / Play Store readiness checklist. This session delivered Priority 1 only; P2-P5 pending
+user go-ahead / clarifying decisions (SMS/OTP provider choice, store identifiers).
+
+frontend:
+  - task: "LC-1 Priority 1 — Mobile Quotation Builder product-card & catalog-browsing parity"
+    implemented: true
+    working: true
+    file: "frontend/src/components/quotation/catalog/ProductExplorer.tsx, frontend/src/components/quotation/sheets/ProductModal.tsx, frontend/src/components/quotation/catalog/PickerCard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Env restore first (session reset wiped backend/.env + frontend/.env per documented
+            RECOVERY.md pattern): user supplied fresh MongoDB Atlas + Supabase creds this
+            session. Verified via direct motor query (same "don't trust the label" catch as a
+            prior session) that DB_NAME=buildcon_house holds the real catalog (2,601 products —
+            not the DB_NAME="buildcon" 20-doc demo db) before writing backend/.env. Reinstalled
+            backend/requirements.txt (reportlab etc missing again after reset). GET
+            /api/health/system -> healthy=true, mongo Atlas connected, supabase connected,
+            products=2601. Set frontend/.env EXPO_PUBLIC_BACKEND_URL to this session's live
+            preview URL (documented in RECOVERY.md as required — same-origin blank value
+            empirically fails in this environment's browser context).
+
+            ROOT-CAUSE READ (code review, not guesswork) confirmed the user's exact complaints
+            live in 3 files: ProductExplorer.tsx (the grid used both in the 3-pane desktop
+            layout AND as the full-screen phone picker sheet), ProductModal.tsx (the "Add to
+            quotation" product detail modal), PickerCard.tsx (a secondary card renderer). Fixed,
+            all additive/no redesign:
+            1. Price-never-wraps: added numberOfLines={1} to every price/MRP Text across all 3
+               files (ProductExplorer card price+mrp, ProductModal priceBig+mrpBig, PickerCard
+               price) — this is what actually stops a currency string like "₹24,000" from
+               breaking onto 2 lines when its flex container gets squeezed; previously only
+               `flex:1` was relied on with no line-clamp, so react-native-web's default
+               word-break could split the string once the sibling (Add button) pushed the price
+               column below its natural width.
+            2. Add-button oversizing: ProductExplorer's addBtn now has flexShrink:0 (was
+               unconstrained, could be compressed AND could grow unpredictably depending on
+               sibling width) plus tightened padding; PickerCard's price given flexShrink:0 too
+               so the name column shrinks first, never the button/price.
+            3. Card height inconsistency: root cause was VariantSwatchStrip returning `null`
+               outright for products with no variants, collapsing that row's height only on
+               some cards. Wrapped it in a `variantSlot` View with a fixed minHeight so every
+               card reserves identical vertical space whether or not it has variants; also
+               fixed a pre-existing misalignment bug (VariantSwatchStrip was called with its
+               default `paddingLeft=54`, a value meant for PickerCard's inline-thumbnail layout,
+               not this vertical card — was indenting swatches oddly on every card; passed
+               paddingLeft={0}).
+            4. Mobile catalog parity (the core "mobile only shows Recent/Price/A-Z" complaint):
+               BrandRail (brand+category browse) is desktop/tablet-only by design (rendered
+               beside the grid in three-pane/two-pane layouts) and was never surfaced inside the
+               phone-only full-screen ProductExplorer/picker sheet. Added a phone-only
+               (windowWidth<640) horizontal Brand-pill row + Category-pill row directly in
+               ProductExplorer's header, reusing the SAME BuilderContext state BrandRail already
+               drives (b.brands/b.selectedBrandId/b.setSelectedBrandId/b.categoriesForRail/
+               b.selectedCategoryId/b.setSelectedCategoryId) — zero new state, zero backend
+               changes, just exposing existing capability on phone. Verified filtering works
+               (selecting Hansgrohe -> 908 products, category pills appear scoped to that
+               brand). Colour/finish switching and infinite scroll were ALREADY implemented
+               (VariantSwatchStrip on every card; onEndReached/loadMoreProducts) — no changes
+               needed there, flagged as already-met rather than re-built.
+            5. Recent searches (genuinely missing, added from scratch): new AsyncStorage-backed
+               key `forge.builder.recentSearches.v1` via the existing `src/utils/storage` KV
+               wrapper (no new dependency). Committing a search (onSubmitEditing, min 2 chars)
+               prepends/dedupes/caps at 8; a "Recent" chip row appears under the search box
+               whenever the query is empty and history exists; tapping a chip re-applies it;
+               "Clear" wipes history. Works identically on all breakpoints, most valuable on
+               phone per the request.
+            6. ProductModal footer ("Add to quotation" oversized next to 2 other buttons): this
+               3-button row (Favourite / Add another / Add to quotation) was never responsive —
+               fine on desktop's wide modal, but the same fixed row rendered on phone where the
+               modal is ~full-screen-width, cramming a long "Add to quotation" label. Added a
+               <480px-width branch that stacks a compact top row (Favourite + Add another) above
+               a full-width primary "Add to quotation" button — desktop/tablet (>=480px) keep
+               the original single-row layout untouched, verified via testing agent (single row,
+               2px Y-diff = same row) so there's no regression above phone width.
+            7. Also fixed a latent overflow bug found while in this file: ProductModal's `left`
+               gallery column had a rigid `width:300` that could overflow on the smallest
+               supported phones (iPhone SE-class ~375px logical width leaves ~279px of content
+               width after modal padding — 21px narrower than the fixed column). Changed to
+               `width:"100%", maxWidth:300` so it shrinks fluidly instead of clipping.
+
+            Ran `npx tsc --noEmit` and eslint on all 3 touched files — zero new errors/warnings
+            (pre-existing unrelated warnings in ds.tsx/_layout.tsx/BuilderTopbar.tsx untouched).
+        - working: true
+          agent: "testing"
+          comment: |
+            Phone viewport (390x844) verification via auto_frontend_testing_agent — 12/12 PASS.
+            Confirmed: footer "Add" button (testID=mobile-add-first, NOT a floating FAB — that
+            component is deprecated/unused per BuilderFooter.tsx's own code comment, correctly
+            superseded by the compact phone footer bar) opens the full-screen picker; brand pill
+            row (testID=mobile-brand-selector) with correct counts (Hansgrohe 908, Axor 448 etc)
+            filters the grid; category pill row (testID=mobile-category-selector) appears scoped
+            to the selected brand; every product card's price renders on one unbroken line
+            (e.g. "₹38,810.00"); 3 sampled cards measured at exactly equal height (0px diff);
+            search "mixer" -> clear -> "Recent" chip "mixer" appears and re-applies on tap;
+            infinite-scroll mechanism triggers on reaching the end of a list; product modal has
+            no horizontal overflow and its footer is correctly stacked (Favourite + Add another
+            row above a full-width Add-to-quotation button). Desktop (1440x900) regression also
+            re-verified separately: single-row footer preserved, 3-pane layout intact, 0px card
+            height diff, no console errors. Tablet (810x1080) layout structure (brand rail +
+            quotation pane) confirmed correct with the FAB-based test path correctly identified
+            as N/A for this layout.
+
+test_plan:
+  current_focus:
+    - "LC-1 Priority 1 — Mobile Quotation Builder product-card & catalog-browsing parity"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        LC-1 Priority 1 (Mobile Quotation Builder) delivered and verified on phone/tablet/desktop.
+        Priorities 2-5 (Cross-platform audit, Customer Portal phone+OTP auth, Product image
+        management, Store readiness) are queued — P3 needs an SMS/OTP provider decision from the
+        user (no provider currently integrated) and P5 needs store identifiers/accounts before
+        implementation can start. Awaiting user go-ahead on sequencing.
+
 frontend:
   - task: "Production Hardening Phase 3 — Cross-Platform Functional Audit (navigation, forms, keyboard avoidance, missing Add Customer screen)"
     implemented: true
