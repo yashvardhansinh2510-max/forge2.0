@@ -167,13 +167,13 @@ async def delete_media(media_id: str) -> bool:
 
 
 async def list_media_for_product(product_id: str, family_key: Optional[str] = None) -> list[ProductMedia]:
-    """Return all media attached to this product OR its family, ordered by
-    (source priority: internal > manufacturer > supplier), is_primary desc,
-    sort_order asc."""
-    or_clauses: list[dict] = [{"product_id": product_id}]
-    if family_key:
-        or_clauses.append({"family_key": family_key})
-    docs = await db.product_media.find({"$or": or_clauses}, {"_id": 0}).to_list(500)
+    """Return all media attached to THIS product ONLY. `family_key` is
+    accepted for backward compatibility with callers but intentionally
+    unused for resolving a single product's own image — pooling in sibling
+    media here previously caused finish/colour switches to show a different
+    variant's photo (never a product's own). If a product has no media of
+    its own, callers should render an empty state, not a sibling's photo."""
+    docs = await db.product_media.find({"product_id": product_id}, {"_id": 0}).to_list(500)
     prio = {"internal": 0, "manufacturer": 1, "supplier": 2}
     docs.sort(key=lambda d: (
         prio.get(d.get("source_type", "supplier"), 3),
@@ -260,26 +260,21 @@ async def hydrate_media_batch(docs: list[dict]) -> list[dict]:
     """Same result as calling hydrate_product_media() on every doc, but with
     exactly ONE query against `product_media` for the whole page instead of
     one query per product (was the single biggest latency source in the
-    Quotation Builder catalog grid — ~60 sequential round trips per page)."""
+    Quotation Builder catalog grid — ~60 sequential round trips per page).
+
+    Resolves each product's own media ONLY (product_id match) — never pools
+    in family-sibling media here, for the same reason as
+    list_media_for_product: a product must only ever show its own photo."""
     if not docs:
         return docs
     ids = [d["id"] for d in docs if d.get("id")]
-    family_keys = list({d["family_key"] for d in docs if d.get("family_key")})
-    or_clauses: list[dict] = []
-    if ids:
-        or_clauses.append({"product_id": {"$in": ids}})
-    if family_keys:
-        or_clauses.append({"family_key": {"$in": family_keys}})
-    if not or_clauses:
+    if not ids:
         return docs
-    rows = await db.product_media.find({"$or": or_clauses}, {"_id": 0}).to_list(20000)
+    rows = await db.product_media.find({"product_id": {"$in": ids}}, {"_id": 0}).to_list(20000)
     by_product: dict[str, list[dict]] = {}
-    by_family: dict[str, list[dict]] = {}
     for r in rows:
         if r.get("product_id"):
             by_product.setdefault(r["product_id"], []).append(r)
-        if r.get("family_key"):
-            by_family.setdefault(r["family_key"], []).append(r)
 
     prio = {"internal": 0, "manufacturer": 1, "supplier": 2}
 
@@ -293,9 +288,7 @@ async def hydrate_media_batch(docs: list[dict]) -> list[dict]:
 
     for d in docs:
         raw = list(by_product.get(d.get("id"), []))
-        if d.get("family_key"):
-            raw += by_family.get(d["family_key"], [])
-        # de-dupe (a row could match both product_id and family_key clauses)
+        # de-dupe (defensive — a product_id should only ever map to its own rows)
         seen_ids = set()
         deduped = []
         for r in raw:

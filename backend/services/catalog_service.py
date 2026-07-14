@@ -199,9 +199,18 @@ def _dedup_media(rows: list[ProductMedia]) -> list[ProductMedia]:
 
 
 def _apply_media(product: dict, snapshot: CatalogSnapshot) -> None:
+    # IMPORTANT: this must resolve media for THIS product only. It used to
+    # also pool in every family sibling's media via `media_by_family` as a
+    # "helpful" fallback — but since every sibling's own media_by_product
+    # rows ALSO have their own is_primary/hero flags, a pooled+globally
+    # sorted list has no way to prefer "this exact product's own photo"
+    # over "some other colour's photo that happens to sort first". That
+    # produced the reported bug: switching finish/colour updates every text
+    # field correctly but the image can silently stay on (or jump to) a
+    # completely different variant's photo. A product must never display
+    # another variant's image — if it has none of its own, show nothing
+    # (the frontend's empty-state placeholder) rather than borrow one.
     rows = list(snapshot.media_by_product.get(product.get("id"), ()))
-    if product.get("family_key"):
-        rows.extend(snapshot.media_by_family.get(product["family_key"], ()))
     rows = _dedup_media(rows)
 
     summary = {"supplier": 0, "manufacturer": 0, "internal": 0}
