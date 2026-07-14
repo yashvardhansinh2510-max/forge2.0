@@ -864,7 +864,7 @@ frontend:
             Phase 3 Cross-Platform Functional Audit RE-RUN COMPLETE (2026-07-13)
             
             CONTEXT: Previous test run found EXPO_PUBLIC_BACKEND_URL was empty, causing total API failure.
-            User corrected this to the real public preview URL (https://product-media-hub-2.preview.emergentagent.com)
+            User corrected this to the real public preview URL (https://forge-lc1.preview.emergentagent.com)
             in frontend/.env and restarted Expo. Re-ran FULL Phase 3 audit from scratch.
             
             ═══════════════════════════════════════════════════════════════════════════
@@ -872,7 +872,7 @@ frontend:
             ═══════════════════════════════════════════════════════════════════════════
             
             ✅ GET /api/health via app: 200 OK (no more "Unexpected token '<'" errors)
-            ✅ EXPO_PUBLIC_BACKEND_URL correctly set to: https://product-media-hub-2.preview.emergentagent.com
+            ✅ EXPO_PUBLIC_BACKEND_URL correctly set to: https://forge-lc1.preview.emergentagent.com
             ✅ All API calls now use correct public URL, not localhost
             
             ═══════════════════════════════════════════════════════════════════════════
@@ -1986,7 +1986,7 @@ backend:
           comment: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Fix applied: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin)."
         - working: true
           agent: "testing"
-          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://product-media-hub-2.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
+          comment: "Bug fix VERIFIED — All checks passed. ✅ Login successful with owner@forge.app / Forge@2026, redirected to dashboard. ✅ NO 'Failed to fetch' errors in console (0 errors, 3 warnings). ✅ All 7 API requests are same-origin (https://forge-lc1.preview.emergentagent.com/api/*). ✅ NO localhost:8001 requests detected. ✅ Catalog page loaded successfully (shows 0 families - expected as products not yet imported). ✅ Network requests verified: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). All endpoints returning HTTP 200. Bug completely resolved - frontend now uses same-origin requests and Kubernetes ingress correctly routes to backend."
 
 frontend:
   - task: "Quotation Builder 2.0 Phase 1A — undo/redo, DnD, variants, alternates"
@@ -3008,9 +3008,9 @@ agent_communication:
     - agent: "main"
       message: "User reported 'Failed to fetch' error when using Forge Expo web app. Root cause suspected: frontend/.env had EXPO_PUBLIC_BACKEND_URL=http://localhost:8001, which from browser tries to hit user's local machine (not container). Applied fix: (1) frontend/.env now has EXPO_PUBLIC_BACKEND_URL= (empty string), (2) frontend/src/api/client.ts line 4-5 changed to const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || '', (3) Restarted expo supervisor. Kubernetes ingress routes /api/* to backend on port 8001 automatically, so BASE must be empty (same-origin). Please verify: (1) Login with owner@forge.app / Forge@2026 succeeds, (2) Dashboard loads, (3) Navigate to catalog screen, (4) Verify products list loads (may be empty), (5) Confirm request URLs are same-origin (preview URL) not localhost:8001, (6) Check browser console for 'Failed to fetch' errors."
     - agent: "testing"
-      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://product-media-hub-2.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
+      message: "Bug Fix Verification COMPLETE — 'Failed to fetch' error RESOLVED. ✅ All verification checks passed: (1) Login successful with owner@forge.app / Forge@2026, redirected to dashboard at /dashboard. (2) Dashboard loaded showing 'Good evening, Aarav' with stats (Revenue ₹0.00, Open Pipeline ₹0.00, Quotes 0, Pending Approval 0). (3) Catalog page loaded successfully at /catalog showing '0 families' with filters (All categories, All brands, Families/All variants toggle, AI Import button). (4) Catalog empty state displayed: 'No families match - Try clearing filters or switch to All variants view' (expected - products not yet imported per review request). (5) Network analysis: 7 API requests detected, ALL same-origin (https://forge-lc1.preview.emergentagent.com/api/*), ZERO localhost:8001 requests. (6) Console clean: 0 errors, 3 warnings (non-critical), ZERO 'Failed to fetch' errors. ✅ Verified API endpoints: POST /api/auth/login (200), GET /api/dashboard/stats (200), GET /api/brands (200), GET /api/categories (200), GET /api/catalog/hierarchy (200), GET /api/auth/me (200), GET /api/products/families?limit=60 (200). Fix working perfectly - frontend now uses same-origin requests (empty EXPO_PUBLIC_BACKEND_URL) and Kubernetes ingress correctly routes /api/* to backend. User can now use the app without 'Failed to fetch' errors."
     - agent: "main"
-      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://product-media-hub-2.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
+      message: "Quotation Builder V4 shipped. Please regression-test the NEW V4 backend endpoints. Focus ONLY on V4 additions plus a small smoke test that existing endpoints still work. Credentials in /app/memory/test_credentials.md — owner@forge.app / Forge@2026. API base URL: https://forge-lc1.preview.emergentagent.com/api. PRIORITY 1 — V4 catalog additions: (1.1) GET /api/brands must return 5 brands with product_count field, sum equals total active products. (1.2) GET /api/categories returns categories with product_count. (1.3) GET /api/categories?brand_id=<Hansgrohe_id> returns ONLY categories where Hansgrohe has products (product_count > 0), fake brand_id returns []. (1.4) GET /api/products?limit=5&sort=popular returns {total, items} with NEW fields: popular, frequently_used, recently_used, usage_count, my_usage_count. (1.5-1.8) Test sort options: recent, price_asc, price_desc, name. (1.9) GET /api/products?q=chrome search. (1.10) GET /api/products?brand_id=X&category_id=Y combined filters. PRIORITY 2 — Custom product: (2.1) POST /api/products/custom creates with is_custom=true, tags contains 'custom'. (2.2) Same SKU auto-suffixes. (2.3) is_custom=false + duplicate SKU returns 409. (2.4) Search finds custom product. (2.5) Auth required. PRIORITY 3 — Complete the set: (3.1) GET /api/products/{id}/complete-the-set returns {source_product_id, items}. (3.2) Non-existent id returns 404. (3.3) Auth required. PRIORITY 4 — Recent Quotations: (4.1) GET /api/quotations/recent?limit=5 returns array with required fields (id, number, customer_name, project_name, phone, grand_total, status, revision_count, updated_at). (4.2) Ordered by updated_at DESC. (4.3) Auth required. PRIORITY 5 — V4 quotation fields: (5.1) POST /api/quotations with {project_name, phone_snapshot, reference_source} persists all three. (5.2) GET verifies fields intact. (5.3) PATCH with ui_state persists all keys. (5.4) PATCH project_name preserves phone_snapshot. (5.5) PATCH silent=true does NOT create revision. (5.6) PATCH silent=false creates revision. PRIORITY 6 — Smoke regression: (6.1) POST /api/quotations existing shape works. (6.2) GET /api/products/{id}/alternates returns correct shape. (6.3) GET /api/purchase-orders returns 200. (6.4) GET /api/payments/stats returns 200. (6.5) GET /api/quotations/{id}/place-order/preview works. (6.6) POST /api/quotations/{id}/duplicate works."
     - agent: "testing"
       message: |
         Quotation Builder V4 Backend Regression Testing COMPLETE — ALL 63 TESTS PASSED (100% success rate).
@@ -7001,7 +7001,7 @@ frontend:
           alternative auth approaches, and report browser verification unavailable immediately."
           
           FINDINGS:
-          ✓ Preview URL accessible: https://product-media-hub-2.preview.emergentagent.com
+          ✓ Preview URL accessible: https://forge-lc1.preview.emergentagent.com
           ✓ Login page loads correctly at /login
           ✓ Login form renders with email/password fields
           ✓ Credentials filled successfully: owner@forge.app / Forge@2026
@@ -7237,7 +7237,7 @@ backend:
             
             Comprehensive verification of NEW/CHANGED customer-scoped quotation endpoints per review request.
             Authenticated as customer@forge.app / Forge@2026 (customer portal) and owner@forge.app / Forge@2026 (staff).
-            Base URL: https://product-media-hub-2.preview.emergentagent.com/api
+            Base URL: https://forge-lc1.preview.emergentagent.com/api
             
             ═══════════════════════════════════════════════════════════════════════════
             AUTHENTICATION
@@ -10090,4 +10090,197 @@ agent_communication:
             Zero regressions detected. All 2,610 products remain in catalog with correct counts.
             Backend is stable and ready for production use.
 
+
+
+  - task: "Quotation Builder Mobile/Tablet/Desktop Polish - Product picker UI refinements (phone FAB, brand/category pills, price layout, card heights, modal footer)"
+    implemented: true
+    working: false
+    file: "frontend/src/components/quotation/layout/BuilderShell.tsx, frontend/src/components/quotation/layout/MobileControls.tsx, frontend/src/components/quotation/catalog/ProductExplorer.tsx, frontend/src/components/quotation/sheets/ProductModal.tsx, frontend/src/components/quotation/canvas/QuotationCanvas.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: |
+            Quotation Builder Cross-Viewport Testing COMPLETED (2026-07-14)
+            Tested at 3 viewports: PHONE (390x844), TABLET (810x1080), DESKTOP (1440x900)
+            Login: owner@forge.app / Forge@2026
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            CRITICAL FAILURES - PHONE VIEWPORT (390x844)
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ❌ BLOCKER: Mobile FAB button (testID="mobile-fab") is NOT RENDERING
+            • Review request explicitly requires floating "+" FAB button bottom-right on phone
+            • MobileFAB component exists in MobileControls.tsx but is NOT imported/rendered anywhere
+            • BuilderShell.tsx does not render <MobileFAB /> component on phone viewport
+            • QuotationPane.tsx does not render <MobileFAB /> component
+            • QuotationCanvas.tsx shows "Browse catalog" button in empty state instead
+            • BuilderFooter.tsx shows "Add" button in footer bar, but NO floating FAB
+            
+            ❌ CASCADING FAILURES (all blocked by missing FAB):
+            • Cannot open product picker modal (no FAB to tap)
+            • Cannot test brand pill row (testID="mobile-brand-selector")
+            • Cannot test category pill row (testID="mobile-category-selector")
+            • Cannot test product cards (image, name, SKU, price layout, Add button)
+            • Cannot test card height consistency
+            • Cannot test search functionality with recent searches
+            • Cannot test infinite scroll
+            • Cannot test product detail modal footer buttons
+            
+            PHONE VIEWPORT ACTUAL BEHAVIOR:
+            • Shows only Quotation pane with "New Quotation" header ✓
+            • Empty state shows "Add your first product" message ✓
+            • Empty state shows "Browse catalog" button (testID="empty-browse-catalog") ✗ (not FAB)
+            • Footer bar shows "Add" button (testID="mobile-add-first") ✗ (not FAB)
+            • NO floating FAB button visible anywhere on screen ✗
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TABLET VIEWPORT (810x1080) - PARTIAL PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ PASS: Layout structure correct
+            • Shows 2-pane layout (Brand rail + Quotation pane) ✓
+            • Mobile FAB correctly NOT visible on tablet ✓
+            • Quotation pane visible with "New Quotation" ✓
+            
+            ⚠️  INCOMPLETE: Could not fully verify product cards
+            • Brand rail present but not clearly visible in test
+            • Product cards not visible in main view (expected for 2-pane)
+            • Tablet uses ProductPickerSheet for product selection
+            • Could not open picker sheet to verify product cards
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            DESKTOP VIEWPORT (1440x900) - FULL PASS ✅
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ PASS: Full 3-pane layout (Brand rail + Product grid + Quotation pane)
+            • Brand rail visible on left with "All brands" ✓
+            • Product grid visible with 60 cards in center ✓
+            • Quotation pane visible on right with "New Quotation" ✓
+            • Mobile FAB correctly NOT visible on desktop ✓
+            
+            ✅ PASS: Product cards (3 cards tested)
+            • All cards show price with ₹ symbol ✓
+            • All cards have Add button (testID="add-{sku}") ✓
+            • Card heights perfectly consistent: 297px, 297px, 297px (0px diff) ✓
+            • Price displays on single line without wrapping ✓
+            • Add button properly sized (not oversized) ✓
+            
+            ✅ PASS: Product detail modal
+            • Modal opens when clicking product card ✓
+            • Footer buttons found: Favourite, Add another, Add to quotation ✓
+            • Favourite button (testID="pm-favourite") present ✓
+            • Add another button (testID="pm-add-more") present ✓
+            • Add to quotation button (testID="pm-add-close") present ✓
+            • Footer buttons in SINGLE ROW (Y diff=2px, not stacked) ✓
+            • Modal content does not overflow horizontally ✓
+            
+            ✅ PASS: No console errors detected
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            ROOT CAUSE ANALYSIS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            The MobileFAB component is defined in:
+            /app/frontend/src/components/quotation/layout/MobileControls.tsx
+            
+            export function MobileFAB() {
+              const b = useBuilder();
+              return (
+                <Pressable
+                  testID="mobile-fab"
+                  onPress={() => b.setPickerSheetOpen(true)}
+                  style={({ pressed }) => [styles.fab, pressed && { opacity: 0.9 }]}
+                >
+                  <Feather name="plus" size={22} color={colors.onBrand} />
+                </Pressable>
+              );
+            }
+            
+            However, this component is NEVER imported or rendered in:
+            • BuilderShell.tsx (the main layout component)
+            • QuotationPane.tsx (the phone-only pane)
+            • QuotationCanvas.tsx (the canvas with empty state)
+            • BuilderFooter.tsx (the footer with Add button)
+            
+            The phone viewport currently shows:
+            1. Empty state "Browse catalog" button in QuotationCanvas.tsx (line 56-62)
+            2. Footer "Add" button in BuilderFooter.tsx (line 83-91)
+            
+            But NEITHER of these is the floating FAB button required by the review request.
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            SUMMARY
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            PHONE (390x844): ❌ CRITICAL FAILURE
+            • 0/9 tests passed (all blocked by missing FAB)
+            • Mobile FAB button not rendering (BLOCKER)
+            • Cannot test any product picker functionality
+            
+            TABLET (810x1080): ⚠️  PARTIAL PASS
+            • 3/3 layout tests passed
+            • Product card tests incomplete (could not open picker)
+            
+            DESKTOP (1440x900): ✅ FULL PASS
+            • 9/9 tests passed
+            • All requirements met
+            • No regressions detected
+            
+            OVERALL: ❌ FAILED
+            • Critical blocker on phone viewport
+            • Desktop working perfectly
+            • Tablet partially working
+            
+            RECOMMENDATION: Main agent must add <MobileFAB /> component to BuilderShell.tsx
+            or QuotationPane.tsx to render the floating FAB button on phone viewport (isPhone=true).
+            The component exists and is ready to use, it just needs to be imported and rendered.
+
+
+test_plan:
+  current_focus:
+    - "Quotation Builder Mobile/Tablet/Desktop Polish - Product picker UI refinements"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Quotation Builder Cross-Viewport Testing COMPLETE — CRITICAL BLOCKER FOUND ON PHONE VIEWPORT
+        
+        ❌ PHONE (390x844): CRITICAL FAILURE
+           • Mobile FAB button (testID="mobile-fab") is NOT RENDERING
+           • MobileFAB component exists in MobileControls.tsx but is never imported/rendered
+           • BuilderShell.tsx does not render <MobileFAB /> on phone viewport
+           • All 9 phone tests BLOCKED by missing FAB (cannot open product picker)
+           • Phone shows "Browse catalog" button in empty state instead of floating FAB
+           • Phone shows "Add" button in footer bar, but NO floating FAB
+        
+        ⚠️  TABLET (810x1080): PARTIAL PASS
+           • Layout structure correct (2-pane: Brand rail + Quotation)
+           • Mobile FAB correctly NOT visible on tablet ✓
+           • Could not fully verify product cards (picker sheet didn't open in test)
+        
+        ✅ DESKTOP (1440x900): FULL PASS (9/9 tests)
+           • Full 3-pane layout working perfectly ✓
+           • Product cards: price on single line, proper Add button, consistent heights (0px diff) ✓
+           • Product modal: footer buttons in single row (not stacked) ✓
+           • No console errors ✓
+        
+        ROOT CAUSE:
+        The MobileFAB component is defined but never rendered. Main agent must:
+        1. Import MobileFAB from "./layout/MobileControls" in BuilderShell.tsx or QuotationPane.tsx
+        2. Render <MobileFAB /> conditionally when isPhone=true
+        3. Position it as a floating button (already styled in MobileControls.tsx)
+        
+        RECOMMENDATION: Fix the missing FAB rendering, then re-test phone viewport to verify:
+        • FAB appears bottom-right
+        • Tapping FAB opens product picker modal
+        • Brand/category pills work
+        • Product cards show correct layout
+        • Search and infinite scroll work
+        • Product modal footer buttons are full-width on phone
 

@@ -83,7 +83,7 @@
         "api_requests_count": 7,
         "image_requests_count": 3,
         "duplicate_api_urls": {
-          "https://product-media-hub-2.preview.emergentagent.com/api/categories": 2
+          "https://forge-lc1.preview.emergentagent.com/api/categories": 2
         },
         "unique_api_endpoints": [
           "categories",
@@ -224,7 +224,7 @@
         "api_requests_count": 7,
         "image_requests_count": 2,
         "duplicate_api_urls": {
-          "https://product-media-hub-2.preview.emergentagent.com/api/categories": 2
+          "https://forge-lc1.preview.emergentagent.com/api/categories": 2
         },
         "unique_api_endpoints": [
           "categories",
@@ -365,7 +365,7 @@
         "api_requests_count": 7,
         "image_requests_count": 2,
         "duplicate_api_urls": {
-          "https://product-media-hub-2.preview.emergentagent.com/api/categories": 2
+          "https://forge-lc1.preview.emergentagent.com/api/categories": 2
         },
         "unique_api_endpoints": [
           "categories",

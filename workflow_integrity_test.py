@@ -10,7 +10,7 @@ import json
 from typing import Optional
 
 # Backend URL
-BASE_URL = "https://product-media-hub-2.preview.emergentagent.com/api"
+BASE_URL = "https://forge-lc1.preview.emergentagent.com/api"
 
 # Test credentials
 OWNER_EMAIL = "owner@forge.app"
