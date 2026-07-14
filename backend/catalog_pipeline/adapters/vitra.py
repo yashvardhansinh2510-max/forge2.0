@@ -23,6 +23,7 @@ Iteration 1 changes:
 from __future__ import annotations
 import io
 import re
+from collections import defaultdict
 
 from ..base import MISSING, BrandAdapter, ExtractionReport, ProductRow, dedupe_iter
 from ..image_extractor import ExtractedImage, extract_images_from_xlsx_ex
@@ -145,31 +146,33 @@ class VitraAdapter(BrandAdapter):
 
         last_design = MISSING
 
-        # Extract every image with quality metadata. We collect a per-sheet
-        # ordered list so we can build a global row → image mapping without
-        # over-assigning: each image is used at most once per (sheet, row).
-        by_sheet_row: dict[tuple[str, int], ExtractedImage] = {}
-        for sheet, row_idx, img in extract_images_from_xlsx_ex(data):
-            # If multiple blips anchor at the exact same (sheet, row), keep the
-            # highest-quality one.
-            key = (sheet, row_idx)
-            prev = by_sheet_row.get(key)
-            qrank_pre = {"excellent": 4, "good": 3, "acceptable": 2, "poor": 1}
+        # Extract every image with quality metadata, keyed by its EXACT
+        # (sheet, row, column) anchor position — never collapsed to
+        # (sheet, row) alone. The Vitra sheet places one finish's photo per
+        # finish-group, side-by-side in the SAME row (WHITE / MATT WHITE /
+        # MATT TAUPE / ... each own their own "IMAGE" sub-column). Keying on
+        # row alone would keep only the single highest-quality blip per row
+        # and silently hand every other finish that same picture — this is
+        # the exact bug that made every Vitra finish variant show an
+        # identical photo. Keeping the column means each finish keeps its
+        # own picture.
+        by_sheet_row_col: dict[tuple[str, int, int], ExtractedImage] = {}
+        qrank_pre = {"excellent": 4, "good": 3, "acceptable": 2, "poor": 1}
+        for sheet, row_idx, col_idx, img in extract_images_from_xlsx_ex(data):
+            key = (sheet, row_idx, col_idx)
+            prev = by_sheet_row_col.get(key)
             if prev is None or (qrank_pre.get(img.quality, 0), img.longest_edge) > (qrank_pre.get(prev.quality, 0), prev.longest_edge):
-                by_sheet_row[key] = img
-        report.images_found = len(by_sheet_row)
+                by_sheet_row_col[key] = img
+        report.images_found = len(by_sheet_row_col)
 
-        # Group image anchor rows by sheet for closest-match lookup.
-        anchors_by_sheet: dict[str, list[int]] = {}
-        for (sheet, row_idx) in by_sheet_row:
-            anchors_by_sheet.setdefault(sheet, []).append(row_idx)
+        # Group image anchor (row, col) pairs by sheet for closest-match
+        # lookup, restricted per-column below so different finishes never
+        # borrow each other's anchor.
+        anchors_by_sheet: dict[str, list[tuple[int, int]]] = {}
+        for (sheet, row_idx, col_idx) in by_sheet_row_col:
+            anchors_by_sheet.setdefault(sheet, []).append((row_idx, col_idx))
         for s in anchors_by_sheet:
             anchors_by_sheet[s].sort()
-
-        # Track which anchor rows have already been consumed so each image is
-        # used by at most one primary product row. Variant siblings within the
-        # same family still get the *same* image because they resolve to the
-        # same closest anchor (single lookup per row).
 
         for ws in wb.worksheets:
             all_rows: list[list] = [list(r) for r in ws.iter_rows(values_only=True)]
@@ -183,35 +186,53 @@ class VitraAdapter(BrandAdapter):
             for col, val in enumerate(finish_header):
                 if val and str(val).strip():
                     raw_groups.append((str(val).strip(), col))
-            group_columns: list[tuple[str, int, int]] = []
+            group_columns: list[tuple[str, int, int, int | None]] = []
             for gi, (finish, start_col) in enumerate(raw_groups):
                 next_col = raw_groups[gi + 1][1] if gi + 1 < len(raw_groups) else len(sub_header)
                 code_col: int | None = None
                 mrp_col: int | None = None
+                image_col: int | None = None
                 for c in range(start_col, min(next_col, len(sub_header))):
                     label = str(sub_header[c] or "").strip().lower()
                     if label == "code" and code_col is None:
                         code_col = c
                     elif label == "mrp" and mrp_col is None:
                         mrp_col = c
+                    elif "image" in label and image_col is None:
+                        image_col = c
                 if code_col is not None and mrp_col is not None:
-                    group_columns.append((finish, code_col, mrp_col))
+                    if image_col is None:
+                        # Sub-header didn't literally spell "IMAGE" — infer it
+                        # from the documented layout (Code, IMAGE, MRP) as the
+                        # column immediately after Code, but only when that
+                        # column actually falls before MRP (never guess past
+                        # the group's own boundary into the next finish).
+                        candidate = code_col + 1
+                        image_col = candidate if candidate < mrp_col else None
+                    group_columns.append((finish, code_col, mrp_col, image_col))
 
             if not group_columns:
                 report.warnings.append(f"Sheet '{ws.title}' has no recognizable finish groups; fell back to narrow parser")
 
             for r_idx, row in enumerate(all_rows[2:], start=3):
                 design_raw = str(row[0] or "").strip()
+                detail_raw = str(row[1] or "").strip() if len(row) > 1 else ""
+                # The supplier's own sheet repeats the header block itself
+                # partway down (verified in the 2026 file at rows 45 & 69) —
+                # without this guard those rows get parsed as bogus products
+                # whose "SKU" is literally the finish-header text (e.g.
+                # "WHITE 003/403"). Never treat a repeated header as data.
+                if design_raw.upper() == "DESIGN" and detail_raw.upper() == "DETAIL":
+                    continue
                 # Series column can contain embedded newlines ("OPTIONS \nWITH TAP HOLE").
                 # Collapse them so the hierarchy label stays clean.
                 design = re.sub(r"\s+", " ", design_raw) if design_raw else last_design
-                detail = str(row[1] or "").strip() if len(row) > 1 else ""
-                detail = re.sub(r"\s+", " ", detail) if detail else ""
+                detail = re.sub(r"\s+", " ", detail_raw) if detail_raw else ""
                 if design:
                     last_design = design
 
                 if group_columns:
-                    for finish, code_col, mrp_col in group_columns:
+                    for finish, code_col, mrp_col, image_col in group_columns:
                         code_cell = str(row[code_col]).strip() if code_col < len(row) and row[code_col] not in (None, "") else ""
                         if not code_cell:
                             continue
@@ -226,24 +247,33 @@ class VitraAdapter(BrandAdapter):
                         # design+detail combination.
                         family_key = f"vitra:{_slug(ws.title)}:{_slug(design)}:{_slug(detail)}"
 
-                        # Locate the closest image anchor row within a narrow
-                        # window (±2). Variants of the same family (same
-                        # r_idx) intentionally resolve to the same anchor, so
-                        # they share the family's product photo. Distinct
-                        # family rows are ≥ 2 rows apart in the Vitra sheet,
-                        # so a ±2 window keeps assignments unambiguous.
+                        # Locate the closest image anchor within a narrow row
+                        # window (±2), constrained to THIS finish's own image
+                        # column (±1, to tolerate the anchor landing on the
+                        # neighbouring cell boundary within the same 4-column
+                        # group). Never search outside this finish's own
+                        # column range — that would borrow a sibling finish's
+                        # photo, which is the bug this fix removes. If this
+                        # finish truly has no photo of its own, it stays
+                        # unmapped (no fabrication, no borrowing).
                         best: ExtractedImage | None = None
-                        anchors = anchors_by_sheet.get(ws.title, [])
-                        best_distance = 99
-                        for a in anchors:
-                            d = abs(a - r_idx)
-                            if d <= 2 and d < best_distance:
-                                candidate = by_sheet_row.get((ws.title, a))
-                                if candidate is not None:
-                                    best = candidate
-                                    best_distance = d
-                                    if d == 0:
-                                        break
+                        best_score = (99, 99)
+                        if image_col is not None:
+                            for (a_row, a_col) in anchors_by_sheet.get(ws.title, []):
+                                d_col = abs(a_col - image_col)
+                                if d_col > 1:
+                                    continue
+                                d_row = abs(a_row - r_idx)
+                                if d_row > 2:
+                                    continue
+                                score = (d_row, d_col)
+                                if score < best_score:
+                                    candidate = by_sheet_row_col.get((ws.title, a_row, a_col))
+                                    if candidate is not None:
+                                        best = candidate
+                                        best_score = score
+                                        if score == (0, 0):
+                                            break
                         image_urls = [best.data_url] if best else []
                         image_meta = [best.to_dict()] if best else []
                         image_quality = best.quality if best else "missing"
@@ -323,6 +353,28 @@ class VitraAdapter(BrandAdapter):
                             image_quality="missing",
                             confidence=0.55,
                         ))
+
+        # Same-SKU-different-payload conflict guard: the supplier file can
+        # (rarely) list the identical code under two different finish
+        # columns with different colours/prices — a genuine source-file
+        # error, not something this pipeline should silently resolve by
+        # picking one and discarding the other. Flag both, drop confidence
+        # below the certifier's auto-accept threshold, and surface it in the
+        # import report so a human decides which (if either) is correct.
+        by_sku: dict[str, list[ProductRow]] = defaultdict(list)
+        for r in rows:
+            by_sku[r.sku].append(r)
+        for sku, group in by_sku.items():
+            if len(group) < 2:
+                continue
+            distinct_payloads = {(g.colour, g.mrp) for g in group}
+            if len(distinct_payloads) > 1:
+                for g in group:
+                    g.confidence = min(g.confidence, 0.4)
+                    g.issues.append(
+                        f"Conflict: SKU {sku!r} appears {len(group)}x in the supplier file "
+                        f"with different colour/price combinations {sorted(distinct_payloads)} — needs manual review"
+                    )
 
         report.parsed_rows = len(rows)
         return rows, report

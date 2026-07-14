@@ -197,7 +197,7 @@ async def run(dry_run: bool) -> dict:
             p = Product(
                 name=(r.description or "Untitled")[:200], sku=r.sku, brand_id=brand_id,
                 category_id=cat_id, family_key=r.family_key, family_name=family_name,
-                variant_label=r.finish, finish=r.finish, description=r.description,
+                variant_label=r.finish, finish=r.finish, colour=r.finish, description=r.description,
                 mrp=r.mrp, price=r.mrp, specs=specs, tags=[t for t in tags if t], active=True,
             )
             await db.products.insert_one(p.dict())

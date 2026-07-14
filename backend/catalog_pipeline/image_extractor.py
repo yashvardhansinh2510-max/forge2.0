@@ -383,6 +383,61 @@ def extract_images_from_pdf_ex(pdf_bytes: bytes) -> Iterator[tuple[int, Extracte
                 continue
 
 
+def extract_images_from_pdf_positioned(pdf_bytes: bytes) -> Iterator[tuple[int, tuple[float, float, float, float], ExtractedImage]]:
+    """Yield (page_idx_1based, bbox, ExtractedImage) for every embedded image,
+    WITH its real position on the page.
+
+    This exists because some supplier PDFs (Geberit) put several genuinely
+    different product photos on the SAME page — one per colour/finish
+    variant. A page-only mapping (`extract_images_from_pdf_ex`) cannot tell
+    them apart and ends up handing every SKU on the page the first image
+    found, which is exactly the bug this function fixes: callers can now
+    match each SKU's own text block to its geometrically-nearest image
+    instead of borrowing an unrelated variant's photo.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except Exception as e:  # pragma: no cover
+        logger.warning("PyMuPDF missing: %s", e)
+        return
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        logger.warning("Cannot open PDF with PyMuPDF: %s", e)
+        return
+    seen: set[str] = set()
+    for page_idx in range(len(doc)):
+        page = doc[page_idx]
+        try:
+            raw_images = page.get_images(full=True)
+        except Exception:
+            continue
+        for entry in raw_images:
+            xref = entry[0]
+            try:
+                rects = page.get_image_rects(xref)
+                if not rects:
+                    continue
+                bbox = (rects[0].x0, rects[0].y0, rects[0].x1, rects[0].y1)
+                pix = doc.extract_image(xref)
+                data = pix.get("image")
+                ext = (pix.get("ext") or "jpeg").lower()
+                if not data:
+                    continue
+                ext_norm = "jpeg" if ext in ("jpg", "jpeg") else ext
+                img = _decode_supplier_image(data, ext_norm)
+                if img is None:
+                    continue
+                # Same physical picture can be embedded once but referenced at
+                # multiple positions (xref reuse) — that's legitimate (e.g. a
+                # generic "Reference Image" placeholder used by more than one
+                # SKU), so we do NOT globally dedupe by sha1 here the way the
+                # XLSX path does; every position gets its own match attempt.
+                yield page_idx + 1, bbox, img
+            except Exception:
+                continue
+
+
 # ==========================================================================
 # ---------- XLSX (zip-first) ----------
 # ==========================================================================
@@ -390,15 +445,28 @@ def extract_images_from_pdf_ex(pdf_bytes: bytes) -> Iterator[tuple[int, Extracte
 def extract_images_from_xlsx(xlsx_bytes: bytes) -> Iterator[tuple[str, int, str, str]]:
     """Legacy-compatible XLSX extractor: (sheet, row_1based, sha1, data_url).
 
-    Kept for the Vitra adapter's existing per-row lookup logic.
+    Kept for the Hansgrohe adapter's existing per-row lookup logic (that
+    supplier layout is one-row-per-SKU with a single "Product Image" column,
+    so row-only anchoring is not ambiguous there).
     """
-    for sheet, row, img in extract_images_from_xlsx_ex(xlsx_bytes):
+    for sheet, row, _col, img in extract_images_from_xlsx_ex(xlsx_bytes):
         yield sheet, row, img.sha1, img.data_url
 
 
-def extract_images_from_xlsx_ex(xlsx_bytes: bytes) -> Iterator[tuple[str, int, ExtractedImage]]:
-    """Yield (sheet_name, anchor_row_1based, ExtractedImage) for every embedded
-    image the supplier ships, with each image classified by pixel quality."""
+def extract_images_from_xlsx_ex(xlsx_bytes: bytes) -> Iterator[tuple[str, int, int, ExtractedImage]]:
+    """Yield (sheet_name, anchor_row_1based, anchor_col_0based, ExtractedImage)
+    for every embedded image the supplier ships, with each image classified
+    by pixel quality.
+
+    IMPORTANT: the column is included (not just the row) because some
+    supplier layouts (e.g. Vitra) put several DIFFERENT finish variants'
+    photos side-by-side in the SAME row, one per finish's own "IMAGE"
+    sub-column. Callers that key purely on (sheet, row) would collapse those
+    distinct photos into one and then hand every finish the same picture —
+    the exact bug this column was added to prevent. Callers whose supplier
+    layout is genuinely one-row-per-product (Hansgrohe) can simply ignore
+    the column via `extract_images_from_xlsx`.
+    """
     try:
         z = zipfile.ZipFile(BytesIO(xlsx_bytes), "r")
     except Exception as e:
@@ -478,11 +546,15 @@ def extract_images_from_xlsx_ex(xlsx_bytes: bytes) -> Iterator[tuple[str, int, E
         for anchor_tag in ("oneCellAnchor", "twoCellAnchor", "absoluteAnchor"):
             for anchor in dtree.findall("{%s}%s" % (NS["xdr"], anchor_tag)):
                 row_idx = 0
+                col_idx = 0
                 frm = anchor.find("{%s}from" % NS["xdr"])
                 if frm is not None:
                     row_el = frm.find("{%s}row" % NS["xdr"])
                     if row_el is not None and row_el.text and row_el.text.isdigit():
                         row_idx = int(row_el.text) + 1
+                    col_el = frm.find("{%s}col" % NS["xdr"])
+                    if col_el is not None and col_el.text and col_el.text.isdigit():
+                        col_idx = int(col_el.text)
 
                 # A drawing anchor may reference multiple blips inside an
                 # AlternateContent block (Choice = modern format, Fallback =
@@ -525,7 +597,7 @@ def extract_images_from_xlsx_ex(xlsx_bytes: bytes) -> Iterator[tuple[str, int, E
                     key=lambda c: (quality_rank.get(c.quality, 0), c.longest_edge),
                     reverse=True,
                 )[0]
-                yield sheet_name, row_idx, best
+                yield sheet_name, row_idx, col_idx, best
 
 
 def _resolve_relative(base: str, target: str) -> str:

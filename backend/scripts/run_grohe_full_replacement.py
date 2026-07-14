@@ -323,6 +323,7 @@ async def run(dry_run: bool) -> dict:
                 family_key=r.family_key,
                 family_name=family_name,
                 variant_label=r.finish,
+                colour=r.finish,
                 finish=r.finish,
                 description=r.description,
                 mrp=r.mrp,

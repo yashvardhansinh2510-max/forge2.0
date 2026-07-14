@@ -271,7 +271,7 @@ class HansgroheAdapter(BrandAdapter):
 
         # ---- Image mapping: (sheet, row) → highest-quality anchor ----
         by_sheet_row: dict[tuple[str, int], ExtractedImage] = {}
-        for sheet, row_idx, img in extract_images_from_xlsx_ex(data):
+        for sheet, row_idx, _col_idx, img in extract_images_from_xlsx_ex(data):
             key = (sheet, row_idx)
             prev = by_sheet_row.get(key)
             qrank = {"excellent": 4, "good": 3, "acceptable": 2, "poor": 1}

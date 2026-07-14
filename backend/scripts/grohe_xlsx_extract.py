@@ -143,6 +143,29 @@ def _detect_finish(text: str) -> Optional[str]:
     return None
 
 
+# Some Grohe files (RSH Aqua Tile Shower / Plate / Bau Line / Wall Mounted /
+# etc.) never spell the finish out in the description at all — the ONLY
+# place the variant is distinguished is the SKU's own trailing 4-character
+# code (verified directly against the raw supplier xlsx: e.g. "1049860000"
+# vs "104986AL00" / "104986DL00" / "104986GN00" / "104986KF00" — identical
+# description, only the SKU tail differs). "0000" is GROHE's own
+# industry-wide, publicly documented convention for Chrome across their
+# entire catalog (same convention Hansgrohe uses) — not a guess. The
+# lettered tails (AL/DL/GN/KF/...) are NOT a documented public code table,
+# so we never invent a colour name for them; we surface the supplier's own
+# literal code instead ("Code AL00") so the variant is at least genuinely
+# distinguishable in the UI rather than showing an identical, meaningless
+# "Variant" label for every option. Never applied when the description text
+# itself already answered the question.
+def _finish_from_sku_tail(sku: str) -> Optional[str]:
+    tail = sku[-4:] if len(sku) >= 4 else ""
+    if not tail:
+        return None
+    if tail.isdigit():
+        return "Chrome" if tail == "0000" else f"Code {tail}"
+    return f"Code {tail}"
+
+
 def _normalize_family_base(description: str) -> str:
     """Strip known finish words + pure whitespace/size noise so variants of
     the same base product collapse to one family_key. Text-based only —
@@ -324,7 +347,7 @@ def extract_file(category: str, path: str, original_filename: Optional[str] = No
         finish_hint = cells.get("G")
         finish_hint = str(finish_hint).strip() if finish_hint not in (None, "") else None
 
-        finish = _detect_finish(description)
+        finish = _detect_finish(description) or _finish_from_sku_tail(sku)
         family_key = f"grohe:{category.lower().replace(' ', '-')}:{_normalize_family_base(description)}"
 
         dup_key = hashlib.sha1(f"{sku}|{description}|{mrp}".encode()).hexdigest()
