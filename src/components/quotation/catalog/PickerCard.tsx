@@ -44,7 +44,7 @@ function PickerCardImpl({ product, onQuickAdd, onLongPress, onOpenDetails }: Pro
             {product.sku}{product.finish ? ` · ${product.finish}` : ""}
           </Text>
         </View>
-        <Text style={styles.price}>{money(product.price)}</Text>
+        <Text style={styles.price} numberOfLines={1}>{money(product.price)}</Text>
         <Pressable
           hitSlop={8}
           testID={`add-plus-${product.id}`}
@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
   },
   thumb: { width: 44, height: 44, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
   name: { fontSize: 13, fontWeight: "600", color: colors.onSurface },
-  price: { fontFamily: "System", fontSize: 13, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  price: { fontFamily: "System", fontSize: 13, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"], flexShrink: 0 },
   addBtn: {
     width: 28, height: 28, borderRadius: 999, backgroundColor: colors.brand,
     alignItems: "center", justifyContent: "center",

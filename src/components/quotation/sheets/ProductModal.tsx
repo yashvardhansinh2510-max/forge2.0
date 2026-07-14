@@ -7,7 +7,7 @@
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -21,6 +21,8 @@ export function ProductModal() {
   const b = useBuilder();
   const open = !!b.productModal;
   const product = b.productModal;
+  const { width: windowWidth } = useWindowDimensions();
+  const isCompactFooter = windowWidth < 480;
 
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const [qty, setQty] = useState(1);
@@ -144,9 +146,9 @@ export function ProductModal() {
 
                 <View style={styles.priceCard}>
                   <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-                    <Text style={styles.priceBig}>{money(currentPrice)}</Text>
+                    <Text style={styles.priceBig} numberOfLines={1}>{money(currentPrice)}</Text>
                     {product.mrp && product.mrp > currentPrice ? (
-                      <Text style={styles.mrpBig}>{money(product.mrp)}</Text>
+                      <Text style={styles.mrpBig} numberOfLines={1}>{money(product.mrp)}</Text>
                     ) : null}
                   </View>
                   <Text style={styles.priceHint}>Editable selling price · MRP shown for reference</Text>
@@ -291,25 +293,50 @@ export function ProductModal() {
             ) : null}
           </ScrollView>
 
-          {/* Footer actions */}
-          <View style={styles.footer}>
-            <Pressable
-              onPress={() => b.toggleFavourite(product.id)}
-              style={styles.footerGhost}
-              testID="pm-favourite"
-            >
-              <Feather name="heart" size={14} color={b.favouriteIds.includes(product.id) ? ds.brass : colors.onSurface} />
-              <Text style={styles.footerGhostLabel}>{b.favouriteIds.includes(product.id) ? "Favourited" : "Favourite"}</Text>
-            </Pressable>
-            <View style={{ flex: 1 }} />
-            <Pressable onPress={() => commit(false)} style={styles.footerSecondary} testID="pm-add-more">
-              <Text style={styles.footerSecondaryLabel}>Add another</Text>
-            </Pressable>
-            <Pressable onPress={() => commit(true)} style={styles.footerPrimary} testID="pm-add-close">
-              <Feather name="plus" size={14} color={colors.onBrand} />
-              <Text style={styles.footerPrimaryLabel}>Add to quotation</Text>
-            </Pressable>
-          </View>
+          {/* Footer actions — 3 competing actions ("Favourite" / "Add another" /
+              "Add to quotation") used to be crammed into a single row that
+              never adapted to phone width, forcing the primary CTA to either
+              overflow or shrink unpredictably. Below ~480px we stack: a
+              secondary row (Favourite + Add another, both compact) sits above
+              a full-width primary "Add to quotation" button that's always
+              easy to hit with a thumb and never gets squeezed by its
+              siblings. Desktop/tablet keep the original single-row layout. */}
+          {isCompactFooter ? (
+            <View style={styles.footerStacked}>
+              <View style={styles.footerStackedTopRow}>
+                <Pressable onPress={() => b.toggleFavourite(product.id)} style={styles.footerGhost} testID="pm-favourite">
+                  <Feather name="heart" size={14} color={b.favouriteIds.includes(product.id) ? ds.brass : colors.onSurface} />
+                  <Text style={styles.footerGhostLabel}>{b.favouriteIds.includes(product.id) ? "Favourited" : "Favourite"}</Text>
+                </Pressable>
+                <Pressable onPress={() => commit(false)} style={[styles.footerSecondary, { flex: 1 }]} testID="pm-add-more">
+                  <Text style={styles.footerSecondaryLabel} numberOfLines={1}>Add another</Text>
+                </Pressable>
+              </View>
+              <Pressable onPress={() => commit(true)} style={[styles.footerPrimary, styles.footerPrimaryFull]} testID="pm-add-close">
+                <Feather name="plus" size={15} color={colors.onBrand} />
+                <Text style={styles.footerPrimaryLabel} numberOfLines={1}>Add to quotation</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.footer}>
+              <Pressable
+                onPress={() => b.toggleFavourite(product.id)}
+                style={styles.footerGhost}
+                testID="pm-favourite"
+              >
+                <Feather name="heart" size={14} color={b.favouriteIds.includes(product.id) ? ds.brass : colors.onSurface} />
+                <Text style={styles.footerGhostLabel}>{b.favouriteIds.includes(product.id) ? "Favourited" : "Favourite"}</Text>
+              </Pressable>
+              <View style={{ flex: 1 }} />
+              <Pressable onPress={() => commit(false)} style={styles.footerSecondary} testID="pm-add-more">
+                <Text style={styles.footerSecondaryLabel}>Add another</Text>
+              </Pressable>
+              <Pressable onPress={() => commit(true)} style={styles.footerPrimary} testID="pm-add-close">
+                <Feather name="plus" size={14} color={colors.onBrand} />
+                <Text style={styles.footerPrimaryLabel}>Add to quotation</Text>
+              </Pressable>
+            </View>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
@@ -375,7 +402,7 @@ const styles = StyleSheet.create({
   },
 
   body: { flexDirection: "row", padding: spacing.lg, gap: spacing.lg, flexWrap: "wrap" },
-  left: { width: 300, gap: 12 },
+  left: { width: "100%", maxWidth: 300, gap: 12 },
   right: { flex: 1, minWidth: 260, gap: 14 },
 
   hero: { width: "100%", aspectRatio: 1, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
@@ -457,6 +484,12 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface,
   },
+  footerStacked: {
+    gap: 8, paddingHorizontal: spacing.lg, paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  footerStackedTopRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   footerGhost: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.md,
@@ -465,11 +498,13 @@ const styles = StyleSheet.create({
   footerSecondary: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    alignItems: "center",
   },
   footerSecondaryLabel: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
   footerPrimary: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brand,
   },
+  footerPrimaryFull: { justifyContent: "center", width: "100%", paddingVertical: 13 },
   footerPrimaryLabel: { fontSize: 12, fontWeight: "700", color: colors.onBrand, letterSpacing: 0.2 },
 });
