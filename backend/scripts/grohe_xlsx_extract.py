@@ -101,6 +101,14 @@ ORIGINAL_FILENAMES_BATCH3: dict[str, str] = {
     "Thermostat": "THERMOSTAT.xlsx",
 }
 
+# Batch 4 (2026-08) — 1 more supplier file.
+FILES_BATCH4: dict[str, str] = {
+    "Angle Valve": "angle_valve.xlsx",
+}
+ORIGINAL_FILENAMES_BATCH4: dict[str, str] = {
+    "Angle Valve": "AngleValve.xlsx",
+}
+
 
 @dataclass
 class ImageResult:
@@ -286,7 +294,8 @@ def extract_file(category: str, path: str, original_filename: Optional[str] = No
     images_by_row = _extract_images_by_row(path)
     if original_filename is None:
         original_filename = (ORIGINAL_FILENAMES.get(category) or ORIGINAL_FILENAMES_BATCH2.get(category)
-                              or ORIGINAL_FILENAMES_BATCH3.get(category) or category)
+                              or ORIGINAL_FILENAMES_BATCH3.get(category) or ORIGINAL_FILENAMES_BATCH4.get(category)
+                              or category)
 
     rows: list[GroheRow] = []
     seen_hashes: dict[str, str] = {}   # sha1(sku+desc+mrp) -> first sku seen

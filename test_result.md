@@ -9445,3 +9445,54 @@ agent_communication:
         RECOMMENDATION: Main agent should summarize and finish. The GROHE Catalog Batch 3 
         migration is COMPLETE and PRODUCTION-READY with all verification requirements met.
 
+
+  - task: "GROHE Catalog Batch 4 (additive) — final AngleValve.xlsx file"
+    implemented: true
+    working: "NA"
+    file: "backend/scripts/grohe_xlsx_extract.py (extended, FILES_BATCH4), backend/scripts/run_grohe_batch4_additive.py (new, with lock-file safeguard)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            User's final file for this series: "AngleValve.xlsx" -> new category "Angle Valve",
+            additive on top of batches 1-3 (Grohe was 508... wait, was 500 before this batch).
+            Extraction: 19 raw rows, 100% image coverage (19/19). Heavy overlap with angle-valve
+            SKUs already imported in earlier batches under DIFFERENT categories: 9 SKUs excluded
+            as conflicts (never guessed/moved) — 2 already under "Kitchen Tap" (batch 2), 7
+            already under "Trigger & Tank" (batch 3, same "22041xx0" article family with
+            matching descriptions/prices — clearly the supplier's angle-valve master list
+            overlaps multiple category sheets). 2 rows had no price. Final: 8 clean, genuinely
+            new products imported under the new "Angle Valve" category (all "22037xx0" article
+            family, distinct from the excluded "22041xx0"/"2201600M" family).
+
+            SAFEGUARD ADDED after the batch-3 double-invocation incident: run_grohe_batch4_additive.py
+            now writes a lock file (backups/grohe_batch4.lock) before any --execute write and
+            refuses to run if one already exists, removing it in a `finally` block — prevents a
+            repeat of the accidental double-insert. This execution completed in a single clean
+            pass (confirmed by re-querying the DB directly afterward, not just trusting the log):
+            Grohe 500 -> 508, 0 duplicate SKUs, 0 products without an image.
+
+            Final catalog totals: Hansgrohe 908, Axor 448, Grohe 508, Vitra 250, Geberit 496 =
+            2610. Restarted backend, confirmed "Catalog read model ready: 2610 products."
+
+            CUMULATIVE MANUAL-REVIEW BACKLOG (never guessed, all still awaiting user decision):
+            1. SKU 36274000 — claimed by both "Bau Line" and "Short Body Basin Mixer" (batch 2)
+            2. SKU 26681000, 26682000 — claimed by new "Bau Line" file but already in "Shower"
+               (batch 1 vs batch 2)
+            3. SKU 31593002, 2201600M, 2201700M — claimed by "Tall Body Basin Mixer" but already
+               in "Kitchen Tap" (batch 2 vs batch 3)
+            4. SKU 13254000 — claimed by "Spout" but already in "Bau Line" (batch 2 vs batch 3)
+            5. 9 angle-valve SKUs — claimed by new "Angle Valve" file but already in "Kitchen
+               Tap" or "Trigger & Tank" (batches 2/3 vs batch 4)
+            5 total no-price-row batches (3+10+16+2 = 31 SKUs) skipped across all batches, never
+            fabricated.
+
+            REQUEST: quick regression — (a) brands: Grohe=508, others unchanged (908/448/250/496);
+            (b) new "Angle Valve" category exists with 8 products; (c) GET /api/products for
+            Grohe returns 508 with ZERO duplicate SKUs; (d) spot-check 2-3 Angle Valve product
+            images are live Supabase HTTP 200; (e) health counts.products=2610; (f) other brands
+            + quotations/purchases/payments unaffected (light regression, this was a small batch).
+

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-GROHE Catalog Batch 3 (Additive) Verification Test Suite
-Tests the 3rd additive Grohe catalog batch with special attention to duplicate-SKU incident.
-Grohe should now be exactly 500 products (was 299 before this batch).
+GROHE Catalog Batch 4 (Additive) Verification Test Suite
+Tests the 4th and final additive Grohe catalog batch (AngleValve.xlsx).
+Grohe should now be exactly 508 products (was 500 before this batch).
 """
 
 import requests
@@ -18,26 +18,26 @@ EMAIL = "owner@forge.app"
 PASSWORD = "Forge@2026"
 
 # Expected values
-EXPECTED_GROHE_COUNT = 500
+EXPECTED_GROHE_COUNT = 508
 EXPECTED_HANSGROHE_COUNT = 908
 EXPECTED_AXOR_COUNT = 448
 EXPECTED_VITRA_COUNT = 250
 EXPECTED_GEBERIT_COUNT = 496
-EXPECTED_TOTAL_PRODUCTS = 2602
+EXPECTED_TOTAL_PRODUCTS = 2610
 
-# New categories from batch 3
-NEW_CATEGORIES_BATCH3 = [
+# New category from batch 4
+NEW_CATEGORY_BATCH4 = "Angle Valve"
+EXPECTED_ANGLE_VALVE_COUNT = 8
+
+# Previous categories from earlier batches that should still exist
+PREVIOUS_CATEGORIES_BATCH3 = [
     "Wall Mounted",
     "Tall Body Basin Mixer",
     "Trigger & Tank",
     "Spout"
 ]
 
-# Thermostat should now include Grohe products (previously only Hansgrohe+Axor)
-THERMOSTAT_CATEGORY = "Thermostat"
-
-# Previous categories from earlier batches that should still exist
-PREVIOUS_CATEGORIES = [
+PREVIOUS_CATEGORIES_BATCH1_2 = [
     "RSH Aqua Tile Shower",
     "Plate",
     "Shower",
@@ -48,6 +48,9 @@ PREVIOUS_CATEGORIES = [
     "Kitchen Tap",
     "Short Body Basin Mixer"
 ]
+
+# Thermostat should include Grohe products (from batch 3)
+THERMOSTAT_CATEGORY = "Thermostat"
 
 class TestResults:
     def __init__(self):
@@ -276,9 +279,20 @@ def test_categories(token: str, brands_map: Dict[str, Any]) -> Dict[str, Any]:
                 "count": cat.get("product_count", 0)
             }
         
-        # Check new categories from batch 3
-        print("\n4 NEW CATEGORIES FROM BATCH 3 (all should exist with product_count > 0):")
-        for cat_name in NEW_CATEGORIES_BATCH3:
+        # Check NEW category from batch 4 (CRITICAL)
+        print("\nNEW CATEGORY FROM BATCH 4 (CRITICAL):")
+        if NEW_CATEGORY_BATCH4 in categories_map:
+            count = categories_map[NEW_CATEGORY_BATCH4]["count"]
+            if count == EXPECTED_ANGLE_VALVE_COUNT:
+                results.pass_test(f'"{NEW_CATEGORY_BATCH4}" — product_count={count} (expected {EXPECTED_ANGLE_VALVE_COUNT}) — CORRECT ✓')
+            else:
+                results.fail_test(f'"{NEW_CATEGORY_BATCH4}" — product_count={count} (expected {EXPECTED_ANGLE_VALVE_COUNT}) — INCORRECT')
+        else:
+            results.fail_test(f'"{NEW_CATEGORY_BATCH4}" — NOT FOUND')
+        
+        # Check categories from batch 3
+        print("\nCATEGORIES FROM BATCH 3 (should still exist with product_count > 0):")
+        for cat_name in PREVIOUS_CATEGORIES_BATCH3:
             if cat_name in categories_map:
                 count = categories_map[cat_name]["count"]
                 if count > 0:
@@ -288,28 +302,17 @@ def test_categories(token: str, brands_map: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 results.fail_test(f'"{cat_name}" — NOT FOUND')
         
-        # Check Thermostat category (should now include Grohe)
-        print("\nTHERMOSTAT CATEGORY (should now include Grohe products):")
+        # Check Thermostat category (should include Grohe from batch 3)
+        print("\nTHERMOSTAT CATEGORY (should include Grohe products from batch 3):")
         if THERMOSTAT_CATEGORY in categories_map:
             count = categories_map[THERMOSTAT_CATEGORY]["count"]
             results.pass_test(f'"{THERMOSTAT_CATEGORY}" — product_count={count}')
-            # Note: We can't easily verify it includes Grohe without fetching products
-            results.warn_test(f'"{THERMOSTAT_CATEGORY}" existence verified, but Grohe inclusion requires product fetch')
         else:
             results.fail_test(f'"{THERMOSTAT_CATEGORY}" — NOT FOUND')
         
-        # Check "Spouts" (plural) - should be unchanged (Hansgrohe+Axor only)
-        print("\nSPOUTS (plural) CATEGORY (should be unchanged, Hansgrohe+Axor only):")
-        if "Spouts" in categories_map:
-            count = categories_map["Spouts"]["count"]
-            results.pass_test(f'"Spouts" (plural) — product_count={count} (exists)')
-            results.warn_test(f'"Spouts" (plural) brand verification requires product fetch')
-        else:
-            results.warn_test('"Spouts" (plural) — NOT FOUND (may not exist in this catalog)')
-        
-        # Check previous categories from earlier batches
-        print("\nPREVIOUS CATEGORIES FROM EARLIER BATCHES (should still exist):")
-        for cat_name in PREVIOUS_CATEGORIES:
+        # Check previous categories from batches 1-2
+        print("\nCATEGORIES FROM BATCHES 1-2 (should still exist):")
+        for cat_name in PREVIOUS_CATEGORIES_BATCH1_2:
             if cat_name in categories_map:
                 count = categories_map[cat_name]["count"]
                 results.pass_test(f'"{cat_name}" — product_count={count}')
@@ -324,69 +327,69 @@ def test_categories(token: str, brands_map: Dict[str, Any]) -> Dict[str, Any]:
         return categories_map
 
 def test_images(token: str, categories_map: Dict[str, Any], grohe_id: str):
-    """Test 5: Images spot-check for new categories"""
+    """Test 5: Images spot-check for Angle Valve category"""
     print("\n" + "="*80)
-    print("TEST 5: IMAGES SPOT-CHECK")
+    print("TEST 5: IMAGES SPOT-CHECK (ANGLE VALVE CATEGORY)")
     print("="*80)
     
     results = TestResults()
     
-    # Categories to check (5 newest from batch 3)
-    categories_to_check = NEW_CATEGORIES_BATCH3 + [THERMOSTAT_CATEGORY]
-    
     try:
-        for cat_name in categories_to_check:
-            if cat_name not in categories_map:
-                results.fail_test(f'Category "{cat_name}" not found, skipping image check')
+        if NEW_CATEGORY_BATCH4 not in categories_map:
+            results.fail_test(f'Category "{NEW_CATEGORY_BATCH4}" not found, skipping image check')
+            results.print_summary()
+            return
+        
+        cat_id = categories_map[NEW_CATEGORY_BATCH4]["id"]
+        
+        print(f'\n"{NEW_CATEGORY_BATCH4}" (spot-checking 3 products):')
+        
+        # Fetch products from Angle Valve category
+        response = requests.get(
+            f"{BASE_URL}/products",
+            params={"category_id": cat_id, "brand_id": grohe_id, "limit": 3},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            results.fail_test(f"Failed to fetch products for {NEW_CATEGORY_BATCH4}: {response.status_code}")
+            results.print_summary()
+            return
+        
+        data = response.json()
+        products = data.get("items", [])
+        
+        if not products:
+            results.fail_test(f"No products found in {NEW_CATEGORY_BATCH4}")
+            results.print_summary()
+            return
+        
+        # Check 3 products
+        for i, product in enumerate(products[:3], 1):
+            sku = product.get("sku", "N/A")
+            name = product.get("name", "N/A")
+            # Check both hero_image and hero_image_url fields
+            hero_image = product.get("hero_image") or product.get("hero_image_url")
+            
+            if not hero_image:
+                results.fail_test(f"Product {i} (SKU={sku}): No hero_image or hero_image_url")
                 continue
             
-            cat_id = categories_map[cat_name]["id"]
-            
-            print(f'\n"{cat_name}" (spot-checking 2-3 products):')
-            
-            # Fetch products from this category
-            response = requests.get(
-                f"{BASE_URL}/products",
-                params={"category_id": cat_id, "brand_id": grohe_id, "limit": 3},
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            
-            if response.status_code != 200:
-                results.fail_test(f"Failed to fetch products for {cat_name}: {response.status_code}")
+            # Check if URL is from supabase.co
+            if "supabase.co" not in hero_image:
+                results.fail_test(f"Product {i} (SKU={sku}): Hero image not from supabase.co: {hero_image}")
                 continue
             
-            data = response.json()
-            products = data.get("items", [])
-            
-            if not products:
-                results.warn_test(f"No products found in {cat_name}")
-                continue
-            
-            # Check 2-3 products
-            for i, product in enumerate(products[:3], 1):
-                sku = product.get("sku", "N/A")
-                # Check both hero_image and hero_image_url fields
-                hero_image = product.get("hero_image") or product.get("hero_image_url")
-                
-                if not hero_image:
-                    results.fail_test(f"Product {i} (SKU={sku}): No hero_image or hero_image_url")
-                    continue
-                
-                # Check if URL is from supabase.co
-                if "supabase.co" not in hero_image:
-                    results.fail_test(f"Product {i} (SKU={sku}): Hero image not from supabase.co: {hero_image}")
-                    continue
-                
-                # Check if image URL returns HTTP 200
-                try:
-                    img_response = requests.head(hero_image, timeout=5)
-                    if img_response.status_code == 200:
-                        results.pass_test(f"Product {i}: SKU={sku}, Hero image URL valid (HTTP 200, supabase.co)")
-                    else:
-                        results.fail_test(f"Product {i} (SKU={sku}): Hero image returned HTTP {img_response.status_code}")
-                except Exception as e:
-                    results.fail_test(f"Product {i} (SKU={sku}): Failed to fetch hero image: {str(e)}")
+            # Check if image URL returns HTTP 200
+            try:
+                img_response = requests.head(hero_image, timeout=5)
+                if img_response.status_code == 200:
+                    results.pass_test(f"Product {i}: SKU={sku}, Name={name[:40]}..., Hero image URL valid (HTTP 200, supabase.co)")
+                else:
+                    results.fail_test(f"Product {i} (SKU={sku}): Hero image returned HTTP {img_response.status_code}")
+            except Exception as e:
+                results.fail_test(f"Product {i} (SKU={sku}): Failed to fetch hero image: {str(e)}")
         
         results.print_summary()
         
@@ -581,7 +584,7 @@ def test_other_brands_smoke(token: str, brands_map: Dict[str, Any]):
 
 def main():
     print("="*80)
-    print("GROHE CATALOG BATCH 3 (ADDITIVE) VERIFICATION TEST SUITE")
+    print("GROHE CATALOG BATCH 4 (ADDITIVE) VERIFICATION TEST SUITE")
     print("="*80)
     print(f"Backend URL: {BASE_URL}")
     print(f"Test User: {EMAIL}")
@@ -612,7 +615,7 @@ def main():
     # Test 4: Categories
     categories_map = test_categories(token, brands_map)
     
-    # Test 5: Images
+    # Test 5: Images (Angle Valve category)
     test_images(token, categories_map, grohe_id)
     
     # Test 6: Earlier batch products
