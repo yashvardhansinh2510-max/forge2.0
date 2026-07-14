@@ -230,7 +230,18 @@ class GeberitAdapter(BrandAdapter):
                     if vgap > MAX_IMAGE_GAP:
                         continue
                     candidates.append((vgap, ci, ii))
-            candidates.sort(key=lambda t: t[0])
+            # Optimal-ish greedy: when two candidate pairs tie on vgap (a
+            # common case — several colour variants sit in one row, equally
+            # close to their own photo), assign the MORE CONSTRAINED claim
+            # first (fewest alternative images it could take). Plain
+            # score-only greedy let a flexible neighbour grab the one image
+            # a tightly-boxed variant had no other option for, silently
+            # leaving that variant imageless even though a valid photo
+            # existed right next to it (verified against SKU 116.092.SM.6).
+            alt_count_per_claim: dict[int, int] = defaultdict(int)
+            for _, ci, _ in candidates:
+                alt_count_per_claim[ci] += 1
+            candidates.sort(key=lambda t: (t[0], alt_count_per_claim[t[1]]))
             used_claims: set[int] = set()
             used_imgs: set[int] = set()
             for vgap, ci, ii in candidates:

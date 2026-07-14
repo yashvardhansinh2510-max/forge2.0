@@ -179,20 +179,34 @@ def _normalize_family_base(description: str) -> str:
 
 
 def _convert_emf_to_png(raw: bytes, fmt: str) -> Optional[bytes]:
-    """Headless LibreOffice EMF/WMF -> PNG, then auto-trim the surrounding
-    white canvas (lossless — removes blank margin only, alters zero pixels
-    of the actual artwork)."""
+    """EMF/WMF -> PNG, then auto-trim the surrounding white canvas
+    (lossless — removes blank margin only, alters zero pixels of the
+    actual artwork).
+
+    Tries Inkscape first: verified against this supplier's real EMF files
+    that LibreOffice's EMF import filter fails to even load ("source file
+    could not be loaded") while Inkscape's renders them correctly (its EMF
+    parser handles GDI record types LO's doesn't). LibreOffice is kept as a
+    fallback in case a future file uses a variant Inkscape can't read."""
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / f"src.{fmt}"
         src.write_bytes(raw)
+        out = Path(td) / f"src.png"
         try:
             subprocess.run(
-                ["soffice", "--headless", "--convert-to", "png", "--outdir", td, str(src)],
+                ["inkscape", "--export-type=png", f"--export-filename={out}", str(src)],
                 check=True, capture_output=True, timeout=45,
             )
         except Exception:
-            return None
-        out = Path(td) / "src.png"
+            pass
+        if not out.exists():
+            try:
+                subprocess.run(
+                    ["soffice", "--headless", "--convert-to", "png", "--outdir", td, str(src)],
+                    check=True, capture_output=True, timeout=45,
+                )
+            except Exception:
+                return None
         if not out.exists():
             return None
         png_bytes = out.read_bytes()
