@@ -192,11 +192,18 @@ class GeberitAdapter(BrandAdapter):
                     if pm:
                         mrp = self.to_number(pm.group(1))
                     family_key = f"geberit:{(current_series if current_series != MISSING else 'misc').lower().replace(' ', '-')}:{sku.rsplit('.', 2)[0]}"
+                    # These rows never claim a colour (fine — many Geberit
+                    # accessories genuinely have none), but once name+mrp+
+                    # category are all present the row is just as reliable
+                    # as a structured one, so it should clear the same
+                    # auto-accept bar and get its own geometrically-matched
+                    # image too instead of being stuck on stale data.
+                    confidence = 0.9 if (name != MISSING and mrp != MISSING and current_category != MISSING) else 0.5
                     pr = ProductRow(
                         brand=self.brand, sku=sku, name=name,
                         category=current_category, series=current_series,
                         family_key=family_key, mrp=mrp, image_page=page_idx + 1,
-                        confidence=0.7 if mrp != MISSING and current_category != MISSING else 0.5,
+                        confidence=confidence,
                     )
                     if mrp == MISSING:
                         pr.issues.append("Missing MRP — likely spec/accessory row, needs manual price")
