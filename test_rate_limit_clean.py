@@ -6,7 +6,7 @@ Clean rate limit test - wait for window to expire first
 import requests
 import time
 
-BASE_URL = "https://role-admin-1.preview.emergentagent.com/api"
+BASE_URL = "https://catalog-replace-1.preview.emergentagent.com/api"
 OWNER_EMAIL = "owner@forge.app"
 OWNER_PASSWORD = "Forge@2026"
 

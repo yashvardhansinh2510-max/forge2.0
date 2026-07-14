@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta
 
 # Configuration
-BASE_URL = "https://ff330064-dcc2-4b25-b59c-dadba81bd1d4.preview.emergentagent.com/api"
+BASE_URL = "https://catalog-replace-1.preview.emergentagent.com/api"
 OWNER_EMAIL = "owner@forge.app"
 OWNER_PASSWORD = "Forge@2026"
 
