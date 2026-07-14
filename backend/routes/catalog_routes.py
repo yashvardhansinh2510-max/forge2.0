@@ -7,8 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_user, require_min_role
 from db import db, strip_ids
-from models import Product, ProductCreate, UserPublic
+from models import Product, ProductCreate, ProductPatch, UserPublic
 from services import catalog_service, media_service
+from services.activity_log import log_event
 
 router = APIRouter(tags=["catalog"])
 
@@ -417,6 +418,57 @@ async def create_product(
     await db.products.insert_one(prod.dict())
     catalog_service.schedule_catalog_refresh()
     return prod
+
+
+@router.patch("/products/{product_id}", response_model=Product)
+async def update_product(
+    product_id: str,
+    body: ProductPatch,
+    user: UserPublic = Depends(require_min_role("purchase")),
+):
+    """The single write path for the "single source of truth" product
+    editor — used identically from Catalog, the Quotation Builder's product
+    sheet, and (per the same shared component) Purchases in future. Only
+    fields present in the request are touched (exclude_unset); everything
+    else on the product document is left exactly as-is.
+
+    Quotations already snapshot `name`/`sku`/`unit_price`/`finish`/`colour`/
+    `image` onto each line item at the moment a product is added (see
+    QuotationLineItem + the /quotations/{id}/items endpoint) — so this
+    endpoint intentionally never touches `db.quotations`. Editing a product
+    here changes what FUTURE quotations copy in; every quotation already
+    generated (and its PDF) is unaffected by construction, not by any special
+    case here.
+    """
+    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    updates = body.dict(exclude_unset=True)
+    if not updates:
+        return Product(**existing)
+
+    new_sku = updates.get("sku")
+    if new_sku and new_sku != existing.get("sku"):
+        if await db.products.find_one({"sku": new_sku, "id": {"$ne": product_id}}):
+            raise HTTPException(status_code=409, detail="SKU already exists")
+
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.products.update_one({"id": product_id}, {"$set": updates})
+
+    catalog_service.patch_product_in_snapshot(product_id, updates)
+
+    await log_event(
+        event_type="product.updated",
+        entity_type="product",
+        entity_id=product_id,
+        actor=user,
+        payload={"fields": sorted(updates.keys())},
+        summary=f"Updated {', '.join(sorted(k for k in updates if k != 'updated_at'))}",
+    )
+
+    updated = await catalog_service.product_by_id(product_id)
+    return Product(**{k: v for k, v in updated.items() if k in Product.__fields__})
 
 
 # ---------- Catalog import (AI-assisted scaffold) ----------

@@ -145,6 +145,34 @@ def schedule_catalog_refresh() -> None:
         _background_refresh = asyncio.create_task(refresh_catalog_snapshot())
 
 
+def patch_product_in_snapshot(product_id: str, updates: dict) -> None:
+    """Apply a field-level product edit to the live in-process snapshot
+    immediately — no Atlas round trip, no full-catalog rebuild, no backend
+    restart. This is the "refresh only the affected product" path the
+    single-source-of-truth product editor relies on for instant propagation
+    to every screen reading from the snapshot (catalog grid, search, product
+    detail, quotation builder picker) without waiting on the background
+    refresh below.
+
+    Safe by construction: `product_by_id[id]` and the matching entries inside
+    `products` / `products_by_family` are the SAME dict object (built via a
+    single comprehension in `_build_snapshot`), so mutating the dict in place
+    is instantly visible through every one of those views — there is nothing
+    else to keep in sync.
+
+    `schedule_catalog_refresh()` still runs alongside this as a durability
+    backstop (matches the existing media-mutation pattern), in case the
+    in-memory snapshot was ever rebuilt from a source that doesn't share
+    object identity (e.g. a cold reload mid-request).
+    """
+    if _snapshot is None:
+        return
+    row = _snapshot.product_by_id.get(product_id)
+    if row is not None:
+        row.update(updates)
+    schedule_catalog_refresh()
+
+
 async def note_product_usage(user_id: str, product_ids: list[str], at: str) -> None:
     """Keep popularity/recent/frequent reads coherent with a completed write."""
     global _snapshot

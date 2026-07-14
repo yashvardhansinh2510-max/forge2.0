@@ -11,6 +11,8 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDim
 
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
+import { ProductEditor } from "@/src/components/catalog/ProductEditor";
+import { useAuth } from "@/src/state/auth";
 import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
@@ -19,10 +21,13 @@ import type { Product, ProductVariant } from "../helpers/types";
 
 export function ProductModal() {
   const b = useBuilder();
+  const { staff } = useAuth();
+  const canEditProduct = !!staff && ["owner", "admin", "manager", "accounts", "purchase"].includes(staff.role);
   const open = !!b.productModal;
   const product = b.productModal;
   const { width: windowWidth } = useWindowDimensions();
   const isCompactFooter = windowWidth < 480;
+  const [editorOpen, setEditorOpen] = useState(false);
 
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const [qty, setQty] = useState(1);
@@ -117,6 +122,12 @@ export function ProductModal() {
               <Text style={styles.title} numberOfLines={2}>{product.name}</Text>
               <Text style={styles.sku}>{product.sku}</Text>
             </View>
+            {canEditProduct ? (
+              <Pressable onPress={() => setEditorOpen(true)} style={styles.editBtn} hitSlop={6} testID="product-modal-edit">
+                <Feather name="edit-2" size={14} color={colors.onSurfaceSecondary} />
+                <Text style={styles.editBtnLabel}>Edit product</Text>
+              </Pressable>
+            ) : null}
             <Pressable onPress={b.closeProductModal} style={styles.close} hitSlop={6}>
               <Feather name="x" size={18} color={colors.onSurface} />
             </Pressable>
@@ -355,6 +366,15 @@ export function ProductModal() {
         />
       </Pressable>
     </Modal>
+
+    {/* Single shared Product Editor — same component used from Catalog. */}
+    <ProductEditor
+      productId={product.id}
+      visible={editorOpen}
+      onClose={() => setEditorOpen(false)}
+      onSaved={(updated) => b.patchProduct(product.id, updated)}
+    />
+
     </>
   );
 }
@@ -400,6 +420,12 @@ const styles = StyleSheet.create({
     width: 32, height: 32, borderRadius: radius.md, alignItems: "center", justifyContent: "center",
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
   },
+  editBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5, alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.md, marginRight: 8,
+    backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  editBtnLabel: { fontSize: 12, fontWeight: "600", color: colors.onSurfaceSecondary },
 
   body: { flexDirection: "row", padding: spacing.lg, gap: spacing.lg, flexWrap: "wrap" },
   left: { width: "100%", maxWidth: 300, gap: 12 },

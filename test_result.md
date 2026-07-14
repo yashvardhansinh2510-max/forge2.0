@@ -835,6 +835,141 @@ backend:
             correct. The critical Offer Rate bug (showing undiscounted unit_price instead
             of discounted rate) is FIXED. Zero regressions detected.
 
+backend:
+  - task: "Product Management Unification — PATCH /api/products/{product_id} endpoint"
+    implemented: true
+    working: true
+    file: "backend/routes/catalog_routes.py, backend/services/catalog_service.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            New feature: PATCH /api/products/{id} (did not exist before — added minimally, no
+            rebuild of the already-verified media APIs) + a single shared frontend ProductEditor
+            component (General/Pricing/Media tabs) wired into both Catalog's product detail page
+            and the Quotation Builder's product sheet. Media tab reuses the exact same upload
+            component from the already-verified Priority 4 work (split into
+            ProductImageManagerBody, zero duplicated upload logic). Historical quotations are
+            unaffected by construction (line items already snapshot price/name/etc at add-time,
+            confirmed by reading _enriched_items_for_pdf / the /quotations/{id}/items endpoint —
+            no new code needed for that guarantee). Cache propagation uses a new
+            catalog_service.patch_product_in_snapshot() that mutates the live in-memory snapshot's
+            dict in place (same object referenced by every index: products tuple, product_by_id,
+            products_by_family — so one mutation is visible everywhere instantly) plus the existing
+            schedule_catalog_refresh() as a backstop, matching the already-approved media-mutation
+            pattern instead of introducing a new caching strategy. Requesting deep_testing_backend_v2
+            for the new endpoint (RBAC, SKU-conflict validation, instant snapshot propagation, audit
+            log) before frontend testing.
+        - working: true
+          agent: "testing"
+          comment: |
+            PATCH /api/products/{product_id} Backend Testing COMPLETE (2026-07-14)
+            
+            Comprehensive 10-step testing of Product Management Unification endpoint.
+            ALL 9 TESTABLE STEPS PASSED (100% success rate, 1 skipped).
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST RESULTS BY STEP
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ STEP 1: Product retrieval and original values noted
+            • Test product: d0a005b3-838e-4765-bb90-c3b60888fbe4
+            • Original: INTEGRA RIM-EX WC WITH BIDET · White
+            • SKU: 7041B003H0090, MRP: 38810.0, Price: 38810.0, Finish: White
+            
+            ✅ STEP 2: PATCH with new values (200 OK)
+            • PATCH body: {"name": "Test Edited Name", "mrp": 9999, "price": 8888, 
+              "description": "Test description edit"}
+            • Response status: 200 OK
+            • Response correctly reflects all new values
+            
+            ✅ STEP 3: Immediate GET by ID shows instant update (NO async delay)
+            • GET /api/products/{id} immediately after PATCH
+            • All new values visible INSTANTLY (name, mrp, price, description)
+            • CRITICAL: In-memory snapshot patch working correctly (no 2-3 second delay)
+            
+            ✅ STEP 4: Immediate GET products list shows instant update
+            • GET /api/products?q=Test Edited Name immediately after PATCH
+            • New name appears in search results INSTANTLY
+            • In-memory snapshot visible in paginated list endpoint
+            
+            ✅ STEP 5: Activity log audit trail verified
+            • GET /api/activity/product/{id}
+            • product.updated event found with correct fields: [description, mrp, name, price]
+            • Payload structure correct: {"fields": ["name", "mrp", "price", "description"]}
+            
+            ✅ STEP 6: SKU conflict validation (409 Conflict)
+            • Attempted PATCH with existing SKU: 7041B483H0075
+            • Response: 409 Conflict (correct)
+            • Verified SKU was NOT changed (still 7041B003H0090)
+            • Conflict detection working correctly
+            
+            ✅ STEP 7: Partial update (exclude_unset behavior)
+            • PATCH body: {"finish": "Matte Black"} only
+            • ONLY finish changed to "Matte Black"
+            • All other fields from step 2 untouched (name, mrp, price, description)
+            • Partial update working correctly (exclude_unset=True)
+            
+            ✅ STEP 8: 404 for nonexistent product
+            • PATCH /api/products/nonexistent-id-xyz
+            • Response: 404 Not Found (correct)
+            
+            ⏭️  STEP 9: RBAC testing (SKIPPED - impractical)
+            • Found lower-privilege user: worker@forge.app (role: worker)
+            • Cannot test without password/credentials
+            • Endpoint requires min role "purchase" per code review
+            • SKIPPED as noted in review request
+            
+            ✅ STEP 10: Product restored to original values
+            • PATCH back to original: name, sku, mrp, price, description, finish
+            • Restoration successful (verified via GET)
+            • Production catalog data preserved
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            CRITICAL VERIFICATIONS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ Instant snapshot propagation: Updates visible IMMEDIATELY in both GET by ID
+               and GET products list (no async delay required)
+            ✅ SKU conflict detection: 409 Conflict when attempting to use existing SKU
+            ✅ Partial updates: exclude_unset=True working correctly (only specified fields updated)
+            ✅ Audit trail: product.updated events logged with correct field list
+            ✅ 404 handling: Nonexistent product IDs correctly rejected
+            ✅ Data persistence: Updates persist across multiple GET requests
+            ✅ Production data safety: Test product restored to original values
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            BACKEND LOGS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            • No 500 errors during testing
+            • No exceptions in backend logs
+            • All PATCH requests: 200 OK (except intentional 409/404 tests)
+            • All GET requests: 200 OK
+            • Activity log writes: successful
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            SUMMARY
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            • PATCH endpoint: WORKING (200 OK, correct response body)
+            • Instant snapshot propagation: WORKING (no async delay)
+            • SKU conflict validation: WORKING (409 Conflict)
+            • Partial updates: WORKING (exclude_unset behavior correct)
+            • Audit trail: WORKING (product.updated events logged)
+            • 404 handling: WORKING (nonexistent IDs rejected)
+            • RBAC: NOT TESTED (impractical without test user credentials)
+            • Data restoration: SUCCESSFUL (production catalog preserved)
+            
+            CONCLUSION: PATCH /api/products/{product_id} endpoint is COMPLETE and 
+            PRODUCTION-READY. All critical functionality verified. Zero regressions.
+            The in-memory snapshot patch mechanism works correctly (instant updates
+            visible in all read endpoints). Backend is stable and ready for frontend
+            integration testing.
+
 test_plan:
   current_focus: []
   stuck_tasks: []
@@ -11054,35 +11189,48 @@ test_plan:
   test_priority: "high_first"
 
 agent_communication:
+    - agent: "main"
+      message: |
+        New feature: PATCH /api/products/{id} (did not exist before — added minimally, no
+        rebuild of the already-verified media APIs) + a single shared frontend ProductEditor
+        component (General/Pricing/Media tabs) wired into both Catalog's product detail page
+        and the Quotation Builder's product sheet. Media tab reuses the exact same upload
+        component from the already-verified Priority 4 work (split into
+        ProductImageManagerBody, zero duplicated upload logic). Historical quotations are
+        unaffected by construction (line items already snapshot price/name/etc at add-time,
+        confirmed by reading _enriched_items_for_pdf / the /quotations/{id}/items endpoint —
+        no new code needed for that guarantee). Cache propagation uses a new
+        catalog_service.patch_product_in_snapshot() that mutates the live in-memory snapshot's
+        dict in place (same object referenced by every index: products tuple, product_by_id,
+        products_by_family — so one mutation is visible everywhere instantly) plus the existing
+        schedule_catalog_refresh() as a backstop, matching the already-approved media-mutation
+        pattern instead of introducing a new caching strategy. Requesting deep_testing_backend_v2
+        for the new endpoint (RBAC, SKU-conflict validation, instant snapshot propagation, audit
+        log) before frontend testing.
     - agent: "testing"
       message: |
-        Product Image Management Backend Endpoints Testing COMPLETE.
+        PATCH /api/products/{product_id} Backend Testing COMPLETE (2026-07-14).
         
-        ALL 9 TEST STEPS PASSED (100% success rate).
-        
-        Tested endpoints:
-        • GET /api/products/{product_id}/media - List media
-        • POST /api/products/{product_id}/media - Upload media
-        • PATCH /api/media/{media_id} - Set primary/update metadata
-        • POST /api/products/{product_id}/media/{media_id}/replace - Replace image
-        • DELETE /api/media/{media_id} - Delete media
-        • GET /api/activity/product/{product_id} - Audit trail
+        ALL 9 TESTABLE STEPS PASSED (100% success rate, 1 skipped per review request).
         
         Key verifications:
-        ✅ Upload: File uploaded to Supabase, public URL accessible, media in list
-        ✅ Primary: "Only one primary per product" behavior working correctly
-        ✅ Replace: New image uploaded, old image deleted, metadata inherited
-        ✅ Delete: Media removed from DB and list, audit trail preserved
-        ✅ Audit: All operations logged (upload/replace/delete events found)
-        ✅ Storage: Files uploaded to Supabase public bucket, accessible via public_url
+        ✅ PATCH endpoint returns 200 OK with correct response body
+        ✅ Instant snapshot propagation (updates visible IMMEDIATELY, no async delay)
+        ✅ SKU conflict validation (409 Conflict when using existing SKU)
+        ✅ Partial updates working (exclude_unset=True, only specified fields updated)
+        ✅ Activity log audit trail (product.updated events with correct field list)
+        ✅ 404 handling (nonexistent product IDs rejected)
+        ✅ Production data restored (test product returned to original values)
         
-        Important findings:
-        1. Catalog refresh is async (requires 2-3 second delay for tests)
-        2. GET endpoint returns both product-level AND family-level media (by design)
-        3. "Only one primary" applies per individual product, not across family
-        4. Supabase CDN may cache deleted files (not a backend bug)
-        5. Replace creates NEW media ID, inherits metadata from old
-        6. Audit trail preserves deleted media metadata (immutable log)
+        CRITICAL SUCCESS: In-memory snapshot patch mechanism working correctly.
+        Updates are visible INSTANTLY in both GET /api/products/{id} and 
+        GET /api/products (list) with NO async delay required. This is the key
+        requirement from the review request.
         
-        ZERO CRITICAL ISSUES. All endpoints working correctly.
-        Backend is production-ready for product image management.
+        RBAC testing skipped (impractical without test user credentials, as noted
+        in review request). Endpoint requires min role "purchase" per code review.
+        
+        Zero 500 errors, zero exceptions in backend logs. All PATCH/GET requests
+        successful. Backend is production-ready for frontend integration testing.
+        
+        NEXT: Main agent should proceed with frontend testing or summarize and finish.

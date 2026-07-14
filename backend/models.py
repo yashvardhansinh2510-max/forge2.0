@@ -316,6 +316,28 @@ class ProductCreate(BaseModel):
     is_custom: bool = False
 
 
+class ProductPatch(BaseModel):
+    """Partial edit of an existing catalog product — the "single source of
+    truth" editor (Catalog / Quotation Builder / Purchases all write through
+    this one shape). Every field is optional; only fields actually present in
+    the request body are applied (exclude_unset), so callers never
+    accidentally blank out a field they didn't mean to touch."""
+    name: Optional[str] = None
+    sku: Optional[str] = None
+    brand_id: Optional[str] = None
+    category_id: Optional[str] = None
+    subcategory: Optional[str] = None
+    series: Optional[str] = None
+    family_key: Optional[str] = None
+    family_name: Optional[str] = None
+    finish: Optional[str] = None
+    colour: Optional[str] = None
+    description: Optional[str] = None
+    mrp: Optional[float] = None
+    price: Optional[float] = None
+    specs: Optional[dict] = None
+
+
 # ---------- Quotations ----------
 class QuotationLineItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
