@@ -5,7 +5,7 @@ Debug rate limit - check what IP the backend sees
 
 import requests
 
-BASE_URL = "https://catalog-replace-1.preview.emergentagent.com/api"
+BASE_URL = "https://product-media-hub-2.preview.emergentagent.com/api"
 
 # Make a request and check headers
 response = requests.post(

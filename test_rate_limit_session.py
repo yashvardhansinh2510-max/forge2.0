@@ -6,7 +6,7 @@ Rate limit test with session to ensure same connection/IP
 import requests
 import time
 
-BASE_URL = "https://catalog-replace-1.preview.emergentagent.com/api"
+BASE_URL = "https://product-media-hub-2.preview.emergentagent.com/api"
 OWNER_EMAIL = "owner@forge.app"
 OWNER_PASSWORD = "Forge@2026"
 

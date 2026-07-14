@@ -6,7 +6,7 @@ Focused test for rate limiting - testing the exact scenario from review request
 import requests
 import time
 
-BASE_URL = "https://catalog-replace-1.preview.emergentagent.com/api"
+BASE_URL = "https://product-media-hub-2.preview.emergentagent.com/api"
 OWNER_EMAIL = "owner@forge.app"
 OWNER_PASSWORD = "Forge@2026"
 

@@ -9,7 +9,7 @@ import sys
 from typing import Dict, List, Any, Optional
 
 # Backend URL from frontend/.env
-BASE_URL = "https://216d7dfd-ba32-495c-a1aa-c78b8d90fcbf.preview.emergentagent.com/api"
+BASE_URL = "https://product-media-hub-2.preview.emergentagent.com/api"
 
 # Test credentials from review request
 TEST_EMAIL = "owner@forge.app"
