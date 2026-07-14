@@ -80,6 +80,27 @@ ORIGINAL_FILENAMES_BATCH2: dict[str, str] = {
     "Short Body Basin Mixer": "SHORT BODY BASIN MIXER.xlsx",
 }
 
+# Batch 3 (2026-08) — 5 more supplier files. "Thermostat" REUSES the existing
+# category (already shared by Hansgrohe 122 + Axor 122). "Spout" (singular,
+# from SPOUT.xlsx) is intentionally a DIFFERENT, new category from the
+# pre-existing "Spouts" (plural, Hansgrohe/Axor) — different literal
+# filename, per the never-merge rule; this exact case (Spout.xlsx -> Spout)
+# was given as a worked example in the master instructions.
+FILES_BATCH3: dict[str, str] = {
+    "Wall Mounted": "wall_mounted.xlsx",
+    "Tall Body Basin Mixer": "tall_body_basin_mixer.xlsx",
+    "Trigger & Tank": "trigger_tank.xlsx",
+    "Spout": "spout.xlsx",
+    "Thermostat": "thermostat.xlsx",
+}
+ORIGINAL_FILENAMES_BATCH3: dict[str, str] = {
+    "Wall Mounted": "WALL MOUNTED.xlsx",
+    "Tall Body Basin Mixer": "TALL BODY BASIN MIXER.xlsx",
+    "Trigger & Tank": "TRIGGER &  tank.xlsx",
+    "Spout": "SPOUT.xlsx",
+    "Thermostat": "THERMOSTAT.xlsx",
+}
+
 
 @dataclass
 class ImageResult:
@@ -264,7 +285,8 @@ def extract_file(category: str, path: str, original_filename: Optional[str] = No
     ws = wb[wb.sheetnames[0]]
     images_by_row = _extract_images_by_row(path)
     if original_filename is None:
-        original_filename = ORIGINAL_FILENAMES.get(category) or ORIGINAL_FILENAMES_BATCH2.get(category) or category
+        original_filename = (ORIGINAL_FILENAMES.get(category) or ORIGINAL_FILENAMES_BATCH2.get(category)
+                              or ORIGINAL_FILENAMES_BATCH3.get(category) or category)
 
     rows: list[GroheRow] = []
     seen_hashes: dict[str, str] = {}   # sha1(sku+desc+mrp) -> first sku seen
@@ -333,6 +355,8 @@ if __name__ == "__main__":
     batch = sys.argv[2] if len(sys.argv) > 2 else "1"
     if batch == "2":
         all_rows = extract_all(base, FILES_BATCH2, ORIGINAL_FILENAMES_BATCH2)
+    elif batch == "3":
+        all_rows = extract_all(base, FILES_BATCH3, ORIGINAL_FILENAMES_BATCH3)
     else:
         all_rows = extract_all(base)
     total = 0
