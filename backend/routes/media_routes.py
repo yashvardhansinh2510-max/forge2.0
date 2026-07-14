@@ -79,8 +79,34 @@ async def upload_product_media(
         product_id=product_id, family_key=family_key, brand_id=brand_id,
         source_type=source_type, role=role,  # type: ignore[arg-type]
         is_primary=is_primary, sort_order=sort_order,
-        uploaded_by=user.id, notes=notes,
+        uploaded_by=user.id, notes=notes, actor=user,
     )
+    catalog_service.schedule_catalog_refresh()
+    return doc
+
+
+@router.post("/products/{product_id}/media/{media_id}/replace", response_model=ProductMedia)
+async def replace_product_media(
+    product_id: str,
+    media_id: str,
+    file: UploadFile = File(...),
+    notes: Optional[str] = Form(None),
+    user: UserPublic = Depends(require_min_role("purchase")),
+):
+    """Swap the file behind an existing image slot — keeps its role, primary
+    status and sort position instead of appending a new one at the end. The
+    old storage object is deleted as part of this call (no orphan left
+    behind); both the upload and the deletion are separately audit-logged."""
+    slug, _, _ = await _brand_slug_for_product(product_id)
+    data = await file.read()
+    mime = file.content_type or "application/octet-stream"
+    _validate_media_upload(data, mime)
+    doc = await media_service.replace_media(
+        media_id, data=data, mime=mime, brand_slug=slug,
+        uploaded_by=user.id, notes=notes, actor=user,
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Media not found")
     catalog_service.schedule_catalog_refresh()
     return doc
 
@@ -119,8 +145,8 @@ async def upload_family_media(
 
 
 @router.delete("/media/{media_id}")
-async def delete_media(media_id: str, _: UserPublic = Depends(require_min_role("purchase"))):
-    ok = await media_service.delete_media(media_id)
+async def delete_media(media_id: str, user: UserPublic = Depends(require_min_role("purchase"))):
+    ok = await media_service.delete_media(media_id, actor=user)
     if not ok:
         raise HTTPException(status_code=404, detail="Media not found")
     catalog_service.schedule_catalog_refresh()

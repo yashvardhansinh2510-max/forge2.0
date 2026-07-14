@@ -647,7 +647,7 @@ class PurchaseAttachmentCreate(BaseModel):
 
 
 # ---------- Activity Log (audit trail) ----------
-ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup", "user"]
+ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup", "user", "product"]
 
 
 class ActivityEvent(TimestampedModel):

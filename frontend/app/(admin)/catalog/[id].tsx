@@ -27,7 +27,9 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { Button, Card, IconButton, PriceTag } from "@/src/components/ui";
+import { ProductImageManager } from "@/src/components/catalog/ProductImageManager";
 import { api } from "@/src/api/client";
+import { useAuth } from "@/src/state/auth";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import {
@@ -78,6 +80,10 @@ export default function ProductDetail() {
   const router = useRouter();
   const { isPhone, isWide, pad } = useBreakpoint();
   const insets = useSafeAreaInsets();
+  const { staff } = useAuth();
+  // Same threshold as backend's require_min_role("purchase") for the media
+  // endpoints — keep in sync if that ever changes.
+  const canManageImages = !!staff && ["owner", "admin", "manager", "accounts", "purchase"].includes(staff.role);
 
   const [p, setP] = useState<Product | null>(null);
   const [siblings, setSiblings] = useState<Product[]>([]);
@@ -90,6 +96,7 @@ export default function ProductDetail() {
   const [moveItem, setMoveItem] = useState<PipelineItem | null>(null);
   const [transferItem, setTransferItem] = useState<PipelineItem | null>(null);
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
+  const [showImageManager, setShowImageManager] = useState(false);
 
   const toMovable = (it: PipelineItem): MovableItem => ({
     item_id: it.item_id, sku: it.sku, name: it.name, image: it.image, qty: it.qty,
@@ -104,31 +111,33 @@ export default function ProductDetail() {
     } catch { setPipeline([]); }
   };
 
+  const loadProduct = async (productId: string) => {
+    try {
+      const prod = await api.get<Product>(`/products/${productId}`);
+      setP(prod);
+      loadPipeline(prod.id);
+      if (prod.family_key) {
+        const res = await api.get<{ items: Product[] }>(`/products?family_key=${encodeURIComponent(prod.family_key)}&limit=20`);
+        setSiblings(res.items.filter((x) => x.id !== prod.id));
+      }
+      try {
+        const alt = await api.get<{ items: Product[] }>(`/products/${prod.id}/alternates?limit=6`);
+        setAlternates(alt.items || []);
+      } catch { /* ignore */ }
+      try {
+        const brands = await api.get<Brand[]>("/brands");
+        const b = brands.find((x) => x.id === prod.brand_id);
+        setBrandName(b?.name || "");
+      } catch { /* ignore */ }
+    } catch {
+      setP(null);
+    }
+  };
+
   useEffect(() => {
     if (!id) return;
     setP(null); setSiblings([]); setAlternates([]); setImageIdx(0);
-    (async () => {
-      try {
-        const prod = await api.get<Product>(`/products/${id}`);
-        setP(prod);
-        loadPipeline(prod.id);
-        if (prod.family_key) {
-          const res = await api.get<{ items: Product[] }>(`/products?family_key=${encodeURIComponent(prod.family_key)}&limit=20`);
-          setSiblings(res.items.filter((x) => x.id !== prod.id));
-        }
-        try {
-          const alt = await api.get<{ items: Product[] }>(`/products/${prod.id}/alternates?limit=6`);
-          setAlternates(alt.items || []);
-        } catch { /* ignore */ }
-        try {
-          const brands = await api.get<Brand[]>("/brands");
-          const b = brands.find((x) => x.id === prod.brand_id);
-          setBrandName(b?.name || "");
-        } catch { /* ignore */ }
-      } catch {
-        setP(null);
-      }
-    })();
+    loadProduct(id);
   }, [id]);
 
   const galleryUrls: string[] = useMemo(() => {
@@ -409,6 +418,12 @@ export default function ProductDetail() {
           <Text style={type.caption} numberOfLines={1}>{brandName}{p.series ? ` · ${p.series}` : ""}</Text>
         </View>
         <IconButton icon="heart" onPress={() => {}} size={36} tone="surface" accessibilityLabel="Save" />
+        {canManageImages ? (
+          <IconButton
+            icon="image" onPress={() => setShowImageManager(true)} size={36} tone="surface"
+            accessibilityLabel="Manage images" testID="manage-images-btn"
+          />
+        ) : null}
         <IconButton icon="share-2" onPress={() => {}} size={36} tone="surface" accessibilityLabel="Share" />
       </SafeAreaView>
 
@@ -488,6 +503,14 @@ export default function ProductDetail() {
         itemId={historyItemId}
         onClose={() => setHistoryItemId(null)}
       />
+      {p ? (
+        <ProductImageManager
+          productId={p.id}
+          visible={showImageManager}
+          onClose={() => setShowImageManager(false)}
+          onChanged={() => loadProduct(p.id)}
+        />
+      ) : null}
     </View>
   );
 }

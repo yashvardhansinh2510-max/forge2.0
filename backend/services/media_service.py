@@ -16,7 +16,8 @@ from PIL import Image
 from db import db
 from media_storage import get_media_storage, StorageError
 from media_storage.factory import public_bucket, private_bucket
-from models import ProductMedia, MediaSourceType, MediaRole, MediaQuality
+from models import ProductMedia, MediaSourceType, MediaRole, MediaQuality, UserPublic
+from services.activity_log import log_event
 
 logger = logging.getLogger("forge.media_service")
 
@@ -96,11 +97,17 @@ async def upload_and_register(
     uploaded_by: Optional[str] = None,
     notes: Optional[str] = None,
     private: bool = False,
+    actor: Optional[UserPublic] = None,
 ) -> ProductMedia:
     """Upload bytes to storage and persist metadata.
 
     Idempotent: if an identical SHA-1 already exists for the same target and
     source_type, we return the existing document instead of re-uploading.
+
+    Orphan prevention: if the storage write succeeds but the metadata insert
+    fails for any reason (crash, network drop), we immediately delete the
+    just-uploaded object rather than leaving an untracked file behind in
+    Supabase with no `product_media` row pointing at it.
     """
     sha1 = hashlib.sha1(data).hexdigest()
 
@@ -131,12 +138,33 @@ async def upload_and_register(
         sha1=sha1, mime=mime, size_bytes=len(data), is_primary=is_primary,
         sort_order=sort_order, uploaded_by=uploaded_by, notes=notes,
     )
-    await db.product_media.insert_one(doc.dict())
+    try:
+        await db.product_media.insert_one(doc.dict())
+    except Exception:
+        # Compensating action — don't leave an orphaned object in storage
+        # with no metadata row pointing at it.
+        try:
+            await storage.delete(bucket=bucket, key=key)
+        except StorageError as cleanup_err:
+            logger.warning("orphan cleanup after failed insert also failed (%s): %s", key, cleanup_err)
+        raise
 
     # If this is the new primary, demote others
     if is_primary:
         await _demote_other_primaries(product_id=product_id, family_key=family_key, keep_id=doc.id)
 
+    await log_event(
+        event_type="product.image_uploaded",
+        entity_type="product",
+        entity_id=product_id or family_key or "unknown",
+        actor=actor,
+        actor_id=uploaded_by,
+        payload={
+            "media_id": doc.id, "source_type": source_type, "role": role,
+            "is_primary": is_primary, "size_bytes": len(data), "mime": mime,
+        },
+        summary=f"Uploaded a {role} image ({source_type})",
+    )
     return doc
 
 
@@ -153,7 +181,7 @@ async def _demote_other_primaries(
     await db.product_media.update_many(filt, {"$set": {"is_primary": False}})
 
 
-async def delete_media(media_id: str) -> bool:
+async def delete_media(media_id: str, *, actor: Optional[UserPublic] = None) -> bool:
     doc = await db.product_media.find_one({"id": media_id}, {"_id": 0})
     if not doc:
         return False
@@ -163,7 +191,67 @@ async def delete_media(media_id: str) -> bool:
     except StorageError as e:
         logger.warning("storage delete failed (continuing to remove metadata): %s", e)
     await db.product_media.delete_one({"id": media_id})
+    # The `product_media` row is gone after this point — capture a snapshot
+    # in the (immutable, append-only) activity log now, before it's lost,
+    # so "who deleted which image and when" survives independently of the
+    # live media collection.
+    await log_event(
+        event_type="product.image_deleted",
+        entity_type="product",
+        entity_id=doc.get("product_id") or doc.get("family_key") or "unknown",
+        actor=actor,
+        payload={
+            "media_id": media_id, "source_type": doc.get("source_type"), "role": doc.get("role"),
+            "was_primary": doc.get("is_primary", False), "storage_key": doc.get("storage_key"),
+            "public_url": doc.get("public_url"), "size_bytes": doc.get("size_bytes"),
+        },
+        summary=f"Deleted a {doc.get('role', 'gallery')} image ({doc.get('source_type', 'supplier')})",
+    )
     return True
+
+
+async def replace_media(
+    media_id: str,
+    *,
+    data: bytes,
+    mime: str,
+    brand_slug: str,
+    uploaded_by: Optional[str] = None,
+    notes: Optional[str] = None,
+    actor: Optional[UserPublic] = None,
+) -> Optional[ProductMedia]:
+    """Swap the file behind an existing media slot, preserving its role,
+    primary status and sort order — this is the "Replace image" action
+    (distinct from delete-then-add: the new image inherits the old one's
+    position in the gallery instead of landing at the end).
+
+    Implemented by composing upload_and_register + delete_media so both
+    halves get their own audit trail entry and orphan-safe behaviour for
+    free, plus one linking "replaced" event that ties the two together.
+    """
+    old = await db.product_media.find_one({"id": media_id}, {"_id": 0})
+    if not old:
+        return None
+
+    new_doc = await upload_and_register(
+        data=data, mime=mime, brand_slug=brand_slug,
+        product_id=old.get("product_id"), family_key=old.get("family_key"), brand_id=old.get("brand_id"),
+        source_type=old.get("source_type", "internal"), role=old.get("role", "gallery"),
+        is_primary=old.get("is_primary", False), sort_order=old.get("sort_order", 100),
+        uploaded_by=uploaded_by, notes=notes, actor=actor,
+    )
+    if new_doc.id != media_id:
+        await delete_media(media_id, actor=actor)
+    await log_event(
+        event_type="product.image_replaced",
+        entity_type="product",
+        entity_id=old.get("product_id") or old.get("family_key") or "unknown",
+        actor=actor,
+        actor_id=uploaded_by,
+        payload={"old_media_id": media_id, "new_media_id": new_doc.id, "role": old.get("role")},
+        summary="Replaced a product image",
+    )
+    return new_doc
 
 
 async def list_media_for_product(product_id: str, family_key: Optional[str] = None) -> list[ProductMedia]:

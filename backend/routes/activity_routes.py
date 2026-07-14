@@ -49,3 +49,15 @@ async def customer_timeline(
     _: UserPublic = Depends(get_current_user),
 ):
     return await timeline_for(customer_id=customer_id, limit=limit)
+
+
+@router.get("/product/{product_id}")
+async def product_timeline(
+    product_id: str,
+    limit: int = Query(200, ge=1, le=500),
+    _: UserPublic = Depends(get_current_user),
+):
+    """Audit trail for a product's image uploads/replacements/deletions —
+    survives independently of the live `product_media` rows (a deleted
+    image's metadata is captured here at delete time, not lost with it)."""
+    return await timeline_for(entity_type="product", entity_id=product_id, limit=limit)
