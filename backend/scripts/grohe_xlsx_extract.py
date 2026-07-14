@@ -64,6 +64,22 @@ ORIGINAL_FILENAMES: dict[str, str] = {
     "Single Lever": "SINGLE LIVER.xlsx",
 }
 
+# Batch 2 (2026-08) — 5 more supplier files, same pipeline, same rules.
+FILES_BATCH2: dict[str, str] = {
+    "Bau Line": "bau_line.xlsx",
+    "Body Jet": "body_jet.xlsx",
+    "Handshower": "handshower.xlsx",
+    "Kitchen Tap": "kitchen_tap.xlsx",
+    "Short Body Basin Mixer": "short_body_basin_mixer.xlsx",
+}
+ORIGINAL_FILENAMES_BATCH2: dict[str, str] = {
+    "Bau Line": "BAU LINE.xlsx",
+    "Body Jet": "BODY JET.xlsx",
+    "Handshower": "HANDSHOWER.xlsx",
+    "Kitchen Tap": "KITCHEN TAP.xlsx",
+    "Short Body Basin Mixer": "SHORT BODY BASIN MIXER.xlsx",
+}
+
 
 @dataclass
 class ImageResult:
@@ -78,7 +94,7 @@ class ImageResult:
 class GroheRow:
     category: str
     source_file: str          # original supplier filename (traceability)
-    sl: int
+    sl: Optional[int]
     sku: str
     description: str
     mrp: Optional[float]
@@ -243,19 +259,28 @@ def resolve_image(raw: bytes, fmt: str) -> ImageResult:
     return ImageResult(ok=False, source_format=fmt or "unknown", error="unrecognized format")
 
 
-def extract_file(category: str, path: str) -> list[GroheRow]:
+def extract_file(category: str, path: str, original_filename: Optional[str] = None) -> list[GroheRow]:
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb[wb.sheetnames[0]]
     images_by_row = _extract_images_by_row(path)
-    original_filename = ORIGINAL_FILENAMES[category]
+    if original_filename is None:
+        original_filename = ORIGINAL_FILENAMES.get(category) or ORIGINAL_FILENAMES_BATCH2.get(category) or category
 
     rows: list[GroheRow] = []
     seen_hashes: dict[str, str] = {}   # sha1(sku+desc+mrp) -> first sku seen
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=8):
         cells = {c.column_letter: c.value for c in row if c.value is not None}
         a, b = cells.get("A"), cells.get("B")
-        if not isinstance(a, int) or b is None:
+        c_val = cells.get("C")
+        # A product row requires a SKU (B) + a description (C). The serial
+        # number (A) is sometimes blank in the supplier's own file (verified
+        # across bau_line/body_jet/handshower) — it is NOT required to
+        # recognize a valid row, only used for traceability when present.
+        if b is None or c_val is None:
             continue
+        if isinstance(b, str) and "article" in b.lower():
+            continue  # this is the header row itself (B="Article No."), not a product
+        sl = a if isinstance(a, int) else None
         sku = str(b).strip()
         description = str(cells.get("C") or "").replace("\n", " ").strip()
         description = re.sub(r"\s+", " ", description)
@@ -282,7 +307,7 @@ def extract_file(category: str, path: str) -> list[GroheRow]:
         img_result = resolve_image(*raw_img) if raw_img else ImageResult(ok=False, error="no embedded image at this row")
 
         rows.append(GroheRow(
-            category=category, source_file=original_filename, sl=a, sku=sku,
+            category=category, source_file=original_filename, sl=sl, sku=sku,
             description=description, mrp=mrp, segment=segment,
             finish_hint_col=finish_hint, finish=finish, family_key=family_key,
             row_num=row[0].row, image=img_result, duplicate_of=duplicate_of,
@@ -291,18 +316,25 @@ def extract_file(category: str, path: str) -> list[GroheRow]:
     return rows
 
 
-def extract_all(base_dir: str) -> dict[str, list[GroheRow]]:
+def extract_all(base_dir: str, files: Optional[dict[str, str]] = None,
+                 original_filenames: Optional[dict[str, str]] = None) -> dict[str, list[GroheRow]]:
+    files = files or FILES
+    original_filenames = original_filenames or ORIGINAL_FILENAMES
     result: dict[str, list[GroheRow]] = {}
-    for category, filename in FILES.items():
+    for category, filename in files.items():
         path = str(Path(base_dir) / filename)
-        result[category] = extract_file(category, path)
+        result[category] = extract_file(category, path, original_filenames.get(category))
     return result
 
 
 if __name__ == "__main__":
     import sys
     base = sys.argv[1] if len(sys.argv) > 1 else "/tmp/grohe_analysis"
-    all_rows = extract_all(base)
+    batch = sys.argv[2] if len(sys.argv) > 2 else "1"
+    if batch == "2":
+        all_rows = extract_all(base, FILES_BATCH2, ORIGINAL_FILENAMES_BATCH2)
+    else:
+        all_rows = extract_all(base)
     total = 0
     total_imgs_ok = 0
     failures = []
@@ -315,7 +347,8 @@ if __name__ == "__main__":
                 total_imgs_ok += 1
             else:
                 failures.append((cat, r.sku, r.description, r.image.error))
-            print(f"  sl{r.sl:>3} sku={r.sku:<14} finish={r.finish or '-':<12} "
+            sl_str = str(r.sl) if r.sl is not None else "-"
+            print(f"  sl{sl_str:>3} sku={r.sku:<14} finish={r.finish or '-':<12} "
                   f"img={status:<7} fmt={r.image.source_format} mrp={r.mrp}  {r.description[:55]}")
     print(f"\nTOTAL ROWS: {total}  IMAGES OK: {total_imgs_ok}  MISSING: {len(failures)}")
     if failures:
