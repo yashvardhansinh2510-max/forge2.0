@@ -1,0 +1,58 @@
+{
+  "summary": "Re-verified the 3 findings from iteration_8's review. Result: 2 of 3 are genuinely FIXED and confirmed both via backend API and live UI screenshots; 1 (Geberit ligature text) is UNFIXED in the live app because the code fix was never applied to already-ingested data. (1) Vitra Memoria Rim-ex WC family: 'White' (SKU 5885B403H0101) now correctly shows a placeholder with SKU text and NO image; 'Matt White'/'Matt Black'/'Matt Taupe' each show their own distinct real photo; switching swatches updates SKU+price+image/placeholder together correctly (verified live, screenshots taken). (2) Grohe Nova Cosmopolitan Flush Plate family (SKU prefix 37601, codes AL0/DL0/GN0/KF0): exactly 1 of 4 siblings (AL0) keeps the real image, the other 3 gracefully show the placeholder with SKU text — verified live via API and UI screenshots. (3) Geberit ligature fix: the code in catalog_pipeline/adapters/geberit.py DOES contain the ligature-normalization map (fi/fl/ff/ffi/ffl), but this only runs at PDF-parse/re-ingestion time — the live MongoDB catalog was never re-ingested after this code change (confirmed: affected products' updated_at timestamp predates the geberit.py file's last-modified time), so the live app still shows the exact same reported bug. Found 33 field-level violations across ~11 Geberit SKUs, e.g. SKU 116.092.SM.6 colour/finish/name = 'glass feﬂective' (raw U+FB02 glyph, and it's actually missing the letter 'r' from 'reflective' too — a separate, deeper extraction defect the ligature map alone would not fix). Reproduced live in the UI catalog card for that SKU (screenshot). General regression: catalog list, brand/category filters, text search, family/variants toggle, product detail pages, and quotation flows all load without errors across all 3 brands; no backend 500s or React Native red-screen crashes observed during testing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/products (Geberit colour/finish/name fields)",
+        "issue": "Ligature normalization fix (\\ufb01/\\ufb02/etc -> fi/fl) exists in catalog_pipeline/adapters/geberit.py but was never applied to the live database — the fix only executes during PDF re-ingestion, which has not been re-run since the code change. 33 field-level violations found across ~11 SKUs (e.g. 116.092.SM.6, 131.185.00.5, 131.186.00.7, 115.651.00.1, 115.652.00.1, 115.884.00.1, 115.650.00.1, 115.671.00.2) still show raw ligature glyphs like 'speciﬁc' and 'feﬂective' in colour/finish/name. This is the exact bug reported in iteration_8, still present for the end user.",
+        "priority": "HIGH"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Catalog list card / Product detail colour label (Geberit Sigma80 Square 116.092.SM.6)",
+        "issue": "Colour label renders 'glass feflective' (raw ligature glyph + missing 'r' from 'reflective') live in both the catalog Variants-tab card and would appear on the product detail page too — same defect as iteration_8, not yet resolved for end users.",
+        "testID": "N/A (no testID on catalog card / variant label)",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_catalog_dedup_and_ligature_v3.py",
+    "/app/backend/tests/test_catalog_variant_image_contamination.py",
+    "/app/test_reports/pytest/pytest_dedup_ligature_v3.xml",
+    "/app/test_reports/pytest/pytest_catalog_variant_fix.xml",
+    "/root/.emergent/automation_output/20260714_095839/02_vitra_white.jpeg",
+    "/root/.emergent/automation_output/20260714_095839/03_vitra_mattwhite.jpeg",
+    "/root/.emergent/automation_output/20260714_095839/04_grohe_al0.jpeg",
+    "/root/.emergent/automation_output/20260714_095839/05_grohe_dl0.jpeg",
+    "/root/.emergent/automation_output/20260714_100033/screenshot_*.jpeg (Geberit ligature visible in catalog Variants tab)"
+  ],
+  "action_items": [
+    "Re-run the Geberit catalog re-ingestion (e.g. backend/scripts/run_geberit_reimport.py or the orchestrator flow that produced the original import) so the already-fixed ligature-normalization code in geberit.py actually reaches the live database. A code fix alone does not change previously-ingested MongoDB rows.",
+    "While re-ingesting, double check the 'feﬂective' case specifically — after ligature normalization it becomes 'feflective', which is still wrong ('reflective' has a dropped leading 'r'). This looks like a distinct PDF text-extraction artifact (character loss), not solved by the ligature map alone; verify against the source PDF for SKU 116.092.SM.6.",
+    "(Carried over from iteration_8, still open) Add testID props to the VariantSwatch component in /app/frontend/app/(admin)/catalog/[id].tsx for more robust future automated testing — currently reachable only via visible text."
+  ],
+  "critical_code_review_comments": [
+    "backend/services/catalog_service.py's new `_canonical_sku_for_sha1` + hero-image suppression logic in `_apply_media`/`_primary_product_image` is correctly implemented, deterministic (lowest SKU wins), and applies uniformly across all 3 brands as claimed — verified end-to-end for both Vitra and Grohe reported families.",
+    "catalog_pipeline/adapters/geberit.py's `_fix_ligatures()` is correct in isolation (verified by reading the code and its 5-entry map) but is dead code from the live user's perspective until someone re-runs the ingestion pipeline against the actual Geberit PDF source file — this is a deployment/process gap, not a logic bug."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_catalog_dedup_and_ligature_v3.py (new regression test file for this iteration's 3 scenarios + general regression)"
+  ],
+  "success_rate": {
+    "backend": "80% (8/10 new pytest cases passed; 2 failed, both attributable to the Geberit live-data-not-reingested issue, not a logic defect)",
+    "frontend": "100% of UI flows tested (Vitra variant swatch switching, Grohe placeholder display, Geberit search/list, catalog list/search regression) rendered and behaved correctly — the 1 remaining issue is a DATA-quality issue surfaced through a correctly functioning UI, not a UI bug"
+  },
+  "seed_data_creation": "None — read-only testing against the existing live catalog (2,602 products).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Vitra White/Matt-White and Grohe Nova Cosmopolitan duplicate-image-suppression fix are CONFIRMED WORKING — do not re-flag placeholder-instead-of-duplicate-image as a bug for these. The ONLY remaining open item is Geberit ligature text, and it needs a DATA re-ingestion (not a code fix) to actually reach production — reuse /app/backend/tests/test_catalog_dedup_and_ligature_v3.py::TestGeberitLigatureNormalization to verify once re-ingestion is done. Credentials: owner@forge.app / Forge@2026 (no /app/memory/test_credentials.md file exists in this environment).",
+  "rca_of_issue": "Geberit ligature bug persists live because MongoDB is a snapshot of a PAST PDF extraction run; the fix was added to catalog_pipeline/adapters/geberit.py's text-extraction function, which only executes when a Geberit PDF is (re-)ingested via the pipeline/orchestrator/reimport script. Editing the adapter source code has zero effect on rows already written to the database. Confirmed via timestamps: affected Geberit products' `updated_at` (2026-07-14T09:09:59Z) is earlier than geberit.py's file mtime (2026-07-14T09:51:59Z), and a direct byte inspection of SKU 116.092.SM.6's `colour` field returned codepoint 0xfb02 (raw ﬂ ligature) unchanged. Fix: main agent must trigger the Geberit re-import script/pipeline against the source PDF so the corrected extractor actually re-writes these rows."
+}

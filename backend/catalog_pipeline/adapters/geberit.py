@@ -52,6 +52,18 @@ JUNK_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Standard Unicode ligature glyphs (ﬁ/ﬂ/ﬀ/ﬃ/ﬄ) — some PDF-embedded fonts
+# encode these ligatures instead of the plain two-letter sequence. This is a
+# universally safe, lossless expansion (not a guess): every one of these
+# codepoints has exactly one meaning.
+_LIGATURES = {"\ufb01": "fi", "\ufb02": "fl", "\ufb00": "ff", "\ufb03": "ffi", "\ufb04": "ffl"}
+
+
+def _fix_ligatures(text: str) -> str:
+    for lig, plain in _LIGATURES.items():
+        text = text.replace(lig, plain)
+    return text
+
 CATEGORY_HINTS = {
     "CONCEALED CISTERN": "Concealed Cisterns",
     "INSTALLATION": "Concealed Cisterns",
@@ -123,7 +135,7 @@ class GeberitAdapter(BrandAdapter):
                 x0, y0, x1, y1, text, _bno, btype = b
                 if btype != 0:
                     continue
-                clean = text.strip()
+                clean = _fix_ligatures(text.strip())
                 if not clean:
                     continue
                 up = clean.upper()

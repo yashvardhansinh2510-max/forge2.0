@@ -198,6 +198,23 @@ def _dedup_media(rows: list[ProductMedia]) -> list[ProductMedia]:
     return out
 
 
+def _canonical_sku_for_sha1(snapshot: CatalogSnapshot, family_key: str, sha1: str) -> Optional[str]:
+    """Deterministic (lowest-SKU) owner of a given image hash within a family.
+
+    Used to suppress a supplier-file duplicate photo (byte-identical image
+    reused across two different colour/finish siblings) on every sibling
+    except one, so switching variants never appears to show "the same
+    picture again" for a reason the user can't tell apart from a bug.
+    """
+    canonical: Optional[str] = None
+    for sibling in snapshot.products_by_family.get(family_key, ()):
+        sib_sku = sibling.get("sku") or ""
+        if any(m.sha1 == sha1 for m in snapshot.media_by_product.get(sibling["id"], ())):
+            if canonical is None or sib_sku < canonical:
+                canonical = sib_sku
+    return canonical
+
+
 def _apply_media(product: dict, snapshot: CatalogSnapshot) -> None:
     # IMPORTANT: this must resolve media for THIS product only. It used to
     # also pool in every family sibling's media via `media_by_family` as a
@@ -242,6 +259,22 @@ def _apply_media(product: dict, snapshot: CatalogSnapshot) -> None:
     if not hero_url and gallery:
         hero_url = gallery[0]["url"]
 
+    # Supplier-file duplicate-image guard: some suppliers embed the exact
+    # same photo (byte-identical, same sha1) for two different colour/finish
+    # siblings — e.g. Vitra's "White" and "Matt White" columns. Showing that
+    # identical photo on both is exactly as misleading to the user as
+    # borrowing another variant's image (the symptom is the same: switching
+    # the variant doesn't visibly change anything), so treat every sibling
+    # EXCEPT the deterministic (lowest SKU) owner as having no image of its
+    # own rather than silently duplicating.
+    if hero_url and product.get("family_key"):
+        hero_sha1 = next((m.sha1 for m in rows if m.public_url == hero_url), None)
+        if hero_sha1:
+            canonical_sku = _canonical_sku_for_sha1(snapshot, product["family_key"], hero_sha1)
+            if canonical_sku is not None and canonical_sku != product.get("sku"):
+                hero_url = None
+                gallery = [g for g in gallery if g.get("id") not in {m.id for m in rows if m.sha1 == hero_sha1}]
+
     if not gallery and product.get("images"):
         legacy = product.get("images") or []
         gallery = [
@@ -268,10 +301,20 @@ def _apply_media(product: dict, snapshot: CatalogSnapshot) -> None:
         product["images"] = [hero_url]
 
 
-def _primary_product_image(snapshot: CatalogSnapshot, product_id: str) -> Optional[str]:
+def _primary_product_image(snapshot: CatalogSnapshot, product_id: str, family_key: Optional[str] = None) -> Optional[str]:
     for row in snapshot.media_rows_by_product.get(product_id, ()):
-        if row.get("public_url"):
-            return row["public_url"]
+        if not row.get("public_url"):
+            continue
+        # Same supplier-file duplicate-image guard as `_apply_media`: don't
+        # show a swatch thumbnail that's byte-identical to another sibling's
+        # photo unless this SKU is the deterministic canonical owner.
+        sha1 = row.get("sha1")
+        if family_key and sha1:
+            canonical_sku = _canonical_sku_for_sha1(snapshot, family_key, sha1)
+            product = snapshot.product_by_id.get(product_id) or {}
+            if canonical_sku is not None and canonical_sku != product.get("sku"):
+                continue
+        return row["public_url"]
     return None
 
 
@@ -290,7 +333,7 @@ def _hydrate_variants(product: dict, snapshot: CatalogSnapshot, limit: int = 8) 
             "price": float(sibling.get("price") or 0),
             "mrp": float(sibling.get("mrp") or sibling.get("price") or 0),
             "stock": int(sibling.get("stock") or 0),
-            "image": _primary_product_image(snapshot, sibling["id"]),
+            "image": _primary_product_image(snapshot, sibling["id"], product["family_key"]),
         })
     if variants:
         product["variants"] = variants[:limit]
@@ -729,7 +772,7 @@ async def family_detail(family_key: str) -> dict | None:
             "stock": product.get("stock", 0), "dimensions": product.get("dimensions"),
             "material": product.get("material"), "warranty": product.get("warranty"),
             "specs": product.get("specs") or {},
-            "hero_image": _primary_product_image(snapshot, product["id"]),
+            "hero_image": _primary_product_image(snapshot, product["id"], family_key),
         })
         for key, value in (product.get("specs") or {}).items():
             specs_union.setdefault(key, value)
