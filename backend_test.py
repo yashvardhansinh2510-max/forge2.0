@@ -1,635 +1,755 @@
 #!/usr/bin/env python3
 """
-GROHE Catalog Batch 4 (Additive) Verification Test Suite
-Tests the 4th and final additive Grohe catalog batch (AngleValve.xlsx).
-Grohe should now be exactly 508 products (was 500 before this batch).
+VITRA Catalog Audit & Repair Verification Test Suite
+Backend-only validation as per review request.
 """
 
 import requests
 import sys
-from typing import Dict, List, Any
-from collections import Counter
+from typing import Dict, List, Any, Optional
 
 # Backend URL from frontend/.env
 BASE_URL = "https://216d7dfd-ba32-495c-a1aa-c78b8d90fcbf.preview.emergentagent.com/api"
 
-# Test credentials
-EMAIL = "owner@forge.app"
-PASSWORD = "Forge@2026"
+# Test credentials from review request
+TEST_EMAIL = "owner@forge.app"
+TEST_PASSWORD = "Forge@2026"
 
-# Expected values
-EXPECTED_GROHE_COUNT = 508
-EXPECTED_HANSGROHE_COUNT = 908
-EXPECTED_AXOR_COUNT = 448
-EXPECTED_VITRA_COUNT = 250
-EXPECTED_GEBERIT_COUNT = 496
-EXPECTED_TOTAL_PRODUCTS = 2610
+# Global auth token
+AUTH_TOKEN = None
 
-# New category from batch 4
-NEW_CATEGORY_BATCH4 = "Angle Valve"
-EXPECTED_ANGLE_VALVE_COUNT = 8
+# Test results tracking
+test_results = {
+    "passed": [],
+    "failed": [],
+    "warnings": []
+}
 
-# Previous categories from earlier batches that should still exist
-PREVIOUS_CATEGORIES_BATCH3 = [
-    "Wall Mounted",
-    "Tall Body Basin Mixer",
-    "Trigger & Tank",
-    "Spout"
-]
 
-PREVIOUS_CATEGORIES_BATCH1_2 = [
-    "RSH Aqua Tile Shower",
-    "Plate",
-    "Shower",
-    "Single Lever",
-    "Bau Line",
-    "Body Jet",
-    "Handshower",
-    "Kitchen Tap",
-    "Short Body Basin Mixer"
-]
+def log_pass(test_name: str, details: str = ""):
+    """Log a passed test"""
+    msg = f"✅ PASS: {test_name}"
+    if details:
+        msg += f" - {details}"
+    print(msg)
+    test_results["passed"].append(test_name)
 
-# Thermostat should include Grohe products (from batch 3)
-THERMOSTAT_CATEGORY = "Thermostat"
 
-class TestResults:
-    def __init__(self):
-        self.passed = 0
-        self.failed = 0
-        self.warnings = 0
-        self.errors = []
-        
-    def pass_test(self, message: str):
-        self.passed += 1
-        print(f"✅ {message}")
-        
-    def fail_test(self, message: str):
-        self.failed += 1
-        self.errors.append(message)
-        print(f"❌ {message}")
-        
-    def warn_test(self, message: str):
-        self.warnings += 1
-        print(f"⚠️  {message}")
-        
-    def print_summary(self):
-        print("\n" + "="*80)
-        print("SUMMARY")
-        print("="*80)
-        print(f"PASSED: {self.passed}")
-        print(f"FAILED: {self.failed}")
-        print(f"WARNINGS: {self.warnings}")
-        
-        if self.errors:
-            print("\n🔴 CRITICAL FAILURES:")
-            for error in self.errors:
-                print(f"  • {error}")
-        
-        return self.failed == 0
+def log_fail(test_name: str, details: str):
+    """Log a failed test"""
+    msg = f"❌ FAIL: {test_name} - {details}"
+    print(msg)
+    test_results["failed"].append(f"{test_name}: {details}")
 
-def test_auth() -> str:
-    """Test 1: Authentication"""
+
+def log_warning(test_name: str, details: str):
+    """Log a warning"""
+    msg = f"⚠️  WARNING: {test_name} - {details}"
+    print(msg)
+    test_results["warnings"].append(f"{test_name}: {details}")
+
+
+def get_headers() -> Dict[str, str]:
+    """Get headers with auth token"""
+    headers = {"Content-Type": "application/json"}
+    if AUTH_TOKEN:
+        headers["Authorization"] = f"Bearer {AUTH_TOKEN}"
+    return headers
+
+
+def test_1_auth_login():
+    """TEST 1: Authentication - POST /api/auth/login"""
+    global AUTH_TOKEN
     print("\n" + "="*80)
     print("TEST 1: AUTHENTICATION")
     print("="*80)
     
-    results = TestResults()
-    
     try:
         response = requests.post(
             f"{BASE_URL}/auth/login",
-            json={"email": EMAIL, "password": PASSWORD},
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
             timeout=10
         )
         
         if response.status_code == 200:
             data = response.json()
-            token = data.get("access_token")
+            AUTH_TOKEN = data.get("access_token") or data.get("token")
             user = data.get("user", {})
             
-            if token:
-                results.pass_test(f"POST /api/auth/login {EMAIL}/{PASSWORD} -> 200 OK")
-                results.pass_test(f"Valid JWT token received ({len(token)} chars)")
-                results.pass_test(f"User: {user.get('email')}, Role: {user.get('role')}")
-                return token
+            if AUTH_TOKEN:
+                log_pass("Auth Login", f"User: {user.get('full_name')} ({user.get('email')}), Role: {user.get('role')}")
+                return True
             else:
-                results.fail_test("No access_token in response")
-                return None
+                log_fail("Auth Login", "No token in response")
+                return False
         else:
-            results.fail_test(f"POST /api/auth/login -> {response.status_code} (expected 200)")
-            return None
+            log_fail("Auth Login", f"Status {response.status_code}: {response.text[:200]}")
+            return False
             
     except Exception as e:
-        results.fail_test(f"Authentication failed: {str(e)}")
+        log_fail("Auth Login", f"Exception: {str(e)}")
+        return False
+
+
+def get_vitra_brand_id() -> Optional[str]:
+    """Get Vitra brand ID"""
+    try:
+        response = requests.get(f"{BASE_URL}/brands", headers=get_headers(), timeout=10)
+        if response.status_code == 200:
+            brands = response.json()
+            for brand in brands:
+                if brand.get("name", "").lower() == "vitra":
+                    return brand.get("id")
+        return None
+    except Exception as e:
+        print(f"Error getting Vitra brand ID: {e}")
         return None
 
-def test_brands(token: str) -> Dict[str, Any]:
-    """Test 2: Brands verification - Grohe=500, others unchanged"""
-    print("\n" + "="*80)
-    print("TEST 2: BRANDS")
-    print("="*80)
-    
-    results = TestResults()
-    brands_map = {}
-    
-    try:
-        response = requests.get(
-            f"{BASE_URL}/brands",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            results.fail_test(f"GET /api/brands -> {response.status_code} (expected 200)")
-            return brands_map
-            
-        brands = response.json()
-        
-        for brand in brands:
-            name = brand.get("name")
-            count = brand.get("product_count", 0)
-            brands_map[name] = {
-                "id": brand.get("id"),
-                "count": count
-            }
-        
-        # Check Grohe count (CRITICAL)
-        grohe_count = brands_map.get("Grohe", {}).get("count", 0)
-        if grohe_count == EXPECTED_GROHE_COUNT:
-            results.pass_test(f"Grohe product_count={grohe_count} (expected {EXPECTED_GROHE_COUNT}) — CORRECT ✓")
-        else:
-            results.fail_test(f"Grohe product_count={grohe_count} (expected {EXPECTED_GROHE_COUNT}) — INCORRECT")
-        
-        # Check other brands unchanged
-        checks = [
-            ("Hansgrohe", EXPECTED_HANSGROHE_COUNT),
-            ("Axor", EXPECTED_AXOR_COUNT),
-            ("Vitra", EXPECTED_VITRA_COUNT),
-            ("Geberit", EXPECTED_GEBERIT_COUNT)
-        ]
-        
-        for brand_name, expected_count in checks:
-            actual_count = brands_map.get(brand_name, {}).get("count", 0)
-            if actual_count == expected_count:
-                results.pass_test(f"{brand_name}={actual_count} (unchanged) — CORRECT ✓")
-            else:
-                results.fail_test(f"{brand_name}={actual_count} (expected {expected_count}) — INCORRECT")
-        
-        results.print_summary()
-        return brands_map
-        
-    except Exception as e:
-        results.fail_test(f"Brands test failed: {str(e)}")
-        return brands_map
 
-def test_duplicate_skus(token: str, grohe_id: str) -> bool:
-    """Test 3: CRITICAL - Zero duplicate SKUs in Grohe products"""
+def test_2_repair_1_price_correction():
+    """TEST 2: REPAIR #1 - Price correction for SKU 7426B420H0001"""
     print("\n" + "="*80)
-    print("TEST 3: CRITICAL - ZERO DUPLICATE SKUS")
+    print("TEST 2: REPAIR #1 - PRICE CORRECTION (SKU 7426B420H0001)")
     print("="*80)
     
-    results = TestResults()
-    
-    try:
-        # Fetch ALL Grohe products (limit=600 to ensure we get all 500)
-        all_products = []
-        limit = 600
-        offset = 0
-        
-        while True:
-            response = requests.get(
-                f"{BASE_URL}/products",
-                params={"brand_id": grohe_id, "limit": limit, "offset": offset},
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            
-            if response.status_code != 200:
-                results.fail_test(f"GET /api/products?brand_id={grohe_id} -> {response.status_code}")
-                return False
-            
-            data = response.json()
-            products = data.get("items", [])
-            
-            if not products:
-                break
-                
-            all_products.extend(products)
-            
-            # If we got fewer than limit, we've reached the end
-            if len(products) < limit:
-                break
-                
-            offset += limit
-        
-        total_count = len(all_products)
-        results.pass_test(f"Retrieved {total_count} Grohe products")
-        
-        # Extract all SKUs
-        skus = [p.get("sku") for p in all_products if p.get("sku")]
-        
-        # Count SKU occurrences
-        sku_counts = Counter(skus)
-        
-        # Find duplicates
-        duplicates = {sku: count for sku, count in sku_counts.items() if count > 1}
-        
-        if duplicates:
-            results.fail_test(f"CRITICAL: Found {len(duplicates)} duplicate SKUs in Grohe products:")
-            for sku, count in duplicates.items():
-                results.fail_test(f"  • SKU '{sku}' appears {count} times")
-            return False
-        else:
-            results.pass_test(f"ZERO duplicate SKUs found in {total_count} Grohe products — VERIFIED ✓")
-            results.pass_test(f"All {len(skus)} SKUs are unique")
-            return True
-        
-    except Exception as e:
-        results.fail_test(f"Duplicate SKU check failed: {str(e)}")
+    vitra_id = get_vitra_brand_id()
+    if not vitra_id:
+        log_fail("Repair #1 - Get Vitra Brand", "Could not find Vitra brand")
         return False
-    finally:
-        results.print_summary()
-
-def test_categories(token: str, brands_map: Dict[str, Any]) -> Dict[str, Any]:
-    """Test 4: Categories verification"""
-    print("\n" + "="*80)
-    print("TEST 4: CATEGORIES")
-    print("="*80)
-    
-    results = TestResults()
-    categories_map = {}
     
     try:
-        response = requests.get(
-            f"{BASE_URL}/categories",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            results.fail_test(f"GET /api/categories -> {response.status_code}")
-            return categories_map
-        
-        categories = response.json()
-        
-        for cat in categories:
-            name = cat.get("name")
-            categories_map[name] = {
-                "id": cat.get("id"),
-                "count": cat.get("product_count", 0)
-            }
-        
-        # Check NEW category from batch 4 (CRITICAL)
-        print("\nNEW CATEGORY FROM BATCH 4 (CRITICAL):")
-        if NEW_CATEGORY_BATCH4 in categories_map:
-            count = categories_map[NEW_CATEGORY_BATCH4]["count"]
-            if count == EXPECTED_ANGLE_VALVE_COUNT:
-                results.pass_test(f'"{NEW_CATEGORY_BATCH4}" — product_count={count} (expected {EXPECTED_ANGLE_VALVE_COUNT}) — CORRECT ✓')
-            else:
-                results.fail_test(f'"{NEW_CATEGORY_BATCH4}" — product_count={count} (expected {EXPECTED_ANGLE_VALVE_COUNT}) — INCORRECT')
-        else:
-            results.fail_test(f'"{NEW_CATEGORY_BATCH4}" — NOT FOUND')
-        
-        # Check categories from batch 3
-        print("\nCATEGORIES FROM BATCH 3 (should still exist with product_count > 0):")
-        for cat_name in PREVIOUS_CATEGORIES_BATCH3:
-            if cat_name in categories_map:
-                count = categories_map[cat_name]["count"]
-                if count > 0:
-                    results.pass_test(f'"{cat_name}" — product_count={count}')
-                else:
-                    results.fail_test(f'"{cat_name}" — product_count={count} (expected > 0)')
-            else:
-                results.fail_test(f'"{cat_name}" — NOT FOUND')
-        
-        # Check Thermostat category (should include Grohe from batch 3)
-        print("\nTHERMOSTAT CATEGORY (should include Grohe products from batch 3):")
-        if THERMOSTAT_CATEGORY in categories_map:
-            count = categories_map[THERMOSTAT_CATEGORY]["count"]
-            results.pass_test(f'"{THERMOSTAT_CATEGORY}" — product_count={count}')
-        else:
-            results.fail_test(f'"{THERMOSTAT_CATEGORY}" — NOT FOUND')
-        
-        # Check previous categories from batches 1-2
-        print("\nCATEGORIES FROM BATCHES 1-2 (should still exist):")
-        for cat_name in PREVIOUS_CATEGORIES_BATCH1_2:
-            if cat_name in categories_map:
-                count = categories_map[cat_name]["count"]
-                results.pass_test(f'"{cat_name}" — product_count={count}')
-            else:
-                results.fail_test(f'"{cat_name}" — NOT FOUND')
-        
-        results.print_summary()
-        return categories_map
-        
-    except Exception as e:
-        results.fail_test(f"Categories test failed: {str(e)}")
-        return categories_map
-
-def test_images(token: str, categories_map: Dict[str, Any], grohe_id: str):
-    """Test 5: Images spot-check for Angle Valve category"""
-    print("\n" + "="*80)
-    print("TEST 5: IMAGES SPOT-CHECK (ANGLE VALVE CATEGORY)")
-    print("="*80)
-    
-    results = TestResults()
-    
-    try:
-        if NEW_CATEGORY_BATCH4 not in categories_map:
-            results.fail_test(f'Category "{NEW_CATEGORY_BATCH4}" not found, skipping image check')
-            results.print_summary()
-            return
-        
-        cat_id = categories_map[NEW_CATEGORY_BATCH4]["id"]
-        
-        print(f'\n"{NEW_CATEGORY_BATCH4}" (spot-checking 3 products):')
-        
-        # Fetch products from Angle Valve category
+        # Search for the specific SKU
         response = requests.get(
             f"{BASE_URL}/products",
-            params={"category_id": cat_id, "brand_id": grohe_id, "limit": 3},
-            headers={"Authorization": f"Bearer {token}"},
+            params={"q": "7426B420H0001"},
+            headers=get_headers(),
             timeout=10
         )
         
         if response.status_code != 200:
-            results.fail_test(f"Failed to fetch products for {NEW_CATEGORY_BATCH4}: {response.status_code}")
-            results.print_summary()
-            return
+            log_fail("Repair #1 - Search Product", f"Status {response.status_code}")
+            return False
         
         data = response.json()
-        products = data.get("items", [])
+        items = data.get("items", [])
         
-        if not products:
-            results.fail_test(f"No products found in {NEW_CATEGORY_BATCH4}")
-            results.print_summary()
-            return
+        # Filter to exact SKU match
+        product = None
+        for item in items:
+            if item.get("sku") == "7426B420H0001":
+                product = item
+                break
         
-        # Check 3 products
-        for i, product in enumerate(products[:3], 1):
-            sku = product.get("sku", "N/A")
-            name = product.get("name", "N/A")
-            # Check both hero_image and hero_image_url fields
-            hero_image = product.get("hero_image") or product.get("hero_image_url")
+        if not product:
+            log_fail("Repair #1 - Find Product", "SKU 7426B420H0001 not found")
+            return False
+        sku = product.get("sku")
+        mrp = product.get("mrp")
+        price = product.get("price")
+        name = product.get("name", "")
+        
+        print(f"Found product: {name}")
+        print(f"  SKU: {sku}")
+        print(f"  MRP: {mrp}")
+        print(f"  Price: {price}")
+        
+        # Verify both mrp and price are 30680
+        if mrp == 30680 and price == 30680:
+            log_pass("Repair #1 - Price Correction", f"SKU {sku}: mrp={mrp}, price={price} (correct)")
+            return True
+        else:
+            log_fail("Repair #1 - Price Correction", 
+                    f"SKU {sku}: Expected mrp=30680, price=30680, Got mrp={mrp}, price={price}")
+            return False
             
-            if not hero_image:
-                results.fail_test(f"Product {i} (SKU={sku}): No hero_image or hero_image_url")
-                continue
-            
-            # Check if URL is from supabase.co
-            if "supabase.co" not in hero_image:
-                results.fail_test(f"Product {i} (SKU={sku}): Hero image not from supabase.co: {hero_image}")
-                continue
-            
-            # Check if image URL returns HTTP 200
-            try:
-                img_response = requests.head(hero_image, timeout=5)
-                if img_response.status_code == 200:
-                    results.pass_test(f"Product {i}: SKU={sku}, Name={name[:40]}..., Hero image URL valid (HTTP 200, supabase.co)")
-                else:
-                    results.fail_test(f"Product {i} (SKU={sku}): Hero image returned HTTP {img_response.status_code}")
-            except Exception as e:
-                results.fail_test(f"Product {i} (SKU={sku}): Failed to fetch hero image: {str(e)}")
-        
-        results.print_summary()
-        
     except Exception as e:
-        results.fail_test(f"Images test failed: {str(e)}")
-        results.print_summary()
+        log_fail("Repair #1 - Exception", str(e))
+        return False
 
-def test_earlier_batch_products(token: str, grohe_id: str):
-    """Test 6: Confirm products from earlier batches still present"""
+
+def test_3_repair_2_broken_image_removed():
+    """TEST 3: REPAIR #2 - Broken image removed for SKU 7041B003H0090"""
     print("\n" + "="*80)
-    print("TEST 6: EARLIER BATCH PRODUCTS PRESERVED")
+    print("TEST 3: REPAIR #2 - BROKEN IMAGE REMOVED (SKU 7041B003H0090)")
     print("="*80)
     
-    results = TestResults()
-    
-    # Sample SKUs from earlier batches (from test_result.md history)
-    # Batch 1 SKUs
-    batch1_skus = [
-        "104992DL00",  # RSH Aqua Tile Shower
-        "1068690000",  # Plate
-        "26565000",    # Shower
-        "33963000"     # Single Lever
-    ]
-    
-    # Batch 2 SKUs
-    batch2_skus = [
-        "24274001",    # Bau Line
-        "26801A00",    # Body Jet
-        "27573ALC",    # Handshower
-        "2201600M"     # Kitchen Tap
-    ]
-    
-    all_test_skus = batch1_skus + batch2_skus
+    vitra_id = get_vitra_brand_id()
+    if not vitra_id:
+        log_fail("Repair #2 - Get Vitra Brand", "Could not find Vitra brand")
+        return False
     
     try:
-        for sku in all_test_skus:
-            response = requests.get(
-                f"{BASE_URL}/products",
-                params={"brand_id": grohe_id, "sku": sku, "limit": 1},
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            
-            if response.status_code != 200:
-                results.fail_test(f"Failed to search for SKU {sku}: {response.status_code}")
-                continue
-            
-            data = response.json()
-            products = data.get("items", [])
-            
-            if products:
-                product = products[0]
-                results.pass_test(f"SKU {sku} — Still present (name: {product.get('name', 'N/A')[:50]}...)")
-            else:
-                results.fail_test(f"SKU {sku} — NOT FOUND (should be present from earlier batch)")
-        
-        results.print_summary()
-        
-    except Exception as e:
-        results.fail_test(f"Earlier batch products test failed: {str(e)}")
-        results.print_summary()
-
-def test_general_regression(token: str):
-    """Test 7: General regression tests"""
-    print("\n" + "="*80)
-    print("TEST 7: GENERAL REGRESSION")
-    print("="*80)
-    
-    results = TestResults()
-    
-    endpoints = [
-        ("GET /api/quotations", f"{BASE_URL}/quotations"),
-        ("GET /api/purchase-orders", f"{BASE_URL}/purchase-orders"),
-        ("GET /api/payments/stats", f"{BASE_URL}/payments/stats"),
-        ("GET /api/followups/stats", f"{BASE_URL}/followups/stats"),
-        ("GET /api/customers", f"{BASE_URL}/customers"),
-    ]
-    
-    try:
-        # Test basic endpoints
-        for name, url in endpoints:
-            response = requests.get(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                results.pass_test(f"{name} → 200 OK")
-            else:
-                results.fail_test(f"{name} → {response.status_code} (expected 200)")
-        
-        # Test PDF export (get first quotation and export it)
-        print("\nPDF EXPORT TEST:")
+        # Search for the specific SKU
         response = requests.get(
-            f"{BASE_URL}/quotations",
-            headers={"Authorization": f"Bearer {token}"},
-            params={"limit": 1},
+            f"{BASE_URL}/products",
+            params={"q": "7041B003H0090"},
+            headers=get_headers(),
             timeout=10
         )
         
-        if response.status_code == 200:
-            quotations = response.json()
-            if quotations and len(quotations) > 0:
-                quotation_id = quotations[0].get("id")
-                
-                pdf_response = requests.get(
-                    f"{BASE_URL}/quotations/{quotation_id}/pdf",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=15
-                )
-                
-                if pdf_response.status_code == 200:
-                    if pdf_response.content[:4] == b'%PDF':
-                        results.pass_test(f"GET /api/quotations/{quotation_id}/pdf → 200 OK (valid PDF)")
-                    else:
-                        results.fail_test(f"PDF export returned 200 but not a valid PDF")
-                else:
-                    results.fail_test(f"GET /api/quotations/{quotation_id}/pdf → {pdf_response.status_code}")
+        if response.status_code != 200:
+            log_fail("Repair #2 - Search Product", f"Status {response.status_code}")
+            return False
+        
+        data = response.json()
+        items = data.get("items", [])
+        
+        # Filter to exact SKU match
+        product = None
+        for item in items:
+            if item.get("sku") == "7041B003H0090":
+                product = item
+                break
+        
+        if not product:
+            log_fail("Repair #2 - Find Product", "SKU 7041B003H0090 not found")
+            return False
+        sku = product.get("sku")
+        name = product.get("name", "")
+        gallery = product.get("gallery", [])
+        
+        print(f"Found product: {name}")
+        print(f"  SKU: {sku}")
+        print(f"  Gallery count: {len(gallery)}")
+        
+        # Check for gallery images (role=gallery should be removed)
+        gallery_images = [m for m in gallery if m.get("role") == "gallery"]
+        hero_images = [m for m in gallery if m.get("role") == "hero"]
+        
+        print(f"  Hero images: {len(hero_images)}")
+        print(f"  Gallery images: {len(gallery_images)}")
+        
+        # Verify NO gallery images exist (the broken gallery image was removed)
+        if gallery_images:
+            log_fail("Repair #2 - Gallery Images", 
+                    f"Expected 0 gallery images, found {len(gallery_images)}")
+            return False
+        
+        # Verify at least one hero image exists
+        if not hero_images:
+            log_fail("Repair #2 - Hero Image", "No hero image found")
+            return False
+        
+        # Check the first hero image
+        hero = hero_images[0]
+        role = hero.get("role")
+        url = hero.get("url")
+        
+        print(f"  Primary hero role: {role}")
+        print(f"  Primary hero URL: {url}")
+        
+        # Verify it's a supabase.co URL
+        if "supabase.co" not in url:
+            log_fail("Repair #2 - Media URL", f"Expected supabase.co URL, got: {url}")
+            return False
+        
+        # Verify the URL returns HTTP 200
+        try:
+            img_response = requests.head(url, timeout=10)
+            if img_response.status_code == 200:
+                log_pass("Repair #2 - Broken Image Removed", 
+                        f"SKU {sku}: No gallery images (broken one removed), hero image URL returns HTTP 200")
+                return True
             else:
-                results.warn_test("No quotations available for PDF export test")
-        
-        # Test health/system
-        print("\nHEALTH CHECK:")
-        response = requests.get(f"{BASE_URL}/health/system", timeout=10)
-        
-        if response.status_code == 200:
-            health = response.json()
+                log_fail("Repair #2 - Image URL Check", 
+                        f"Image URL returned status {img_response.status_code}")
+                return False
+        except Exception as e:
+            log_fail("Repair #2 - Image URL Check", f"Failed to check image URL: {e}")
+            return False
             
-            if health.get("healthy") == True:
-                results.pass_test("GET /api/health/system → healthy=true")
-            else:
-                results.fail_test(f"GET /api/health/system → healthy={health.get('healthy')} (expected true)")
-            
-            counts = health.get("counts", {})
-            product_count = counts.get("products", 0)
-            
-            if product_count == EXPECTED_TOTAL_PRODUCTS:
-                results.pass_test(f"counts.products={product_count} (expected {EXPECTED_TOTAL_PRODUCTS})")
-            else:
-                results.fail_test(f"counts.products={product_count} (expected {EXPECTED_TOTAL_PRODUCTS})")
-        else:
-            results.fail_test(f"GET /api/health/system → {response.status_code}")
-        
-        results.print_summary()
-        
     except Exception as e:
-        results.fail_test(f"General regression test failed: {str(e)}")
-        results.print_summary()
+        log_fail("Repair #2 - Exception", str(e))
+        return False
 
-def test_other_brands_smoke(token: str, brands_map: Dict[str, Any]):
-    """Test 8: Smoke-check other brands"""
+
+def test_4_brand_count_unchanged():
+    """TEST 4: Brand counts unchanged (Vitra=250, others unchanged)"""
     print("\n" + "="*80)
-    print("TEST 8: OTHER BRANDS SMOKE CHECK")
+    print("TEST 4: BRAND COUNT UNCHANGED")
     print("="*80)
     
-    results = TestResults()
-    
-    brands_to_check = ["Hansgrohe", "Axor", "Geberit", "Vitra"]
+    expected_counts = {
+        "vitra": 250,
+        "hansgrohe": 908,
+        "axor": 448,
+        "grohe": 508,
+        "geberit": 496
+    }
     
     try:
-        for brand_name in brands_to_check:
-            if brand_name not in brands_map:
-                results.fail_test(f"{brand_name} — NOT FOUND in brands")
+        response = requests.get(f"{BASE_URL}/brands", headers=get_headers(), timeout=10)
+        
+        if response.status_code != 200:
+            log_fail("Brand Count - API Call", f"Status {response.status_code}")
+            return False
+        
+        brands = response.json()
+        all_correct = True
+        
+        print("\nBrand counts:")
+        for brand in brands:
+            name = brand.get("name", "").lower()
+            count = brand.get("product_count", 0)
+            expected = expected_counts.get(name)
+            
+            if expected is not None:
+                status = "✓" if count == expected else "✗"
+                print(f"  {status} {brand.get('name')}: {count} (expected {expected})")
+                
+                if count != expected:
+                    log_fail(f"Brand Count - {brand.get('name')}", 
+                            f"Expected {expected}, got {count}")
+                    all_correct = False
+        
+        if all_correct:
+            log_pass("Brand Count Unchanged", "All brand counts match expected values")
+            return True
+        else:
+            return False
+            
+    except Exception as e:
+        log_fail("Brand Count - Exception", str(e))
+        return False
+
+
+def test_5_spot_check_untouched_vitra_products():
+    """TEST 5: Spot check 5 random Vitra products (not the 2 repaired ones)"""
+    print("\n" + "="*80)
+    print("TEST 5: SPOT CHECK UNTOUCHED VITRA PRODUCTS")
+    print("="*80)
+    
+    vitra_id = get_vitra_brand_id()
+    if not vitra_id:
+        log_fail("Spot Check - Get Vitra Brand", "Could not find Vitra brand")
+        return False
+    
+    excluded_skus = ["7426B420H0001", "7041B003H0090"]
+    
+    try:
+        # Get Vitra products
+        response = requests.get(
+            f"{BASE_URL}/products",
+            params={"brand_id": vitra_id, "limit": 20},
+            headers=get_headers(),
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            log_fail("Spot Check - Get Products", f"Status {response.status_code}")
+            return False
+        
+        data = response.json()
+        items = data.get("items", [])
+        
+        # Filter out the repaired products
+        untouched = [p for p in items if p.get("sku") not in excluded_skus]
+        
+        if len(untouched) < 5:
+            log_warning("Spot Check", f"Only {len(untouched)} untouched products available")
+        
+        # Check first 5 untouched products
+        check_count = min(5, len(untouched))
+        all_ok = True
+        
+        print(f"\nChecking {check_count} untouched Vitra products:")
+        
+        for i, product in enumerate(untouched[:check_count], 1):
+            sku = product.get("sku")
+            name = product.get("name", "")
+            price = product.get("price")
+            category = product.get("category_name", "")
+            media = product.get("media", [])
+            
+            print(f"\n  {i}. SKU: {sku}")
+            print(f"     Name: {name}")
+            print(f"     Price: {price}")
+            print(f"     Category: {category}")
+            print(f"     Media count: {len(media)}")
+            
+            # Basic validation
+            if not sku or not name:
+                log_fail(f"Spot Check - Product {i}", "Missing SKU or name")
+                all_ok = False
                 continue
             
-            brand_id = brands_map[brand_name]["id"]
+            if price is None or price < 0:
+                log_fail(f"Spot Check - Product {i}", f"Invalid price: {price}")
+                all_ok = False
+                continue
             
+            # Check images if present
+            if media:
+                for media_entry in media[:1]:  # Check first image
+                    url = media_entry.get("url")
+                    if url:
+                        try:
+                            img_response = requests.head(url, timeout=5)
+                            if img_response.status_code == 200:
+                                print(f"     Image: HTTP 200 ✓")
+                            else:
+                                log_warning(f"Spot Check - Product {i} Image", 
+                                          f"Image returned status {img_response.status_code}")
+                        except Exception as e:
+                            log_warning(f"Spot Check - Product {i} Image", 
+                                      f"Failed to check image: {e}")
+        
+        if all_ok:
+            log_pass("Spot Check Untouched Products", 
+                    f"Checked {check_count} products - all have valid data")
+            return True
+        else:
+            return False
+            
+    except Exception as e:
+        log_fail("Spot Check - Exception", str(e))
+        return False
+
+
+def test_6_search_functionality():
+    """TEST 6: Search functionality for Vitra products"""
+    print("\n" + "="*80)
+    print("TEST 6: SEARCH FUNCTIONALITY")
+    print("="*80)
+    
+    search_tests = [
+        ("vitra", "Brand name search"),
+        ("memoria", "Product name search"),
+        ("integra", "Product name search"),
+        ("7426B420H0001", "Exact SKU search")
+    ]
+    
+    all_ok = True
+    
+    for query, description in search_tests:
+        try:
             response = requests.get(
                 f"{BASE_URL}/products",
-                params={"brand_id": brand_id, "limit": 3},
-                headers={"Authorization": f"Bearer {token}"},
+                params={"q": query},
+                headers=get_headers(),
                 timeout=10
             )
             
             if response.status_code == 200:
                 data = response.json()
-                products = data.get("items", [])
+                items = data.get("items", [])
+                total = data.get("total", 0)
                 
-                if len(products) >= 2:
-                    results.pass_test(f"{brand_name} — Retrieved {len(products)} products successfully")
+                if items:
+                    print(f"  ✓ Search '{query}' ({description}): {total} results")
+                    log_pass(f"Search - {description}", f"Query '{query}' returned {total} results")
                 else:
-                    results.warn_test(f"{brand_name} — Only {len(products)} products retrieved (expected 2-3)")
+                    log_warning(f"Search - {description}", f"Query '{query}' returned 0 results")
             else:
-                results.fail_test(f"{brand_name} — Failed to retrieve products: {response.status_code}")
+                log_fail(f"Search - {description}", 
+                        f"Query '{query}' returned status {response.status_code}")
+                all_ok = False
+                
+        except Exception as e:
+            log_fail(f"Search - {description}", f"Query '{query}' exception: {e}")
+            all_ok = False
+    
+    return all_ok
+
+
+def test_7_quotations_check():
+    """TEST 7: Check quotations referencing repaired SKUs"""
+    print("\n" + "="*80)
+    print("TEST 7: QUOTATIONS CHECK")
+    print("="*80)
+    
+    repaired_skus = ["7426B420H0001", "7041B003H0090"]
+    
+    try:
+        # Get all quotations
+        response = requests.get(
+            f"{BASE_URL}/quotations",
+            headers=get_headers(),
+            timeout=10
+        )
         
-        results.print_summary()
+        if response.status_code != 200:
+            log_fail("Quotations Check - Get Quotations", f"Status {response.status_code}")
+            return False
+        
+        quotations = response.json()
+        print(f"Total quotations: {len(quotations)}")
+        
+        # Check if any quotation references the repaired SKUs
+        found_quotations = []
+        
+        for quot in quotations:
+            quot_id = quot.get("id")
+            quot_number = quot.get("number")
+            line_items = quot.get("line_items", [])
+            
+            for item in line_items:
+                if item.get("sku") in repaired_skus:
+                    found_quotations.append({
+                        "id": quot_id,
+                        "number": quot_number,
+                        "sku": item.get("sku")
+                    })
+        
+        if not found_quotations:
+            print("  No quotations found referencing repaired SKUs (expected/OK)")
+            log_pass("Quotations Check", "No quotations reference repaired SKUs")
+            return True
+        
+        print(f"\nFound {len(found_quotations)} quotation(s) referencing repaired SKUs:")
+        
+        # Check each quotation in detail
+        all_ok = True
+        for quot_info in found_quotations:
+            quot_id = quot_info["id"]
+            quot_number = quot_info["number"]
+            sku = quot_info["sku"]
+            
+            print(f"\n  Quotation {quot_number} (ID: {quot_id}) references SKU {sku}")
+            
+            # Get full quotation details
+            try:
+                detail_response = requests.get(
+                    f"{BASE_URL}/quotations/{quot_id}",
+                    headers=get_headers(),
+                    timeout=10
+                )
+                
+                if detail_response.status_code == 200:
+                    print(f"    ✓ GET /api/quotations/{quot_id}: 200 OK")
+                    
+                    # Try to generate PDF
+                    try:
+                        pdf_response = requests.get(
+                            f"{BASE_URL}/quotations/{quot_id}/pdf",
+                            headers=get_headers(),
+                            timeout=30
+                        )
+                        
+                        if pdf_response.status_code == 200:
+                            print(f"    ✓ PDF generation: 200 OK ({len(pdf_response.content)} bytes)")
+                            log_pass(f"Quotations Check - {quot_number}", 
+                                   f"Quotation with SKU {sku} still works, PDF generates")
+                        else:
+                            log_fail(f"Quotations Check - {quot_number} PDF", 
+                                   f"PDF generation failed: status {pdf_response.status_code}")
+                            all_ok = False
+                    except Exception as e:
+                        log_fail(f"Quotations Check - {quot_number} PDF", 
+                               f"PDF generation exception: {e}")
+                        all_ok = False
+                else:
+                    log_fail(f"Quotations Check - {quot_number}", 
+                           f"GET failed: status {detail_response.status_code}")
+                    all_ok = False
+                    
+            except Exception as e:
+                log_fail(f"Quotations Check - {quot_number}", f"Exception: {e}")
+                all_ok = False
+        
+        return all_ok
         
     except Exception as e:
-        results.fail_test(f"Other brands smoke check failed: {str(e)}")
-        results.print_summary()
+        log_fail("Quotations Check - Exception", str(e))
+        return False
 
-def main():
+
+def test_8_general_regression():
+    """TEST 8: General regression checks"""
+    print("\n" + "="*80)
+    print("TEST 8: GENERAL REGRESSION")
     print("="*80)
-    print("GROHE CATALOG BATCH 4 (ADDITIVE) VERIFICATION TEST SUITE")
+    
+    all_ok = True
+    
+    # 8a. Health check
+    try:
+        response = requests.get(f"{BASE_URL}/health/system", timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            healthy = data.get("healthy")
+            product_count = data.get("counts", {}).get("products")
+            
+            print(f"  Health check: healthy={healthy}, products={product_count}")
+            
+            if healthy and product_count == 2610:
+                log_pass("General Regression - Health", 
+                        f"healthy=true, counts.products=2610")
+            else:
+                log_fail("General Regression - Health", 
+                        f"Expected healthy=true and products=2610, got healthy={healthy}, products={product_count}")
+                all_ok = False
+        else:
+            log_fail("General Regression - Health", f"Status {response.status_code}")
+            all_ok = False
+    except Exception as e:
+        log_fail("General Regression - Health", str(e))
+        all_ok = False
+    
+    # 8b. Other endpoints
+    endpoints = [
+        ("/customers", "Customers"),
+        ("/purchase-orders", "Purchase Orders"),
+        ("/payments/stats", "Payments Stats")
+    ]
+    
+    for endpoint, name in endpoints:
+        try:
+            response = requests.get(f"{BASE_URL}{endpoint}", headers=get_headers(), timeout=10)
+            
+            if response.status_code == 200:
+                print(f"  ✓ GET {endpoint}: 200 OK")
+            else:
+                log_fail(f"General Regression - {name}", f"Status {response.status_code}")
+                all_ok = False
+        except Exception as e:
+            log_fail(f"General Regression - {name}", str(e))
+            all_ok = False
+    
+    if all_ok:
+        log_pass("General Regression", "All endpoints working correctly")
+    
+    return all_ok
+
+
+def test_9_smoke_check_other_brands():
+    """TEST 9: Smoke check 2 products each from other brands"""
+    print("\n" + "="*80)
+    print("TEST 9: SMOKE CHECK OTHER BRANDS")
     print("="*80)
-    print(f"Backend URL: {BASE_URL}")
-    print(f"Test User: {EMAIL}")
-    print()
     
-    # Test 1: Authentication
-    token = test_auth()
-    if not token:
-        print("\n❌ CRITICAL: Authentication failed. Cannot proceed with other tests.")
-        sys.exit(1)
+    brands_to_check = ["Hansgrohe", "Axor", "Geberit", "Grohe"]
+    all_ok = True
     
-    # Test 2: Brands
-    brands_map = test_brands(token)
-    if not brands_map:
-        print("\n❌ CRITICAL: Failed to retrieve brands. Cannot proceed with other tests.")
-        sys.exit(1)
+    try:
+        # Get all brands
+        response = requests.get(f"{BASE_URL}/brands", headers=get_headers(), timeout=10)
+        
+        if response.status_code != 200:
+            log_fail("Smoke Check - Get Brands", f"Status {response.status_code}")
+            return False
+        
+        brands = response.json()
+        brand_map = {b.get("name"): b.get("id") for b in brands}
+        
+        for brand_name in brands_to_check:
+            brand_id = brand_map.get(brand_name)
+            
+            if not brand_id:
+                log_warning("Smoke Check", f"Brand {brand_name} not found")
+                continue
+            
+            print(f"\n  Checking {brand_name}:")
+            
+            # Get 2 products from this brand
+            response = requests.get(
+                f"{BASE_URL}/products",
+                params={"brand_id": brand_id, "limit": 2},
+                headers=get_headers(),
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                log_fail(f"Smoke Check - {brand_name}", f"Status {response.status_code}")
+                all_ok = False
+                continue
+            
+            data = response.json()
+            items = data.get("items", [])
+            
+            if len(items) < 2:
+                log_warning(f"Smoke Check - {brand_name}", f"Only {len(items)} products available")
+            
+            for i, product in enumerate(items[:2], 1):
+                sku = product.get("sku")
+                name = product.get("name", "")[:50]
+                
+                print(f"    {i}. {sku}: {name}...")
+                
+                # Check if product loads fine
+                if not sku or not name:
+                    log_fail(f"Smoke Check - {brand_name} Product {i}", "Missing SKU or name")
+                    all_ok = False
+        
+        if all_ok:
+            log_pass("Smoke Check Other Brands", "All brands load fine")
+        
+        return all_ok
+        
+    except Exception as e:
+        log_fail("Smoke Check - Exception", str(e))
+        return False
+
+
+def print_summary():
+    """Print test summary"""
+    print("\n" + "="*80)
+    print("TEST SUMMARY")
+    print("="*80)
     
-    grohe_id = brands_map.get("Grohe", {}).get("id")
-    if not grohe_id:
-        print("\n❌ CRITICAL: Grohe brand not found. Cannot proceed with Grohe-specific tests.")
-        sys.exit(1)
+    total = len(test_results["passed"]) + len(test_results["failed"])
+    passed = len(test_results["passed"])
+    failed = len(test_results["failed"])
+    warnings = len(test_results["warnings"])
     
-    # Test 3: CRITICAL - Duplicate SKUs
-    duplicate_check_passed = test_duplicate_skus(token, grohe_id)
-    if not duplicate_check_passed:
-        print("\n🔴 CRITICAL: DUPLICATE SKU CHECK FAILED!")
+    print(f"\nTotal Tests: {total}")
+    print(f"✅ Passed: {passed}")
+    print(f"❌ Failed: {failed}")
+    print(f"⚠️  Warnings: {warnings}")
     
-    # Test 4: Categories
-    categories_map = test_categories(token, brands_map)
+    if test_results["failed"]:
+        print("\n" + "="*80)
+        print("FAILED TESTS:")
+        print("="*80)
+        for failure in test_results["failed"]:
+            print(f"  ❌ {failure}")
     
-    # Test 5: Images (Angle Valve category)
-    test_images(token, categories_map, grohe_id)
-    
-    # Test 6: Earlier batch products
-    test_earlier_batch_products(token, grohe_id)
-    
-    # Test 7: General regression
-    test_general_regression(token)
-    
-    # Test 8: Other brands smoke check
-    test_other_brands_smoke(token, brands_map)
+    if test_results["warnings"]:
+        print("\n" + "="*80)
+        print("WARNINGS:")
+        print("="*80)
+        for warning in test_results["warnings"]:
+            print(f"  ⚠️  {warning}")
     
     print("\n" + "="*80)
-    print("ALL TESTS COMPLETE")
+    
+    return failed == 0
+
+
+def main():
+    """Main test runner"""
     print("="*80)
+    print("VITRA CATALOG AUDIT & REPAIR VERIFICATION")
+    print("Backend-only validation")
+    print("="*80)
+    
+    # Run all tests in sequence
+    tests = [
+        test_1_auth_login,
+        test_2_repair_1_price_correction,
+        test_3_repair_2_broken_image_removed,
+        test_4_brand_count_unchanged,
+        test_5_spot_check_untouched_vitra_products,
+        test_6_search_functionality,
+        test_7_quotations_check,
+        test_8_general_regression,
+        test_9_smoke_check_other_brands
+    ]
+    
+    for test_func in tests:
+        try:
+            test_func()
+        except Exception as e:
+            print(f"\n❌ CRITICAL ERROR in {test_func.__name__}: {e}")
+            test_results["failed"].append(f"{test_func.__name__}: Critical exception - {e}")
+    
+    # Print summary
+    success = print_summary()
+    
+    # Exit with appropriate code
+    sys.exit(0 if success else 1)
+
 
 if __name__ == "__main__":
     main()
