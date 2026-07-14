@@ -91,6 +91,12 @@ export type BuilderApi = {
   productModal: Product | null;
   openProductModal: (p: Product) => void;
   closeProductModal: () => void;
+  /** Merge a partial product update (from the shared ProductEditor) into
+   * both the open detail modal AND the in-memory picker grid, so an edit
+   * saved mid-quotation reflects immediately without refetching the whole
+   * product list. The backend is the real source of truth — this is purely
+   * a same-tick UI mirror of what it just confirmed saving. */
+  patchProduct: (id: string, updates: Record<string, unknown>) => void;
   customProductSheetOpen: boolean;
   setCustomProductSheetOpen: (v: boolean) => void;
 
@@ -516,6 +522,10 @@ export function BuilderProvider({ onFinalize, children }: {
   // Product modal helpers
   const openProductModal = useCallback((p: Product) => setProductModal(p), []);
   const closeProductModal = useCallback(() => setProductModal(null), []);
+  const patchProduct = useCallback((id: string, updates: Record<string, unknown>) => {
+    setProductModal((cur) => (cur && cur.id === id ? ({ ...cur, ...updates } as Product) : cur));
+    setProducts((cur) => cur.map((p) => (p.id === id ? ({ ...p, ...updates } as Product) : p)));
+  }, []);
 
   // ---------- Derived ----------
   const totals = useMemo(
@@ -867,7 +877,7 @@ export function BuilderProvider({ onFinalize, children }: {
     brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
     sortKey, setSortKey, favouriteIds, toggleFavourite,
     setProjectName, setPhone, setReferenceSource,
-    productModal, openProductModal, closeProductModal,
+    productModal, openProductModal, closeProductModal, patchProduct,
     customProductSheetOpen, setCustomProductSheetOpen,
     recentQuotations, refreshRecentQuotations, restoreQuotation, startNewQuotation,
     totals, usedCategoryIds, flatRows,

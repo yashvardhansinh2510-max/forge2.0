@@ -26,12 +26,15 @@ type MediaItem = {
 
 type Pending = { uri: string; mimeType: string; replaceId?: string };
 
-export function ProductImageManager({
-  productId, visible, onClose, onChanged,
+/** The actual grid/upload/preview/delete UI, with no Sheet chrome of its own
+ * — reusable as a standalone drawer (see ProductImageManager below) OR
+ * embedded as the "Media" section inside the unified ProductEditor. Exactly
+ * one implementation of the upload flow exists in the whole app; both
+ * call sites render this same component. */
+export function ProductImageManagerBody({
+  productId, onChanged,
 }: {
   productId: string;
-  visible: boolean;
-  onClose: () => void;
   /** Called after any successful upload/replace/delete/set-primary so the
    * caller can refetch the product and pick up the new hero_image_url/gallery
    * (the backend already invalidates its own catalog cache; this is what
@@ -55,9 +58,7 @@ export function ProductImageManager({
     }
   }, [productId]);
 
-  useEffect(() => {
-    if (visible) { setMedia(null); setPending(null); load(); }
-  }, [visible, load]);
+  useEffect(() => { setMedia(null); setPending(null); load(); }, [load]);
 
   const pick = async (replaceId?: string) => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -128,86 +129,76 @@ export function ProductImageManager({
 
   return (
     <>
-      <Sheet
-        visible={visible}
-        onClose={() => { setPending(null); onClose(); }}
-        title="Manage images"
-        subtitle="Upload, replace, or remove product photos"
-        variant="drawer"
-        width={640}
-        testID="product-image-manager"
-      >
-        {pending ? (
-          <View style={styles.previewWrap}>
-            <Text style={type.overline}>Preview</Text>
-            <View style={styles.previewImage}>
-              <Image source={{ uri: pending.uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
-            </View>
-            <Text style={[type.caption, { textAlign: "center" }]}>
-              {pending.replaceId
-                ? "This will replace the existing image in the same spot."
-                : "This will be added to the product's gallery."}
-            </Text>
+      {pending ? (
+        <View style={styles.previewWrap}>
+          <Text style={type.overline}>Preview</Text>
+          <View style={styles.previewImage}>
+            <Image source={{ uri: pending.uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+          </View>
+          <Text style={[type.caption, { textAlign: "center" }]}>
+            {pending.replaceId
+              ? "This will replace the existing image in the same spot."
+              : "This will be added to the product's gallery."}
+          </Text>
+          <Button
+            label="Choose a different photo"
+            variant="secondary" icon="image" style={{ width: "100%" }}
+            onPress={() => pick(pending.replaceId)} testID="image-retake"
+          />
+          <View style={styles.previewActions}>
+            <Button label="Cancel" variant="secondary" style={{ flex: 1 }} onPress={() => setPending(null)} testID="image-preview-cancel" />
             <Button
-              label="Choose a different photo"
-              variant="secondary" icon="image" style={{ width: "100%" }}
-              onPress={() => pick(pending.replaceId)} testID="image-retake"
+              label={pending.replaceId ? "Save replacement" : "Save image"}
+              style={{ flex: 1 }} loading={busy} onPress={confirmUpload} testID="image-preview-save"
             />
-            <View style={styles.previewActions}>
-              <Button label="Cancel" variant="secondary" style={{ flex: 1 }} onPress={() => setPending(null)} testID="image-preview-cancel" />
-              <Button
-                label={pending.replaceId ? "Save replacement" : "Save image"}
-                style={{ flex: 1 }} loading={busy} onPress={confirmUpload} testID="image-preview-save"
-              />
-            </View>
           </View>
-        ) : media === null ? (
-          <View style={{ padding: spacing.xxl, alignItems: "center" }}>
-            <ActivityIndicator color={colors.brand} />
-          </View>
-        ) : (
-          <View style={{ padding: spacing.lg, gap: spacing.lg }}>
-            <Button label="Add photo" icon="upload" onPress={() => pick()} testID="image-add-btn" />
-            {media.length === 0 ? (
-              <EmptyState icon="image" title="No images yet" subtitle="Add the first photo for this product." />
-            ) : (
-              <View style={styles.grid}>
-                {media.map((m) => (
-                  <View key={m.id} style={[styles.tile, { width: cols === 2 ? "47%" : "31%" }]} testID={`media-tile-${m.id}`}>
-                    <View style={styles.thumbWrap}>
-                      {m.public_url ? (
-                        <Image source={{ uri: m.public_url }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
-                      ) : (
-                        <Feather name="image" size={22} color={colors.onSurfaceMuted} />
-                      )}
-                      {m.is_primary ? (
-                        <View style={styles.primaryBadge}><Badge label="Primary" tone="brand" size="sm" /></View>
-                      ) : null}
-                    </View>
-                    <Text style={type.caption} numberOfLines={1}>{m.source_type} · {m.role}</Text>
-                    <View style={styles.actionsRow}>
-                      {!m.is_primary ? (
-                        <Pressable onPress={() => setPrimary(m.id)} style={styles.miniAction} testID={`media-set-primary-${m.id}`}>
-                          <Feather name="star" size={12} color={colors.onSurfaceSecondary} />
-                          <Text style={styles.miniActionLabel}>Primary</Text>
-                        </Pressable>
-                      ) : null}
-                      <Pressable onPress={() => pick(m.id)} style={styles.miniAction} testID={`media-replace-${m.id}`}>
-                        <Feather name="refresh-cw" size={12} color={colors.onSurfaceSecondary} />
-                        <Text style={styles.miniActionLabel}>Replace</Text>
-                      </Pressable>
-                      <Pressable onPress={() => setConfirmDeleteId(m.id)} style={styles.miniAction} testID={`media-delete-${m.id}`}>
-                        <Feather name="trash-2" size={12} color={colors.error} />
-                        <Text style={[styles.miniActionLabel, { color: colors.error }]}>Delete</Text>
-                      </Pressable>
-                    </View>
+        </View>
+      ) : media === null ? (
+        <View style={{ padding: spacing.xxl, alignItems: "center" }}>
+          <ActivityIndicator color={colors.brand} />
+        </View>
+      ) : (
+        <View style={{ padding: spacing.lg, gap: spacing.lg }}>
+          <Button label="Add photo" icon="upload" onPress={() => pick()} testID="image-add-btn" />
+          {media.length === 0 ? (
+            <EmptyState icon="image" title="No images yet" subtitle="Add the first photo for this product." />
+          ) : (
+            <View style={styles.grid}>
+              {media.map((m) => (
+                <View key={m.id} style={[styles.tile, { width: cols === 2 ? "47%" : "31%" }]} testID={`media-tile-${m.id}`}>
+                  <View style={styles.thumbWrap}>
+                    {m.public_url ? (
+                      <Image source={{ uri: m.public_url }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+                    ) : (
+                      <Feather name="image" size={22} color={colors.onSurfaceMuted} />
+                    )}
+                    {m.is_primary ? (
+                      <View style={styles.primaryBadge}><Badge label="Primary" tone="brand" size="sm" /></View>
+                    ) : null}
                   </View>
-                ))}
-              </View>
-            )}
-          </View>
-        )}
-      </Sheet>
+                  <Text style={type.caption} numberOfLines={1}>{m.source_type} · {m.role}</Text>
+                  <View style={styles.actionsRow}>
+                    {!m.is_primary ? (
+                      <Pressable onPress={() => setPrimary(m.id)} style={styles.miniAction} testID={`media-set-primary-${m.id}`}>
+                        <Feather name="star" size={12} color={colors.onSurfaceSecondary} />
+                        <Text style={styles.miniActionLabel}>Primary</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable onPress={() => pick(m.id)} style={styles.miniAction} testID={`media-replace-${m.id}`}>
+                      <Feather name="refresh-cw" size={12} color={colors.onSurfaceSecondary} />
+                      <Text style={styles.miniActionLabel}>Replace</Text>
+                    </Pressable>
+                    <Pressable onPress={() => setConfirmDeleteId(m.id)} style={styles.miniAction} testID={`media-delete-${m.id}`}>
+                      <Feather name="trash-2" size={12} color={colors.error} />
+                      <Text style={[styles.miniActionLabel, { color: colors.error }]}>Delete</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
 
       <ConfirmDialog
         visible={!!confirmDeleteId}
@@ -221,6 +212,32 @@ export function ProductImageManager({
         testID="confirm-delete-media"
       />
     </>
+  );
+}
+
+/** Standalone drawer entry point (used from the Catalog product detail's
+ * quick "Manage images" affordance). Just wraps ProductImageManagerBody in
+ * a Sheet — all the actual logic lives in the body component above. */
+export function ProductImageManager({
+  productId, visible, onClose, onChanged,
+}: {
+  productId: string;
+  visible: boolean;
+  onClose: () => void;
+  onChanged?: () => void;
+}) {
+  return (
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title="Manage images"
+      subtitle="Upload, replace, or remove product photos"
+      variant="drawer"
+      width={640}
+      testID="product-image-manager"
+    >
+      {visible ? <ProductImageManagerBody productId={productId} onChanged={onChanged} /> : null}
+    </Sheet>
   );
 }
 

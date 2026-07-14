@@ -27,7 +27,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { Button, Card, IconButton, PriceTag } from "@/src/components/ui";
-import { ProductImageManager } from "@/src/components/catalog/ProductImageManager";
+import { ProductEditor } from "@/src/components/catalog/ProductEditor";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
@@ -84,6 +84,7 @@ export default function ProductDetail() {
   // Same threshold as backend's require_min_role("purchase") for the media
   // endpoints — keep in sync if that ever changes.
   const canManageImages = !!staff && ["owner", "admin", "manager", "accounts", "purchase"].includes(staff.role);
+  const [editorTab, setEditorTab] = useState<"General" | "Pricing" | "Media">("General");
 
   const [p, setP] = useState<Product | null>(null);
   const [siblings, setSiblings] = useState<Product[]>([]);
@@ -420,8 +421,8 @@ export default function ProductDetail() {
         <IconButton icon="heart" onPress={() => {}} size={36} tone="surface" accessibilityLabel="Save" />
         {canManageImages ? (
           <IconButton
-            icon="image" onPress={() => setShowImageManager(true)} size={36} tone="surface"
-            accessibilityLabel="Manage images" testID="manage-images-btn"
+            icon="edit-2" onPress={() => { setEditorTab("General"); setShowImageManager(true); }} size={36} tone="surface"
+            accessibilityLabel="Edit product" testID="manage-images-btn"
           />
         ) : null}
         <IconButton icon="share-2" onPress={() => {}} size={36} tone="surface" accessibilityLabel="Share" />
@@ -504,11 +505,12 @@ export default function ProductDetail() {
         onClose={() => setHistoryItemId(null)}
       />
       {p ? (
-        <ProductImageManager
+        <ProductEditor
           productId={p.id}
           visible={showImageManager}
+          initialTab={editorTab}
           onClose={() => setShowImageManager(false)}
-          onChanged={() => loadProduct(p.id)}
+          onSaved={(updated) => { setP((cur) => (cur ? ({ ...cur, ...updated } as Product) : cur)); }}
         />
       ) : null}
     </View>
