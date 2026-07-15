@@ -153,13 +153,13 @@ export default function QuotationDetail() {
                     <Text style={{ fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface }} numberOfLines={2}>{it.name}</Text>
                     <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
                   </View>
-                  <Text style={[type.mono, { width: 60, textAlign: "right" }]}>{it.qty}</Text>
-                  <Text style={[type.mono, { width: 100, textAlign: "right" }]}>{money(it.unit_price)}</Text>
+                  <Text style={[type.mono, { width: 60, textAlign: "right" }]} numberOfLines={1}>{it.qty}</Text>
+                  <Text style={[type.mono, { width: 100, textAlign: "right" }]} numberOfLines={1}>{money(it.unit_price)}</Text>
                   <View style={{ width: 70, alignItems: "flex-end" }}>
                     <Text style={type.mono}>{pct}%</Text>
                     {source !== "none" && source !== "product" ? <Text style={[type.caption, { fontSize: 10 }]}>via {source}</Text> : null}
                   </View>
-                  <Text style={{ width: 110, textAlign: "right", fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "700", fontVariant: ["tabular-nums"], color: colors.onSurface }}>
+                  <Text style={{ width: 110, textAlign: "right", fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "700", fontVariant: ["tabular-nums"], color: colors.onSurface }} numberOfLines={1}>
                     {money(it.qty * it.unit_price * (1 - pct / 100))}
                   </Text>
                 </View>
@@ -190,7 +190,7 @@ export default function QuotationDetail() {
                     </View>
                     <View style={styles.metaCol}>
                       <Text style={type.caption}>Rate</Text>
-                      <Text style={styles.metaValue}>{money(it.unit_price)}</Text>
+                      <Text style={styles.metaValue} numberOfLines={1}>{money(it.unit_price)}</Text>
                     </View>
                     <View style={styles.metaCol}>
                       <Text style={type.caption}>Disc</Text>
@@ -198,7 +198,7 @@ export default function QuotationDetail() {
                     </View>
                     <View style={[styles.metaCol, { alignItems: "flex-end" }]}>
                       <Text style={type.caption}>Total</Text>
-                      <Text style={[styles.metaValue, { color: colors.brand }]}>{money(lineTotal)}</Text>
+                      <Text style={[styles.metaValue, { color: colors.brand }]} numberOfLines={1}>{money(lineTotal)}</Text>
                     </View>
                   </View>
                 </View>
@@ -220,7 +220,7 @@ export default function QuotationDetail() {
             <Row label="Discount" value={`- ${money(q.discount_total)}`} />
             <View style={styles.totalRow}>
               <Text style={{ fontSize: 15, fontFamily: type.titleMd.fontFamily, fontWeight: "700", color: colors.onSurface }}>Grand total</Text>
-              <Text style={{ fontSize: 22, fontFamily: type.displayMd.fontFamily, fontWeight: "700", fontVariant: ["tabular-nums"], color: colors.onSurface, letterSpacing: -0.3 }}>
+              <Text style={{ fontSize: 22, fontFamily: type.displayMd.fontFamily, fontWeight: "700", fontVariant: ["tabular-nums"], color: colors.onSurface, letterSpacing: -0.3 }} numberOfLines={1}>
                 {money(q.grand_total)}
               </Text>
             </View>
@@ -250,7 +250,7 @@ export default function QuotationDetail() {
                     <Text style={{ fontSize: 13, fontFamily: type.titleMd.fontFamily, fontWeight: "600", marginTop: 2, color: colors.onSurface }}>{po.brand_name || "—"}</Text>
                   </View>
                   <StatusBadge status={po.status} />
-                  <Text style={{ width: 100, textAlign: "right", fontFamily: type.titleMd.fontFamily, fontWeight: "600", fontVariant: ["tabular-nums"], color: colors.onSurface }}>{money(po.grand_total)}</Text>
+                  <Text style={{ width: 100, textAlign: "right", fontFamily: type.titleMd.fontFamily, fontWeight: "600", fontVariant: ["tabular-nums"], color: colors.onSurface }} numberOfLines={1}>{money(po.grand_total)}</Text>
                   <Feather name="chevron-right" size={14} color={colors.onSurfaceMuted} />
                 </Pressable>
               ))}
@@ -271,9 +271,9 @@ export default function QuotationDetail() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-      <Text style={type.bodyMuted}>{label}</Text>
-      <Text style={{ fontSize: 14, fontFamily: type.bodyStrong.fontFamily, fontWeight: "500", fontVariant: ["tabular-nums"], color: colors.onSurface }}>{value}</Text>
+    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
+      <Text style={type.bodyMuted} numberOfLines={1}>{label}</Text>
+      <Text style={{ fontSize: 14, fontFamily: type.bodyStrong.fontFamily, fontWeight: "500", fontVariant: ["tabular-nums"], color: colors.onSurface, flexShrink: 0 }} numberOfLines={1}>{value}</Text>
     </View>
   );
 }

@@ -21,7 +21,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, Pressable,
-  ScrollView, StyleSheet, Text, View,
+  ScrollView, Share, StyleSheet, Text, View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -98,6 +98,18 @@ export default function ProductDetail() {
   const [transferItem, setTransferItem] = useState<PipelineItem | null>(null);
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
   const [showImageManager, setShowImageManager] = useState(false);
+
+  const shareProduct = async () => {
+    if (!p) return;
+    try {
+      await Share.share({
+        title: p.name,
+        message: `${p.name}${p.sku ? ` (${p.sku})` : ""}${brandName ? ` · ${brandName}` : ""} · ${money(p.price)}`,
+      });
+    } catch {
+      // user dismissed the native share sheet — nothing to do
+    }
+  };
 
   const toMovable = (it: PipelineItem): MovableItem => ({
     item_id: it.item_id, sku: it.sku, name: it.name, image: it.image, qty: it.qty,
@@ -413,8 +425,8 @@ export default function ProductDetail() {
       {/* Actions (inline on tablet; sticky on phone below) */}
       {isWide ? (
         <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
-          <Button label="Add to quotation" icon="plus" size="lg" onPress={() => router.push("/(admin)/quotations/new" as any)} testID="add-to-quote" />
-          <Button label="Share" variant="secondary" icon="share-2" size="lg" onPress={() => {}} />
+          <Button label="Add to quotation" icon="plus" size="lg" onPress={() => router.push(`/(admin)/quotations/new?productId=${p.id}` as any)} testID="add-to-quote" />
+          <Button label="Share" variant="secondary" icon="share-2" size="lg" onPress={shareProduct} testID="share-product-wide" />
         </View>
       ) : null}
     </View>
@@ -427,14 +439,13 @@ export default function ProductDetail() {
         <View style={{ flex: 1 }}>
           <Text style={type.caption} numberOfLines={1}>{brandName}{p.series ? ` · ${p.series}` : ""}</Text>
         </View>
-        <IconButton icon="heart" onPress={() => {}} size={36} tone="surface" accessibilityLabel="Save" />
         {canManageImages ? (
           <IconButton
             icon="edit-2" onPress={() => { setEditorTab("General"); setShowImageManager(true); }} size={36} tone="surface"
             accessibilityLabel="Edit product" testID="manage-images-btn"
           />
         ) : null}
-        <IconButton icon="share-2" onPress={() => {}} size={36} tone="surface" accessibilityLabel="Share" />
+        <IconButton icon="share-2" onPress={shareProduct} size={36} tone="surface" accessibilityLabel="Share" testID="share-product-top" />
       </SafeAreaView>
 
       <ScrollView
@@ -488,11 +499,11 @@ export default function ProductDetail() {
       {/* Sticky bottom CTA — phone only */}
       {isPhone ? (
         <View style={[styles.stickyBar, { paddingBottom: insets.bottom + 10 }]}>
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={type.caption}>Total</Text>
-            <Text style={{ fontSize: 18, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] }}>{money(p.price)}</Text>
+            <Text style={{ fontSize: 18, fontWeight: "800", color: colors.onSurface, fontVariant: ["tabular-nums"] }} numberOfLines={1}>{money(p.price)}</Text>
           </View>
-          <Button label="Add to quotation" icon="plus" size="lg" onPress={() => router.push("/(admin)/quotations/new" as any)} testID="add-to-quote" />
+          <Button label="Add to quotation" icon="plus" size="md" onPress={() => router.push(`/(admin)/quotations/new?productId=${p.id}` as any)} testID="add-to-quote" />
         </View>
       ) : null}
 

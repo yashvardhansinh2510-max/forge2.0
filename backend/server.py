@@ -24,6 +24,7 @@ from routes.activity_routes import router as activity_router  # noqa: E402
 from routes.followup_routes import router as followup_router  # noqa: E402
 from routes.settings_routes import router as settings_router  # noqa: E402
 from routes.roles_routes import router as roles_router  # noqa: E402
+from routes.permissions_routes import router as permissions_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
 from services import catalog_service  # noqa: E402
 from services.domain_outbox import dispatch_pending, ensure_outbox_indexes  # noqa: E402
@@ -73,6 +74,7 @@ api.include_router(activity_router)
 api.include_router(followup_router)
 api.include_router(settings_router)
 api.include_router(roles_router)
+api.include_router(permissions_router)
 
 app.include_router(api)
 

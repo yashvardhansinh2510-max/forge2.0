@@ -119,7 +119,7 @@ export default function CustomerDashboard() {
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                 <View>
                   <Text style={type.caption}>Grand total</Text>
-                  <Text style={{ fontSize: 22, fontWeight: "700", fontVariant: ["tabular-nums"] }}>{money(latest.grand_total)}</Text>
+                  <Text style={{ fontSize: 22, fontWeight: "700", fontVariant: ["tabular-nums"] }} numberOfLines={1}>{money(latest.grand_total)}</Text>
                 </View>
                 <Button testID="latest-view-btn" label="View" icon="arrow-right" size="sm" variant="secondary" onPress={() => router.push(`/(customer)/quotes/${latest.id}`)} />
               </View>

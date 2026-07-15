@@ -10,7 +10,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button, Card, IconButton } from "@/src/components/ui";
@@ -143,7 +143,12 @@ export default function PlaceOrderReview() {
         <View style={{ width: 60 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
+      >
+        <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }} keyboardShouldPersistTaps="handled">
         {/* Header summary */}
         <View>
           <Text style={type.displayLg}>{preview.customer_name}</Text>
@@ -196,7 +201,7 @@ export default function PlaceOrderReview() {
                 </View>
                 <View style={{ alignItems: "flex-end" }}>
                   <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>Subtotal</Text>
-                  <Text style={[type.mono, { fontSize: 15, fontWeight: "700", marginTop: 2 }]}>{money(b.subtotal)}</Text>
+                  <Text style={[type.mono, { fontSize: 15, fontWeight: "700", marginTop: 2 }]} numberOfLines={1}>{money(b.subtotal)}</Text>
                 </View>
               </View>
 
@@ -209,7 +214,7 @@ export default function PlaceOrderReview() {
                       {it.room ? <Text style={type.caption}>{it.room}</Text> : null}
                     </View>
                     <Text style={[type.mono, { fontSize: 11, width: 50, textAlign: "right" }]}>{it.qty} nos</Text>
-                    <Text style={[type.mono, { fontSize: 12, width: 80, textAlign: "right", fontWeight: "600" }]}>{money(it.unit_cost * it.qty)}</Text>
+                    <Text style={[type.mono, { fontSize: 12, width: 80, textAlign: "right", fontWeight: "600" }]} numberOfLines={1}>{money(it.unit_cost * it.qty)}</Text>
                   </View>
                 ))}
                 {b.items.length > 6 ? (
@@ -264,7 +269,7 @@ export default function PlaceOrderReview() {
         <View style={styles.confirmBar}>
           <View style={{ flex: 1 }}>
             <Text style={type.caption}>Total order value</Text>
-            <Text style={{ fontSize: 20, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] }}>
+            <Text style={{ fontSize: 20, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] }} numberOfLines={1}>
               {money(preview.total_value)}
             </Text>
           </View>
@@ -278,6 +283,7 @@ export default function PlaceOrderReview() {
           />
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

@@ -77,7 +77,7 @@ export default function CustomerQuotationDetail() {
           </View>
           <View>
             <Text style={type.caption}>Grand total</Text>
-            <Text style={{ fontSize: 28, fontWeight: "700", fontVariant: ["tabular-nums"] }}>{money(doc.grand_total)}</Text>
+            <Text style={{ fontSize: 28, fontWeight: "700", fontVariant: ["tabular-nums"] }} numberOfLines={1}>{money(doc.grand_total)}</Text>
           </View>
           <Button
             testID="download-latest-pdf"
@@ -102,7 +102,7 @@ export default function CustomerQuotationDetail() {
                   <Text style={type.bodyStrong} numberOfLines={2}>{item.name}</Text>
                   <Text style={type.caption}>{item.sku}{item.room ? ` · ${item.room}` : ""} · Qty {item.qty}</Text>
                 </View>
-                <Text style={[type.bodyStrong, { fontVariant: ["tabular-nums"] }]}>{money(item.qty * item.unit_price)}</Text>
+                <Text style={[type.bodyStrong, { fontVariant: ["tabular-nums"] }]} numberOfLines={1}>{money(item.qty * item.unit_price)}</Text>
               </View>
             </View>
           ))}
@@ -158,8 +158,8 @@ export default function CustomerQuotationDetail() {
                       <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
                         <Feather name="tag" size={14} color={colors.onSurfaceMuted} />
                         <View>
-                          <Text style={type.bodyStrong}>{b.brand_name}</Text>
-                          <Text style={type.caption}>{b.item_count} item{b.item_count === 1 ? "" : "s"} · {money(b.subtotal)}</Text>
+                          <Text style={type.bodyStrong} numberOfLines={1}>{b.brand_name}</Text>
+                          <Text style={type.caption} numberOfLines={1}>{b.item_count} item{b.item_count === 1 ? "" : "s"} · {money(b.subtotal)}</Text>
                         </View>
                       </View>
                       <Button

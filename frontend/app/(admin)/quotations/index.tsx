@@ -153,7 +153,7 @@ function QuotationRow({ q, onPress }: { q: Quotation; onPress: () => void }) {
             <Text numberOfLines={1} style={type.caption}>{q.items.length} items · {created}</Text>
           </View>
         </View>
-        <Text style={styles.total}>{money(q.grand_total)}</Text>
+        <Text style={styles.total} numberOfLines={1}>{money(q.grand_total)}</Text>
       </View>
     </Pressable>
   );
