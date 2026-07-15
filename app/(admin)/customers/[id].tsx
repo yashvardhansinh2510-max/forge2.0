@@ -5,7 +5,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View,
+  ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -58,6 +58,19 @@ type Workspace = {
 
 type Tab = "overview" | "quotations" | "purchases" | "timeline";
 
+// Safe fallback so a failed/slow /workspace fetch can never blank the whole
+// page — every `workspace.foo.bar` access below stays valid (all zeros/empty)
+// instead of throwing "Cannot read properties of null" when the workspace
+// request errors. That render crash (silent — surfaces as an uncaught
+// pageerror, not a console.error) was the root cause behind the previous
+// "Customer Detail completely blank on phone" report.
+const EMPTY_WORKSPACE: Workspace = {
+  customer: { id: "", name: "", tier: "retail" } as Customer,
+  summary: { total_items: 0, total_value: 0, outstanding_value: 0, outstanding_count: 0, open_pos: 0, blocked_count: 0, delivered_count: 0, shortage_count: 0 },
+  shortages: [], products: [], brands: [], stages: [], purchase_orders: [], outstanding_items: [], recent_activity: [],
+  expected_delivery: { next_at: null, purchase_orders: [] },
+};
+
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -65,6 +78,7 @@ export default function CustomerDetail() {
   const isDesktop = width >= 900;
 
   const [customer, setCustomer] = useState<Customer | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [purchases, setPurchases] = useState<PO[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -76,18 +90,24 @@ export default function CustomerDetail() {
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [c, qs, pos, tl, ws] = await Promise.all([
-      api.get<Customer>(`/customers/${id}`),
-      api.get<Quotation[]>(`/quotations`).then((all) => all.filter((q: any) => q.customer_id === id)).catch(() => []),
-      api.get<PO[]>(`/purchase-orders?customer_id=${id}`).catch(() => []),
-      api.get<TimelineEvent[]>(`/activity/customer/${id}`).catch(() => []),
-      api.get<Workspace>(`/purchases/customers/${id}/workspace`).catch(() => null),
-    ]);
-    setCustomer(c);
-    setQuotations(qs);
-    setPurchases(pos);
-    setTimeline(tl);
-    setWorkspace(ws);
+    if (!id) return;
+    setLoadError(null);
+    try {
+      const [c, qs, pos, tl, ws] = await Promise.all([
+        api.get<Customer>(`/customers/${id}`),
+        api.get<Quotation[]>(`/quotations`).then((all) => all.filter((q: any) => q.customer_id === id)).catch(() => []),
+        api.get<PO[]>(`/purchase-orders?customer_id=${id}`).catch(() => []),
+        api.get<TimelineEvent[]>(`/activity/customer/${id}`).catch(() => []),
+        api.get<Workspace>(`/purchases/customers/${id}/workspace`).catch(() => EMPTY_WORKSPACE),
+      ]);
+      setCustomer(c);
+      setQuotations(qs);
+      setPurchases(pos);
+      setTimeline(tl);
+      setWorkspace(ws);
+    } catch (e: any) {
+      setLoadError(e?.detail || "Could not load this customer. Check your connection and try again.");
+    }
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
@@ -132,7 +152,24 @@ export default function CustomerDetail() {
     [quotations],
   );
 
-  if (!customer) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
+  if (loadError) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md }}>
+          <EmptyState icon="alert-triangle" title="Couldn't load this customer" subtitle={loadError} />
+          <Button label="Try again" icon="refresh-cw" onPress={() => { setLoadError(null); load(); }} testID="customer-detail-retry" />
+          <Button label="Back" variant="ghost" onPress={() => router.back()} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+  if (!customer) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }} edges={["top"]}>
+        <ActivityIndicator color={colors.onSurfaceMuted} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
