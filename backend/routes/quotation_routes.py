@@ -24,85 +24,11 @@ from services.domain_outbox import (
     enqueue_after_primary_commit,
 )
 from services.followup_engine import reconcile_followups
+from services.pricing import effective_discount_pct as _effective_discount_pct
+from services.pricing import per_line_net_amounts
+from services.pricing import recalc_quotation_totals as _recalc
 
 router = APIRouter(prefix="/quotations", tags=["quotations"])
-
-
-def _effective_discount_pct(
-    line: QuotationLineItem,
-    room_discounts: dict[str, "RoomDiscountCfg"],
-    category_discounts: dict[str, float],
-    project_discount_pct: float,
-) -> tuple[float, str]:
-    """Return (pct, source) — Product override > Room > Category > Project.
-    Mirrors frontend/src/components/quotation/helpers/pricing.ts effectivePct
-    EXACTLY — these two implementations must never drift, or the builder's
-    live totals would disagree with what the server persists.
-    A room with an "amount" (flat ₹) discount has no single per-line pct —
-    it's resolved by _recalc's second pass — so we return pct=0 with source
-    "room_amount" here to signal "blocked from category/project, pending
-    room-level allocation", exactly like the TS version.
-    """
-    if line.discount_pct is not None:
-        return float(line.discount_pct), "product"
-    rd = room_discounts.get(line.room) if line.room else None
-    if rd and rd.value > 0:
-        if rd.type == "percent":
-            return float(rd.value), "room"
-        return 0.0, "room_amount"
-    if line.category_id and line.category_id in category_discounts:
-        return float(category_discounts[line.category_id]), "category"
-    if project_discount_pct:
-        return float(project_discount_pct), "project"
-    return 0.0, "none"
-
-
-def _recalc(
-    items: list[QuotationLineItem],
-    project_discount_pct: float = 0.0,
-    category_discounts: dict[str, float] | None = None,
-    room_discounts: dict[str, "RoomDiscountCfg"] | None = None,
-) -> dict:
-    category_discounts = category_discounts or {}
-    room_discounts = room_discounts or {}
-    subtotal = 0.0
-    discount_total = 0.0
-
-    # Pass 1 — per-line pct (product / room-percent / category / project).
-    rows = []
-    for it in items:
-        gross = it.qty * it.unit_price
-        pct, source = _effective_discount_pct(it, room_discounts, category_discounts, project_discount_pct)
-        disc = gross * pct / 100
-        rows.append({"gross": gross, "disc": disc, "source": source, "room": it.room})
-
-    # Pass 2 — allocate flat room-amount discounts proportionally across the
-    # affected room's eligible (non-product-overridden) lines.
-    by_room: dict[str, list[dict]] = defaultdict(list)
-    for row in rows:
-        if row["source"] == "room_amount":
-            by_room[row["room"] or ""].append(row)
-    for room, room_rows in by_room.items():
-        cfg = room_discounts.get(room)
-        if not cfg or cfg.type != "amount" or cfg.value <= 0:
-            continue
-        room_gross = sum(r["gross"] for r in room_rows)
-        flat = min(cfg.value, room_gross)
-        if room_gross <= 0 or flat <= 0:
-            continue
-        for row in room_rows:
-            row["disc"] = flat * (row["gross"] / room_gross)
-
-    for row in rows:
-        subtotal += row["gross"]
-        discount_total += row["disc"]
-
-    grand_total = subtotal - discount_total
-    return {
-        "subtotal": round(subtotal, 2),
-        "discount_total": round(discount_total, 2),
-        "grand_total": round(grand_total, 2),
-    }
 
 
 async def _next_number() -> str:
@@ -619,7 +545,12 @@ async def portal_pdf_revision(
     if not rev:
         raise HTTPException(status_code=404, detail="Revision not found")
     snapshot = rev.get("snapshot") or {}
-    merged = {**doc, **snapshot}
+    # The snapshot only carries items/discounts/totals — NOT a timestamp —
+    # so without this override every revision PDF silently showed the
+    # CURRENT quotation's created_at (i.e. every revision looked dated the
+    # same day the quote was first created, not the day that revision was
+    # actually generated).
+    merged = {**doc, **snapshot, "created_at": rev.get("created_at") or doc.get("created_at")}
     room_discs = {k: RoomDiscountCfg(**v) for k, v in (merged.get("room_discounts") or {}).items()}
     totals = _recalc(
         [QuotationLineItem(**i) for i in merged.get("items", [])],
@@ -695,12 +626,20 @@ async def _brand_grouped_preview(doc: dict) -> dict:
     brand_ids = list({product.get("brand_id") for product in products if product.get("brand_id")})
     brands = await db.brands.find({"id": {"$in": brand_ids}}, {"_id": 0}).to_list(len(brand_ids) + 5)
     brand_map = {brand["id"]: brand for brand in brands}
+    # Resolve the SAME effective (post product/room/category/project
+    # discount) per-line total that the OrderPlaced automation will use for
+    # the real Purchase Order's unit_cost — so this review screen never
+    # shows a different number than what actually gets created.
+    net_by_line = per_line_net_amounts(doc)
     grouped: dict[str, dict] = {}
     for item in items:
         brand_id = product_map.get(item["product_id"], {}).get("brand_id") or "__unassigned__"
         group = grouped.setdefault(brand_id, {"brand_id": None if brand_id == "__unassigned__" else brand_id, "brand_name": brand_map.get(brand_id, {}).get("name", "Unassigned"), "items": [], "subtotal": 0.0})
-        group["items"].append(item)
-        group["subtotal"] += float(item.get("qty") or 0) * float(item.get("unit_price") or 0)
+        qty = float(item.get("qty") or 0)
+        net_total = net_by_line.get(item.get("id"))
+        unit_cost = round(net_total / qty, 2) if net_total is not None and qty else float(item.get("unit_price") or 0)
+        group["items"].append({**item, "unit_cost": unit_cost})
+        group["subtotal"] += qty * unit_cost
     cards = [{**group, "subtotal": round(group["subtotal"], 2), "item_count": len(group["items"])} for group in grouped.values()]
     return {"quotation_id": doc["id"], "quotation_number": doc.get("number"), "customer_id": doc.get("customer_id"), "customer_name": doc.get("customer_name"), "brands": sorted(cards, key=lambda card: card["brand_name"]), "total_value": round(sum(card["subtotal"] for card in cards), 2)}
 

@@ -155,6 +155,20 @@ def _room_totals(items: Iterable[dict]) -> tuple[float, float, float]:
     return subtotal, discount, subtotal - discount
 
 
+def _format_pdf_date(raw: str | None) -> str:
+    """Human-readable "15 Jul 2026" — matches the en-IN date formatting used
+    everywhere else in the app (Quotations list, Customer Portal, etc.)
+    instead of a raw ISO slice like "2026-07-15" which is what every
+    quotation PDF showed before this fix."""
+    value = raw or datetime.now().isoformat()
+    try:
+        # Handles both "...Z" and "+00:00"-style offsets.
+        cleaned = value.replace("Z", "+00:00")
+        return datetime.fromisoformat(cleaned).strftime("%d %b %Y")
+    except (ValueError, TypeError):
+        return value[:10] if isinstance(value, str) else datetime.now().strftime("%d %b %Y")
+
+
 def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
     """Render the supplied BuildCon House A4 quotation template.
 
@@ -209,7 +223,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         float(item.get("discount_pct") or 0) > 0 for item in quotation.get("items", [])
     )
     story: list[Flowable] = []
-    created = (quotation.get("created_at") or datetime.now().isoformat())[:10]
+    created = _format_pdf_date(quotation.get("created_at"))
     room_order = list(quotation.get("rooms") or [])
     grouped: dict[str, list[dict]] = defaultdict(list)
     for item in quotation.get("items", []):
@@ -297,13 +311,12 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         "2. Brands may revise MRP without prior notice.",
         "3. 100% advance payment is required to confirm the order.",
         "4. All MRP mentioned is inclusive of applicable tax.",
-        "5. Quotation remains valid till the company MRP remains unchanged, subject to force majeure w.r.t. tax or MRP.",
+        "5. This quotation is valid for the current month or until the company MRP changes — whichever is earlier — subject to force majeure w.r.t. tax or MRP.",
         "6. For items with escalated MRP, order confirmation requires 100% payment prior to the cut-off timeline.",
         "7. Delivery as per company schedule. Freight extra, as per actuals.",
-        "8. Rate valid for the current month only.",
-        "9. Any damage in transit must be reported within 24 hours of delivery with photographic proof.",
-        "10. Cancellations after order confirmation may be subject to a restocking charge.",
-        "11. GST and other applicable taxes will be charged extra as per government norms.",
+        "8. Any damage in transit must be reported within 24 hours of delivery with photographic proof.",
+        "9. Cancellations after order confirmation may be subject to a restocking charge.",
+        "10. GST and other applicable taxes will be charged extra as per government norms.",
     ]
     story.extend([Paragraph(term, styles["small"]) for term in terms])
     if b.get("terms_text"):

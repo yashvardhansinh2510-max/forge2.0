@@ -7,12 +7,15 @@ retry is safe after a process/network failure.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from db import client, db
 from models import ActivityEvent, Followup, Payment, PurchaseOrder, PurchaseOrderItem, PurchaseStageEvent, PurchaseStatusEvent, UserPublic
+from services.notifications import notify
+from services.pricing import per_line_net_amounts
 
 EVENT_QUOTATION_GENERATED = "QuotationGenerated"
 EVENT_ORDER_PLACED = "OrderPlaced"
@@ -156,6 +159,12 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         raise RuntimeError(f"Quotation {quotation_id} no longer exists")
     key = event["idempotency_key"]
     groups = await _brand_groups(quotation, session)
+    # Resolve every line's EFFECTIVE (post product/room/category/project
+    # discount) total ONCE, from the full quotation — not per brand-group —
+    # so a discount configured at room/category/project level (rather than
+    # stamped on the line itself) is preserved into the PO's unit_cost
+    # instead of silently falling back to the full undiscounted price.
+    net_by_line = per_line_net_amounts(quotation)
     created_po_ids: list[str] = []
     for group in groups:
         brand_key = group["brand_id"] or "unassigned"
@@ -167,9 +176,17 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         now = now_iso()
         po_items = []
         for raw in group["items"]:
+            qty = float(raw.get("qty") or 0)
+            net_total = net_by_line.get(raw.get("id"))
+            if net_total is None:
+                # Line wasn't found in the breakdown (shouldn't happen) — fall
+                # back to the raw per-line discount rather than full price.
+                unit_cost = round(float(raw.get("unit_price") or 0) * (1 - float(raw.get("discount_pct") or 0) / 100), 2)
+            else:
+                unit_cost = round(net_total / qty, 2) if qty else 0.0
             po_items.append(PurchaseOrderItem(
                 product_id=raw["product_id"], sku=raw["sku"], name=raw["name"], image=raw.get("image"), finish=raw.get("finish"), category_id=raw.get("category_id"), room=raw.get("room"),
-                qty=float(raw.get("qty") or 0), unit_cost=round(float(raw.get("unit_price") or 0) * (1 - float(raw.get("discount_pct") or 0) / 100), 2), quotation_line_id=raw.get("id"), stage="order_in_company",
+                qty=qty, unit_cost=unit_cost, quotation_line_id=raw.get("id"), stage="order_in_company",
                 customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name", ""), brand_id=group["brand_id"], brand_name=group["brand_name"],
                 last_moved_at=now, last_moved_by=event["actor_id"], last_moved_by_name=event["actor_name"],
                 stage_history=[PurchaseStageEvent(from_stage=None, to_stage="order_in_company", by_user_id=event["actor_id"], by_user_name=event["actor_name"], note=f"Created from {quotation.get('number')}", action="create")],
@@ -202,6 +219,13 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         payload={"event": EVENT_ORDER_PLACED, "purchase_order_ids": created_po_ids, "outstanding": payment["amount"]}, session=session,
     )
     await _upsert_followup(key=f"{key}:followup", quotation=quotation, reason=f"Order {quotation.get('number')} placed — confirm payment and delivery plan.", category="payment", session=session)
+    asyncio.create_task(notify(
+        quotation.get("created_by"),
+        f"Order confirmed · {quotation.get('number')}",
+        body=f"{len(created_po_ids)} purchase order(s) created for {quotation.get('customer_name')} — outstanding ₹{payment['amount']:,.0f}",
+        kind="success",
+        link=f"/quotations/{quotation_id}",
+    ))
     return {"quotation_id": quotation_id, "purchase_order_ids": created_po_ids, "payment_amount": payment["amount"], "count": len(created_po_ids)}
 
 

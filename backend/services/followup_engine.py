@@ -14,12 +14,14 @@ trigger condition no longer holds (e.g. a payment got fully collected).
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from db import db
 from models import Followup, now_iso
 from services.activity_log import log_event
+from services.notifications import notify
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -442,6 +444,7 @@ async def reconcile_followups() -> dict:
         {"is_automated": True, "status": {"$in": ["open", "snoozed"]}}, {"_id": 0},
     ).to_list(10000)
     existing_by_key = {f["source_key"]: f for f in existing if f.get("source_key")}
+    quotation_created_by = {q["id"]: q.get("created_by") for q in quotations}
 
     created = updated = resolved = 0
     for key, fields in desired.items():
@@ -457,6 +460,19 @@ async def reconcile_followups() -> dict:
             f = Followup(source_key=key, is_automated=True, **fields)
             await db.followups.insert_one(f.dict())
             created += 1
+            # Nudge the rep who owns this customer's quotation the moment a
+            # new high-priority follow-up appears — this is the ONLY place
+            # in the app that ever wrote a Notification before this fix
+            # existed only as a one-time demo seed.
+            if fields.get("priority_level") in ("critical", "high"):
+                recipient = quotation_created_by.get(fields.get("quotation_id"))
+                asyncio.create_task(notify(
+                    recipient,
+                    f"Follow-up needed · {fields.get('customer_name')}",
+                    body=fields.get("reason"),
+                    kind="warning" if fields.get("priority_level") == "critical" else "info",
+                    link=f"/customers/{fields.get('customer_id')}",
+                ))
 
     for _key, ex in existing_by_key.items():
         await db.followups.update_one({"id": ex["id"]}, {"$set": {

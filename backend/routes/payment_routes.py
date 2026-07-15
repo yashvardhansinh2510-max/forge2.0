@@ -20,6 +20,7 @@ from db import db
 from models import Payment, PaymentCreate, UserPublic
 from services.activity_log import log_event
 from services.followup_engine import reconcile_followups
+from services.notifications import notify
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
@@ -268,6 +269,22 @@ async def create_payment(
     if body.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be greater than zero")
 
+    # Overpayment guard — a payment can never push the order past its grand
+    # total. Computed BEFORE inserting so concurrent double-submits can't
+    # both squeak past the check.
+    grand = float(quot.get("grand_total") or 0)
+    paid_before_map = await _paid_by_quotation([body.quotation_id])
+    already_paid = paid_before_map.get(body.quotation_id, 0.0)
+    outstanding_before = round(grand - already_paid, 2)
+    if round(float(body.amount), 2) > outstanding_before + 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Payment of ₹{body.amount:,.2f} exceeds the outstanding balance of "
+                f"₹{max(outstanding_before, 0):,.2f} on {quot.get('number')}"
+            ),
+        )
+
     now = datetime.now(timezone.utc).isoformat()
     paid_at = body.paid_at or now
     payment = Payment(
@@ -314,6 +331,14 @@ async def create_payment(
     # A payment landing is exactly when payment_overdue/payment_partial
     # reminders should refresh or auto-close — event-triggered, not a cron job.
     asyncio.create_task(reconcile_followups())
+    asyncio.create_task(notify(
+        quot.get("created_by"),
+        f"Payment received · {quot.get('number')}",
+        body=f"₹{payment.amount:,.0f} ({MODE_LABELS.get(body.mode, body.mode).title()}) from {quot.get('customer_name')}"
+        + (" — fully paid" if fully_paid else f" — ₹{max(grand - total_paid, 0):,.0f} outstanding"),
+        kind="success",
+        link=f"/quotations/{body.quotation_id}",
+    ))
     return payment
 
 
