@@ -8,7 +8,7 @@ import json
 import time
 from datetime import datetime, timedelta
 
-BASE_URL = "https://forge-lc1.preview.emergentagent.com/api"
+BASE_URL = "https://forge-polish-sprint.preview.emergentagent.com/api"
 PRIMARY_EMAIL = "owner@forge.app"
 PRIMARY_PASSWORD = "Forge@2026"
 SALES_EMAIL = "sales@forge.app"

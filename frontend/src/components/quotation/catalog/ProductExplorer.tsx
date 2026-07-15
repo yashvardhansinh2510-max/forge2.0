@@ -11,12 +11,14 @@ import { ActivityIndicator, FlatList, Platform, Pressable, ScrollView, StyleShee
 
 import { EmptyState } from "@/src/components/ui";
 import { ProductImage } from "@/src/components/ProductImage";
+import { toast } from "@/src/components/Toast";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { supplierLogoFor } from "@/src/design/BrandLogo";
 import { storage } from "@/src/utils/storage";
 import { useBuilder } from "../context/BuilderContext";
 import { VariantSwatchStrip } from "../shared/VariantChip";
+import { QuickAddButton } from "../shared/QuickAddButton";
 import { productImageList } from "../helpers/media";
 import { quotationGridColumns } from "../helpers/responsive";
 import type { Product, ProductVariant } from "../helpers/types";
@@ -245,7 +247,7 @@ export function ProductExplorer() {
             </View>
           ) : !b.productLoading && b.products.length > 0 && !b.productHasMore ? (
             <Text style={styles.endOfList}>
-              {b.products.length} of {b.productTotal} products — you've reached the end
+              {b.products.length} of {b.productTotal} products — you&apos;ve reached the end
             </Text>
           ) : null
         }
@@ -347,19 +349,22 @@ function ProductGridCardImpl({ product, favourite, onToggleFav, onQuickAdd, onOp
               <Text style={styles.mrp} numberOfLines={1} ellipsizeMode="clip">{money(product.mrp)}</Text>
             ) : null}
           </View>
-          <Pressable
-            onPress={() => onQuickAdd(product)}
-            style={styles.addBtn}
-            hitSlop={4}
+          <QuickAddButton
+            onAdd={() => onQuickAdd(product)}
+            toastText={`${product.name} added to quotation`}
             testID={`add-${product.sku}`}
-          >
-            <Feather name="plus" size={13} color={colors.onBrand} />
-            <Text style={styles.addLabel} numberOfLines={1}>Add</Text>
-          </Pressable>
+          />
         </View>
 
         <View style={styles.variantSlot}>
-          <VariantSwatchStrip product={product} onSelect={(v) => onQuickAdd(product, v)} paddingLeft={0} />
+          <VariantSwatchStrip
+            product={product}
+            onSelect={(v) => {
+              onQuickAdd(product, v);
+              toast.success(`${product.name} · ${v.finish || v.color || v.size || v.sku} added`);
+            }}
+            paddingLeft={0}
+          />
         </View>
       </View>
     </Pressable>
@@ -485,11 +490,6 @@ const styles = StyleSheet.create({
   priceCol: { flex: 1, minWidth: 0 },
   price: { fontSize: 14, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"], letterSpacing: -0.1 },
   mrp: { fontSize: 10, color: colors.onSurfaceMuted, textDecorationLine: "line-through", fontVariant: ["tabular-nums"] },
-  addBtn: {
-    flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0,
-    paddingHorizontal: 9, paddingVertical: 6, borderRadius: radius.sm, backgroundColor: colors.brand,
-  },
-  addLabel: { fontSize: 11, fontWeight: "700", color: colors.onBrand, letterSpacing: 0.2 },
   variantSlot: { minHeight: 26, justifyContent: "center" },
   endOfList: {
     textAlign: "center", fontSize: 11, color: colors.onSurfaceMuted,

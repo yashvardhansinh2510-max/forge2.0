@@ -9,7 +9,7 @@ import json
 from typing import Optional
 
 # Configuration
-BASE_URL = "https://forge-lc1.preview.emergentagent.com/api"
+BASE_URL = "https://forge-polish-sprint.preview.emergentagent.com/api"
 LOGIN_EMAIL = "owner@forge.app"
 LOGIN_PASSWORD = "Forge@2026"
 
