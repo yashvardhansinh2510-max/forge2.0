@@ -116,7 +116,10 @@ export function Button({
       ) : icon ? (
         <Feather name={icon} size={sizing.iconSize} color={skin.fg} />
       ) : null}
-      <Text style={{ color: skin.fg, fontSize: sizing.fs, fontFamily: type.titleMd.fontFamily, fontWeight: "600", letterSpacing: -0.1 }}>
+      <Text
+        numberOfLines={1}
+        style={{ color: skin.fg, fontSize: sizing.fs, fontFamily: type.titleMd.fontFamily, fontWeight: "600", letterSpacing: -0.1, flexShrink: 1 }}
+      >
         {label}
       </Text>
       {iconRight && !loading ? <Feather name={iconRight} size={sizing.iconSize} color={skin.fg} /> : null}
@@ -879,23 +882,33 @@ export function PriceTag({
   const priceSize = size === "xl" ? 26 : size === "lg" ? 20 : size === "sm" ? 13 : 16;
   const mrpSize   = size === "xl" ? 14 : size === "lg" ? 13 : size === "sm" ? 11 : 12;
   return (
-    <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6, justifyContent: align === "right" ? "flex-end" : "flex-start", flexWrap: "wrap" }}>
-      <Text style={{
-        fontSize: priceSize,
-        fontFamily: type.titleMd.fontFamily,
-        fontWeight: "700",
-        color: colors.onSurface,
-        fontVariant: ["tabular-nums"],
-        letterSpacing: -0.2,
-      }}>{money(price)}</Text>
-      {showSlash ? (
-        <Text style={{
-          fontSize: mrpSize,
-          color: colors.onSurfaceMuted,
-          textDecorationLine: "line-through",
+    <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6, justifyContent: align === "right" ? "flex-end" : "flex-start", flexShrink: 1, minWidth: 0 }}>
+      <Text
+        numberOfLines={1}
+        ellipsizeMode="clip"
+        style={{
+          fontSize: priceSize,
+          fontFamily: type.titleMd.fontFamily,
+          fontWeight: "700",
+          color: colors.onSurface,
           fontVariant: ["tabular-nums"],
-          fontFamily: type.body.fontFamily,
-        }}>{money(mrp!)}</Text>
+          letterSpacing: -0.2,
+          flexShrink: 1,
+        }}
+      >{money(price)}</Text>
+      {showSlash ? (
+        <Text
+          numberOfLines={1}
+          ellipsizeMode="clip"
+          style={{
+            fontSize: mrpSize,
+            color: colors.onSurfaceMuted,
+            textDecorationLine: "line-through",
+            fontVariant: ["tabular-nums"],
+            fontFamily: type.body.fontFamily,
+            flexShrink: 0,
+          }}
+        >{money(mrp!)}</Text>
       ) : null}
     </View>
   );

@@ -63,8 +63,8 @@ export default function CustomerQuotationsList() {
             <Card key={q.id} testID={`quote-row-${q.id}`} onPress={() => router.push(`/(customer)/quotes/${q.id}`)}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <View style={{ flex: 1, gap: 4 }}>
-                  <Text style={[type.mono, { color: colors.onSurfaceMuted }]}>{q.number}</Text>
-                  <Text style={type.titleMd}>{money(q.grand_total)}</Text>
+                  <Text style={[type.mono, { color: colors.onSurfaceMuted }]} numberOfLines={1}>{q.number}</Text>
+                  <Text style={type.titleMd} numberOfLines={1}>{money(q.grand_total)}</Text>
                   <Text style={type.caption}>
                     {new Date(q.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
                     {q.revisions && q.revisions.length > 0 ? ` · Rev ${q.revisions.length}` : ""}

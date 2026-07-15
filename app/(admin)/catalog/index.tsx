@@ -550,29 +550,36 @@ function FamilyCard({ family: f, brandName, onPress }: { family: Family; brandNa
         ) : null}
       </View>
       <View style={{ padding: 12, gap: 4 }}>
-        {f.series ? <Text style={styles.overlineSubtle} numberOfLines={1}>{f.series}</Text> : null}
+        <View style={styles.metaSlot}>
+          {(f.series || f.subcategory) ? (
+            <Text style={styles.overlineSubtle} numberOfLines={1}>{f.series || f.subcategory}</Text>
+          ) : null}
+        </View>
         <Text numberOfLines={2} style={styles.title}>{f.family_name}</Text>
-        {f.subcategory ? <Text style={type.caption} numberOfLines={1}>{f.subcategory}</Text> : null}
 
-        {/* swatch row */}
-        {f.variants.length > 1 ? (
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
-            {f.variants.slice(0, 5).map((v) => (
-              <View key={v.id} style={styles.swatchRing}>
-                <View style={[styles.swatchDot, { backgroundColor: swatchColor(v.colour, v.finish) }]} />
-              </View>
-            ))}
-            {f.variants.length > 5 ? (
-              <View style={styles.swatchRing}>
-                <Text style={{ fontSize: 8, fontWeight: "700", color: colors.onSurfaceMuted }}>+{f.variants.length - 5}</Text>
-              </View>
-            ) : null}
-          </View>
-        ) : null}
+        {/* swatch row — reserved height always, so family cards with and
+            without multiple variants sit at identical row heights (same
+            fix pattern as the Quotation Builder's picker grid). */}
+        <View style={styles.variantSlot}>
+          {f.variants.length > 1 ? (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4 }}>
+              {f.variants.slice(0, 5).map((v) => (
+                <View key={v.id} style={styles.swatchRing}>
+                  <View style={[styles.swatchDot, { backgroundColor: swatchColor(v.colour, v.finish) }]} />
+                </View>
+              ))}
+              {f.variants.length > 5 ? (
+                <View style={styles.swatchRing}>
+                  <Text style={{ fontSize: 8, fontWeight: "700", color: colors.onSurfaceMuted }}>+{f.variants.length - 5}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
 
         <View style={{ marginTop: 6 }}>
           {f.max_price > f.min_price ? (
-            <Text style={styles.priceRange}>
+            <Text style={styles.priceRange} numberOfLines={1}>
               {money(f.min_price)}
               <Text style={styles.priceRangeMuted}> – {money(f.max_price)}</Text>
             </Text>
@@ -611,7 +618,9 @@ function ProductCard({ product: p, brandName, onPress }: { product: Product; bra
         ) : null}
       </View>
       <View style={{ padding: 12, gap: 4 }}>
-        {p.series ? <Text style={styles.overlineSubtle} numberOfLines={1}>{p.series}</Text> : null}
+        <View style={styles.metaSlot}>
+          {p.series ? <Text style={styles.overlineSubtle} numberOfLines={1}>{p.series}</Text> : null}
+        </View>
         <Text numberOfLines={2} style={styles.title}>{p.name}</Text>
         <Text style={type.caption} numberOfLines={1}>{p.sku}{p.finish ? ` · ${p.finish}` : ""}</Text>
         <View style={{ marginTop: 6 }}>
@@ -749,6 +758,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary,
   },
   swatchDot: { width: 16, height: 16, borderRadius: 8 },
+  variantSlot: { minHeight: 24, justifyContent: "center", marginTop: 2 },
+  metaSlot: { minHeight: 14, justifyContent: "center" },
   listFooter: { paddingVertical: 20, alignItems: "center", justifyContent: "center", gap: 8 },
   endOfList: { textAlign: "center", paddingVertical: 24, color: colors.onSurfaceMuted, fontSize: 12, fontWeight: "600" },
 });

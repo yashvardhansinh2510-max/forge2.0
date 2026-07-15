@@ -13,7 +13,7 @@ import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
@@ -322,8 +322,8 @@ export default function PurchaseOrderDetail() {
                         <Text style={[type.caption, { fontSize: 10 }]}>{Math.round((it.qty_received / it.qty) * 100)}%</Text>
                       ) : null}
                     </View>
-                    <Text style={[type.mono, { width: 90, textAlign: "right" }]}>{money(it.unit_cost)}</Text>
-                    <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]}>
+                    <Text style={[type.mono, { width: 90, textAlign: "right" }]} numberOfLines={1}>{money(it.unit_cost)}</Text>
+                    <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]} numberOfLines={1}>
                       {money(it.qty * it.unit_cost)}
                     </Text>
                   </View>
@@ -513,48 +513,50 @@ function StatusModal({
   useEffect(() => { if (visible) { setNext(null); setNote(""); } }, [visible]);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable onPress={onClose} style={styles.modalScrim}>
-        <Pressable onPress={() => {}} style={styles.modalCard}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <Text style={type.titleMd}>Change status</Text>
-            <IconButton icon="x" size={30} onPress={onClose} />
-          </View>
-          <Text style={[type.caption, { marginTop: 4 }]}>Current · {labels[current]}</Text>
-          <View style={{ gap: 8, marginTop: spacing.md }}>
-            {allowed.map((s) => (
-              <Pressable
-                key={s}
-                testID={`status-opt-${s}`}
-                onPress={() => setNext(s)}
-                style={[styles.optionRow, next === s && { borderColor: colors.brand, backgroundColor: colors.brandTint }]}
-              >
-                <View style={[styles.statusDot, { backgroundColor: STATUS_TONE[s] }]} />
-                <Text style={{ fontSize: 14, fontWeight: "600", flex: 1 }}>{labels[s]}</Text>
-                {next === s ? <Feather name="check" size={16} color={colors.brand} /> : null}
-              </Pressable>
-            ))}
-          </View>
-          <TextInput
-            value={note}
-            onChangeText={setNote}
-            placeholder="Add a note (optional)"
-            placeholderTextColor={colors.onSurfaceMuted}
-            style={[styles.notesInput, { minHeight: 60, marginTop: spacing.md }]}
-            multiline
-          />
-          <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end", marginTop: spacing.md }}>
-            <Button label="Cancel" variant="ghost" onPress={onClose} />
-            <Button
-              label="Confirm"
-              icon="check"
-              onPress={() => next && onConfirm(next, note || undefined)}
-              disabled={!next}
-              loading={busy}
-              testID="confirm-status"
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <Pressable onPress={onClose} style={styles.modalScrim}>
+          <Pressable onPress={() => {}} style={styles.modalCard}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={type.titleMd}>Change status</Text>
+              <IconButton icon="x" size={30} onPress={onClose} />
+            </View>
+            <Text style={[type.caption, { marginTop: 4 }]}>Current · {labels[current]}</Text>
+            <View style={{ gap: 8, marginTop: spacing.md }}>
+              {allowed.map((s) => (
+                <Pressable
+                  key={s}
+                  testID={`status-opt-${s}`}
+                  onPress={() => setNext(s)}
+                  style={[styles.optionRow, next === s && { borderColor: colors.brand, backgroundColor: colors.brandTint }]}
+                >
+                  <View style={[styles.statusDot, { backgroundColor: STATUS_TONE[s] }]} />
+                  <Text style={{ fontSize: 14, fontWeight: "600", flex: 1 }}>{labels[s]}</Text>
+                  {next === s ? <Feather name="check" size={16} color={colors.brand} /> : null}
+                </Pressable>
+              ))}
+            </View>
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              placeholder="Add a note (optional)"
+              placeholderTextColor={colors.onSurfaceMuted}
+              style={[styles.notesInput, { minHeight: 60, marginTop: spacing.md }]}
+              multiline
             />
-          </View>
+            <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end", marginTop: spacing.md }}>
+              <Button label="Cancel" variant="ghost" onPress={onClose} />
+              <Button
+                label="Confirm"
+                icon="check"
+                onPress={() => next && onConfirm(next, note || undefined)}
+                disabled={!next}
+                loading={busy}
+                testID="confirm-status"
+              />
+            </View>
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -599,59 +601,61 @@ function ReceiveModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable onPress={onClose} style={styles.modalScrim}>
-        <Pressable onPress={() => {}} style={[styles.modalCard, { maxHeight: "90%" }]}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <Text style={type.titleMd}>Record receipts</Text>
-            <IconButton icon="x" size={30} onPress={onClose} />
-          </View>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-            <Text style={type.caption}>Enter quantities received per line item</Text>
-            <Pressable onPress={setAllFull} hitSlop={8}>
-              <Text style={{ fontSize: 12, fontWeight: "600", color: colors.brand }}>Mark all full</Text>
-            </Pressable>
-          </View>
-          <ScrollView style={{ maxHeight: 360, marginTop: spacing.md }} contentContainerStyle={{ gap: spacing.sm }}>
-            {items.map((it) => (
-              <View key={it.id} style={styles.receiveRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{it.name}</Text>
-                  <Text style={type.caption}>{it.sku} · ordered {it.qty}</Text>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <Pressable onPress={onClose} style={styles.modalScrim}>
+          <Pressable onPress={() => {}} style={[styles.modalCard, { maxHeight: "90%" }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={type.titleMd}>Record receipts</Text>
+              <IconButton icon="x" size={30} onPress={onClose} />
+            </View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+              <Text style={type.caption}>Enter quantities received per line item</Text>
+              <Pressable onPress={setAllFull} hitSlop={8}>
+                <Text style={{ fontSize: 12, fontWeight: "600", color: colors.brand }}>Mark all full</Text>
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 360, marginTop: spacing.md }} contentContainerStyle={{ gap: spacing.sm }} keyboardShouldPersistTaps="handled">
+              {items.map((it) => (
+                <View key={it.id} style={styles.receiveRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{it.name}</Text>
+                    <Text style={type.caption}>{it.sku} · ordered {it.qty}</Text>
+                  </View>
+                  <TextInput
+                    value={draft[it.id] ?? "0"}
+                    onChangeText={(v) => setDraft((d) => ({ ...d, [it.id]: v.replace(/[^0-9.]/g, "") }))}
+                    keyboardType="numeric"
+                    style={styles.qtyInput}
+                    testID={`recv-${it.sku}`}
+                  />
+                  <Text style={type.caption}>of {it.qty}</Text>
                 </View>
-                <TextInput
-                  value={draft[it.id] ?? "0"}
-                  onChangeText={(v) => setDraft((d) => ({ ...d, [it.id]: v.replace(/[^0-9.]/g, "") }))}
-                  keyboardType="numeric"
-                  style={styles.qtyInput}
-                  testID={`recv-${it.sku}`}
-                />
-                <Text style={type.caption}>of {it.qty}</Text>
-              </View>
-            ))}
-          </ScrollView>
-          <TextInput
-            value={note}
-            onChangeText={setNote}
-            placeholder="Note (e.g. invoice #, courier)"
-            placeholderTextColor={colors.onSurfaceMuted}
-            style={[styles.notesInput, { minHeight: 50, marginTop: spacing.md }]}
-            multiline
-          />
-          <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end", marginTop: spacing.md }}>
-            <Button label="Cancel" variant="ghost" onPress={onClose} />
-            <Button label="Save receipts" icon="package" onPress={submit} loading={busy} testID="confirm-receive" />
-          </View>
+              ))}
+            </ScrollView>
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              placeholder="Note (e.g. invoice #, courier)"
+              placeholderTextColor={colors.onSurfaceMuted}
+              style={[styles.notesInput, { minHeight: 50, marginTop: spacing.md }]}
+              multiline
+            />
+            <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end", marginTop: spacing.md }}>
+              <Button label="Cancel" variant="ghost" onPress={onClose} />
+              <Button label="Save receipts" icon="package" onPress={submit} loading={busy} testID="confirm-receive" />
+            </View>
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 function FooterRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
   return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-      <Text style={bold ? { fontSize: 14, fontWeight: "700" } : type.bodyMuted}>{label}</Text>
-      <Text style={[type.mono, bold && { fontSize: 16, fontWeight: "700" }]}>{value}</Text>
+    <View style={{ flexDirection: "row", justifyContent: "space-between", gap: spacing.sm }}>
+      <Text style={bold ? { fontSize: 14, fontWeight: "700" } : type.bodyMuted} numberOfLines={1}>{label}</Text>
+      <Text style={[type.mono, bold && { fontSize: 16, fontWeight: "700" }]} numberOfLines={1}>{value}</Text>
     </View>
   );
 }

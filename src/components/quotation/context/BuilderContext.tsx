@@ -189,8 +189,13 @@ export function useBuilder(): BuilderApi {
 // -----------------------------------------------------------------------------
 // Provider
 // -----------------------------------------------------------------------------
-export function BuilderProvider({ onFinalize, children }: {
+export function BuilderProvider({ onFinalize, initialProductId, children }: {
   onFinalize?: (quotationId: string) => void;
+  /** Seed the new quotation with this product on mount — used when
+   *  navigating here from Catalog's "Add to quotation" CTA (product detail
+   *  page / product cards) so that action actually adds the product instead
+   *  of just dropping the user on an empty builder. */
+  initialProductId?: string | null;
   children: React.ReactNode;
 }) {
   // Reference data — not part of undoable state.
@@ -618,6 +623,22 @@ export function BuilderProvider({ onFinalize, children }: {
       };
     });
   }, [history]);
+
+  // ---------- Seed from Catalog's "Add to quotation" CTA ----------
+  const appliedInitialProductRef = useRef(false);
+  useEffect(() => {
+    if (!initialProductId || appliedInitialProductRef.current) return;
+    appliedInitialProductRef.current = true;
+    (async () => {
+      try {
+        const prod = await api.get<Product>(`/products/${initialProductId}`);
+        addFromProduct(prod);
+        toast.success(`${prod.name} added to quotation`);
+      } catch {
+        toast.error("Could not add that product automatically — search for it below");
+      }
+    })();
+  }, [initialProductId, addFromProduct]);
 
   const updateLine = useCallback((id: string, patch: Partial<Line>, coalesceKey?: string) =>
     history.apply(

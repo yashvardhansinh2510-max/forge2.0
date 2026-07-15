@@ -17,6 +17,7 @@ import { useBp } from "@/src/design/responsive";
 import { brand, color, font, layout, radius, space } from "@/src/design/tokens";
 import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
+import { useModuleAccess } from "@/src/hooks/use-permissions";
 
 type NavItem = { href: string; label: string; icon: FeatherName; match: string; roles?: string[] };
 
@@ -104,6 +105,7 @@ function Sidebar() {
   const router = useRouter();
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
+  const hasAccess = useModuleAccess();
   const isActive = (m: string) => segments.includes(m);
 
   return (
@@ -115,11 +117,11 @@ function Sidebar() {
         <SearchTrigger />
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: space.x3, gap: 1 }} showsVerticalScrollIndicator={false}>
-        {PRIMARY.map((n) => (
+        {PRIMARY.filter((n) => hasAccess(n.match)).map((n) => (
           <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} />
         ))}
         <View style={{ height: space.x5 }} />
-        {SECONDARY.filter((n) => !n.roles || (staff && n.roles.includes(staff.role))).map((n) => (
+        {SECONDARY.filter((n) => hasAccess(n.match)).map((n) => (
           <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} />
         ))}
       </ScrollView>
@@ -156,6 +158,7 @@ function Rail() {
   const router = useRouter();
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
+  const hasAccess = useModuleAccess();
   const palette = usePalette();
   const isActive = (m: string) => segments.includes(m);
 
@@ -186,9 +189,9 @@ function Rail() {
         </Pressable>
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 2 }} showsVerticalScrollIndicator={false}>
-        {PRIMARY.map((n) => <RailBtn key={n.href} item={n} />)}
+        {PRIMARY.filter((n) => hasAccess(n.match)).map((n) => <RailBtn key={n.href} item={n} />)}
         <View style={{ height: space.x4 }} />
-        {SECONDARY.filter((n) => !n.roles || (staff && n.roles.includes(staff.role))).map((n) => (
+        {SECONDARY.filter((n) => hasAccess(n.match)).map((n) => (
           <RailBtn key={n.href} item={n} />
         ))}
       </ScrollView>
@@ -229,10 +232,12 @@ function PhoneBar() {
   const router = useRouter();
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
+  const hasAccess = useModuleAccess();
   const palette = usePalette();
   const [moreOpen, setMoreOpen] = useState(false);
   const isActive = (m: string) => segments.includes(m);
-  const moreActive = MORE_ITEMS.some((m) => isActive(m.match));
+  const visibleMore = MORE_ITEMS.filter((n) => hasAccess(n.match));
+  const moreActive = visibleMore.some((m) => isActive(m.match));
 
   const Tab = ({ item }: { item: NavItem }) => {
     const on = isActive(item.match);
@@ -249,7 +254,7 @@ function PhoneBar() {
   return (
     <>
       <View style={styles.phoneBar}>
-        {PHONE_TABS.map((t) => <Tab key={t.href} item={t} />)}
+        {PHONE_TABS.filter((t) => hasAccess(t.match)).map((t) => <Tab key={t.href} item={t} />)}
         <View style={styles.fabSlot}>
           <Pressable
             testID="bottom-fab-new-quotation"
@@ -260,7 +265,7 @@ function PhoneBar() {
             <Feather name="plus" size={22} color={color.onAction} />
           </Pressable>
         </View>
-        {PHONE_TABS_RIGHT.map((t) => <Tab key={t.href} item={t} />)}
+        {PHONE_TABS_RIGHT.filter((t) => hasAccess(t.match)).map((t) => <Tab key={t.href} item={t} />)}
         <Pressable testID="bottom-nav-more" onPress={() => setMoreOpen(true)} style={styles.tab}>
           <View style={[styles.tabIconWrap, moreActive && styles.tabIconWrapActive]}>
             <Feather name="menu" size={19} color={moreActive ? color.brass : color.inkFaint} />
@@ -279,7 +284,7 @@ function PhoneBar() {
           <Text style={styles.moreLabel}>Search everything</Text>
         </Pressable>
         <Hairline style={{ marginVertical: 6 }} />
-        {MORE_ITEMS.filter((n) => !n.roles || (staff && n.roles.includes(staff.role))).map((n) => (
+        {visibleMore.map((n) => (
           <Pressable
             key={n.href}
             onPress={() => { setMoreOpen(false); router.push(n.href as any); }}

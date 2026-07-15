@@ -260,7 +260,7 @@ export default function CustomerDetail() {
                     <Text style={type.titleSm} numberOfLines={1}>{q.items.length} items</Text>
                     <Text style={type.caption}>{fmtDate(q.created_at)}</Text>
                   </View>
-                  <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]}>
+                  <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]} numberOfLines={1}>
                     {money(q.grand_total)}
                   </Text>
                   <StatusBadge status={q.status} />
