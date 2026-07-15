@@ -12,6 +12,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDim
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
 import { ProductEditor } from "@/src/components/catalog/ProductEditor";
+import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
 import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
@@ -101,12 +102,14 @@ export function ProductModal() {
     const custom: ProductVariant = v
       ? { ...v, price: currentPrice }
       : { sku: product.sku, price: currentPrice, mrp: product.mrp, finish: product.finish ?? null };
-    for (let i = 0; i < Math.max(1, Math.floor(qty)); i++) b.addFromProduct(product, custom);
+    const qtyAdded = Math.max(1, Math.floor(qty));
+    for (let i = 0; i < qtyAdded; i++) b.addFromProduct(product, custom);
     if (notes.trim() && b.s.lines.length) {
       // Attach notes to the just-added line (the last one).
       const last = b.s.lines[b.s.lines.length - 1];
       if (last) b.updateLine(last.id, { notes: notes.trim() });
     }
+    toast.success(qtyAdded > 1 ? `${qtyAdded} × ${product.name} added` : `${product.name} added to quotation`);
     if (closeAfter) b.closeProductModal();
   };
 
@@ -291,7 +294,7 @@ export function ProductModal() {
                   {completeSet.map((s) => (
                     <Pressable
                       key={s.id}
-                      onPress={() => b.addFromProduct(s)}
+                      onPress={() => { b.addFromProduct(s); toast.success(`${s.name} added to quotation`); }}
                       style={styles.relCard}
                     >
                       <ProductImage source={productImageList(s)} style={styles.relThumb} fallbackLabel={s.sku} />
