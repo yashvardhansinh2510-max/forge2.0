@@ -2717,12 +2717,116 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Performance Investigation Complete - Read-only analysis of Forge Expo/React Native Web"
+    - "Phone viewport UI/UX audit complete - /dashboard, /customers, /customers/new, /customers/[id], /customers/[id]/edit"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 frontend:
+
+frontend:
+  - task: "Phone Viewport UI/UX Audit - Dashboard, Customers, Customer Forms"
+    implemented: true
+    working: false
+    file: "frontend/app/(admin)/dashboard.tsx, frontend/app/(admin)/customers/index.tsx, frontend/app/(admin)/customers/new.tsx, frontend/app/(admin)/customers/[id].tsx, frontend/app/(admin)/customers/[id]/edit.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: |
+            Phone Viewport (390x844) UI/UX Audit Complete (2026-07-15)
+            
+            PURE UI/UX AUDIT - NO FIXES ATTEMPTED, ONLY REPORTING OBSERVATIONS
+            
+            Tested 5 screens on phone viewport (390x844):
+            1. /dashboard
+            2. /customers (list)
+            3. /customers/new (add form)
+            4. /customers/[id] (detail page)
+            5. /customers/[id]/edit (edit form)
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            CRITICAL ISSUES FOUND (BLOCKING)
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ❌ SCREEN 4: /customers/[id] - Customer Detail Page
+            • COMPLETELY BLANK - page renders only bottom navigation bar, no content
+            • White/empty screen with no customer information visible
+            • This is a SHOWSTOPPER - users cannot view customer details on phone
+            • URL navigated correctly: /customers/9abd42ec-739e-4476-8da2-52cc18b7ffe0
+            • No error messages displayed, just blank content area
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            MAJOR ISSUES FOUND (HIGH PRIORITY)
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ⚠ SCREEN 3: /customers/new - Add Customer Form
+            • "Tier" section at bottom is CUT OFF - shows "Retail", "Trade", "Vi..." 
+            • The third tier option text is clipped/truncated (likely "VIP")
+            • This appears to be a segmented control or button group that doesn't fit
+            • Users cannot see the full label for the third tier option
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            MINOR ISSUES / OBSERVATIONS (INFORMATIONAL)
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✓ SCREEN 1: /dashboard - NO ISSUES FOUND
+            • Clean layout with proper spacing
+            • Stat cards in 2x2 grid layout work well on phone
+            • "UP NEXT" section shows skeleton loading (expected during data load)
+            • "THE BUSINESS" section shows 4 stat cards with proper alignment
+            • "PIPELINE" section shows skeleton loading
+            • Bottom navigation bar properly positioned
+            • No text touching edges, no overlapping elements
+            
+            ✓ SCREEN 2: /customers - NO ISSUES FOUND
+            • Header with title and "+ Add Customer" button properly spaced
+            • Stat cards in 2x2 grid layout work well (TOTAL/VIP, TRADE/RETAIL)
+            • Search bar has proper padding from edges
+            • Filter chips (All, VIP, Trade, Retail) have consistent spacing
+            • Customer cards show avatar, name, email, and tier badge with proper alignment
+            • Card heights appear consistent across all 3 visible customer cards
+            • No text touching edges, no overlapping elements
+            • Chevron icons on right side of cards properly aligned
+            
+            ✓ SCREEN 3: /customers/new - MOSTLY CLEAN (except Tier cut-off noted above)
+            • Header with back arrow and "Add Customer" title properly spaced
+            • Form fields have consistent spacing and alignment
+            • Input fields have proper padding from screen edges
+            • Labels are properly aligned above inputs
+            • Placeholder text is visible and not cut off
+            • Form fields: Name*, Company, Email, Phone, City, Address, GSTIN all render correctly
+            • Bottom navigation bar properly positioned
+            
+            ✓ SCREEN 5: /customers/[id]/edit - NO ISSUES FOUND
+            • Header with back arrow and "Edit Customer" title properly spaced
+            • Form fields have consistent spacing and alignment
+            • Input fields have proper padding from screen edges
+            • Labels are properly aligned above inputs
+            • Helper text under Email field ("Required for portal access") is visible and properly positioned
+            • All form fields render correctly: Name*, Company, Email, Phone, City, Address, GSTIN, Notes
+            • Bottom navigation bar properly positioned
+            • No text touching edges, no overlapping elements
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            SUMMARY OF FINDINGS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            SCREENS TESTED: 5
+            CRITICAL ISSUES: 1 (Customer detail page completely blank)
+            MAJOR ISSUES: 1 (Tier selector text cut off on add customer form)
+            MINOR ISSUES: 0
+            CLEAN SCREENS: 3 (/dashboard, /customers list, /customers/[id]/edit)
+            
+            RECOMMENDATION:
+            1. PRIORITY 1: Fix customer detail page (/customers/[id]) - completely broken on phone
+            2. PRIORITY 2: Fix "Tier" selector on add customer form - third option text is cut off
+            
+            Overall, the phone viewport implementation is mostly clean with good spacing and 
+            alignment, but has 2 concrete issues that need fixing before mobile launch.
+
   - task: "Phase 3 · Design System V2 — locked tokens, complete primitive set, Payments migrated"
     implemented: true
     working: "NA"
@@ -11650,6 +11754,42 @@ frontend:
             The bug fix is production-ready and can be deployed with confidence.
 
 agent_communication:
+
+    - agent: "testing"
+      message: |
+        Phone Viewport UI/UX Audit Complete (2026-07-15)
+        
+        Completed pure UI/UX audit of 5 screens on phone viewport (390x844) as requested.
+        NO FIXES ATTEMPTED - only reporting visual observations.
+        
+        === CRITICAL ISSUE ===
+        ❌ /customers/[id] (Customer Detail) - COMPLETELY BLANK
+        • Page renders only bottom navigation bar, no content visible
+        • White/empty screen - users cannot view customer details on phone
+        • This is a SHOWSTOPPER for mobile launch
+        
+        === MAJOR ISSUE ===
+        ⚠ /customers/new (Add Customer Form) - Tier selector text CUT OFF
+        • Third tier option shows "Vi..." instead of full text (likely "VIP")
+        • Segmented control/button group doesn't fit properly on phone width
+        
+        === CLEAN SCREENS (3/5) ===
+        ✓ /dashboard - no issues found
+        ✓ /customers (list) - no issues found  
+        ✓ /customers/[id]/edit - no issues found
+        
+        All clean screens have:
+        • Proper spacing between elements
+        • No text touching screen edges
+        • Consistent card heights
+        • Proper input field alignment
+        • No overlapping elements
+        
+        RECOMMENDATION FOR MAIN AGENT:
+        1. Fix customer detail page rendering on phone (PRIORITY 1)
+        2. Fix tier selector text truncation on add customer form (PRIORITY 2)
+        3. Overall mobile implementation is solid - only 2 concrete issues found
+
     - agent: "testing"
       message: |
         Product Image Upload/Replace Bug Fix Verification COMPLETE (2026-07-15)
