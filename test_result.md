@@ -11186,7 +11186,7 @@ backend:
 frontend:
   - task: "Unified Product Editor — Edit from Catalog and Quotation Builder"
     implemented: true
-    working: false
+    working: true
     file: "frontend/src/components/catalog/ProductEditor.tsx, frontend/app/(admin)/catalog/[id].tsx, frontend/src/components/quotation/sheets/ProductModal.tsx"
     stuck_count: 0
     priority: "high"
@@ -11301,10 +11301,109 @@ frontend:
             CURRENT STATUS: Marking as working=false due to the name field display issue.
             All other functionality works correctly. Once the design decision is made
             and implemented, this feature will be production-ready.
+        - working: true
+          agent: "testing"
+          comment: |
+            Product Name Fix RE-VERIFICATION COMPLETE (2026-07-15)
+            
+            Re-tested the product name fix at DESKTOP viewport (1440x900) per user's review request.
+            ALL CRITICAL STEPS PASSED (100% success rate).
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            FIX APPLIED BY MAIN AGENT
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            Main agent chose OPTION 2: Display `name` instead of `family_name` on detail page.
+            Changed line 278 of catalog/[id].tsx from `{p.family_name || p.name}` to `{p.name}`.
+            
+            Comment added (lines 273-276):
+            "Title — always the product's own editable `name` (this is exactly
+            the field the shared Product Editor's "Product Name" writes to,
+            so an edit is immediately visible here; family grouping is still
+            shown above, in the overline, rather than replacing the title)."
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            VERIFICATION TEST RESULTS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            Test Product: INTEGRA RIM-EX WC WITH BIDET · White (ID: d0a005b3-838e-4765-bb90-c3b60888fbe4)
+            Test Name: "QA Verify Name Fix 42"
+            
+            ✅ Step 1: Login successful (owner@forge.app)
+            ✅ Step 2: Navigated to product detail page (/catalog/{id})
+            ✅ Step 3: Noted original title: "INTEGRA RIM-EX WC WITH BIDET · White"
+            ✅ Step 4: Opened edit drawer (testID="manage-images-btn")
+            ✅ Step 5: Edited name to "QA Verify Name Fix 42" (testID="edit-name")
+            ✅ Step 6: Saved changes (testID="product-editor-save")
+            
+            ✅ Step 6 VERIFICATION (CRITICAL - THE FIX):
+               • Closed drawer
+               • Title updated to "QA Verify Name Fix 42" WITHOUT page reload
+               • ✓ This confirms the fix is working - H1 title now shows p.name (the edited field)
+            
+            ✅ Step 7 VERIFICATION (CRITICAL - PERSISTENCE):
+               • Hard reloaded the page (full browser refresh)
+               • Title STILL shows "QA Verify Name Fix 42" after reload
+               • ✓ Confirms the change was saved to the database server-side
+            
+            ✅ Step 8 VERIFICATION (CRITICAL - OVERLINE PRESERVATION):
+               • Family/collection overline chip is STILL visible above the title
+               • Overline shows: "VITRA · INTEGRA · RIM-EX WC WITH BIDET · INTEGRA · RIM-EX WC"
+               • ✓ Family name is shown separately in the breadcrumb/overline, not replaced by title
+            
+            ✅ Step 9: Cleanup successful - restored original name
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            SCREENSHOTS CAPTURED
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            • 01_product_detail_initial.png - Initial state with original name
+            • 03_edit_drawer_opened.png - Edit drawer with 3 tabs (General/Pricing/Media)
+            • 04_name_edited.png - Name field showing "QA Verify Name Fix 42"
+            • 05_after_save_drawer_closed.png - Title updated WITHOUT reload (KEY SCREENSHOT)
+            • 06_after_hard_reload.png - Title persisted AFTER reload (KEY SCREENSHOT)
+            • 07_cleanup_complete.png - Original name restored
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            KEY OBSERVATIONS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            1. IMMEDIATE UPDATE (Step 6):
+               • The H1 title updates INSTANTLY after save, without needing a page reload
+               • This was the PRIMARY issue reported - now FIXED
+               • The title now correctly displays p.name (the field being edited)
+            
+            2. SERVER-SIDE PERSISTENCE (Step 7):
+               • The edited name persists after a hard page reload
+               • Confirms the PATCH /api/products/{id} endpoint is working correctly
+               • Database update is successful
+            
+            3. FAMILY/COLLECTION OVERLINE (Step 8):
+               • The family name is still visible in the breadcrumb/overline above the title
+               • Family grouping is preserved and shown separately
+               • The title no longer shows family_name, but family info is not lost
+            
+            4. EDIT DRAWER FUNCTIONALITY:
+               • All testIDs working correctly (manage-images-btn, edit-name, product-editor-save)
+               • Success toast appears: "Product updated everywhere it's shown"
+               • Drawer has 3 tabs: General, Pricing, Media (all functional)
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            CONCLUSION
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ FIX VERIFIED - ALL TESTS PASSED
+            
+            The product detail page now correctly displays p.name (the editable field)
+            instead of p.family_name. Editing the product name updates the H1 title
+            immediately (without reload) and persists after page reload (server-side).
+            The family/collection overline remains visible separately above the title.
+            
+            The fix is PRODUCTION-READY. Zero regressions detected. All functionality
+            working as expected per the review request specifications.
 
 test_plan:
-  current_focus:
-    - "Unified Product Editor — Edit from Catalog and Quotation Builder"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -11385,3 +11484,42 @@ agent_communication:
         • Backend integration working (200 OK responses)
         
         RECOMMENDATION: Fix the name field display logic, then this feature is production-ready.
+    - agent: "testing"
+      message: |
+        Product Name Fix RE-VERIFICATION COMPLETE (2026-07-15)
+        
+        ✅ FIX VERIFIED - ALL TESTS PASSED (100% success rate)
+        
+        Main agent applied OPTION 2: Changed catalog/[id].tsx line 278 from 
+        `{p.family_name || p.name}` to `{p.name}`. The H1 title now displays
+        the editable `name` field instead of `family_name`.
+        
+        CRITICAL VERIFICATIONS (all PASSED):
+        ✅ Step 6: Title updates to "QA Verify Name Fix 42" WITHOUT page reload
+           (This was the PRIMARY issue - now FIXED)
+        ✅ Step 7: Title persists after hard page reload (server-side persistence confirmed)
+        ✅ Step 8: Family/collection overline chip STILL visible above title
+           (Family info preserved in breadcrumb, not lost)
+        ✅ Step 9: Cleanup successful (original name restored)
+        
+        KEY OBSERVATIONS:
+        • Immediate update: H1 title updates INSTANTLY after save (no reload needed)
+        • Server persistence: Edited name persists after hard reload (DB update successful)
+        • Overline preservation: Family name still shown in breadcrumb above title
+        • All testIDs working: manage-images-btn, edit-name, product-editor-save
+        • Success toast appears: "Product updated everywhere it's shown"
+        
+        SCREENSHOTS CAPTURED:
+        • 01_product_detail_initial.png - Initial state
+        • 03_edit_drawer_opened.png - Edit drawer with 3 tabs
+        • 04_name_edited.png - Name field edited
+        • 05_after_save_drawer_closed.png - Title updated WITHOUT reload (KEY)
+        • 06_after_hard_reload.png - Title persisted AFTER reload (KEY)
+        • 07_cleanup_complete.png - Cleanup complete
+        
+        CONCLUSION: The fix is PRODUCTION-READY. Zero regressions detected.
+        The product detail page now correctly displays p.name (the editable field).
+        Editing the product name updates the H1 title immediately and persists
+        after page reload. Family/collection overline remains visible separately.
+        
+        Main agent should summarize and finish.

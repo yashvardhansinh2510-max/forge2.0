@@ -255,7 +255,13 @@ export default function ProductDetail() {
       {/* Brand + series overline */}
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {brandName ? <Text style={styles.brandTag}>{brandName.toUpperCase()}</Text> : null}
-        {p.series ? <Text style={styles.overline}>{p.series}</Text> : null}
+        {p.family_name ? <Text style={styles.overline}>{p.family_name}</Text> : null}
+        {p.series ? (
+          <>
+            {p.family_name ? <Feather name="chevron-right" size={11} color={colors.onSurfaceMuted} /> : null}
+            <Text style={styles.overline}>{p.series}</Text>
+          </>
+        ) : null}
         {p.subcategory ? (
           <>
             <Feather name="chevron-right" size={11} color={colors.onSurfaceMuted} />
@@ -264,9 +270,12 @@ export default function ProductDetail() {
         ) : null}
       </View>
 
-      {/* Title */}
+      {/* Title — always the product's own editable `name` (this is exactly
+          the field the shared Product Editor's "Product Name" writes to,
+          so an edit is immediately visible here; family grouping is still
+          shown above, in the overline, rather than replacing the title). */}
       <View>
-        <Text style={type.displayLg}>{p.family_name || p.name}</Text>
+        <Text style={type.displayLg}>{p.name}</Text>
         <Text style={[type.mono, { marginTop: 6, color: colors.onSurfaceMuted }]}>SKU · {p.sku}</Text>
       </View>
 
