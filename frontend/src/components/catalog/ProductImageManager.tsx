@@ -18,6 +18,7 @@ import { api, getToken } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { Badge, Button, ConfirmDialog, EmptyState, Sheet } from "@/src/components/ds";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { uriToBlob } from "@/src/utils/uriToBlob";
 
 type MediaItem = {
   id: string; public_url?: string | null; source_type: string; role: string;
@@ -77,11 +78,9 @@ export function ProductImageManagerBody({
     try {
       const token = await getToken();
       const ext = (pending.mimeType.split("/")[1] || "jpg").replace("jpeg", "jpg");
+      const blob = await uriToBlob(pending.uri);
       const form = new FormData();
-      form.append(
-        "file",
-        { uri: pending.uri, name: `product-photo.${ext}`, type: pending.mimeType } as any,
-      );
+      form.append("file", blob, `product-photo.${ext}`);
       const url = pending.replaceId
         ? `${api.base}/api/products/${productId}/media/${pending.replaceId}/replace`
         : `${api.base}/api/products/${productId}/media`;

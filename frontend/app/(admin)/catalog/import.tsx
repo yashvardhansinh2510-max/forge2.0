@@ -13,6 +13,7 @@ import { Badge, Button, Card, EmptyState } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { api, getToken } from "@/src/api/client";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { uriToBlob } from "@/src/utils/uriToBlob";
 
 const SUPPORTED = ["Hansgrohe", "Axor", "Grohe", "Vitra", "Geberit"] as const;
 type Brand = typeof SUPPORTED[number];
@@ -76,8 +77,8 @@ export default function CatalogImport() {
 
       const form = new FormData();
       form.append("brand", brand);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      form.append("file", { uri: asset.uri, name: asset.name || "upload", type: asset.mimeType || "application/octet-stream" } as any);
+      const blob = await uriToBlob(asset.uri);
+      form.append("file", blob, asset.name || "upload");
 
       const r = await fetch(`${api.base}/api/catalog/imports`, {
         method: "POST",
