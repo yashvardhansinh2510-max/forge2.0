@@ -12,7 +12,7 @@ from PIL import Image
 import httpx
 
 # Configuration
-BACKEND_URL = os.getenv("BACKEND_URL", "https://forge-polish-sprint.preview.emergentagent.com")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://ux-audit-2.preview.emergentagent.com")
 API_BASE = f"{BACKEND_URL}/api"
 LOGIN_EMAIL = "owner@forge.app"
 LOGIN_PASSWORD = "Forge@2026"

@@ -10,7 +10,7 @@ from typing import Optional
 import requests
 
 # Backend URL - use public URL from frontend/.env
-BASE_URL = "https://forge-polish-sprint.preview.emergentagent.com/api"
+BASE_URL = "https://ux-audit-2.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 CUSTOMER_EMAIL = "customer@forge.app"

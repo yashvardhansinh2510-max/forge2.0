@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 
 # Backend URL from frontend/.env
-BACKEND_URL = "https://forge-polish-sprint.preview.emergentagent.com/api"
+BACKEND_URL = "https://ux-audit-2.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 OWNER_EMAIL = "owner@forge.app"
