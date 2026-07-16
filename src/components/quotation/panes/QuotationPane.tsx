@@ -15,7 +15,7 @@ import { RoomChipRow } from "../canvas/RoomChipRow";
 import { QuotationCanvas } from "../canvas/QuotationCanvas";
 import { BuilderFooter } from "../footer/BuilderFooter";
 
-export function QuotationPane() {
+export function QuotationPane({ compact = false }: { compact?: boolean }) {
   const b = useBuilder();
 
   const customer = b.customers.find((c) => c.id === b.s.customerId);
@@ -53,10 +53,10 @@ export function QuotationPane() {
       </View>
 
       <View style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-        <QuotationCanvas />
+        <QuotationCanvas compact={compact} />
       </View>
 
-      <BuilderFooter />
+      <BuilderFooter compact={compact} />
     </View>
   );
 }

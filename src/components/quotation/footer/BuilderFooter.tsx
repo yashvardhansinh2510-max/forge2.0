@@ -13,7 +13,6 @@ import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
-import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 
 import { useBuilder } from "../context/BuilderContext";
 
@@ -56,14 +55,13 @@ function NotesAndDiscount({ b }: { b: ReturnType<typeof useBuilder> }) {
   );
 }
 
-export function BuilderFooter() {
+export function BuilderFooter({ compact = false }: { compact?: boolean }) {
   const b = useBuilder();
-  const { isPhone } = useBreakpoint();
   const [expanded, setExpanded] = useState(false);
 
   const canFinish = !!b.s.customerId && b.s.lines.length > 0;
 
-  if (isPhone) {
+  if (compact) {
     return (
       <View style={styles.phoneWrap}>
         {expanded ? (
