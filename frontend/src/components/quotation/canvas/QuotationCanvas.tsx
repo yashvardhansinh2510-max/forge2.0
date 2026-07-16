@@ -6,16 +6,14 @@ import DraggableFlatList, { RenderItemParams } from "react-native-draggable-flat
 import { EmptyState } from "@/src/components/ui";
 import { font, radius, spacing } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
-import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 
 import { useBuilder } from "../context/BuilderContext";
 import type { BuilderRow } from "../helpers/types";
 import { LineRow } from "./LineRow";
 import { RoomHeaderRow } from "./RoomHeaderRow";
 
-export function QuotationCanvas() {
+export function QuotationCanvas({ compact = false }: { compact?: boolean }) {
   const b = useBuilder();
-  const { isPhone } = useBreakpoint();
 
   const renderItem = ({ item, drag, isActive }: RenderItemParams<BuilderRow>) => {
     if (item.kind === "room-header") {
@@ -49,9 +47,9 @@ export function QuotationCanvas() {
         <EmptyState
           icon="file-plus"
           title="Add your first product"
-          subtitle={isPhone ? "Tap Browse catalog to search and add products. Everything totals live." : "Search on the left and tap to add. Everything totals live."}
+          subtitle={compact ? "Tap Browse catalog to search and add products. Everything totals live." : "Search on the left and tap to add. Everything totals live."}
         />
-        {isPhone ? (
+        {compact ? (
           <Pressable
             testID="empty-browse-catalog"
             onPress={() => b.setPickerSheetOpen(true)}

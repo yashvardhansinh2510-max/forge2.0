@@ -41,6 +41,18 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
   const threePane = w >= THREE_PANE;
   const twoPane = !threePane && w >= TWO_PANE;
   const isPhone = !threePane && !twoPane;
+  // The catalog grid (ProductExplorer) only renders inline in the threePane
+  // layout — everywhere else it lives inside ProductPickerSheet and needs an
+  // explicit "Add"/"Browse catalog" entry point. QuotationPane's children
+  // (BuilderFooter, QuotationCanvas) previously derived their own "isPhone"
+  // from raw window width via useBreakpoint(), which disagreed with this
+  // container-width-based calculation (window width stays >=700/900 at
+  // tablet sizes even though the *content area* — after the admin shell's
+  // own sidebar — has already dropped into the twoPane/isPhone bucket here).
+  // That mismatch meant tablet widths rendered the compact single-column
+  // shell but the desktop-style footer/empty-state with no way to open the
+  // picker sheet at all. Passing this one flag down removes the ambiguity.
+  const compactCatalog = !threePane;
 
   const railW = railCollapsed ? 56 : w >= 1400 ? 260 : 240;
   const quotationW = w >= 1440 ? 480 : w >= 1200 ? 440 : 400;
@@ -65,27 +77,27 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       ) : threePane ? (
         <View style={{ flex: 1, flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
           <View style={{ width: railW, overflow: "hidden" }}>
-            <BrandRail collapsed={railCollapsed} onToggleCollapsed={() => setRailCollapsed((v) => !v)} />
+            <BrandRail collapsed={railCollapsed} onToggleCollapsed={() => setRailCollapsed((v) => !v)} compact={false} />
           </View>
           <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
             <ProductExplorer />
           </View>
           <View style={{ width: quotationW, minHeight: 0, overflow: "hidden", borderLeftWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
-            <QuotationPane />
+            <QuotationPane compact={false} />
           </View>
         </View>
       ) : twoPane ? (
         <View style={{ flex: 1, flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
           <View style={{ width: railCollapsed ? 56 : 220, overflow: "hidden" }}>
-            <BrandRail collapsed={railCollapsed} onToggleCollapsed={() => setRailCollapsed((v) => !v)} />
+            <BrandRail collapsed={railCollapsed} onToggleCollapsed={() => setRailCollapsed((v) => !v)} compact />
           </View>
           <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
-            <QuotationPane />
+            <QuotationPane compact={compactCatalog} />
           </View>
         </View>
       ) : (
         <View style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <QuotationPane />
+          <QuotationPane compact={compactCatalog} />
         </View>
       )}
 

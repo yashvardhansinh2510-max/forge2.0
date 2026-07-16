@@ -20,7 +20,7 @@ import { useBuilder } from "../context/BuilderContext";
 import { RecentQuotationsPanel } from "../panes/RecentQuotationsPanel";
 import type { Category } from "../helpers/types";
 
-export function BrandRail({ collapsed = false, onToggleCollapsed }: { collapsed?: boolean; onToggleCollapsed?: () => void }) {
+export function BrandRail({ collapsed = false, onToggleCollapsed, compact = false }: { collapsed?: boolean; onToggleCollapsed?: () => void; compact?: boolean }) {
   const b = useBuilder();
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -51,22 +51,29 @@ export function BrandRail({ collapsed = false, onToggleCollapsed }: { collapsed?
 
   const onTapBrand = useCallback((brandId: string) => {
     b.setSelectedBrandId(brandId);
+    // On the two-pane tablet layout the grid only exists inside
+    // ProductPickerSheet — without this, selecting a brand there was a
+    // dead-end tap with no visible effect (grid isn't rendered inline).
+    // Harmless to skip on desktop: the inline grid already re-filters itself.
+    if (compact) b.setPickerSheetOpen(true);
     setExpanded((cur) => {
       const next = cur === brandId ? null : brandId;
       if (next) ensureCategories(brandId);
       return next;
     });
-  }, [b, ensureCategories]);
+  }, [b, ensureCategories, compact]);
 
   const onTapAll = useCallback(() => {
     b.setSelectedBrandId(null);
+    if (compact) b.setPickerSheetOpen(true);
     setExpanded(null);
-  }, [b]);
+  }, [b, compact]);
 
   const onTapCategory = useCallback((brandId: string, categoryId: string | null) => {
     if (b.selectedBrandId !== brandId) b.setSelectedBrandId(brandId);
     b.setSelectedCategoryId(categoryId);
-  }, [b]);
+    if (compact) b.setPickerSheetOpen(true);
+  }, [b, compact]);
 
   return (
     <View style={styles.panel}>
@@ -207,7 +214,20 @@ export function BrandRail({ collapsed = false, onToggleCollapsed }: { collapsed?
                 <Feather name="plus" size={14} color={colors.onSurface} />
                 <Text style={styles.quickActionLabel}>Custom product</Text>
               </Pressable>
-              <Pressable style={styles.quickAction} onPress={() => b.searchRef.current?.focus()} testID="rail-focus-search">
+              <Pressable
+                style={styles.quickAction}
+                onPress={() => {
+                  // In the two-pane tablet layout the catalog grid lives inside
+                  // ProductPickerSheet (not mounted inline), so the search input
+                  // this used to blindly focus doesn't exist until the sheet is
+                  // open. Opening it first is a harmless no-op on the three-pane
+                  // desktop layout (sheet isn't rendered there, search box is
+                  // already inline and gets focused immediately as before).
+                  if (compact) b.setPickerSheetOpen(true);
+                  setTimeout(() => b.searchRef.current?.focus(), compact ? 50 : 0);
+                }}
+                testID="rail-focus-search"
+              >
                 <Feather name="search" size={14} color={colors.onSurface} />
                 <Text style={styles.quickActionLabel}>Search catalog</Text>
                 <Text style={styles.kbHint}>⌘K</Text>
