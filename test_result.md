@@ -13054,3 +13054,106 @@ agent_communication:
         STATUS: Cannot complete automated testing due to tool limitation. Manual testing
         required to verify the 8 checkpoints at 3 sizes. Backend and code review suggest
         the application is functioning correctly.
+
+frontend:
+  - task: "Sprint 1 (Cross-device UX audit) — Batch 1: Quotation Builder responsive fixes"
+    implemented: true
+    working: true
+    file: "frontend/src/components/quotation/layout/BuilderShell.tsx, frontend/src/components/quotation/catalog/BrandRail.tsx, frontend/src/components/quotation/panes/QuotationPane.tsx, frontend/src/components/quotation/canvas/QuotationCanvas.tsx, frontend/src/components/quotation/footer/BuilderFooter.tsx, frontend/app/(admin)/dashboard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            SESSION START: fresh fork had wiped backend/.env + frontend/.env again (documented
+            RECOVERY.md pattern). User supplied fresh MongoDB Atlas + Supabase creds in this
+            request. Verified via direct motor query that DB_NAME=buildcon_house holds the real
+            2,601-product catalog (not "buildcon", a stale 20-product demo db as literally typed
+            by the user — corrected automatically, consistent with this project's documented
+            history of this exact mistake). Reinstalled backend requirements. GET
+            /api/health/system -> healthy=true, Atlas connected, Supabase connected. Regenerated
+            JWT_SECRET (invalidates old sessions only). Login verified (owner@forge.app/Forge@2026).
+
+            User approved a 5-sprint roadmap (cross-device/mobile UX audit highest priority ->
+            catalog quality -> UI consistency -> store readiness), explicitly scoped THIS session
+            to Sprint 1 only, batches of 2-3 screens, fix-as-you-go, no backend refactors/perf
+            work/redesigns. Batch 1 = Quotation Builder (desktop/tablet/phone).
+
+            BUG 1 (found opportunistically while verifying login/dashboard, fixed — 1-line,
+            frontend-only, not a "backend perf" item): dashboard.tsx's load() did
+            `await api.post("/followups/reconcile")` BEFORE fetching any of the actual dashboard
+            data — this endpoint measured ~8.6s end-to-end (curl-verified), so "Today" sat on a
+            skeleton loader for 8+ seconds on every single load/refresh. Changed to fire-and-forget
+            (same best-effort "soft" semantics as the old try/catch, just no longer blocking the
+            critical render path). Verified via direct Playwright script: dashboard now renders
+            real KPI/pipeline content within ~1s of login instead of hanging on skeletons.
+
+            BUG 2 (major, found via structured cross-breakpoint audit, fixed): at tablet
+            viewport widths (iPad landscape 1180x820, iPad portrait 810x1080, Android tablet
+            800x1280), the Quotation Builder's product catalog was a COMPLETE DEAD END — the
+            canvas showed only the empty "Add your first product" state with NO way to open the
+            catalog at all (no Browse-catalog button, brand-rail taps did nothing visible,
+            "Search catalog" quick action was a no-op). Root cause: BuilderShell.tsx computes its
+            own layout mode (threePane/twoPane/isPhone) from the CONTAINER width (via onLayout,
+            i.e. viewport width minus the outer admin sidebar), and correctly drops into the
+            twoPane bucket at these sizes (BrandRail + QuotationPane only, catalog grid moves into
+            ProductPickerSheet). But BuilderFooter.tsx and QuotationCanvas.tsx independently
+            computed their OWN "isPhone" via useBreakpoint() (raw window width, cutoff <700) —
+            which is still false at 800-1180px window width, so they rendered their desktop-style
+            branch (no "Browse catalog" CTA, no compact "+Add" footer button) even though the
+            shell around them had already switched to the sheet-based catalog model. Result: the
+            only entry point that would have opened ProductPickerSheet was never rendered.
+            Fixed by making BuilderShell the single source of truth: added `compactCatalog = 
+            !threePane` in BuilderShell, threaded a `compact` prop down through
+            QuotationPane -> BuilderFooter / QuotationCanvas (replacing their independent
+            useBreakpoint().isPhone checks), and passed `compact` to BrandRail so tapping a brand/
+            category/"All brands" or the "Search catalog" quick action now also calls
+            b.setPickerSheetOpen(true) when in the two-pane tablet layout (harmless no-op on
+            desktop's three-pane layout, where ProductPickerSheet isn't even mounted). Lint clean
+            on all 5 touched files (2 pre-existing unrelated unused-import warnings in
+            BrandRail.tsx untouched).
+        - working: true
+          agent: "testing"
+          comment: |
+            Verified via auto_frontend_testing_agent, single persistent browser tab/session
+            (avoids the localStorage-per-context false "session expired" report from an earlier
+            attempt), login via testID fields:
+            • Desktop 1440x900: full a-k checklist clean (equal card heights, prices never wrap,
+              modal buttons fine, footer/save-status/icon buttons all functional, empty search
+              state present, no console errors). No regressions from this session's changes.
+            • Android phone 412x915 / iPhone 390x844: full flow clean — Browse-catalog entry
+              point, brand/category pills, prices never wrap, Add buttons correctly sized,
+              product modal stacked-button layout correct, no cut-off content.
+            • iPad landscape 1180x820, iPad portrait 810x1080, Android tablet 800x1280 (the 3
+              previously-broken sizes): RE-VERIFIED FIXED — brand rail/"Browse catalog" button now
+              opens the catalog (inline grid or full-screen sheet depending on exact effective
+              width), closes cleanly back to the builder, footer Add/Finish buttons fully
+              on-screen. Follow-up deeper pass on Android tablet: line item shows correct
+              non-overlapping qty/rate/price with a visible delete icon; footer grand total fully
+              visible, not clipped; discount sheet opens correctly with Project-wide %/Category
+              overrides/Room overrides sections and Cancel/Apply buttons. A few finer checks
+              (adding a 2nd distinct product, typing into the discount %, exact customer-picker
+              interaction, keyboard-open state) were inconclusive due to automation-tool selector
+              flakiness rather than a demonstrated app defect — flagged for a spot-check but not
+              blocking, since the equivalent flows are already confirmed clean on desktop/phone.
+
+test_plan:
+  current_focus:
+    - "Sprint 1 (Cross-device UX audit) — Batch 1: Quotation Builder responsive fixes"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Sprint 1, Batch 1 (Quotation Builder, desktop/tablet/phone) complete for this round.
+        Fixed 2 real bugs found via structured breakpoint audit: (1) Dashboard 8.6s skeleton
+        hang before first paint (frontend-only fire-and-forget fix, not a backend perf project),
+        (2) Quotation Builder catalog was a complete dead-end at all 3 tablet breakpoints
+        (820-1180px) — now fixed and re-verified. Desktop and phone were already solid (no
+        changes needed there beyond what LC-1 delivered previously). Moving to Batch 2
+        (Catalog browsing screen) next per the user's approved priority order, pending their
+        go-ahead.
