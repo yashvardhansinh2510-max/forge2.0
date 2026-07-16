@@ -12342,14 +12342,115 @@ agent_communication:
           agent: "testing"
           comment: "Data cleanup verified successful. GET /api/customers returns 4 customers (correct), no test junk visible. All core endpoints returning sensible data. See Sprint 1 comprehensive test results above."
 
+  - task: "Visual/UX Audit — Quotation Builder across 6 breakpoints (iPhone 390x844, Android 412x915, iPad portrait 810x1080, iPad landscape 1180x820, Android tablet 800x1280, Desktop 1440x900)"
+    implemented: true
+    working: false
+    file: "frontend/app/(admin)/quotations/new.tsx, frontend/src/components/quotation/catalog/ProductExplorer.tsx, frontend/src/components/quotation/sheets/ProductModal.tsx, frontend/src/components/quotation/footer/BuilderFooter.tsx, frontend/src/api/client.ts, frontend/src/state/auth.tsx"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: |
+            CRITICAL BLOCKING ISSUE FOUND: Staff login authentication token persistence failure
+            
+            ISSUE DESCRIPTION:
+            Attempted comprehensive visual/UX audit of the Quotation Builder across 6 breakpoints
+            as requested. However, discovered a critical authentication issue that completely blocks
+            access to the quotation builder for STAFF LOGIN (owner@forge.app):
+            
+            1. Login API call succeeds (POST /api/auth/login returns 200 OK with valid JWT)
+            2. However, the authentication token is NOT being persisted/stored properly in frontend
+            3. Subsequent API calls receive 401 Unauthorized errors
+            4. User remains stuck on login page at /login, cannot access any authenticated routes
+            5. This affects ALL breakpoints - not a responsive design issue, but an auth flow bug
+            
+            EVIDENCE FROM TESTING:
+            • Backend logs show: POST /api/auth/login HTTP/1.1" 200 OK (login API works)
+            • Immediately followed by: GET /api/products/recent HTTP/1.1" 401 Unauthorized
+            • Multiple API endpoints returning 401: /api/brands, /api/customers, /api/categories
+            • Browser URL remains at /login after successful API response (no navigation occurs)
+            • No navigation to dashboard or quotation builder occurs
+            • "Use demo account" link successfully fills credentials (owner@forge.app / Forge@2026)
+            • Sign in button click executes (via JavaScript) but login flow does not complete
+            
+            ATTEMPTED SOLUTIONS:
+            • Tried multiple button click methods (text selector, JavaScript click, Enter key)
+            • Tried "Use demo account" link (successfully fills credentials)
+            • Verified backend is running and healthy (2601 products loaded, MongoDB connected)
+            • Verified credentials are correct per /app/memory/test_credentials.md
+            • Verified login API returns 200 OK with valid response
+            
+            ROOT CAUSE HYPOTHESIS:
+            The frontend is not properly storing the JWT token returned from POST /api/auth/login,
+            or not including it in the Authorization header for subsequent requests. This is
+            likely an issue with:
+            • AsyncStorage/localStorage token persistence in React Native Web environment
+            • API client configuration (missing token interceptor or incorrect header setup)
+            • Auth context not updating state after successful login
+            • Token not being extracted from login response correctly
+            • Navigation not triggering after auth state update
+            
+            VISUAL OBSERVATIONS (from login page screenshots across all 6 breakpoints):
+            ✅ Login page renders correctly at all breakpoints (390px to 1440px)
+            ✅ Form fields are properly sized and accessible at all breakpoints
+            ✅ "Sign in" button is visible and appropriately sized
+            ✅ "Use demo account" link works (fills credentials correctly)
+            ✅ No horizontal scroll issues at any breakpoint
+            ✅ No layout breaking or clipping at any breakpoint
+            ✅ Responsive design of login page is working correctly
+            ✅ Desktop (1440x900): Login form centered, good spacing
+            ✅ iPad landscape (1180x820): Login form centered, good spacing
+            ✅ iPad portrait (810x1080): Login form centered, good spacing
+            ✅ Android tablet (800x1280): Login form centered, good spacing
+            ✅ Android phone (412x915): Login form full-width, good touch targets
+            ✅ iPhone (390x844): Login form full-width, good touch targets
+            
+            IMPACT:
+            • CANNOT complete the requested quotation builder visual audit (all 11 checkpoints a-k)
+            • CANNOT test product card rendering, pricing display, button sizing
+            • CANNOT test product modal layout and footer buttons
+            • CANNOT test footer/totals bar visibility and safe area handling
+            • CANNOT test empty states, loading states, or scroll performance
+            • CANNOT access any authenticated routes in the application
+            • This is a PRODUCTION-BLOCKING issue for App Store submission (reviewers cannot log in)
+            
+            NOTE: Customer portal login (customer@forge.app / Forge@2026) was verified working
+            in Sprint 1 testing via direct API calls. This issue is specific to STAFF login via
+            the web UI, suggesting the problem is in the frontend auth flow, not the backend API.
+            
+            RECOMMENDATION FOR MAIN AGENT:
+            Must fix the staff authentication token persistence issue before any visual/UX audit
+            can be completed. Suggested investigation areas:
+            1. Check frontend/src/api/client.ts for token interceptor configuration
+            2. Check frontend/src/state/auth.tsx for token storage logic after login
+            3. Verify AsyncStorage is working correctly in React Native Web environment
+            4. Check if token is being extracted from login response correctly
+            5. Verify Authorization header is being set on subsequent API requests
+            6. Check if navigation is triggered after successful auth state update
+            7. Use WEBSEARCH TOOL to find "React Native Web Expo Router JWT token persistence"
+               or "AsyncStorage not working in web" if needed
+            
+            SCREENSHOTS CAPTURED (25 total):
+            • Login page at all 6 breakpoints showing correct responsive layout
+            • Form filled state with demo credentials
+            • After login attempt (still stuck on login page)
+            • All breakpoints of quotation builder (showing blank/login page, not builder)
+            
+            STATUS: BLOCKED - Cannot proceed with quotation builder audit until staff auth is fixed
+
+
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 4
+  test_sequence: 5
 
 test_plan:
-  current_focus: []
-  stuck_tasks: []
+  current_focus:
+    - "Visual/UX Audit — Quotation Builder (BLOCKED by staff auth token persistence issue)"
+  stuck_tasks:
+    - "Visual/UX Audit — Quotation Builder (BLOCKED by staff auth token persistence issue)"
   test_all: false
   test_priority: "high_first"
 
@@ -12414,3 +12515,66 @@ agent_communication:
         All critical fixes verified. Zero regressions detected. Backend stable.
         
         Main agent should summarize and finish.
+    - agent: "testing"
+      message: |
+        CRITICAL BLOCKING ISSUE: Staff Login Authentication Token Persistence Failure
+        
+        Attempted to perform the requested visual/UX audit of the Quotation Builder across
+        6 breakpoints (iPhone 390x844, Android 412x915, iPad portrait 810x1080, iPad landscape
+        1180x820, Android tablet 800x1280, Desktop 1440x900) as specified in the review request.
+        
+        However, discovered a PRODUCTION-BLOCKING authentication issue that prevents access to
+        the quotation builder and all authenticated routes:
+        
+        🔴 CRITICAL ISSUE: Staff login (owner@forge.app / Forge@2026) fails to persist JWT token
+        
+        EVIDENCE:
+        • Login API succeeds: POST /api/auth/login HTTP/1.1" 200 OK (backend working)
+        • Token NOT persisted: All subsequent API calls return 401 Unauthorized
+        • Backend logs show:
+          ✅ POST /api/auth/login HTTP/1.1" 200 OK
+          🔴 GET /api/products/recent HTTP/1.1" 401 Unauthorized
+          🔴 GET /api/brands HTTP/1.1" 401 Unauthorized
+          🔴 GET /api/customers HTTP/1.1" 401 Unauthorized
+        • User remains stuck on /login page (no navigation occurs)
+        • Affects ALL breakpoints (not a responsive design issue)
+        
+        ROOT CAUSE:
+        Frontend is not storing the JWT token returned from login API, or not including it in
+        Authorization headers for subsequent requests. This is a frontend auth flow bug, not a
+        backend API issue (backend returns 200 OK with valid token).
+        
+        IMPACT:
+        • CANNOT complete quotation builder visual audit (all 11 checkpoints a-k blocked)
+        • CANNOT access any authenticated routes
+        • PRODUCTION-BLOCKING for App Store submission (reviewers cannot log in)
+        
+        NOTE: Customer portal login (customer@forge.app) was verified working in Sprint 1 via
+        direct API calls. This issue is specific to STAFF login via the web UI.
+        
+        VISUAL AUDIT OF LOGIN PAGE (completed):
+        ✅ Login page renders correctly at all 6 breakpoints
+        ✅ No layout issues, horizontal scroll, or clipping at any breakpoint
+        ✅ Form fields and buttons properly sized and accessible
+        ✅ Responsive design working correctly (390px to 1440px)
+        ✅ "Use demo account" link works (fills credentials correctly)
+        
+        QUOTATION BUILDER AUDIT: BLOCKED (cannot access without working staff auth)
+        
+        RECOMMENDATION:
+        Main agent MUST fix staff authentication token persistence before visual audit can proceed.
+        Investigation areas:
+        1. frontend/src/api/client.ts - token interceptor configuration
+        2. frontend/src/state/auth.tsx - token storage after login
+        3. AsyncStorage compatibility in React Native Web
+        4. Token extraction from login response
+        5. Authorization header setup for subsequent requests
+        6. Navigation trigger after auth state update
+        
+        If stuck, use WEBSEARCH TOOL for:
+        • "React Native Web Expo Router JWT token persistence"
+        • "AsyncStorage not working in web browser"
+        • "Expo Router auth flow token storage"
+        
+        25 screenshots captured showing login page at all breakpoints and failed login attempts.
+
