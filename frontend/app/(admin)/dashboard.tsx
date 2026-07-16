@@ -121,7 +121,11 @@ export default function Today() {
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
-    try { await api.post("/followups/reconcile"); } catch { /* soft */ }
+    // Fire-and-forget: this reconcile pass can take several seconds under
+    // load and is best-effort housekeeping, not something the user should
+    // ever sit on a skeleton for. Same "soft" semantics as before — we just
+    // no longer block the critical render path on it.
+    api.post("/followups/reconcile").catch(() => {});
     const [m, fus, st, ps, rq, sh] = await Promise.allSettled([
       api.get<Mission>("/followups/mission"),
       api.get<Fu[]>("/followups?limit=12"),
