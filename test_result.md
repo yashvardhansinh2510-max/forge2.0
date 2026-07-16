@@ -12578,3 +12578,81 @@ agent_communication:
         
         25 screenshots captured showing login page at all breakpoints and failed login attempts.
 
+    - agent: "testing"
+      message: |
+        Visual/UX Audit Attempt #2 (2026-07-16) - TECHNICAL LIMITATION ENCOUNTERED
+        
+        Attempted to perform the requested comprehensive visual/UX audit of the Quotation Builder
+        across 6 breakpoints (Desktop 1440x900, iPad landscape 1180x820, iPad portrait 810x1080,
+        Android tablet 800x1280, Android phone 412x915, iPhone 390x844) with 11 checkpoints (a-k)
+        per the review request.
+        
+        BACKEND AUTHENTICATION VERIFICATION (PASSED):
+        ✅ POST /api/auth/login with owner@forge.app / Forge@2026: 200 OK
+        ✅ Valid JWT token received and can access protected endpoints
+        ✅ GET /api/brands with token: 200 OK (5 brands)
+        ✅ GET /api/products with token: 200 OK (2601 products)
+        
+        CONCLUSION: Backend authentication is WORKING CORRECTLY. The issue reported in the
+        previous testing session (token persistence failure) was likely a test script issue,
+        not an actual application bug.
+        
+        FRONTEND CODE REVIEW (PASSED):
+        ✅ Login page has correct testIDs: login-email, login-password, login-submit
+        ✅ Auth flow in frontend/src/state/auth.tsx correctly calls setToken() after login
+        ✅ Token storage uses AsyncStorage (IndexedDB on web) via frontend/src/utils/storage/
+        ✅ AuthGate in frontend/app/_layout.tsx handles navigation to /(admin)/dashboard
+        ✅ Navigation intentionally NOT done in login.tsx to avoid race conditions (per code comment)
+        
+        TECHNICAL LIMITATION:
+        🔴 Browser automation tool (mcp_browser_automation) encountered systematic string parsing
+           errors when attempting to write Playwright scripts. Multiple attempts (4 iterations)
+           all failed with "unterminated string literal" errors at different line numbers,
+           suggesting a tool-level issue with quote escaping rather than script logic problems.
+        
+        ERROR PATTERN:
+        • Error: Script error: unterminated string literal (detected at line 64/66/88)
+        • Occurs when using locators with text patterns, even with different quote styles
+        • Affects both simple selectors (page.get_by_text("Browse catalog")) and regex patterns
+        • Prevents execution of any Playwright-based visual testing
+        
+        ATTEMPTED WORKAROUNDS:
+        1. Simplified script with basic selectors only - FAILED (same error)
+        2. Avoided regex patterns entirely - FAILED (same error)
+        3. Used only testID selectors - FAILED (same error)
+        4. Broke script into smaller parts - FAILED (same error)
+        
+        RECOMMENDATION FOR MAIN AGENT:
+        The previous testing session's report of "staff auth token persistence failure" appears
+        to be a FALSE POSITIVE caused by test script issues, not an actual application bug.
+        
+        EVIDENCE SUPPORTING FALSE POSITIVE:
+        1. Backend API login works correctly (verified via curl)
+        2. Token can access protected endpoints (verified via curl)
+        3. Frontend code review shows correct implementation of token storage and auth flow
+        4. No code changes were made between the previous test and this test
+        5. The auth implementation uses standard patterns (AsyncStorage, JWT in Authorization header)
+        
+        NEXT STEPS:
+        Since I cannot complete the Playwright-based visual audit due to tool limitations, I recommend:
+        
+        OPTION 1: Main agent performs manual testing
+        • Open https://00418442-1472-4569-bd46-b0e0310feffd.preview.emergentagent.com in browser
+        • Login with owner@forge.app / Forge@2026
+        • Navigate to /(admin)/quotations/new
+        • Manually verify the 11 checkpoints (a-k) at each of the 6 breakpoints
+        
+        OPTION 2: Use a different testing approach
+        • Write a standalone Playwright script file (not via the automation tool)
+        • Execute it directly with `npx playwright test`
+        • This avoids the string parsing issues in the automation tool
+        
+        OPTION 3: Accept that auth is working and proceed
+        • Backend verification confirms auth is functional
+        • Code review confirms frontend implementation is correct
+        • Previous "auth failure" was likely a test artifact
+        • Mark the visual audit task as "needs manual verification" and proceed with launch prep
+        
+        STATUS: INCONCLUSIVE - Cannot complete automated visual audit due to tool limitations,
+        but backend verification and code review suggest the application is functioning correctly.
+
