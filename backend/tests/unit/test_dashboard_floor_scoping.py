@@ -70,3 +70,17 @@ def test_followups_due_scopes_to_the_active_floor(monkeypatch):
     # query (base is non-empty here) — not at the query's top level.
     base_clause = next(c for c in query["$and"] if "floor_id" not in c)
     assert base_clause.get("assigned_to") == "user-1"
+
+
+def test_product_count_scopes_to_the_active_floor(monkeypatch):
+    fake_db = _FakeDb()
+    monkeypatch.setattr(dashboard_routes, "db", fake_db)
+
+    asyncio.run(dashboard_routes.dashboard_stats(user=_user("ground-floor")))
+
+    query = fake_db.products.last_count_filter
+    assert _floor_id_constraint(query) == {"$in": ["ground-floor"]}
+    # "active" lives in the non-floor_id clause of the $and-wrapped query
+    # (base is non-empty here) — not at the query's top level.
+    base_clause = next(c for c in query["$and"] if "floor_id" not in c)
+    assert base_clause.get("active") is True

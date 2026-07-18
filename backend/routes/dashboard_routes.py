@@ -17,8 +17,7 @@ async def dashboard_stats(user: UserPublic = Depends(get_current_user)):
 
     quotations = await db.quotations.find(floor_query(user, {}), {"_id": 0}).to_list(1000)
     customers = await db.customers.count_documents(floor_query(user, {}))
-    # Catalog has no floor scoping yet (tracked separately) — product count stays global.
-    products = await db.products.count_documents({"active": True})
+    products = await db.products.count_documents(floor_query(user, {"active": True}))
 
     # revenue = grand_total of won quotations this month
     revenue_month = sum(

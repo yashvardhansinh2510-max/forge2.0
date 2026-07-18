@@ -61,9 +61,9 @@ async def _all_with_bucket(user: UserPublic | None = None) -> list[dict]:
     return docs
 
 
-async def _rule_counts() -> dict[str, int]:
+async def _rule_counts(user: UserPublic) -> dict[str, int]:
     pipeline = [
-        {"$match": {"status": {"$in": ["open", "snoozed"]}}},
+        {"$match": floor_query(user, {"status": {"$in": ["open", "snoozed"]}})},
         {"$group": {"_id": "$rule_type", "count": {"$sum": 1}}},
     ]
     rows = await db.followups.aggregate(pipeline).to_list(30)
@@ -83,8 +83,8 @@ async def reconcile(_: UserPublic = Depends(get_current_user)):
 
 
 @router.get("/config/rules")
-async def rules_config(_: UserPublic = Depends(get_current_user)):
-    counts = await _rule_counts()
+async def rules_config(user: UserPublic = Depends(get_current_user)):
+    counts = await _rule_counts(user)
     return [{**r, "active_count": counts.get(r["rule_type"], 0)} for r in RULE_DEFINITIONS]
 
 
@@ -132,7 +132,7 @@ async def stats(user: UserPublic = Depends(get_current_user)):
         1 for d in docs if d.get("completed_at") and y_start.isoformat() <= d["completed_at"] < y_end.isoformat()
     )
 
-    rules = await _rule_counts()
+    rules = await _rule_counts(user)
     return {
         "today_tasks": counts["today"], "today_critical": today_critical,
         "overdue": counts["overdue"], "overdue_critical": overdue_critical,

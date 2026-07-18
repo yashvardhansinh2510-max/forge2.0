@@ -114,3 +114,34 @@ def test_log_call_reschedule_inherits_source_followup_floor(monkeypatch):
     ))
 
     assert fake_followups.inserted[0]["floor_id"] == "ground-floor"
+
+
+def test_rule_counts_scopes_to_the_active_floor(monkeypatch):
+    class _Recorder:
+        def __init__(self):
+            self.last_pipeline = None
+
+        def aggregate(self, pipeline):
+            self.last_pipeline = pipeline
+            return self
+
+        async def to_list(self, _n):
+            return []
+
+    class _FakeDb:
+        followups = _Recorder()
+
+    fake_db = _FakeDb()
+    monkeypatch.setattr(followups, "db", fake_db)
+
+    asyncio.run(followups._rule_counts(_user("ground-floor")))
+
+    match_stage = fake_db.followups.last_pipeline[0]["$match"]
+    # floor_query wraps in $and when base is non-empty (base here is
+    # {"status": {"$in": [...]}}) — check the floor constraint is present
+    # somewhere in the query, not just at the top level.
+    if "floor_id" in match_stage:
+        floor_constraint = match_stage["floor_id"]
+    else:
+        floor_constraint = next(c["floor_id"] for c in match_stage.get("$and", []) if "floor_id" in c)
+    assert floor_constraint == {"$in": ["ground-floor"]}
