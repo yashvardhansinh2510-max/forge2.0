@@ -247,6 +247,7 @@ class Brand(TimestampedModel):
     slug: str
     logo_url: Optional[str] = None
     country: Optional[str] = None
+    floor_id: str = "first-floor"
 
 
 class Category(TimestampedModel):
@@ -254,6 +255,7 @@ class Category(TimestampedModel):
     slug: str
     parent_id: Optional[str] = None
     icon: Optional[str] = None
+    floor_id: str = "first-floor"
 
 
 class ProductVariant(BaseModel):
