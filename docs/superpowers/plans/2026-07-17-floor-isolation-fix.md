@@ -846,7 +846,6 @@ import asyncio
 
 import pytest
 
-from auth import floor_query
 from models import UserPublic
 from routes import followup_routes as followups
 
@@ -888,20 +887,37 @@ class _FakeDb:
         self.followups = _Recorder()
 
 
+def _floor_id_constraint(query: dict) -> dict | None:
+    """floor_query(user, base) returns a bare {"floor_id": ...} dict only
+    when base is empty — every real call site here passes a non-empty base
+    (e.g. {"event_type": ..., "created_at": rng}), which takes the
+    $and-wrapping branch instead: {"$and": [{"floor_id": ...}, base]}. This
+    extracts the floor_id constraint either way so tests don't silently
+    assert against the wrong shape (a bare `.get("floor_id")` on the
+    $and-wrapped form always returns None, even on a correct
+    implementation)."""
+    if "floor_id" in query:
+        return query["floor_id"]
+    for clause in query.get("$and", []):
+        if "floor_id" in clause:
+            return clause["floor_id"]
+    return None
+
+
 def test_insights_scopes_every_query_to_the_active_floor(monkeypatch):
     fake_db = _FakeDb()
     monkeypatch.setattr(followups, "db", fake_db)
 
     asyncio.run(followups.insights(user=_user("ground-floor")))
 
-    expected = floor_query(_user("ground-floor"), {}).get("floor_id")
-    assert fake_db.activity_events.last_count_filter.get("floor_id") == expected
-    assert fake_db.payments.last_find_filter.get("floor_id") == expected
-    assert fake_db.quotations.last_count_filter.get("floor_id") == expected
+    expected = {"$in": ["ground-floor"]}
+    assert _floor_id_constraint(fake_db.activity_events.last_count_filter) == expected
+    assert _floor_id_constraint(fake_db.payments.last_find_filter) == expected
+    assert _floor_id_constraint(fake_db.quotations.last_count_filter) == expected
     # followups.count_documents is called twice (completed_today, still_open) —
     # last_count_filter only captures the final call, which is enough to prove
     # the floor filter reaches this collection too.
-    assert fake_db.followups.last_count_filter.get("floor_id") == expected
+    assert _floor_id_constraint(fake_db.followups.last_count_filter) == expected
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1129,15 +1145,33 @@ class _FakeDb:
         self.followups = _Recorder()
 
 
+def _floor_id_constraint(query: dict) -> dict | None:
+    """floor_query(user, base) $and-wraps its floor constraint whenever
+    base is non-empty (which it is here — {"status": ..., "due_at": ...,
+    "assigned_to": ...}) — a bare `.get("floor_id")` would incorrectly
+    return None even on a correct implementation. Extracts the constraint
+    from either the bare-dict (empty base) or $and-wrapped (non-empty
+    base) shape."""
+    if "floor_id" in query:
+        return query["floor_id"]
+    for clause in query.get("$and", []):
+        if "floor_id" in clause:
+            return clause["floor_id"]
+    return None
+
+
 def test_followups_due_scopes_to_the_active_floor(monkeypatch):
     fake_db = _FakeDb()
     monkeypatch.setattr(dashboard_routes, "db", fake_db)
 
     asyncio.run(dashboard_routes.dashboard_stats(user=_user("ground-floor")))
 
-    expected = floor_query(_user("ground-floor"), {}).get("floor_id")
-    assert fake_db.followups.last_count_filter.get("floor_id") == expected
-    assert fake_db.followups.last_count_filter.get("assigned_to") == "user-1"
+    query = fake_db.followups.last_count_filter
+    assert _floor_id_constraint(query) == {"$in": ["ground-floor"]}
+    # "assigned_to" lives in the non-floor_id clause of the $and-wrapped
+    # query (base is non-empty here) — not at the query's top level.
+    base_clause = next(c for c in query["$and"] if "floor_id" not in c)
+    assert base_clause.get("assigned_to") == "user-1"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
