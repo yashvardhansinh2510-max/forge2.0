@@ -407,7 +407,7 @@ async def hydrate_variants_batch(docs: list[dict], limit_per_family: int = 8) ->
         {"family_key": {"$in": family_keys}, "active": True},
         {
             "_id": 0, "id": 1, "sku": 1, "family_key": 1, "finish": 1, "colour": 1,
-            "color": 1, "price": 1, "mrp": 1, "stock": 1, "name": 1,
+            "color": 1, "size": 1, "price": 1, "mrp": 1, "stock": 1, "name": 1,
         },
     ).to_list(20000)
     if not siblings:
@@ -443,6 +443,7 @@ async def hydrate_variants_batch(docs: list[dict], limit_per_family: int = 8) ->
             variants.append({
                 "id": s["id"], "sku": s["sku"],
                 "finish": s.get("finish"), "color": s.get("colour") or s.get("color"),
+                "size": s.get("size"),
                 "price": float(s.get("price") or 0), "mrp": float(s.get("mrp") or s.get("price") or 0),
                 "stock": int(s.get("stock") or 0),
                 "image": image_by_pid.get(s["id"]),

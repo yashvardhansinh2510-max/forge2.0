@@ -700,6 +700,7 @@ async def search_catalog(
         series_l = (product.get("series") or "").lower()
         subcat = (product.get("subcategory") or "").lower()
         finish_l = (product.get("finish") or "").lower()
+        size_l = (product.get("size") or "").lower()
         colour_l = (product.get("colour") or "").lower()
         dimensions = (product.get("dimensions") or "").lower()
         description = (product.get("description") or "").lower()
@@ -715,6 +716,7 @@ async def search_catalog(
         value += 6 if q_lower in series_l else 0
         value += 4 if q_lower in subcat else 0
         value += 3 if q_lower in finish_l else 0
+        value += 3 if q_lower in size_l else 0
         value += 3 if q_lower in colour_l else 0
         value += 1 if q_lower in dimensions else 0
         value += 1 if q_lower in description else 0

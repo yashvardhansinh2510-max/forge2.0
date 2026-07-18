@@ -82,3 +82,33 @@ def test_facet_buckets_includes_sizes():
         from services.catalog_service import facet_buckets
         result = asyncio.run(facet_buckets(brand_id=None, category_id=None, subcategory=None, series=None))
         assert result["sizes"] == [{"value": "600x600mm", "count": 1}]
+
+
+def test_search_catalog_scores_size_only_match(monkeypatch):
+    """Regression test: search_catalog()'s hand-rolled score() closure must
+    consider `size`, not just sku/name/family/series/subcat/finish/colour/
+    dimensions/description. A product whose ONLY matching field is `size`
+    (e.g. searching "600x600mm") must still be returned by the primary
+    GET /catalog/search endpoint."""
+    from services.catalog_service import search_catalog
+
+    product = {
+        "id": "p1", "sku": "TILE-001", "name": "Ceramic Tile", "brand_id": "b1",
+        "category_id": "c1", "subcategory": None, "series": None, "family_key": None,
+        "finish": None, "colour": None, "family_name": None, "dimensions": None,
+        "description": None, "size": "600x600mm", "floor_id": "ground-floor",
+    }
+    snapshot = _build_snapshot([product], [], [], [], [])
+
+    async def fake_get_catalog_snapshot():
+        return snapshot
+
+    monkeypatch.setattr(catalog_service, "get_catalog_snapshot", fake_get_catalog_snapshot)
+
+    result = asyncio.run(search_catalog(
+        q="600x600mm", brand_id=None, category_id=None, subcategory=None,
+        series=None, limit=10, group=False,
+    ))
+
+    assert result["total"] == 1
+    assert result["items"][0]["id"] == "p1"
