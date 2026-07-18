@@ -304,6 +304,7 @@ class Product(TimestampedModel):
     colour: Optional[str] = None
     description: Optional[str] = None
     finish: Optional[str] = None            # e.g. "Chrome", "Matt Black", "Brushed Brass"
+    size: Optional[str] = None              # e.g. "600x600mm" — tile nominal size
     material: Optional[str] = None
     dimensions: Optional[str] = None
     warranty: Optional[str] = None
@@ -340,6 +341,7 @@ class ProductCreate(BaseModel):
     category_id: str
     description: Optional[str] = None
     finish: Optional[str] = None
+    size: Optional[str] = None
     material: Optional[str] = None
     dimensions: Optional[str] = None
     warranty: Optional[str] = None
@@ -366,6 +368,7 @@ class ProductPatch(BaseModel):
     family_key: Optional[str] = None
     family_name: Optional[str] = None
     finish: Optional[str] = None
+    size: Optional[str] = None
     colour: Optional[str] = None
     description: Optional[str] = None
     mrp: Optional[float] = None

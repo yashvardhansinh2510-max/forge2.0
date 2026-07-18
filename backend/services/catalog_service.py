@@ -25,7 +25,7 @@ _SNAPSHOT_MAX_AGE_SECONDS = 300.0
 _MEDIA_PRIORITY = {"internal": 0, "manufacturer": 1, "supplier": 2}
 _SEARCH_FIELDS = (
     "name", "sku", "description", "series", "family_name", "subcategory",
-    "collection", "finish", "colour", "dimensions", "tags",
+    "collection", "finish", "colour", "dimensions", "size", "tags",
 )
 
 
@@ -671,6 +671,7 @@ async def facet_buckets(
         "subcategories": bucket("subcategory"),
         "series": bucket("series"),
         "finishes": bucket("finish"),
+        "sizes": bucket("size"),
         "colours": bucket("colour"),
         "materials": bucket("material"),
         "price": {"min": min(prices, default=0), "max": max(prices, default=0)},

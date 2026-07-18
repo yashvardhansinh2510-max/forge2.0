@@ -62,3 +62,23 @@ def test_list_brands_with_counts_does_not_leak_other_floors_products_into_count(
     assert len(result) == 1
     assert result[0]["id"] == "b1"
     assert result[0]["product_count"] == 1
+
+
+def test_size_is_a_search_field():
+    from services.catalog_service import _SEARCH_FIELDS
+    assert "size" in _SEARCH_FIELDS
+
+
+def test_facet_buckets_includes_sizes():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    async def _fake_snapshot():
+        class _Snap:
+            products = ({"size": "600x600mm", "floor_id": "ground-floor"},)
+        return _Snap()
+
+    with patch("services.catalog_service.get_catalog_snapshot", _fake_snapshot):
+        from services.catalog_service import facet_buckets
+        result = asyncio.run(facet_buckets(brand_id=None, category_id=None, subcategory=None, series=None))
+        assert result["sizes"] == [{"value": "600x600mm", "count": 1}]
