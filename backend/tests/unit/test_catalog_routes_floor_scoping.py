@@ -57,3 +57,27 @@ def test_create_brand_stamps_floor_for_write(monkeypatch):
 
     assert inserted["floor_id"] == "ground-floor"
     assert inserted["name"] == "CUTE"
+
+
+def test_create_category_stamps_floor_for_write(monkeypatch):
+    inserted = {}
+
+    class _FakeCategories:
+        async def find_one(self, *_a, **_kw):
+            return None
+
+        async def insert_one(self, doc):
+            inserted.update(doc)
+
+    class _FakeDb:
+        categories = _FakeCategories()
+
+    monkeypatch.setattr(catalog_routes, "db", _FakeDb())
+    monkeypatch.setattr(catalog_routes.catalog_service, "schedule_catalog_refresh", lambda: None)
+
+    from models import CategoryCreate
+    body = CategoryCreate(name="Tiles", slug="tiles")
+    asyncio.run(catalog_routes.create_category(body, user=_user("ground-floor")))
+
+    assert inserted["floor_id"] == "ground-floor"
+    assert inserted["name"] == "Tiles"
