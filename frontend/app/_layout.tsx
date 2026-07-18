@@ -48,12 +48,24 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       (kind === "staff" && !!staff?.must_change_password) ||
       (kind === "customer" && !!customer?.must_change_password);
 
-    if (kind && mustChangePassword && !onForceChange) {
-      router.replace("/(auth)/set-new-password");
+    if (kind && mustChangePassword) {
+      // Still must change password: redirect to the force-change screen if
+      // not already there, otherwise do nothing and let the user finish it.
+      // Bug fixed here: this used to be `if (... && !onForceChange)` with no
+      // matching branch for "must change AND already on that screen" — that
+      // case fell through to the generic staff/customer routing below, which
+      // bounced straight back to /(admin)/dashboard, which re-triggered this
+      // same redirect next render — an infinite replace() loop that crashed
+      // the app with "Maximum update depth exceeded" for every account with
+      // a temporary password (i.e. every staff account after a credential
+      // rotation) the moment they reached this screen.
+      if (!onForceChange) router.replace("/(auth)/set-new-password");
       return;
     }
-    if (kind && !mustChangePassword && onForceChange) {
-      // Just finished the forced change — fall through to normal routing.
+    if (kind && onForceChange) {
+      // Just finished the forced change (mustChangePassword is now false,
+      // otherwise the branch above would have returned) — fall through to
+      // normal routing.
       router.replace(kind === "staff" ? "/(admin)/dashboard" : "/(customer)/home");
       return;
     }
