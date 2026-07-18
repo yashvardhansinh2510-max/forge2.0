@@ -95,6 +95,15 @@ export function computeTotals(
   return { subtotal: sub, discount: disc, grand: Math.round((sub - disc) * 100) / 100 };
 }
 
+// Joins whichever of finish/size/color are present into one display
+// string, e.g. "Glossy · 600×600mm". A tile has both a finish and a size —
+// the old pattern (`finish || color || size || sku`) picked only ONE of
+// them, silently dropping the other. Returns "" (never a fallback to sku)
+// so callers decide their own sku fallback explicitly.
+export function variantDescriptor(v: { finish?: string | null; size?: string | null; color?: string | null }): string {
+  return [v.finish, v.size, v.color].filter((part): part is string => !!part).join(" · ");
+}
+
 // Approximate swatch colour from a finish label. Kept deliberately small — we
 // fall back to a neutral chrome tone when we don't recognise the finish.
 export function finishSwatch(finish?: string | null): string {

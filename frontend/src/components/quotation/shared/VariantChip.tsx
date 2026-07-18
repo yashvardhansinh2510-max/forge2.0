@@ -4,7 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { colors, money } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 
-import { finishSwatch } from "../helpers/pricing";
+import { finishSwatch, variantDescriptor } from "../helpers/pricing";
 import type { Product, ProductVariant } from "../helpers/types";
 
 export function FinishSwatch({ finish, size = 12 }: { finish?: string | null; size?: number }) {
@@ -29,7 +29,7 @@ export function VariantChip({
   active?: boolean;
 }) {
   const delta = (variant.price ?? basePrice) - basePrice;
-  const label = variant.finish || variant.color || variant.size || variant.sku;
+  const label = variantDescriptor(variant) || variant.sku;
   return (
     <Pressable
       testID={testID}

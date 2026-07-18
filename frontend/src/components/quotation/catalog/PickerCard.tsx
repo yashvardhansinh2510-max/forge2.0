@@ -13,6 +13,7 @@ import { colors, money, radius, type } from "@/src/theme/tokens";
 import { VariantSwatchStrip } from "../shared/VariantChip";
 import { QuickAddButton } from "../shared/QuickAddButton";
 import { productImageList } from "../helpers/media";
+import { variantDescriptor } from "../helpers/pricing";
 import type { Product, ProductVariant } from "../helpers/types";
 
 type Props = {
@@ -62,7 +63,7 @@ function PickerCardImpl({ product, onQuickAdd, onLongPress, onOpenDetails }: Pro
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.name} numberOfLines={1}>{product.name}</Text>
           <Text style={type.caption} numberOfLines={1}>
-            {product.sku}{product.finish ? ` · ${product.finish}` : ""}
+            {product.sku}{variantDescriptor(product) ? ` · ${variantDescriptor(product)}` : ""}
           </Text>
         </View>
         <Text style={styles.price} numberOfLines={1}>{money(product.price)}</Text>
@@ -80,7 +81,7 @@ function PickerCardImpl({ product, onQuickAdd, onLongPress, onOpenDetails }: Pro
         onSelect={(v) => {
           onQuickAdd(product, v);
           Haptics.selectionAsync();
-          toast.success(`${product.name} · ${v.finish || v.color || v.size || v.sku} added`);
+          toast.success(`${product.name} · ${variantDescriptor(v) || v.sku} added`);
         }}
       />
     </View>
