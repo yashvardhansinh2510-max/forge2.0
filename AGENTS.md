@@ -33,7 +33,7 @@ Do not re-derive the root cause or re-scan the codebase for affected endpoints �
 - `floor_query(user, base)` — Mongo filter dict, for queries that take a filter (`db.collection.find(floor_query(user, {...}))`).
 - `floor_for_write(user)` — single floor_id string, for **human-initiated** creates (`Quotation(..., floor_id=floor_for_write(user))`).
 - `floor_scope_ids(user)` — plain `Optional[list[str]]`, for code that builds its own aggregation pipeline or in-memory filter instead of taking a Mongo filter dict (added in Task 1 of the plan above).
-- **Automation/event-handler-created records** (background workflows with no live user, e.g. `domain_outbox.py`, `transfer_workflow.py`, `followup_engine.py`) inherit `floor_id` from their immediate **source document** instead — never `floor_for_write()` — since these handlers often only have an actor id/name string, and a record derived from a ground-floor source must stay ground-floor regardless of which floor the triggering user happens to have selected. See the plan's Milestone B for the exact helper functions (`_transfer_floor_id`, `_source_floor_id`, `_followup_floor_id`) already added for this.
+- **Automation/event-handler-created records** (background workflows with no live user, e.g. `domain_outbox.py`, `transfer_workflow.py`, `followup_engine.py`) inherit `floor_id` from their immediate **source document** instead — never `floor_for_write()` — since these handlers often only have an actor id/name string, and a record derived from a ground-floor source must stay ground-floor regardless of which floor the triggering user happens to have selected. Use `floor_inherit(source)` from `auth.py` for this (added alongside `floor_query`/`floor_for_write`/`floor_scope_ids` — this consolidates what used to be four duplicated per-file helpers; don't reintroduce a fifth local copy).
 
 All four live in `backend/auth.py` (the first three) or as small local helpers next to their one caller (the fourth kind) — don't scatter re-implementations of the same logic across files.
 
@@ -49,13 +49,15 @@ Update this table as work lands. Commit SHAs below are on `main` (this repo comm
 | 4 | Follow-ups `/insights` | **Done** (spec + code-quality review both passed) | `781a65b` |
 | 5 | Reports overview | **Done** (spec + code-quality review both passed) | `da9e240` |
 | 6 | Dashboard `followups_due` counter | **Done** (spec + code-quality review both passed) — **Milestone A (read-path scoping) fully complete** | `00b70fd` |
-| 7 | `domain_outbox.py::_handle_order_placed` (PO + Payment floor inheritance) | Not started | — |
-| 8 | `domain_outbox.py::_upsert_followup` | Not started | — |
-| 9 | `followup_engine.py` rule-based auto-follow-up engine | Not started | — |
-| 10 | `transfer_workflow.py::execute_transfer` | Not started | — |
-| 11 | `transfer_workflow.py::handle_purchase_transferred` | Not started | — |
-| 12 | Legacy inline transfer/reorder code in `purchases_tracker.py` | Not started | — |
-| 13 | Follow-up call-back rescheduling (`POST /{id}/log-call`) | Not started | — |
+| 7 | `domain_outbox.py::_handle_order_placed` (PO + Payment floor inheritance) | **Done** (spec + code-quality review both passed) | `bfff087` |
+| 8 | `domain_outbox.py::_upsert_followup` | **Done** (spec + code-quality review both passed) | `5e69494` |
+| 9 | `followup_engine.py` rule-based auto-follow-up engine | **Done** (spec + code-quality review both passed) | `981d13d` |
+| 10 | `transfer_workflow.py::execute_transfer` | **Done** (spec + code-quality review both passed) | `379a8ff` |
+| 11 | `transfer_workflow.py::handle_purchase_transferred` | **Done** (spec passed; code-quality found a real issue — first test was a no-op, fixed by reusing `_transfer_floor_id`, re-reviewed and approved) | `c07be25`, `3dbca7b` |
+| 12 | Legacy inline transfer/reorder code in `purchases_tracker.py` | **Done** (spec + code-quality review both passed; reviewer flagged cross-file helper duplication as a non-blocking follow-up — see below) | `5c25ca5` |
+| 13 | Follow-up call-back rescheduling (`POST /{id}/log-call`) | **Done** (spec + code-quality review both passed) — **Milestone B (write-path floor inheritance) fully complete** | `24c87af` |
+
+**Bonus cleanup (not one of the 20 plan tasks):** Task 12's reviewer flagged that `_transfer_floor_id` (transfer_workflow.py), `_source_floor_id` (purchases_tracker.py), `_followup_floor_id` (followup_engine.py), and three inline copies in `domain_outbox.py` were all near-identical reimplementations of "inherit floor_id from source, default to first-floor." A separate session consolidated these into one `auth.floor_inherit(source)` helper alongside `floor_query`/`floor_for_write`/`floor_scope_ids`. Pure refactor, no behavior change, full suite passes (74/74). Commit `b5ecee4`.
 | 14 | `Brand`/`Category` gain `floor_id` + backfill migration `0004` | Not started | — |
 | 15 | Floor-scope the in-memory catalog engine (`catalog_service.py`) | Not started | — |
 | 16 | Thread floor scope through Catalog routes; fix product-creation floor default | Not started | — |
