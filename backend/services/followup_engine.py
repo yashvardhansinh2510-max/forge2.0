@@ -18,6 +18,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from auth import floor_inherit
 from db import db
 from models import Followup, now_iso
 from services.activity_log import log_event
@@ -155,7 +156,7 @@ def _followup_floor_id(quotation: Optional[dict], purchase: Optional[dict]) -> s
     """Automated follow-ups inherit floor_id from whichever source document
     triggered the rule — never a hardcoded default that would silently mix
     floors once ground-floor quotations/purchases exist."""
-    return (quotation or purchase or {}).get("floor_id", "first-floor")
+    return floor_inherit(quotation) if quotation else floor_inherit(purchase or {})
 
 
 def build_whatsapp_message(f: dict) -> str:

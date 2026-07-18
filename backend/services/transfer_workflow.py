@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from auth import floor_inherit
 from db import client, db
 from models import (
     ActivityEvent, CustomerPublic, Followup, Payment, PurchaseOrder,
@@ -26,13 +27,6 @@ EVENT_PURCHASE_TRANSFERRED = "PurchaseTransferred"
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _transfer_floor_id(source_po: dict) -> str:
-    """Every record a transfer creates (destination quotation, destination
-    PO, shortage, payment, follow-up) stays on the SOURCE PO's floor — a
-    transfer moves stock between customers, not between floors."""
-    return source_po.get("floor_id", "first-floor")
 
 
 async def ensure_transfer_indexes() -> None:
@@ -141,7 +135,7 @@ async def execute_transfer(
                 subtotal=round(quote_line.net, 2), grand_total=round(quote_line.net, 2),
                 notes=f"Transfer from {source_name} · {source_po.get('number')}" + (f" — {reason}" if reason else ""),
                 created_by=user.id, created_by_name=user.full_name, source="transfer",
-                floor_id=_transfer_floor_id(source_po),
+                floor_id=floor_inherit(source_po),
             )
             destination_item_id = str(uuid4())
             destination_item = PurchaseOrderItem(
@@ -161,7 +155,7 @@ async def execute_transfer(
                 internal_notes=f"Transfer {transfer_id} from {source_po.get('number')} · {source_name}" + (f" — {reason}" if reason else ""),
                 subtotal=round(destination_item.qty * destination_item.unit_cost, 2), grand_total=round(destination_item.qty * destination_item.unit_cost, 2),
                 created_by=user.id, created_by_name=user.full_name,
-                floor_id=_transfer_floor_id(source_po),
+                floor_id=floor_inherit(source_po),
                 status_history=[PurchaseStatusEvent(from_status=None, to_status="draft", by_user_id=user.id, by_user_name=user.full_name, note="Created by customer transfer")],
             )
             quote.source_purchase_order_id = destination_po.id
@@ -193,7 +187,7 @@ async def execute_transfer(
                 "image": source_item.get("image"), "brand_id": destination_item.brand_id, "brand_name": destination_item.brand_name, "room": source_item.get("room"),
                 "qty": float(qty), "source_qty_before": source_qty, "source_remaining_qty": max(0, source_remaining), "reason": reason,
                 "created_customer": created_customer, "actor_id": user.id, "actor_name": user.full_name, "created_at": now, "updated_at": now,
-                "floor_id": _transfer_floor_id(source_po),
+                "floor_id": floor_inherit(source_po),
             }
             await db.purchase_transfers.insert_one(transfer, session=session)
             event = await enqueue_after_primary_commit(
@@ -243,7 +237,7 @@ async def handle_purchase_transferred(event: dict, session: Any) -> dict:
                     committed_qty=committed, allocated_qty=allocated, shortage_qty=missing, status="awaiting_reorder",
                     reason=f"{transfer['qty']:g} unit(s) transferred to {transfer['destination_customer_name']} — {missing:g} unit(s) need re-order.",
                     transferred_to_customer_id=transfer["destination_customer_id"], transferred_to_customer_name=transfer["destination_customer_name"],
-                    floor_id=_transfer_floor_id(transfer),
+                    floor_id=floor_inherit(transfer),
                 ).dict()
                 shortage["automation_key"] = shortage_key
                 fields = {k: v for k, v in shortage.items() if k not in {"id", "created_at"}}
@@ -264,7 +258,7 @@ async def handle_purchase_transferred(event: dict, session: Any) -> dict:
     payment = Payment(
         quotation_id=transfer["destination_quotation_id"], quotation_number=transfer["destination_quotation_number"], customer_id=transfer["destination_customer_id"], customer_name=transfer["destination_customer_name"],
         amount=round(float(dest_quote.get("grand_total") or 0), 2), mode="bank", status="pending", note=f"Pending balance from transfer {transfer['id']}", recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
-        floor_id=_transfer_floor_id(transfer),
+        floor_id=floor_inherit(transfer),
     ).dict()
     payment["automation_key"] = f"{key}:payment"
     await db.payments.update_one({"automation_key": payment["automation_key"]}, {"$setOnInsert": payment}, upsert=True, session=session)
@@ -274,7 +268,7 @@ async def handle_purchase_transferred(event: dict, session: Any) -> dict:
         source_key=f"{key}:followup", rule_type="manual", category="purchase", customer_id=transfer["destination_customer_id"], customer_name=transfer["destination_customer_name"], customer_phone=destination_customer.get("phone"), customer_tier=destination_customer.get("tier", "retail"),
         quotation_id=transfer["destination_quotation_id"], quotation_number=transfer["destination_quotation_number"], purchase_id=transfer["destination_po_id"], purchase_number=transfer["destination_po_number"],
         value=payment["amount"], reason=f"Transferred {transfer['qty']:g} × {transfer['name']} received from {transfer['source_customer_name']}.", next_action="Confirm transfer and payment plan", next_action_reason="Transfer-specific operational follow-up.", suggested_channel="call", due_at=now_iso(), is_automated=False,
-        floor_id=_transfer_floor_id(transfer),
+        floor_id=floor_inherit(transfer),
     ).dict()
     followup["automation_key"] = f"{key}:followup"
     await db.followups.update_one({"automation_key": followup["automation_key"]}, {"$setOnInsert": followup}, upsert=True, session=session)

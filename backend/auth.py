@@ -344,6 +344,14 @@ def floor_for_write(user: UserPublic) -> str:
     return (allowed or ["first-floor"])[0] if allowed is not None else "first-floor"
 
 
+def floor_inherit(source: dict | None) -> str:
+    """Records derived from an existing document (quotation, PO, transfer,
+    shortage, ...) stay on that source's floor rather than defaulting to
+    first-floor, which would silently mix floors once non-default-floor
+    records exist."""
+    return (source or {}).get("floor_id", "first-floor")
+
+
 def require_floor_access(floor_id: str, user: UserPublic) -> UserPublic:
     allowed = accessible_floor_ids(user)
     if allowed is not None and floor_id not in allowed:

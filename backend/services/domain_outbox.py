@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from auth import floor_inherit
 from db import client, db
 from models import ActivityEvent, Followup, Payment, PurchaseOrder, PurchaseOrderItem, PurchaseStageEvent, PurchaseStatusEvent, UserPublic
 from services.notifications import notify
@@ -100,7 +101,7 @@ async def _upsert_followup(*, key: str, quotation: dict, reason: str, category: 
         suggested_channel="call",
         due_at=now_iso(),
         is_automated=False,
-        floor_id=quotation.get("floor_id", "first-floor"),
+        floor_id=floor_inherit(quotation),
     ).dict()
     followup["automation_key"] = key
     await db.followups.update_one({"automation_key": key}, {"$setOnInsert": followup}, upsert=True, session=session)
@@ -199,7 +200,7 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             brand_id=group["brand_id"], brand_name=group["brand_name"], supplier_id=supplier.get("id"), supplier_name=supplier.get("name"),
             status="draft", items=po_items, subtotal=round(sum(item.qty * item.unit_cost for item in po_items), 2),
             grand_total=round(sum(item.qty * item.unit_cost for item in po_items), 2), created_by=event["actor_id"], created_by_name=event["actor_name"],
-            floor_id=quotation.get("floor_id", "first-floor"),
+            floor_id=floor_inherit(quotation),
             status_history=[PurchaseStatusEvent(from_status=None, to_status="draft", by_user_id=event["actor_id"], by_user_name=event["actor_name"], note=f"Created from {quotation.get('number')}")],
         ).dict()
         po["automation_key"] = po_key
@@ -211,7 +212,7 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         quotation_id=quotation_id, quotation_number=quotation.get("number"), customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name"),
         amount=round(float(quotation.get("grand_total") or 0), 2), mode="bank", status="pending", note="Outstanding balance created by OrderPlaced automation.",
         recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
-        floor_id=quotation.get("floor_id", "first-floor"),
+        floor_id=floor_inherit(quotation),
     ).dict()
     payment["automation_key"] = payment_key
     await db.payments.update_one({"automation_key": payment_key}, {"$setOnInsert": payment}, upsert=True, session=session)

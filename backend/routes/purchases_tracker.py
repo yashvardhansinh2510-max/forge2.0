@@ -36,7 +36,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 
-from auth import floor_query, floor_scope_ids, get_current_user, require_min_role
+from auth import floor_inherit, floor_query, floor_scope_ids, get_current_user, require_min_role
 from db import db
 from models import (
     PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
@@ -51,13 +51,6 @@ from services.transfer_workflow import execute_transfer, transfer_history
 
 router = APIRouter(prefix="/purchases", tags=["purchases"])
 logger = logging.getLogger("forge.purchases_tracker")
-
-
-def _source_floor_id(source: dict) -> str:
-    """Same inheritance rule as transfer_workflow._transfer_floor_id — a
-    record derived from an existing PO/quotation/shortage stays on that
-    source's floor."""
-    return source.get("floor_id", "first-floor")
 
 
 # =============================================================================
@@ -998,7 +991,7 @@ async def _reconcile_shortage_for_line(
             "status": "awaiting_reorder", "reason": reason,
             "transferred_to_customer_id": dest_customer_id, "transferred_to_customer_name": dest_customer_name,
             "updated_at": now,
-            "floor_id": _source_floor_id(q),
+            "floor_id": floor_inherit(q),
         }
         if existing:
             await db.purchase_shortages.update_one({"id": existing["id"]}, {"$set": fields})
@@ -1128,7 +1121,7 @@ async def transfer_item(
         ),
         created_by=user.id, created_by_name=user.full_name,
         source="transfer",
-        floor_id=_source_floor_id(po),
+        floor_id=floor_inherit(po),
     )
 
     # Build the destination item — same shape, fresh id, transfer bookkeeping.
@@ -1181,7 +1174,7 @@ async def transfer_item(
         grand_total=round(dest_item.qty * dest_item.unit_cost, 2),
         created_by=user.id,
         created_by_name=user.full_name,
-        floor_id=_source_floor_id(po),
+        floor_id=floor_inherit(po),
         status_history=[
             PurchaseStatusEvent(
                 from_status=None, to_status="draft",
@@ -1384,7 +1377,7 @@ async def create_po_for_shortage(
         internal_notes=f"Reorder — {s.get('reason')}",
         subtotal=0, grand_total=0,
         created_by=user.id, created_by_name=user.full_name,
-        floor_id=_source_floor_id(s),
+        floor_id=floor_inherit(s),
         status_history=[
             PurchaseStatusEvent(
                 from_status=None, to_status="draft",
