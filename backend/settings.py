@@ -42,7 +42,6 @@ class Settings:
     allow_demo_seed: bool
     environment: str
     demo_password: str | None
-    google_session_url: str
 
     def readiness_flags(self) -> dict[str, bool]:
         """Safe, non-secret status values for diagnostics and health responses."""
@@ -139,14 +138,6 @@ def load_settings(
             "no demo password ships as a hardcoded default anymore."
         )
 
-    # Google Sign-In session verification. Defaults to Emergent's relay (the
-    # scaffold this app was built from) but MUST be overridable — a real
-    # production deployment should not have its auth flow silently depend on
-    # a third-party's demo domain name. See BACKEND_AUDIT_2026-07-17.md High #7.
-    google_session_url = (
-        env.get("GOOGLE_SESSION_URL") or "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
-    ).strip()
-
     return Settings(
         mongo_url=mongo_url,
         db_name=db_name,
@@ -162,7 +153,6 @@ def load_settings(
         allow_demo_seed=allow_demo_seed,
         environment=environment,
         demo_password=demo_password,
-        google_session_url=google_session_url,
     )
 
 

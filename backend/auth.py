@@ -7,7 +7,6 @@ from typing import Optional
 from uuid import uuid4
 
 import bcrypt
-import httpx
 import jwt
 from fastapi import Depends, Header, HTTPException, Query, Request
 
@@ -63,10 +62,6 @@ def invalidate_principal_cache(kind: str, subject: str, session_id: str | None =
         return
     for key in [key for key in _principal_cache if key[0] == kind and key[1] == subject]:
         _principal_cache.pop(key, None)
-
-# Configurable via GOOGLE_SESSION_URL (settings.py) — never hardcode a
-# production auth dependency on a third-party's demo domain.
-GOOGLE_SESSION_URL = settings.google_session_url
 
 
 def hash_password(pw: str) -> str:
@@ -196,22 +191,6 @@ async def create_session(
         "created_at": now, "last_seen_at": now, "revoked": False,
     })
     return sid
-
-
-async def verify_google_session(session_id: str) -> dict:
-    """Server-side verification against Emergent's OAuth session-data API —
-    never trust a client-supplied email/name/picture directly."""
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(GOOGLE_SESSION_URL, headers={"X-Session-ID": session_id})
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Could not reach Google sign-in service: {e}") from e
-    if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Google sign-in session is invalid or expired")
-    data = resp.json()
-    if not data.get("email"):
-        raise HTTPException(status_code=401, detail="Google did not return an email for this account")
-    return data
 
 
 async def get_current_user(

@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from auth import (
     create_session, create_token, decode_token, get_current_customer, get_current_user,
-    hash_password, invalidate_principal_cache, verify_google_session, verify_password,
+    hash_password, invalidate_principal_cache, verify_password,
 )
 from db import db
 from models import (
     ChangePasswordPayload, CustomerLoginPayload, CustomerPublic, CustomerTokenResponse,
-    GoogleSessionPayload, LoginPayload, SessionInfo, TokenResponse, UserPublic, now_iso,
+    LoginPayload, SessionInfo, TokenResponse, UserPublic, now_iso,
 )
 from services.activity_log import log_event
 from services.invite_service import is_temp_password_expired
@@ -161,66 +161,6 @@ async def customer_change_password(
 @router.get("/customer/me", response_model=CustomerPublic)
 async def customer_me(cust: CustomerPublic = Depends(get_current_customer)):
     return cust
-
-
-# ---------- Sign in with Google ----------
-# Verified server-side against Emergent's OAuth session-data API — the
-# frontend only ever hands us a one-time session_id, never a trusted profile.
-
-@router.post("/google/staff", response_model=TokenResponse)
-async def google_staff_login(body: GoogleSessionPayload, request: Request):
-    profile = await verify_google_session(body.session_id)
-    email = profile["email"].lower()
-    doc = await db.users.find_one({"email": email}, {"_id": 0})
-    if not doc:
-        # Deliberately NOT auto-creating staff accounts — an unmatched email
-        # must never get in, and must never get a default role.
-        raise HTTPException(
-            status_code=404,
-            detail="No staff account found for this email. Please contact your administrator.",
-        )
-    if not doc.get("active", True):
-        raise HTTPException(status_code=403, detail="Account disabled")
-    if profile.get("picture") and not doc.get("avatar_url"):
-        await db.users.update_one({"id": doc["id"]}, {"$set": {"avatar_url": profile["picture"]}})
-        doc["avatar_url"] = profile["picture"]
-    sid = await create_session("staff", doc["id"], request, login_method="google")
-    token = create_token(doc["id"], "staff", {"role": doc["role"], "session_id": sid})
-    doc.pop("password_hash", None)
-    return TokenResponse(access_token=token, user=UserPublic(**doc))
-
-
-@router.post("/google/customer", response_model=CustomerTokenResponse)
-async def google_customer_login(body: GoogleSessionPayload, request: Request):
-    """Security requirement (Team/Portal management session): 'Only customers
-    with portal_enabled = true may log in' applies to EVERY customer login
-    path, not just email/password — so this no longer auto-creates a
-    self-service account on first Google sign-in. A staff member must create
-    the customer record and turn Portal Enabled on (Customers > Edit
-    Customer) before Google sign-in works for them, exactly like staff
-    Google login already requires a pre-existing account below."""
-    profile = await verify_google_session(body.session_id)
-    email = profile["email"].lower()
-    doc = await db.customers.find_one({"email": email}, {"_id": 0})
-    if not doc:
-        raise HTTPException(
-            status_code=404,
-            detail="No customer account found for this email. Please contact your account manager for a portal invite.",
-        )
-    if not doc.get("portal_enabled"):
-        raise HTTPException(status_code=403, detail="Portal access is disabled for this account. Contact your account manager.")
-    if profile.get("picture") and not doc.get("avatar_url"):
-        await db.customers.update_one({"id": doc["id"]}, {"$set": {"avatar_url": profile["picture"]}})
-        doc["avatar_url"] = profile["picture"]
-    sid = await create_session("customer", doc["id"], request, login_method="google")
-    token = create_token(doc["id"], "customer", {"session_id": sid})
-    doc.pop("password_hash", None)
-    await log_event(
-        event_type="customer.portal_login", entity_type="customer", entity_id=doc["id"],
-        customer_id=doc["id"], actor_id=doc["id"], actor_name=doc.get("name"),
-        summary="Customer Portal Login",
-    )
-    return CustomerTokenResponse(access_token=token, customer=CustomerPublic(**doc))
 
 
 # ---------- Session management (works for either staff or customer token) ----------
