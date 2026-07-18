@@ -2959,8 +2959,8 @@ git commit -m "feat: add size as a first-class Product field, search field, and 
 ### Task 19: SKU uniqueness migration (per floor + brand)
 
 **Files:**
-- Create: `backend/migrations/0005_products_sku_unique_per_floor_brand.py`
-- Test: `backend/tests/unit/test_migration_0005.py` (new)
+- Create: `backend/migrations/0006_products_sku_unique_per_floor_brand.py`
+- Test: `backend/tests/unit/test_migration_0006.py` (new)
 
 **Manual pre-step required before this migration can run cleanly against
 the live database** — flag this to the user, don't silently work around it:
@@ -2974,7 +2974,7 @@ data decision for a human, not a schema migration.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `backend/tests/unit/test_migration_0005.py`:
+Create `backend/tests/unit/test_migration_0006.py`:
 
 ```python
 """Migration 0005 creates a compound unique index on products scoped to
@@ -2986,7 +2986,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 
-migration = importlib.import_module("migrations.0005_products_sku_unique_per_floor_brand")
+migration = importlib.import_module("migrations.0006_products_sku_unique_per_floor_brand")
 
 
 class _FakeProducts:
@@ -3014,12 +3014,12 @@ def test_migration_creates_compound_unique_index():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd backend && .venv/bin/pytest tests/unit/test_migration_0005.py -v`
+Run: `cd backend && .venv/bin/pytest tests/unit/test_migration_0006.py -v`
 Expected: FAIL — `ModuleNotFoundError` (file doesn't exist yet)
 
 - [ ] **Step 3: Write minimal implementation**
 
-Create `backend/migrations/0005_products_sku_unique_per_floor_brand.py`:
+Create `backend/migrations/0006_products_sku_unique_per_floor_brand.py`:
 
 ```python
 """SKU uniqueness is now scoped per (floor_id, brand_id) rather than
@@ -3051,7 +3051,7 @@ async def up(db) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd backend && .venv/bin/pytest tests/unit/test_migration_0005.py -v`
+Run: `cd backend && .venv/bin/pytest tests/unit/test_migration_0006.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Before committing — resolve the live duplicate SKU manually**
@@ -3083,7 +3083,7 @@ until the query above returns an empty list.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add backend/migrations/0005_products_sku_unique_per_floor_brand.py backend/tests/unit/test_migration_0005.py
+git add backend/migrations/0006_products_sku_unique_per_floor_brand.py backend/tests/unit/test_migration_0006.py
 git commit -m "feat: scope product SKU uniqueness to (floor_id, brand_id)"
 ```
 
