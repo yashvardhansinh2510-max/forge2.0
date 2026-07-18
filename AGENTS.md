@@ -28,7 +28,9 @@ FastAPI + MongoDB Atlas (cloud, not local) + Supabase (file storage) backend, Ex
 
 Do not re-derive the root cause or re-scan the codebase for affected endpoints — both are already fully enumerated in those two files. If you need to know "is X in scope," check the plan's 20 task headers first.
 
-**Status as of 2026-07-18: all 20 tasks complete, reviewed (spec compliance + code quality, two-stage per task), and pushed to `origin/main`.** One live operational blocker remains before the app can be safely restarted against production — see "⚠️ Migration `0006`" below — and two small follow-up tasks were spawned separately (not blocking, not started). See the task table and notes below for full detail.
+**Status as of 2026-07-18: all 20 planned tasks complete, plus a final holistic review (see below), plus 2 additional gaps that review found — everything reviewed (spec compliance + code quality, two-stage per task) and pushed to `origin/main` at commit `f86a43e`.** One live operational blocker remains before the app can be safely restarted against production — see "⚠️ Migration `0006`" below — and two small follow-up tasks were spawned separately (not blocking, not started; see "Spawned follow-ups" at the end of this file).
+
+**Final holistic review** (after all 20 tasks landed): traced 3 end-to-end user scenarios through the actual HEAD code (floor switch → Purchases Tracker; quotation → auto-PO → customer transfer; follow-ups tab), confirmed `floor_id` is correctly read/written/scoped at every hop with no gap in any detailed-record path. Did an independent fresh sweep of all `count_documents`/`aggregate` calls across `routes/`/`services/` (not just trusting the plan's own enumeration) and found 2 real gaps of the same bug class — both count/badge-level leaks, not detailed-record leaks: `dashboard_routes.py`'s product-count KPI and `followup_routes.py`'s per-rule badge counts were still global (the first had a stale "not scoped yet" comment left over from before Catalog was floor-scoped; the second predated the `user`-threading convention). Both fixed, tested, reviewed, and pushed (`f86a43e`). A second, independent sweep after that fix confirmed no third gap of the same shape remains on any staff-facing endpoint. Full backend test suite: 90 passed.
 
 ### Established pattern (use this, don't invent a new one)
 
@@ -92,17 +94,23 @@ A code-quality reviewer traced what actually happens if migration `0006` (`backe
    ```
 3. Only then restart/deploy the backend against the live database — the code is already committed and pushed, there's nothing further to push at that point.
 
-Also flagged separately (spawned as background task suggestions, not yet started): the app's own SKU duplicate-check queries in `catalog_routes.py` (`create_product`/`create_custom_product`/`update_product`) are still global, not scoped to `(floor_id, brand_id)` — so even after this migration is safely deployed, legitimate cross-floor SKU reuse would still be rejected by the API before reaching the database. Needs its own follow-up task.
+See "Spawned follow-ups" near the end of this file for the two related background tasks (not blocking, not started).
 
 **Explicitly out of scope for this plan** (decided with the user, don't re-litigate): no new MongoDB/Supabase infrastructure (already cloud-hosted, confirmed via `backend/.env`'s real Atlas `mongodb+srv://` URL); no tile product data import (schema/isolation only — data entry is separate, later work); no Cmd+K quick-search brand-scoping (confirmed not needed — Catalog page + Quotation Builder search, both fixed here, are what matter); no `LineRow`/`Line`-type/`QuotationLineItem` changes for `size` (LineRow only shows a colour swatch, not a text fallback chain — not affected by the bug this plan fixes).
 
-### How to continue implementing
+### Spawned follow-ups (not blocking, not started as of 2026-07-18)
 
-1. Open `docs/superpowers/plans/2026-07-17-floor-isolation-fix.md`, find the next "Not started" task by number, and follow it exactly — it already has complete before/after code, the exact test to write first (TDD), and the exact commit message.
-2. Run backend tests from `backend/` using `.venv/bin/pytest tests/unit -q` (existing venv, don't create a new one). Baseline as of 2026-07-18 is 45 passed, 0 failed — any new failures are yours to explain, not pre-existing.
+Both were flagged during code review of Task 17/19 as real gaps of the same shape as this whole plan, but explicitly out of each task's own scope — background task chips exist for a human to start with one click:
+
+1. **`bootstrap.py` doesn't verify `brands`/`categories` indexes at startup.** `REQUIRED_INDEXES` checks `products`/`users`/`quotations`/`purchase_orders`/`customers`/`payments`/`suppliers`/`activity_events` but not `brands.slug`/`categories.slug` — so there's no automated guarantee those unique indexes (created by migrations `0004`... actually by `scripts/ensure_indexes.py` for brands, and migration `0005` for categories) actually exist in a live deployment.
+2. **`catalog_routes.py`'s SKU duplicate-checks are still global.** `create_product`/`create_custom_product`/`update_product` all do `db.products.find_one({"sku": sku})` with no `floor_id`/`brand_id` scoping — so even once migration `0006` is safely deployed (relaxing the DB-level constraint to per-floor-per-brand), the API's own pre-check would still reject a legitimate cross-floor SKU reuse before it ever reaches the database. This is the one that actually matters for the tile catalog to work as intended once real data arrives — prioritize this one if only starting one of the two.
+
+### If more floor-isolation work comes up later
+
+1. Follow the same TDD pattern used throughout this plan (see any task in `docs/superpowers/plans/2026-07-17-floor-isolation-fix.md` for the shape: failing test → minimal `floor_query`/`floor_scope_ids`/`floor_inherit` fix → passing test → isolated commit).
+2. Run backend tests from `backend/` using `.venv/bin/pytest tests/unit -q` (existing venv, don't create a new one). Current baseline as of 2026-07-18 is **90 passed, 0 failed** — any new failures are yours to explain, not pre-existing.
 3. Before committing, run `git status --short` on the specific files you touched. If any of them show unrelated pre-existing changes beyond your own diff, use `git add -p` and select only your hunks (see "Important — this repo has concurrent editors" above). Don't skip this — it's the difference between a reviewable commit and a misleading one.
-4. Update the task status table above when a task lands.
-5. This repo pushes to `origin` (`https://github.com/yashvardhansinh2510-max/forge2.0.git`) on branch `main`. Confirm with the user before pushing if you're unsure whether local commits are ready.
+4. This repo pushes to `origin` (`https://github.com/yashvardhansinh2510-max/forge2.0.git`) on branch `main`. Confirm with the user before pushing if you're unsure whether local commits are ready — and see the migration `0006` warning above before ever restarting a backend process against the live database.
 
 ### Known gotchas (don't rediscover these the hard way)
 
