@@ -1,59 +1,26 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Authentication — one image, one form, one button.
 // ─────────────────────────────────────────────────────────────────────────────
-import { AntDesign } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useState } from "react";
 import {
-  ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View,
+  Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button, Field, IconButton, Input, Txt } from "@/src/design/components";
 import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useBp } from "@/src/design/responsive";
-import { brand, color, font, radius, space } from "@/src/design/tokens";
+import { brand, color, font, space } from "@/src/design/tokens";
 import { useAuth } from "@/src/state/auth";
 
 const HERO = "https://images.pexels.com/photos/36650049/pexels-photo-36650049.jpeg?auto=compress&cs=tinysrgb&w=1600";
 
 type Mode = "staff" | "customer";
 
-function GoogleButton({ label, onPress, loading }: { label: string; onPress: () => void; loading?: boolean }) {
-  return (
-    <Pressable
-      testID="google-signin-button"
-      onPress={loading ? undefined : onPress}
-      disabled={loading}
-      style={({ pressed, hovered }: any) => [
-        styles.googleBtn,
-        (pressed || hovered) && !loading && { backgroundColor: color.canvas },
-        loading && { opacity: 0.6 },
-      ]}
-    >
-      {loading ? (
-        <ActivityIndicator size="small" color={color.ink} />
-      ) : (
-        <AntDesign name="google" size={16} color="#4285F4" />
-      )}
-      <Text style={styles.googleBtnLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function OrDivider() {
-  return (
-    <View style={styles.dividerRow}>
-      <View style={styles.dividerLine} />
-      <Text style={styles.dividerLabel}>OR</Text>
-      <View style={styles.dividerLine} />
-    </View>
-  );
-}
-
 export default function Login() {
-  const { loginStaff, loginCustomer, loginWithGoogle, googleBusy, googleError, clearGoogleError } = useAuth();
+  const { loginStaff, loginCustomer } = useAuth();
   const { isPhone, isTablet, height } = useBp();
   const compactPhone = isPhone && height < 700;
   const insets = useSafeAreaInsets();
@@ -107,15 +74,6 @@ export default function Login() {
       </View>
 
       <View style={{ gap: compactPhone ? space.x3 : space.x4 }}>
-        <GoogleButton
-          label="Continue with Google"
-          loading={googleBusy}
-          onPress={() => { clearGoogleError(); setError(null); loginWithGoogle(mode); }}
-        />
-        {googleError ? <Text style={styles.googleErrorText}>{googleError}</Text> : null}
-
-        <OrDivider />
-
         <Field label="Email">
           <Input
             testID="login-email"
@@ -155,7 +113,7 @@ export default function Login() {
         ) : <View />}
         <Pressable
           testID="toggle-portal"
-          onPress={() => { setMode((m) => (m === "staff" ? "customer" : "staff")); setError(null); clearGoogleError(); setEmail(""); setPassword(""); }}
+          onPress={() => { setMode((m) => (m === "staff" ? "customer" : "staff")); setError(null); setEmail(""); setPassword(""); }}
           hitSlop={8}
         >
           <Text style={{ fontFamily: font.medium, fontSize: 13, color: color.brassDeep }}>
@@ -212,16 +170,3 @@ export default function Login() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  googleBtn: {
-    height: 48, borderRadius: radius.md, borderWidth: 1, borderColor: color.line,
-    backgroundColor: color.surface, flexDirection: "row", alignItems: "center",
-    justifyContent: "center", gap: 10,
-  },
-  googleBtnLabel: { fontFamily: font.medium, fontSize: 14.5, color: color.ink },
-  googleErrorText: { fontFamily: font.regular, fontSize: 12.5, color: "#B3261E", marginTop: -4 },
-  dividerRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: color.line },
-  dividerLabel: { fontFamily: font.medium, fontSize: 11, letterSpacing: 0.6, color: color.inkSoft },
-});
