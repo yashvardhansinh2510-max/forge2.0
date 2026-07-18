@@ -28,6 +28,13 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _transfer_floor_id(source_po: dict) -> str:
+    """Every record a transfer creates (destination quotation, destination
+    PO, shortage, payment, follow-up) stays on the SOURCE PO's floor — a
+    transfer moves stock between customers, not between floors."""
+    return source_po.get("floor_id", "first-floor")
+
+
 async def ensure_transfer_indexes() -> None:
     await db.purchase_transfers.create_index("idempotency_key", unique=True, name="transfer_idempotency")
     await db.purchase_transfers.create_index([("source_item_id", 1), ("created_at", -1)], name="transfer_source_history")
@@ -134,6 +141,7 @@ async def execute_transfer(
                 subtotal=round(quote_line.net, 2), grand_total=round(quote_line.net, 2),
                 notes=f"Transfer from {source_name} · {source_po.get('number')}" + (f" — {reason}" if reason else ""),
                 created_by=user.id, created_by_name=user.full_name, source="transfer",
+                floor_id=_transfer_floor_id(source_po),
             )
             destination_item_id = str(uuid4())
             destination_item = PurchaseOrderItem(
@@ -153,6 +161,7 @@ async def execute_transfer(
                 internal_notes=f"Transfer {transfer_id} from {source_po.get('number')} · {source_name}" + (f" — {reason}" if reason else ""),
                 subtotal=round(destination_item.qty * destination_item.unit_cost, 2), grand_total=round(destination_item.qty * destination_item.unit_cost, 2),
                 created_by=user.id, created_by_name=user.full_name,
+                floor_id=_transfer_floor_id(source_po),
                 status_history=[PurchaseStatusEvent(from_status=None, to_status="draft", by_user_id=user.id, by_user_name=user.full_name, note="Created by customer transfer")],
             )
             quote.source_purchase_order_id = destination_po.id
@@ -184,6 +193,7 @@ async def execute_transfer(
                 "image": source_item.get("image"), "brand_id": destination_item.brand_id, "brand_name": destination_item.brand_name, "room": source_item.get("room"),
                 "qty": float(qty), "source_qty_before": source_qty, "source_remaining_qty": max(0, source_remaining), "reason": reason,
                 "created_customer": created_customer, "actor_id": user.id, "actor_name": user.full_name, "created_at": now, "updated_at": now,
+                "floor_id": _transfer_floor_id(source_po),
             }
             await db.purchase_transfers.insert_one(transfer, session=session)
             event = await enqueue_after_primary_commit(
