@@ -58,11 +58,11 @@ async def dashboard_stats(user: UserPublic = Depends(get_current_user)):
 
     # follow-ups due today for the logged-in user
     today_end = (now + timedelta(days=1)).isoformat()
-    followups_due = await db.followups.count_documents({
+    followups_due = await db.followups.count_documents(floor_query(user, {
         "status": "open",
         "due_at": {"$lte": today_end},
         "assigned_to": user.id,
-    })
+    }))
 
     return {
         "revenue_month": round(revenue_month, 2),
