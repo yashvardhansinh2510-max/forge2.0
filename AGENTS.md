@@ -43,9 +43,9 @@ Update this table as work lands. Commit SHAs below are on `main` (this repo comm
 
 | # | Task | Status | Commit(s) |
 |---|------|--------|-----------|
-| 1 | Purchases Tracker main board (`_iter_items` + `GET /items`) + `floor_scope_ids` in `auth.py` | **Done** (spec review passed; code-quality review still pending as of this writing) | `4ffad24` |
-| 2 | Purchases Tracker facet endpoints (`/stages`, `/brands`, `/customers`) | Not started | — |
-| 3 | Purchases Tracker remaining read endpoints (`customer_workspace`, `dispatch_record`, `list_shortages`, `export_xlsx`, `get_item`, `item_transfer_history`) | Not started | — |
+| 1 | Purchases Tracker main board (`_iter_items` + `GET /items`) + `floor_scope_ids` in `auth.py` | **Done** (spec + code-quality review both passed) | `4ffad24` |
+| 2 | Purchases Tracker facet endpoints (`/stages`, `/brands`, `/customers`) | **Done** (spec + code-quality review both passed) | `a1d0174` |
+| 3 | Purchases Tracker remaining read endpoints (`customer_workspace`, `dispatch_record`, `list_shortages`, `export_xlsx`, `get_item`, `item_transfer_history`) | **Done** (spec + code-quality review both passed; 2 minor style-consistency notes left as optional follow-up, see review) | `bfdeb65` |
 | 4 | Follow-ups `/insights` | Not started | — |
 | 5 | Reports overview | Not started | — |
 | 6 | Dashboard `followups_due` counter | Not started | — |
