@@ -243,6 +243,7 @@ async def handle_purchase_transferred(event: dict, session: Any) -> dict:
                     committed_qty=committed, allocated_qty=allocated, shortage_qty=missing, status="awaiting_reorder",
                     reason=f"{transfer['qty']:g} unit(s) transferred to {transfer['destination_customer_name']} — {missing:g} unit(s) need re-order.",
                     transferred_to_customer_id=transfer["destination_customer_id"], transferred_to_customer_name=transfer["destination_customer_name"],
+                    floor_id=transfer.get("floor_id", "first-floor"),
                 ).dict()
                 shortage["automation_key"] = shortage_key
                 fields = {k: v for k, v in shortage.items() if k not in {"id", "created_at"}}
@@ -263,6 +264,7 @@ async def handle_purchase_transferred(event: dict, session: Any) -> dict:
     payment = Payment(
         quotation_id=transfer["destination_quotation_id"], quotation_number=transfer["destination_quotation_number"], customer_id=transfer["destination_customer_id"], customer_name=transfer["destination_customer_name"],
         amount=round(float(dest_quote.get("grand_total") or 0), 2), mode="bank", status="pending", note=f"Pending balance from transfer {transfer['id']}", recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
+        floor_id=transfer.get("floor_id", "first-floor"),
     ).dict()
     payment["automation_key"] = f"{key}:payment"
     await db.payments.update_one({"automation_key": payment["automation_key"]}, {"$setOnInsert": payment}, upsert=True, session=session)
@@ -272,6 +274,7 @@ async def handle_purchase_transferred(event: dict, session: Any) -> dict:
         source_key=f"{key}:followup", rule_type="manual", category="purchase", customer_id=transfer["destination_customer_id"], customer_name=transfer["destination_customer_name"], customer_phone=destination_customer.get("phone"), customer_tier=destination_customer.get("tier", "retail"),
         quotation_id=transfer["destination_quotation_id"], quotation_number=transfer["destination_quotation_number"], purchase_id=transfer["destination_po_id"], purchase_number=transfer["destination_po_number"],
         value=payment["amount"], reason=f"Transferred {transfer['qty']:g} × {transfer['name']} received from {transfer['source_customer_name']}.", next_action="Confirm transfer and payment plan", next_action_reason="Transfer-specific operational follow-up.", suggested_channel="call", due_at=now_iso(), is_automated=False,
+        floor_id=transfer.get("floor_id", "first-floor"),
     ).dict()
     followup["automation_key"] = f"{key}:followup"
     await db.followups.update_one({"automation_key": followup["automation_key"]}, {"$setOnInsert": followup}, upsert=True, session=session)
