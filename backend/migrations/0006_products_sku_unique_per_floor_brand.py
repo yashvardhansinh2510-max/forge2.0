@@ -13,6 +13,21 @@ unresolved and the collision happens to also match on index name; a
 brand-new index name here means a genuine duplicate-key error instead,
 which is the correct, loud failure for real duplicate data — don't catch or
 suppress it.
+
+** DEPLOYMENT WARNING — this is not just about avoiding a manual script. **
+`migrations/runner.py` auto-applies every pending migration at every backend
+startup (see `server.py`'s startup event, which calls `run_migrations(db)`
+uncaught — unlike the reconciliation call right below it, this one has no
+surrounding try/except). Traced this directly: there is no per-migration
+error handling in the runner either. So the moment this file exists in
+`backend/migrations/` on any deployment pointed at a database that still has
+the Hansgrohe duplicate, the *next process restart* (not a manual
+`scripts/run_migrations.py` invocation — any restart) will raise an uncaught
+`DuplicateKeyError` out of the FastAPI startup handler, which aborts
+application startup entirely. Because the migration never gets recorded as
+applied on failure, this repeats on every subsequent restart — a boot crash
+loop, not a one-time error. Do not deploy/merge this file to any environment
+that shares the live database until the duplicate SKU above is resolved.
 """
 from __future__ import annotations
 
