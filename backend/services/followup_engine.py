@@ -151,6 +151,13 @@ def reason_factors_for(value: float, days_since_contact: int, urgency_bullet: st
     return out
 
 
+def _followup_floor_id(quotation: Optional[dict], purchase: Optional[dict]) -> str:
+    """Automated follow-ups inherit floor_id from whichever source document
+    triggered the rule — never a hardcoded default that would silently mix
+    floors once ground-floor quotations/purchases exist."""
+    return (quotation or purchase or {}).get("floor_id", "first-floor")
+
+
 def build_whatsapp_message(f: dict) -> str:
     """Generic, honest message builder — no fabricated tracking claims."""
     name = (f.get("customer_name") or "there").split()[0]
@@ -240,6 +247,7 @@ async def reconcile_followups() -> dict:
             "next_action": next_action, "next_action_reason": next_action_reason,
             "suggested_channel": channel, "priority_score": score, "priority_level": level,
             "tags": tags or [], "due_at": due_at or now_iso(),
+            "floor_id": _followup_floor_id(quotation, purchase),
         }
 
     # ---- Quotation-based rules ------------------------------------------------
