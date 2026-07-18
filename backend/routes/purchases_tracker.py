@@ -286,10 +286,14 @@ async def _iter_items(
 # Read endpoints
 # =============================================================================
 @router.get("/stages")
-async def stage_catalog(_: UserPublic = Depends(get_current_user)):
-    """Stage list with counts across ALL non-cancelled items."""
+async def stage_catalog(user: UserPublic = Depends(get_current_user)):
+    """Stage list with counts across ALL non-cancelled items on the caller's floor(s)."""
+    match: dict = {"status": {"$ne": "cancelled"}}
+    floor_ids = floor_scope_ids(user)
+    if floor_ids is not None:
+        match["floor_id"] = {"$in": floor_ids}
     pipeline = [
-        {"$match": {"status": {"$ne": "cancelled"}}},
+        {"$match": match},
         {"$unwind": "$items"},
         {"$group": {"_id": {"$ifNull": ["$items.stage", "order_in_company"]}, "count": {"$sum": 1}}},
     ]
@@ -302,10 +306,14 @@ async def stage_catalog(_: UserPublic = Depends(get_current_user)):
 
 
 @router.get("/brands")
-async def brand_facets(_: UserPublic = Depends(get_current_user)):
-    """Brand list with counts of tracked items."""
+async def brand_facets(user: UserPublic = Depends(get_current_user)):
+    """Brand list with counts of tracked items on the caller's floor(s)."""
+    match: dict = {"status": {"$ne": "cancelled"}}
+    floor_ids = floor_scope_ids(user)
+    if floor_ids is not None:
+        match["floor_id"] = {"$in": floor_ids}
     pipeline = [
-        {"$match": {"status": {"$ne": "cancelled"}}},
+        {"$match": match},
         {"$unwind": "$items"},
         {"$group": {
             "_id": {"id": "$brand_id", "name": "$brand_name"},
@@ -323,10 +331,14 @@ async def brand_facets(_: UserPublic = Depends(get_current_user)):
 
 
 @router.get("/customers")
-async def customer_facets(_: UserPublic = Depends(get_current_user)):
-    """Customers with open (non-delivered) tracked items."""
+async def customer_facets(user: UserPublic = Depends(get_current_user)):
+    """Customers with open (non-delivered) tracked items on the caller's floor(s)."""
+    match: dict = {"status": {"$ne": "cancelled"}}
+    floor_ids = floor_scope_ids(user)
+    if floor_ids is not None:
+        match["floor_id"] = {"$in": floor_ids}
     pipeline = [
-        {"$match": {"status": {"$ne": "cancelled"}}},
+        {"$match": match},
         {"$unwind": "$items"},
         {"$group": {
             "_id": {"id": "$customer_id", "name": "$customer_name"},

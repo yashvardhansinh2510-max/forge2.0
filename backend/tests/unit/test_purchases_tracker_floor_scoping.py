@@ -70,3 +70,17 @@ def test_iter_items_unscoped_when_floor_ids_is_none(monkeypatch):
 
     match_stage = fake_pos.last_pipeline[0]["$match"]
     assert "floor_id" not in match_stage
+
+
+@pytest.mark.parametrize(
+    "route_func",
+    [tracker.stage_catalog, tracker.brand_facets, tracker.customer_facets],
+)
+def test_facet_endpoints_scope_pipeline_to_the_active_floor(monkeypatch, route_func):
+    fake_pos = _FakePurchaseOrders()
+    monkeypatch.setattr(tracker, "db", _FakeDb(fake_pos))
+
+    asyncio.run(route_func(user=_user("ground-floor")))
+
+    match_stage = fake_pos.last_pipeline[0]["$match"]
+    assert match_stage.get("floor_id") == {"$in": ["ground-floor"]}
