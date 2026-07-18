@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import os
 
-from auth import accessible_floor_ids, get_current_user, hash_password, invalidate_principal_cache, require_min_role
+from auth import accessible_floor_ids, floor_query, get_current_user, hash_password, invalidate_principal_cache, require_min_role
 from db import db
 from models import FloorCreatePayload, FloorPublic, TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from services.activity_log import log_event
@@ -281,8 +281,8 @@ async def reset_team_member_password(user_id: str, user: UserPublic = Depends(re
 
 
 @router.get("/reports/overview")
-async def reports_overview(_: UserPublic = Depends(get_current_user)):
-    quotations = await db.quotations.find({}, {"_id": 0}).to_list(2000)
+async def reports_overview(user: UserPublic = Depends(get_current_user)):
+    quotations = await db.quotations.find(floor_query(user, {}), {"_id": 0}).to_list(2000)
     by_status: dict[str, int] = {}
     revenue_by_month: dict[str, float] = {}
     for q in quotations:
