@@ -184,21 +184,27 @@ async def mission(user: UserPublic = Depends(get_current_user)):
 
 
 @router.get("/insights")
-async def insights(_: UserPublic = Depends(get_current_user)):
+async def insights(user: UserPublic = Depends(get_current_user)):
     start, end = ist_day_bounds_utc(0)
     rng = {"$gte": start.isoformat(), "$lt": end.isoformat()}
 
-    calls = await db.activity_events.count_documents({"event_type": "followup.call_logged", "created_at": rng})
-    whatsapps = await db.activity_events.count_documents({
+    calls = await db.activity_events.count_documents(
+        floor_query(user, {"event_type": "followup.call_logged", "created_at": rng})
+    )
+    whatsapps = await db.activity_events.count_documents(floor_query(user, {
         "event_type": "followup.contacted", "payload.channel": "whatsapp", "created_at": rng,
-    })
-    pay_docs = await db.payments.find({"paid_at": rng}, {"_id": 0, "amount": 1}).to_list(1000)
+    }))
+    pay_docs = await db.payments.find(
+        floor_query(user, {"paid_at": rng}), {"_id": 0, "amount": 1},
+    ).to_list(1000)
     payments_collected = sum(p.get("amount", 0) for p in pay_docs)
-    quotations_approved = await db.quotations.count_documents({
+    quotations_approved = await db.quotations.count_documents(floor_query(user, {
         "status": {"$in": ["approved", "won"]}, "updated_at": rng,
-    })
-    completed_today = await db.followups.count_documents({"completed_at": rng})
-    still_open = await db.followups.count_documents({"status": {"$in": ["open", "snoozed"]}})
+    }))
+    completed_today = await db.followups.count_documents(floor_query(user, {"completed_at": rng}))
+    still_open = await db.followups.count_documents(
+        floor_query(user, {"status": {"$in": ["open", "snoozed"]}})
+    )
     response_rate = round(100 * completed_today / max(1, completed_today + still_open))
 
     return {
