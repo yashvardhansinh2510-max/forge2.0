@@ -376,7 +376,10 @@ def hydrate_product(product: dict, snapshot: CatalogSnapshot) -> dict:
 
 def _matches_filters(product: dict, *, brand_id: Optional[str], category_id: Optional[str],
                      subcategory: Optional[str], series: Optional[str], family_key: Optional[str],
-                     finish: Optional[str], colour: Optional[str]) -> bool:
+                     finish: Optional[str], colour: Optional[str],
+                     floor_ids: Optional[list[str]] = None) -> bool:
+    if floor_ids is not None and product.get("floor_id") not in floor_ids:
+        return False
     expected = {
         "brand_id": brand_id,
         "category_id": category_id,
@@ -425,6 +428,7 @@ async def list_products_page(
     *, user_id: str, q: Optional[str], brand_id: Optional[str], category_id: Optional[str],
     subcategory: Optional[str], series: Optional[str], family_key: Optional[str],
     finish: Optional[str], colour: Optional[str], sort: str, limit: int, skip: int,
+    floor_ids: Optional[list[str]] = None,
 ) -> dict:
     snapshot = await get_catalog_snapshot()
     pattern = _compile_search(q)
@@ -433,7 +437,7 @@ async def list_products_page(
         if _matches_filters(
             product, brand_id=brand_id, category_id=category_id,
             subcategory=subcategory, series=series, family_key=family_key,
-            finish=finish, colour=colour,
+            finish=finish, colour=colour, floor_ids=floor_ids,
         ) and _matches_search(product, pattern)
     ]
     total = len(matching)
@@ -487,23 +491,29 @@ async def list_products_page(
     return {"total": total, "items": docs}
 
 
-async def list_brands_with_counts() -> list[dict]:
+async def list_brands_with_counts(floor_ids: Optional[list[str]] = None) -> list[dict]:
     snapshot = await get_catalog_snapshot()
     counts = Counter(row.get("brand_id") for row in snapshot.products)
-    out = copy.deepcopy(list(snapshot.brands))
+    brands = snapshot.brands if floor_ids is None else [
+        b for b in snapshot.brands if b.get("floor_id") in floor_ids
+    ]
+    out = copy.deepcopy(list(brands))
     for row in out:
         row["product_count"] = counts.get(row.get("id"), 0)
     return out
 
 
-async def list_categories_with_counts(brand_id: Optional[str]) -> list[dict]:
+async def list_categories_with_counts(brand_id: Optional[str], floor_ids: Optional[list[str]] = None) -> list[dict]:
     snapshot = await get_catalog_snapshot()
     counts = Counter(
         row.get("category_id") for row in snapshot.products
         if not brand_id or row.get("brand_id") == brand_id
     )
     out = []
-    for category in snapshot.categories:
+    categories = snapshot.categories if floor_ids is None else [
+        c for c in snapshot.categories if c.get("floor_id") in floor_ids
+    ]
+    for category in categories:
         count = counts.get(category.get("id"), 0)
         if brand_id and count == 0:
             continue
@@ -534,10 +544,13 @@ async def product_by_id(product_id: str) -> dict | None:
     return hydrate_product(product, snapshot) if product else None
 
 
-async def hierarchy_rows() -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
+async def hierarchy_rows(floor_ids: Optional[list[str]] = None) -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
     snapshot = await get_catalog_snapshot()
     groups: dict[tuple, dict] = {}
-    for product in snapshot.products:
+    products = snapshot.products if floor_ids is None else [
+        p for p in snapshot.products if p.get("floor_id") in floor_ids
+    ]
+    for product in products:
         key = (
             product.get("brand_id"), product.get("category_id"), product.get("subcategory"),
             product.get("series"), product.get("family_key"), product.get("family_name"),
@@ -564,6 +577,7 @@ async def hierarchy_rows() -> tuple[list[dict], dict[str, dict], dict[str, dict]
 async def list_family_groups(
     *, brand_id: Optional[str], category_id: Optional[str], subcategory: Optional[str],
     series: Optional[str], q: Optional[str], limit: int, skip: int,
+    floor_ids: Optional[list[str]] = None,
 ) -> dict:
     snapshot = await get_catalog_snapshot()
     pattern = _compile_search(q)
@@ -572,7 +586,7 @@ async def list_family_groups(
         if row.get("family_key")
         and _matches_filters(
             row, brand_id=brand_id, category_id=category_id, subcategory=subcategory,
-            series=series, family_key=None, finish=None, colour=None,
+            series=series, family_key=None, finish=None, colour=None, floor_ids=floor_ids,
         )
         and (pattern is None or any(pattern.search(str(row.get(field) or "")) for field in (
             "name", "family_name", "series", "subcategory", "finish", "colour", "sku",
@@ -628,14 +642,14 @@ async def list_family_groups(
 
 async def facet_buckets(
     *, brand_id: Optional[str], category_id: Optional[str], subcategory: Optional[str],
-    series: Optional[str],
+    series: Optional[str], floor_ids: Optional[list[str]] = None,
 ) -> dict:
     snapshot = await get_catalog_snapshot()
     products = [
         row for row in snapshot.products
         if _matches_filters(
             row, brand_id=brand_id, category_id=category_id, subcategory=subcategory,
-            series=series, family_key=None, finish=None, colour=None,
+            series=series, family_key=None, finish=None, colour=None, floor_ids=floor_ids,
         )
     ]
 
@@ -661,7 +675,7 @@ async def facet_buckets(
 
 async def search_catalog(
     *, q: str, brand_id: Optional[str], category_id: Optional[str], subcategory: Optional[str],
-    series: Optional[str], limit: int, group: bool,
+    series: Optional[str], limit: int, group: bool, floor_ids: Optional[list[str]] = None,
 ) -> dict:
     snapshot = await get_catalog_snapshot()
     query = (q or "").strip()
@@ -670,7 +684,7 @@ async def search_catalog(
         row for row in snapshot.products
         if _matches_filters(
             row, brand_id=brand_id, category_id=category_id, subcategory=subcategory,
-            series=series, family_key=None, finish=None, colour=None,
+            series=series, family_key=None, finish=None, colour=None, floor_ids=floor_ids,
         )
     ]
 
