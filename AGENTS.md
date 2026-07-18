@@ -28,6 +28,8 @@ FastAPI + MongoDB Atlas (cloud, not local) + Supabase (file storage) backend, Ex
 
 Do not re-derive the root cause or re-scan the codebase for affected endpoints — both are already fully enumerated in those two files. If you need to know "is X in scope," check the plan's 20 task headers first.
 
+**Status as of 2026-07-18: all 20 tasks complete, reviewed (spec compliance + code quality, two-stage per task), and pushed to `origin/main`.** One live operational blocker remains before the app can be safely restarted against production — see "⚠️ Migration `0006`" below — and two small follow-up tasks were spawned separately (not blocking, not started). See the task table and notes below for full detail.
+
 ### Established pattern (use this, don't invent a new one)
 
 - `floor_query(user, base)` — Mongo filter dict, for queries that take a filter (`db.collection.find(floor_query(user, {...}))`).
@@ -63,18 +65,18 @@ Update this table as work lands. Commit SHAs below are on `main` (this repo comm
 | 16 | Thread floor scope through Catalog routes; fix product-creation floor default | **Done** (spec + code-quality review both passed) | `febe99f` |
 | 17 | `POST /brands`, `POST /categories` | **Done** (spec passed; code-quality found `categories.slug` had no unique index — unlike `brands.slug` — leaving a real check-then-act race, and no test existed for `create_category`; both fixed, re-reviewed and approved) | `1042ed4`, `ab225ca` |
 | 18 | `size` field on `Product` + search/facets | **Done** (spec passed; code-quality found `size` wasn't wired into `search_catalog`'s scoring or `hydrate_variants_batch`'s sibling-variant hydration — the second one would have silently broken Task 20 — both fixed, re-reviewed and approved) | `a2662ab`, `047694e` |
-| 19 | SKU uniqueness migration `0006` (per floor+brand, **renumbered from 0005** — Task 17's categories.slug index fix took `0005` first) | **Code written, tested, spec + code-quality reviewed and approved — but DELIBERATELY NOT PUSHED.** See "⚠️ Task 19 is holding" below. | `4ab1b5a`, `658a92f` (local only, not on origin) |
-| 20 | Frontend `variantDescriptor()` helper + `PickerCard`/`VariantChip`/`SwapSheet`/`ProductModal` display fix | Not started | — |
+| 19 | SKU uniqueness migration `0006` (per floor+brand, **renumbered from 0005** — Task 17's categories.slug index fix took `0005` first) | **Code written, tested, spec + code-quality reviewed and approved. Pushed to origin (CI has no deploy step and uses an isolated test DB, so this is safe) — but the migration itself must not reach a real deployment/restart until the live duplicate SKU is resolved.** See "⚠️ Task 19 is holding" below. | `4ab1b5a`, `658a92f` |
+| 20 | Frontend `variantDescriptor()` helper + `PickerCard`/`VariantChip`/`SwapSheet`/`ProductModal` display fix | **Done** (spec + code-quality review both passed; reviewer hand-traced all edge cases by hand since this repo has no frontend test runner) — **all 20 tasks complete** | `e889686` |
 
-### ⚠️ Task 19 is holding — do not push commits `4ab1b5a`/`658a92f` without reading this
+### ⚠️ Migration `0006` is a live landmine until the duplicate SKU is resolved — read this before restarting any backend process against the real database
 
 Directly queried the live Atlas database (2026-07-18) and confirmed the known duplicate SKU is still real and unresolved: SKU `26456000` under brand `9b72519c-bfb4-4576-9e79-e85072ab4216` (Hansgrohe), two product documents (`639c8d2e-95e6-406b-a117-f18155b9519d` and `811a1b0f-1b20-401b-9f36-e8134b63bbf2`), both `floor_id="first-floor"`.
 
-A code-quality reviewer traced what actually happens if migration `0006` (`backend/migrations/0006_products_sku_unique_per_floor_brand.py`) reaches a deployment before that duplicate is resolved: `backend/migrations/runner.py` auto-applies every pending migration at **every backend startup** (`server.py`'s startup event calls `run_migrations(db)` with no surrounding `try/except`, unlike the reconciliation call right below it), and there is no per-migration error handling in the runner either. So this isn't "don't run `scripts/run_migrations.py` manually" — merely having this file present in `backend/migrations/` on a deployment pointed at the live DB means the **next process restart** hits an uncaught `DuplicateKeyError`, which aborts FastAPI startup entirely. Since the migration never gets recorded as applied on failure, this repeats on every subsequent restart — a boot crash loop, not a one-time error.
+A code-quality reviewer traced what actually happens if migration `0006` (`backend/migrations/0006_products_sku_unique_per_floor_brand.py`) reaches a deployment before that duplicate is resolved: `backend/migrations/runner.py` auto-applies every pending migration at **every backend startup** (`server.py`'s startup event calls `run_migrations(db)` with no surrounding `try/except`, unlike the reconciliation call right below it), and there is no per-migration error handling in the runner either. So this isn't "don't run `scripts/run_migrations.py` manually" — merely having this file present in `backend/migrations/` on a process pointed at the live DB means the **next process restart** hits an uncaught `DuplicateKeyError`, which aborts FastAPI startup entirely. Since the migration never gets recorded as applied on failure, this repeats on every subsequent restart — a boot crash loop, not a one-time error.
 
-**The migration code itself is correct, fully tested (unit tests use only a fake in-memory db, no live connection), and both reviews passed.** It is sitting as two local commits (`4ab1b5a`, `658a92f`) — intentionally NOT pushed to `origin/main` — specifically to avoid this outage risk. Before pushing:
-1. Resolve the live duplicate: rename one of the two SKUs, or merge the two Hansgrohe products (`639c8d2e...` / `811a1b0f...`). This is a data decision for a human — the migration deliberately does not attempt to auto-resolve it.
-2. Re-run the read-only check to confirm zero duplicates remain:
+**The migration code itself is correct, fully tested (unit tests use only a fake in-memory db, no live connection), and both reviews passed — it has been committed AND pushed to `origin/main`** (commits `4ab1b5a`, `658a92f`). This is safe: CI (`.github/workflows/ci.yml`) has no deploy step and runs unit tests against an isolated `MONGO_URL=mongodb://localhost:27017` / `DB_NAME=forge_ci_unit_tests`, never the real Atlas cluster — confirmed by reading the workflow file directly. The risk is NOT "this is on GitHub" — it's specifically **restarting any real backend process (local dev `uvicorn`, or an actual deployed instance) that connects to the live `buildcon_house` database** while this duplicate still exists. Do not restart the backend against the live database until:
+1. The live duplicate is resolved: rename one of the two SKUs, or merge the two Hansgrohe products (`639c8d2e...` / `811a1b0f...`). This is a data decision for a human — the migration deliberately does not attempt to auto-resolve it.
+2. Re-run the read-only check below to confirm zero duplicates remain:
    ```bash
    cd backend && .venv/bin/python -c "
    import asyncio
@@ -88,7 +90,7 @@ A code-quality reviewer traced what actually happens if migration `0006` (`backe
    asyncio.run(main())
    "
    ```
-3. Only then `git push origin main`.
+3. Only then restart/deploy the backend against the live database — the code is already committed and pushed, there's nothing further to push at that point.
 
 Also flagged separately (spawned as background task suggestions, not yet started): the app's own SKU duplicate-check queries in `catalog_routes.py` (`create_product`/`create_custom_product`/`update_product`) are still global, not scoped to `(floor_id, brand_id)` — so even after this migration is safely deployed, legitimate cross-floor SKU reuse would still be rejected by the API before reaching the database. Needs its own follow-up task.
 
