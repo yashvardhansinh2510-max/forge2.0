@@ -258,6 +258,20 @@ class Category(TimestampedModel):
     floor_id: str = "first-floor"
 
 
+class BrandCreate(BaseModel):
+    name: str
+    slug: str
+    logo_url: Optional[str] = None
+    country: Optional[str] = None
+
+
+class CategoryCreate(BaseModel):
+    name: str
+    slug: str
+    parent_id: Optional[str] = None
+    icon: Optional[str] = None
+
+
 class ProductVariant(BaseModel):
     sku: str
     finish: Optional[str] = None

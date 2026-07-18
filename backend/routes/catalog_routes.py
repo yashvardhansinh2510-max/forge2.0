@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import floor_for_write, floor_scope_ids, get_current_user, require_min_role
 from db import db, strip_ids
-from models import Product, ProductCreate, ProductPatch, UserPublic
+from models import Brand, BrandCreate, Category, CategoryCreate, Product, ProductCreate, ProductPatch, UserPublic
 from services import catalog_service, media_service
 from services.activity_log import log_event
 
@@ -37,6 +37,34 @@ async def list_categories(
     return await catalog_service.list_categories_with_counts(brand_id, floor_ids=floor_scope_ids(user))
 
 
+@router.post("/brands", response_model=Brand)
+async def create_brand(
+    body: BrandCreate,
+    user: UserPublic = Depends(require_min_role("purchase")),
+):
+    if await db.brands.find_one({"slug": body.slug}):
+        raise HTTPException(status_code=409, detail="A brand with this slug already exists")
+    payload = body.dict()
+    payload["floor_id"] = floor_for_write(user)
+    brand = Brand(**payload)
+    await db.brands.insert_one(brand.dict())
+    catalog_service.schedule_catalog_refresh()
+    return brand
+
+
+@router.post("/categories", response_model=Category)
+async def create_category(
+    body: CategoryCreate,
+    user: UserPublic = Depends(require_min_role("purchase")),
+):
+    if await db.categories.find_one({"slug": body.slug}):
+        raise HTTPException(status_code=409, detail="A category with this slug already exists")
+    payload = body.dict()
+    payload["floor_id"] = floor_for_write(user)
+    category = Category(**payload)
+    await db.categories.insert_one(category.dict())
+    catalog_service.schedule_catalog_refresh()
+    return category
 
 
 async def _usage_ranked_product_page(
