@@ -419,21 +419,22 @@ async def create_custom_product(
     auto-suffix). If False, we behave like /products with duplicate-SKU
     rejection.
     """
+    floor_id = floor_for_write(user)
     sku = body.sku or f"CUSTOM-{datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')}"
     if body.is_custom:
         # Auto-uniquify — never fail because the user typed the same SKU twice.
         base = sku
         n = 1
-        while await db.products.find_one({"sku": sku}):
+        while await db.products.find_one({"sku": sku, "floor_id": floor_id, "brand_id": body.brand_id}):
             n += 1
             sku = f"{base}-{n}"
-    elif await db.products.find_one({"sku": sku}):
+    elif await db.products.find_one({"sku": sku, "floor_id": floor_id, "brand_id": body.brand_id}):
         raise HTTPException(status_code=409, detail="SKU already exists")
 
     payload = body.dict()
     payload["sku"] = sku
     payload["tags"] = list(set([*(payload.get("tags") or []), "custom"]))
-    payload["floor_id"] = floor_for_write(user)
+    payload["floor_id"] = floor_id
     prod = Product(**payload)
     await db.products.insert_one(prod.dict())
     catalog_service.schedule_catalog_refresh()
@@ -445,10 +446,11 @@ async def create_product(
     body: ProductCreate,
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    if await db.products.find_one({"sku": body.sku}):
+    floor_id = floor_for_write(user)
+    if await db.products.find_one({"sku": body.sku, "floor_id": floor_id, "brand_id": body.brand_id}):
         raise HTTPException(status_code=409, detail="SKU already exists")
     payload = body.dict()
-    payload["floor_id"] = floor_for_write(user)
+    payload["floor_id"] = floor_id
     prod = Product(**payload)
     await db.products.insert_one(prod.dict())
     catalog_service.schedule_catalog_refresh()
@@ -483,9 +485,17 @@ async def update_product(
     if not updates:
         return Product(**existing)
 
-    new_sku = updates.get("sku")
-    if new_sku and new_sku != existing.get("sku"):
-        if await db.products.find_one({"sku": new_sku, "id": {"$ne": product_id}}):
+    new_sku = updates.get("sku", existing.get("sku"))
+    new_brand_id = updates.get("brand_id", existing.get("brand_id"))
+    sku_changing = "sku" in updates and new_sku != existing.get("sku")
+    brand_changing = "brand_id" in updates and new_brand_id != existing.get("brand_id")
+    if sku_changing or brand_changing:
+        if await db.products.find_one({
+            "sku": new_sku,
+            "floor_id": existing.get("floor_id"),
+            "brand_id": new_brand_id,
+            "id": {"$ne": product_id},
+        }):
             raise HTTPException(status_code=409, detail="SKU already exists")
 
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
