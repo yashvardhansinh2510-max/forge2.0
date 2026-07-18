@@ -74,3 +74,18 @@ def test_order_placed_purchase_order_and_payment_inherit_quotation_floor(monkeyp
         assert po["floor_id"] == "ground-floor"
     assert fake_db.payments.upserts, "expected a pending Payment to be upserted"
     assert fake_db.payments.upserts[0]["floor_id"] == "ground-floor"
+
+
+def test_upsert_followup_inherits_quotation_floor(monkeypatch):
+    class _FakeDb:
+        customers = _Recorder(find_one_result={"phone": "555", "tier": "retail"})
+        followups = _Recorder()
+
+    fake_db = _FakeDb()
+    monkeypatch.setattr(domain_outbox, "db", fake_db)
+
+    asyncio.run(domain_outbox._upsert_followup(
+        key="k1", quotation=_quotation("ground-floor"), reason="test", category="quotation", session=None,
+    ))
+
+    assert fake_db.followups.upserts[0]["floor_id"] == "ground-floor"

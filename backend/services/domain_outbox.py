@@ -100,6 +100,7 @@ async def _upsert_followup(*, key: str, quotation: dict, reason: str, category: 
         suggested_channel="call",
         due_at=now_iso(),
         is_automated=False,
+        floor_id=quotation.get("floor_id", "first-floor"),
     ).dict()
     followup["automation_key"] = key
     await db.followups.update_one({"automation_key": key}, {"$setOnInsert": followup}, upsert=True, session=session)
