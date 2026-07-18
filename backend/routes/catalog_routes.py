@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from auth import get_current_user, require_min_role
+from auth import floor_for_write, floor_scope_ids, get_current_user, require_min_role
 from db import db, strip_ids
 from models import Product, ProductCreate, ProductPatch, UserPublic
 from services import catalog_service, media_service
@@ -16,23 +16,25 @@ router = APIRouter(tags=["catalog"])
 
 # ---------- Brands ----------
 @router.get("/brands")
-async def list_brands(_: UserPublic = Depends(get_current_user)):
-    """Return every brand + its active product count. Counts drive the
-    left-rail brand badges in the Quotation Builder V4."""
-    return await catalog_service.list_brands_with_counts()
+async def list_brands(user: UserPublic = Depends(get_current_user)):
+    """Return every brand + its active product count, scoped to the
+    caller's floor(s). Counts drive the left-rail brand badges in the
+    Quotation Builder V4."""
+    return await catalog_service.list_brands_with_counts(floor_ids=floor_scope_ids(user))
 
 
 @router.get("/categories")
 async def list_categories(
     brand_id: Optional[str] = None,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
-    """Return categories + per-brand-scoped product counts.
+    """Return categories + per-brand-scoped product counts, scoped to the
+    caller's floor(s).
 
     When `brand_id` is passed, counts reflect ONLY that brand — this is what
     powers the left-rail "Categories under Hansgrohe" list.
     """
-    return await catalog_service.list_categories_with_counts(brand_id)
+    return await catalog_service.list_categories_with_counts(brand_id, floor_ids=floor_scope_ids(user))
 
 
 
@@ -113,16 +115,15 @@ async def list_products(
         sort=sort,
         limit=limit,
         skip=skip,
+        floor_ids=floor_scope_ids(user),
     )
 
 
 # ---------- Hierarchy + family-grouped views ----------
 @router.get("/catalog/hierarchy")
-async def catalog_hierarchy(_: UserPublic = Depends(get_current_user)):
-    """Return the full Brand → Category → Subcategory → Series → Family tree.
-
-    Only counts active products. Perfect for browsable navigation in the
-    catalog and quotation-builder pickers.
+async def catalog_hierarchy(user: UserPublic = Depends(get_current_user)):
+    """Return the full Brand → Category → Subcategory → Series → Family tree,
+    scoped to the caller's floor(s). Only counts active products.
     """
     pipeline = [
         {"$match": {"active": True}},
@@ -141,7 +142,7 @@ async def catalog_hierarchy(_: UserPublic = Depends(get_current_user)):
             "image_quality": {"$first": "$image_quality"},
         }},
     ]
-    rows, brands, cats = await catalog_service.hierarchy_rows()
+    rows, brands, cats = await catalog_service.hierarchy_rows(floor_ids=floor_scope_ids(user))
 
     # Fold into brand → category → subcategory → series → family tree
     tree: dict = {}
@@ -225,7 +226,7 @@ async def list_families(
     q: Optional[str] = None,
     limit: int = 60,
     skip: int = 0,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """Return products grouped by family_key — one card per family, variants
     collapsed underneath. Ideal for the premium grouped catalog view.
@@ -238,6 +239,7 @@ async def list_families(
         q=q,
         limit=limit,
         skip=skip,
+        floor_ids=floor_scope_ids(user),
     )
 
 
@@ -251,9 +253,9 @@ async def catalog_search(
     series: Optional[str] = None,
     limit: int = 30,
     group: bool = Query(True, description="Group variants by family_key (Shopify-style)"),
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
-    """Ranked catalog search.
+    """Ranked catalog search, scoped to the caller's floor(s).
 
     Ranking priority (highest first):
       1. Exact SKU / SKU prefix
@@ -272,6 +274,7 @@ async def catalog_search(
         series=series,
         limit=limit,
         group=group,
+        floor_ids=floor_scope_ids(user),
     )
 
 
@@ -281,16 +284,17 @@ async def catalog_facets(
     category_id: Optional[str] = None,
     subcategory: Optional[str] = None,
     series: Optional[str] = None,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """Return the facet buckets (brands, categories, finishes, colours,
-    price range) for the current selection. Powers the multi-facet filter UI.
+    price range) for the current selection, scoped to the caller's floor(s).
     """
     return await catalog_service.facet_buckets(
         brand_id=brand_id,
         category_id=category_id,
         subcategory=subcategory,
         series=series,
+        floor_ids=floor_scope_ids(user),
     )
 
 
@@ -401,6 +405,7 @@ async def create_custom_product(
     payload = body.dict()
     payload["sku"] = sku
     payload["tags"] = list(set([*(payload.get("tags") or []), "custom"]))
+    payload["floor_id"] = floor_for_write(user)
     prod = Product(**payload)
     await db.products.insert_one(prod.dict())
     catalog_service.schedule_catalog_refresh()
@@ -414,7 +419,9 @@ async def create_product(
 ):
     if await db.products.find_one({"sku": body.sku}):
         raise HTTPException(status_code=409, detail="SKU already exists")
-    prod = Product(**body.dict())
+    payload = body.dict()
+    payload["floor_id"] = floor_for_write(user)
+    prod = Product(**payload)
     await db.products.insert_one(prod.dict())
     catalog_service.schedule_catalog_refresh()
     return prod
