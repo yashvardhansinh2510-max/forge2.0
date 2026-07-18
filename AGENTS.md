@@ -46,9 +46,9 @@ Update this table as work lands. Commit SHAs below are on `main` (this repo comm
 | 1 | Purchases Tracker main board (`_iter_items` + `GET /items`) + `floor_scope_ids` in `auth.py` | **Done** (spec + code-quality review both passed) | `4ffad24` |
 | 2 | Purchases Tracker facet endpoints (`/stages`, `/brands`, `/customers`) | **Done** (spec + code-quality review both passed) | `a1d0174` |
 | 3 | Purchases Tracker remaining read endpoints (`customer_workspace`, `dispatch_record`, `list_shortages`, `export_xlsx`, `get_item`, `item_transfer_history`) | **Done** (spec + code-quality review both passed; 2 minor style-consistency notes left as optional follow-up, see review) | `bfdeb65` |
-| 4 | Follow-ups `/insights` | Not started | — |
-| 5 | Reports overview | Not started | — |
-| 6 | Dashboard `followups_due` counter | Not started | — |
+| 4 | Follow-ups `/insights` | **Done** (spec + code-quality review both passed) | `781a65b` |
+| 5 | Reports overview | **Done** (spec + code-quality review both passed) | `da9e240` |
+| 6 | Dashboard `followups_due` counter | **Done** (spec + code-quality review both passed) — **Milestone A (read-path scoping) fully complete** | `00b70fd` |
 | 7 | `domain_outbox.py::_handle_order_placed` (PO + Payment floor inheritance) | Not started | — |
 | 8 | `domain_outbox.py::_upsert_followup` | Not started | — |
 | 9 | `followup_engine.py` rule-based auto-follow-up engine | Not started | — |
