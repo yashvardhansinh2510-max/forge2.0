@@ -131,12 +131,19 @@ app.add_middleware(
 async def _startup():
     # Validate external infrastructure before any seed/reconciliation writes.
     # Uvicorn does not report the application ready until this preflight passes.
-    preflight = await run_bootstrap()
-    preflight.require_healthy()
+    await run_bootstrap()
 
     applied = await run_migrations(db)
     if applied:
         logger.info("Applied %d migration(s) on startup: %s", len(applied), ", ".join(applied))
+
+    # Re-run preflight now that migrations may have just created indexes the
+    # first pass reported missing (e.g. brands.slug/categories.slug via
+    # migrations 0005/0007). Checking once, before migrations, would deadlock
+    # a not-yet-fully-migrated database: preflight blocks startup, so the
+    # migration that would satisfy it never gets the chance to run.
+    preflight = await run_bootstrap()
+    preflight.require_healthy()
 
     await ensure_floor_scope()
     await seed_if_empty()
