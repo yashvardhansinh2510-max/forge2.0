@@ -403,11 +403,68 @@ git commit -m "fix: scope Purchases Tracker facet endpoints to the active floor"
 
 `dispatch_record` and `export_xlsx` both call `_iter_items(...)` without the new `floor_ids` kwarg added in Task 1 — since it defaults to `None` (unscoped), they currently compile fine but stay unscoped until fixed here. `list_shortages` builds its own unscoped `query` dict. `customer_workspace`, `get_item`, and `item_transfer_history` all discard `user` entirely.
 
+**`customer_workspace` note (self-review catch — this function is listed in Files above but was missing from the original Step 3 draft):** it's a large aggregate-everything-about-a-customer endpoint with SEVEN separate unscoped queries: `db.customers.find_one`, `_iter_items(...)` (missing the `floor_ids` kwarg), `db.purchase_orders.find`, `db.purchase_shortages.find`, `db.quotations.find`, `db.payments.find`, `db.followups.find`. Since these are all plain Mongo-filter `.find()`/`.find_one()` calls (not an aggregation pipeline), use `floor_query(user, base)` for each — add `floor_query` to the `from auth import ...` line alongside `floor_scope_ids`. The one call inside it that isn't touched: `timeline_for(customer_id=customer_id, limit=15)` (the activity feed) — this is a known, already-accepted separate gap (the global activity log's per-event floor tagging is explicitly out of scope everywhere in this codebase, tracked separately, not part of this plan).
+
 - [ ] **Step 1: Write the failing test**
 
 Append to `backend/tests/unit/test_purchases_tracker_floor_scoping.py`:
 
 ```python
+def test_customer_workspace_scopes_every_query_to_the_active_floor(monkeypatch):
+    from auth import floor_query
+
+    class _Recorder:
+        def __init__(self, find_one_result=None):
+            self._find_one_result = find_one_result
+            self.last_query: dict | None = None
+
+        async def find_one(self, query, *_args, **_kwargs):
+            self.last_query = query
+            return dict(self._find_one_result) if self._find_one_result else None
+
+        def find(self, query, *_args, **_kwargs):
+            self.last_query = query
+            return self
+
+        def sort(self, *_args, **_kwargs):
+            return self
+
+        async def to_list(self, _n):
+            return []
+
+    class _Db:
+        customers = _Recorder(find_one_result={"id": "cust-1", "name": "Test"})
+        purchase_orders = _Recorder()
+        purchase_shortages = _Recorder()
+        quotations = _Recorder()
+        payments = _Recorder()
+        followups = _Recorder()
+
+    fake_db = _Db()
+    monkeypatch.setattr(tracker, "db", fake_db)
+
+    async def _fake_iter_items(*_args, **kwargs):
+        assert kwargs.get("floor_ids") == ["ground-floor"]
+        return []
+
+    async def _fake_timeline_for(**_kwargs):
+        return []
+
+    monkeypatch.setattr(tracker, "_iter_items", _fake_iter_items)
+    monkeypatch.setattr(tracker, "timeline_for", _fake_timeline_for)
+
+    user = _user("ground-floor")
+    asyncio.run(tracker.customer_workspace("cust-1", user=user))
+
+    expected = floor_query(user, {}).get("floor_id")
+    assert fake_db.customers.last_query.get("floor_id") == expected
+    assert fake_db.purchase_orders.last_query.get("floor_id") == expected
+    assert fake_db.purchase_shortages.last_query.get("floor_id") == expected
+    assert fake_db.quotations.last_query.get("floor_id") == expected
+    assert fake_db.payments.last_query.get("floor_id") == expected
+    assert fake_db.followups.last_query.get("floor_id") == expected
+
+
 def test_dispatch_record_scopes_to_the_active_floor(monkeypatch):
     fake_pos = _FakePurchaseOrders()
     monkeypatch.setattr(tracker, "db", _FakeDb(fake_pos))
@@ -488,10 +545,71 @@ def test_item_transfer_history_404s_when_item_is_on_a_different_floor(monkeypatc
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd backend && .venv/bin/pytest tests/unit/test_purchases_tracker_floor_scoping.py -k "dispatch_record or export_xlsx or list_shortages or get_item or item_transfer_history" -v`
-Expected: FAIL — `dispatch_record()`/`export_xlsx()`/`list_shortages()`/`get_item()`/`item_transfer_history()` currently take `_: UserPublic`, not `user=`, so these fail with a `TypeError` on the keyword argument.
+Run: `cd backend && .venv/bin/pytest tests/unit/test_purchases_tracker_floor_scoping.py -k "customer_workspace or dispatch_record or export_xlsx or list_shortages or get_item or item_transfer_history" -v`
+Expected: FAIL — `customer_workspace()`/`dispatch_record()`/`export_xlsx()`/`list_shortages()`/`get_item()`/`item_transfer_history()` currently take `_: UserPublic`, not `user=`, so these fail with a `TypeError` on the keyword argument.
 
 - [ ] **Step 3: Write minimal implementation**
+
+`customer_workspace` (currently — showing only the lines that change; the summary-building logic in between, and the final `return {...}` block, are unchanged):
+
+```python
+@router.get("/customers/{customer_id}/workspace")
+async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_current_user)):
+    customer = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = await _load_settings()
+    rows = await _iter_items("stock", None, customer_id, None, None, settings.sla_days, limit=2000)
+    pos = await db.purchase_orders.find({"customer_id": customer_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    ...
+    shortages = await db.purchase_shortages.find(
+        {"customer_id": customer_id, "status": "awaiting_reorder"}, {"_id": 0},
+    ).sort("created_at", -1).to_list(100)
+
+    order_quotes = await db.quotations.find(
+        {"customer_id": customer_id, "status": {"$in": ["ordered", "won"]}},
+        {"_id": 0, "id": 1, "grand_total": 1},
+    ).to_list(500)
+    ...
+    payments = await db.payments.find({"customer_id": customer_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    followups = await db.followups.find(
+        {"customer_id": customer_id, "status": {"$in": ["open", "snoozed"]}}, {"_id": 0},
+    ).sort("due_at", 1).to_list(100)
+```
+
+becomes:
+
+```python
+@router.get("/customers/{customer_id}/workspace")
+async def customer_workspace(customer_id: str, user: UserPublic = Depends(get_current_user)):
+    customer = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    settings = await _load_settings()
+    rows = await _iter_items(
+        "stock", None, customer_id, None, None, settings.sla_days, limit=2000,
+        floor_ids=floor_scope_ids(user),
+    )
+    pos = await db.purchase_orders.find(floor_query(user, {"customer_id": customer_id}), {"_id": 0}).sort("created_at", -1).to_list(200)
+    ...
+    shortages = await db.purchase_shortages.find(
+        floor_query(user, {"customer_id": customer_id, "status": "awaiting_reorder"}), {"_id": 0},
+    ).sort("created_at", -1).to_list(100)
+
+    order_quotes = await db.quotations.find(
+        floor_query(user, {"customer_id": customer_id, "status": {"$in": ["ordered", "won"]}}),
+        {"_id": 0, "id": 1, "grand_total": 1},
+    ).to_list(500)
+    ...
+    payments = await db.payments.find(floor_query(user, {"customer_id": customer_id}), {"_id": 0}).sort("created_at", -1).to_list(100)
+    followups = await db.followups.find(
+        floor_query(user, {"customer_id": customer_id, "status": {"$in": ["open", "snoozed"]}}), {"_id": 0},
+    ).sort("due_at", 1).to_list(100)
+```
+
+(The `...` in both blocks marks unchanged lines in between — `total_value`/`outstanding_rows`/`brand_map`/`stage_counts`/`activity = await timeline_for(...)` and everything else stays exactly as it is today.) Add `floor_query` to the `from auth import ...` line alongside `floor_scope_ids` (currently `from auth import floor_scope_ids, get_current_user, require_min_role`).
 
 `dispatch_record` (currently):
 
@@ -676,7 +794,7 @@ async def item_transfer_history(item_id: str, user: UserPublic = Depends(get_cur
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd backend && .venv/bin/pytest tests/unit/test_purchases_tracker_floor_scoping.py -v`
-Expected: PASS (10 tests total so far)
+Expected: PASS (11 tests total so far)
 
 - [ ] **Step 5: Commit**
 
