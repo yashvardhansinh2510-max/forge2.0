@@ -36,7 +36,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 
-from auth import floor_scope_ids, get_current_user, require_min_role
+from auth import floor_query, floor_scope_ids, get_current_user, require_min_role
 from db import db
 from models import (
     PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
@@ -360,20 +360,23 @@ async def customer_facets(user: UserPublic = Depends(get_current_user)):
 
 
 @router.get("/customers/{customer_id}/workspace")
-async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_current_user)):
+async def customer_workspace(customer_id: str, user: UserPublic = Depends(get_current_user)):
     """One-call aggregate powering the Customer Purchase Workspace: summary,
     products ordered, brand/stage breakdowns, POs, outstanding items, recent
     activity, and expected delivery. Everything here is derived live from the
     same PO/item documents the rest of Purchases uses — no separate cache to
     go stale.
     """
-    customer = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    customer = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0})
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
     settings = await _load_settings()
-    rows = await _iter_items("stock", None, customer_id, None, None, settings.sla_days, limit=2000)
-    pos = await db.purchase_orders.find({"customer_id": customer_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    rows = await _iter_items(
+        "stock", None, customer_id, None, None, settings.sla_days, limit=2000,
+        floor_ids=floor_scope_ids(user),
+    )
+    pos = await db.purchase_orders.find(floor_query(user, {"customer_id": customer_id}), {"_id": 0}).sort("created_at", -1).to_list(200)
 
     total_value = round(sum(r["qty"] * r["unit_cost"] for r in rows), 2)
     outstanding_rows = [r for r in rows if r["stage"] != "delivered"]
@@ -397,11 +400,11 @@ async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_curre
     activity = await timeline_for(customer_id=customer_id, limit=15)
 
     shortages = await db.purchase_shortages.find(
-        {"customer_id": customer_id, "status": "awaiting_reorder"}, {"_id": 0},
+        floor_query(user, {"customer_id": customer_id, "status": "awaiting_reorder"}), {"_id": 0},
     ).sort("created_at", -1).to_list(100)
 
     order_quotes = await db.quotations.find(
-        {"customer_id": customer_id, "status": {"$in": ["ordered", "won"]}},
+        floor_query(user, {"customer_id": customer_id, "status": {"$in": ["ordered", "won"]}}),
         {"_id": 0, "id": 1, "grand_total": 1},
     ).to_list(500)
     from routes.payment_routes import _paid_by_quotation
@@ -410,9 +413,9 @@ async def customer_workspace(customer_id: str, _: UserPublic = Depends(get_curre
         max(0.0, float(quote.get("grand_total") or 0) - paid_map.get(quote["id"], 0.0))
         for quote in order_quotes
     ), 2)
-    payments = await db.payments.find({"customer_id": customer_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    payments = await db.payments.find(floor_query(user, {"customer_id": customer_id}), {"_id": 0}).sort("created_at", -1).to_list(100)
     followups = await db.followups.find(
-        {"customer_id": customer_id, "status": {"$in": ["open", "snoozed"]}}, {"_id": 0},
+        floor_query(user, {"customer_id": customer_id, "status": {"$in": ["open", "snoozed"]}}), {"_id": 0},
     ).sort("due_at", 1).to_list(100)
 
     open_pos = [p for p in pos if p.get("status") != "cancelled"]
@@ -499,17 +502,23 @@ async def dispatch_record(
     customer: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = Query(500, ge=1, le=2000),
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     settings = await _load_settings()
-    rows = await _iter_items("dispatch_record", brand, customer, None, q, settings.sla_days, limit)
+    rows = await _iter_items(
+        "dispatch_record", brand, customer, None, q, settings.sla_days, limit,
+        floor_ids=floor_scope_ids(user),
+    )
     return {"count": len(rows), "items": rows}
 
 
 @router.get("/items/{item_id}")
-async def get_item(item_id: str, _: UserPublic = Depends(get_current_user)):
+async def get_item(item_id: str, user: UserPublic = Depends(get_current_user)):
     po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0})
     if not po:
+        raise HTTPException(status_code=404, detail="Item not found")
+    floor_ids = floor_scope_ids(user)
+    if floor_ids is not None and po.get("floor_id") not in floor_ids:
         raise HTTPException(status_code=404, detail="Item not found")
     it = next((i for i in po.get("items", []) if i.get("id") == item_id), None)
     if not it:
@@ -1030,7 +1039,13 @@ async def transfer_item_command(
 
 
 @router.get("/items/{item_id}/transfer-history")
-async def item_transfer_history(item_id: str, _: UserPublic = Depends(get_current_user)):
+async def item_transfer_history(item_id: str, user: UserPublic = Depends(get_current_user)):
+    po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0, "floor_id": 1})
+    if not po:
+        raise HTTPException(status_code=404, detail="Item not found")
+    floor_ids = floor_scope_ids(user)
+    if floor_ids is not None and po.get("floor_id") not in floor_ids:
+        raise HTTPException(status_code=404, detail="Item not found")
     return {"item_id": item_id, "transfers": await transfer_history(item_id)}
 
 
@@ -1306,13 +1321,16 @@ async def list_shortages(
     customer_id: Optional[str] = None,
     status_filter: str = Query("awaiting_reorder", alias="status"),
     limit: int = Query(200, ge=1, le=1000),
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     query: dict = {}
     if status_filter and status_filter != "all":
         query["status"] = status_filter
     if customer_id:
         query["customer_id"] = customer_id
+    floor_ids = floor_scope_ids(user)
+    if floor_ids is not None:
+        query["floor_id"] = {"$in": floor_ids}
     docs = await db.purchase_shortages.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return {"count": len(docs), "items": docs}
 
@@ -1416,10 +1434,13 @@ async def export_xlsx(
     customer: Optional[str] = None,
     stage: Optional[str] = None,
     q: Optional[str] = None,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     settings = await _load_settings()
-    rows = await _iter_items(view, brand, customer, stage, q, settings.sla_days, limit=2000)
+    rows = await _iter_items(
+        view, brand, customer, stage, q, settings.sla_days, limit=2000,
+        floor_ids=floor_scope_ids(user),
+    )
 
     wb = Workbook()
     ws = wb.active
