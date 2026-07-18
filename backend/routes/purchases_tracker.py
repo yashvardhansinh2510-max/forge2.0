@@ -53,6 +53,13 @@ router = APIRouter(prefix="/purchases", tags=["purchases"])
 logger = logging.getLogger("forge.purchases_tracker")
 
 
+def _source_floor_id(source: dict) -> str:
+    """Same inheritance rule as transfer_workflow._transfer_floor_id — a
+    record derived from an existing PO/quotation/shortage stays on that
+    source's floor."""
+    return source.get("floor_id", "first-floor")
+
+
 # =============================================================================
 # Stage catalog — the ONE source of truth used by both backend + frontend.
 # =============================================================================
@@ -991,6 +998,7 @@ async def _reconcile_shortage_for_line(
             "status": "awaiting_reorder", "reason": reason,
             "transferred_to_customer_id": dest_customer_id, "transferred_to_customer_name": dest_customer_name,
             "updated_at": now,
+            "floor_id": _source_floor_id(q),
         }
         if existing:
             await db.purchase_shortages.update_one({"id": existing["id"]}, {"$set": fields})
@@ -1120,6 +1128,7 @@ async def transfer_item(
         ),
         created_by=user.id, created_by_name=user.full_name,
         source="transfer",
+        floor_id=_source_floor_id(po),
     )
 
     # Build the destination item — same shape, fresh id, transfer bookkeeping.
@@ -1172,6 +1181,7 @@ async def transfer_item(
         grand_total=round(dest_item.qty * dest_item.unit_cost, 2),
         created_by=user.id,
         created_by_name=user.full_name,
+        floor_id=_source_floor_id(po),
         status_history=[
             PurchaseStatusEvent(
                 from_status=None, to_status="draft",
@@ -1374,6 +1384,7 @@ async def create_po_for_shortage(
         internal_notes=f"Reorder — {s.get('reason')}",
         subtotal=0, grand_total=0,
         created_by=user.id, created_by_name=user.full_name,
+        floor_id=_source_floor_id(s),
         status_history=[
             PurchaseStatusEvent(
                 from_status=None, to_status="draft",
