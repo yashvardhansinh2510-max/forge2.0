@@ -279,3 +279,13 @@ def require_min_role(min_role: Role):
             raise HTTPException(status_code=403, detail="Insufficient role")
         return user
     return _dep
+
+
+def floor_scope_ids(user: UserPublic) -> Optional[list[str]]:
+    """Resolve the caller's floor filter the same way `floor_query()` does
+    for Mongo-filter-based queries, but as a plain list — for callers that
+    build their own aggregation pipeline or in-memory filter rather than
+    taking a Mongo filter dict."""
+    if user.active_floor_id:
+        return [user.active_floor_id]
+    return accessible_floor_ids(user)

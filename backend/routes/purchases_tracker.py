@@ -35,7 +35,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 
-from auth import get_current_user, require_min_role
+from auth import floor_scope_ids, get_current_user, require_min_role
 from db import db
 from models import (
     PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
@@ -205,9 +205,12 @@ async def _iter_items(
     sla_days: int,
     limit: int = 2000,
     product_id: Optional[str] = None,
+    floor_ids: Optional[list[str]] = None,
 ) -> list[dict]:
     """Return a flat list of tracker rows across all POs, filtered."""
     match: dict = {"status": {"$ne": "cancelled"}}
+    if floor_ids is not None:
+        match["floor_id"] = {"$in": floor_ids}
     if q:
         term = {"$regex": q, "$options": "i"}
         match["$or"] = [
@@ -457,11 +460,14 @@ async def list_items(
     q: Optional[str] = None,
     product_id: Optional[str] = None,
     limit: int = Query(500, ge=1, le=2000),
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """Flat tracker rows filtered by view/brand/customer/stage/q/product_id."""
     settings = await _load_settings()
-    rows = await _iter_items(view, brand, customer, stage, q, settings.sla_days, limit, product_id)
+    rows = await _iter_items(
+        view, brand, customer, stage, q, settings.sla_days, limit, product_id,
+        floor_ids=floor_scope_ids(user),
+    )
 
     blocked_count = sum(1 for r in rows if r["blocked"])
     return {
