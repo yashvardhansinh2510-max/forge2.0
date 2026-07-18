@@ -5,11 +5,12 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View,
+  ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
+import { useBp } from "@/src/design/responsive";
 import {
   Avatar, Badge, Button, Card, EmptyState, PageHeader,
   SegmentedControl, StatTile, StatusBadge,
@@ -17,7 +18,7 @@ import {
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
-import { colors, icon as iconSize, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, icon as iconSize, money, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
 import {
   HistorySheet, MovableItem, MoveStageSheet, STAGE_TONE, TransferSheet,
 } from "@/src/components/purchases/MovementEngine";
@@ -74,8 +75,7 @@ const EMPTY_WORKSPACE: Workspace = {
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isDesktop = width >= 900;
+  const { isDesktop } = useBp();
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -217,7 +217,7 @@ export default function CustomerDetail() {
 
         {/* Stats */}
         <View style={[styles.statsRow, !isDesktop && styles.statsRowMobile]}>
-          <StatTile label="Lifetime Revenue" value={money(totalRevenue)} icon="trending-up" tone="success" sub="Won + ordered" />
+          <StatTile label="Lifetime Revenue" value={moneyShort(totalRevenue)} icon="trending-up" tone="success" sub="Won + ordered" />
           <StatTile label="Quotations" value={String(quotations.length)} icon="file-text" tone="brand" sub="All statuses" />
           <StatTile label="Purchase Orders" value={String(purchases.length)} icon="shopping-cart" tone="brand" sub="Across brands" />
           <StatTile label="Activity" value={String(timeline.length)} icon="activity" tone="neutral" sub="Events logged" />
@@ -378,8 +378,8 @@ export default function CustomerDetail() {
 
               {/* Purchase summary */}
               <View style={[styles.statsRow, !isDesktop && styles.statsRowMobile]}>
-                <StatTile label="Order Value" value={money(workspace.summary.total_value)} icon="shopping-bag" tone="brand" sub={`${workspace.summary.total_items} products`} />
-                <StatTile label="Outstanding" value={money(workspace.summary.outstanding_value)} icon="clock" tone="warning" sub={`${workspace.summary.outstanding_count} pending`} />
+                <StatTile label="Order Value" value={moneyShort(workspace.summary.total_value)} icon="shopping-bag" tone="brand" sub={`${workspace.summary.total_items} products`} />
+                <StatTile label="Outstanding" value={moneyShort(workspace.summary.outstanding_value)} icon="clock" tone="warning" sub={`${workspace.summary.outstanding_count} pending`} />
                 <StatTile label="Open POs" value={String(workspace.summary.open_pos)} icon="file-text" tone="brand" sub={`${purchases.length} total`} />
                 <StatTile label="Delayed" value={String(workspace.summary.blocked_count)} icon="alert-triangle" tone={workspace.summary.blocked_count > 0 ? "danger" : "success"} sub="Past SLA" />
               </View>
@@ -552,9 +552,9 @@ export default function CustomerDetail() {
 
 function Row({ icon, text }: { icon: keyof typeof Feather.glyphMap; text: string }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 }}>
       <Feather name={icon} size={iconSize.sm} color={colors.onSurfaceMuted} />
-      <Text style={[type.bodySm, { color: colors.onSurfaceSecondary }]} numberOfLines={1}>{text}</Text>
+      <Text style={[type.bodySm, { color: colors.onSurfaceSecondary, flex: 1, minWidth: 0 }]} numberOfLines={1}>{text}</Text>
     </View>
   );
 }

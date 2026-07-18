@@ -17,7 +17,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from auth import get_current_user, require_min_role
+from auth import floor_query, get_current_user, require_min_role
 from db import db
 from models import (
     PurchaseAttachment, PurchaseAttachmentCreate, PurchaseOrder, PurchaseOrderItem,
@@ -150,9 +150,13 @@ async def _apply_status_change(
 # List / detail / dashboard
 # -----------------------------------------------------------------------------
 @router.get("/dashboard")
-async def dashboard(_: UserPublic = Depends(get_current_user)):
+async def dashboard(user: UserPublic = Depends(get_current_user)):
     """Column counts + preview cards for the ops board."""
-    pipeline = [
+    pipeline = []
+    scope = floor_query(user)
+    if scope:
+        pipeline.append({"$match": scope})
+    pipeline += [
         {"$group": {
             "_id": "$status",
             "count": {"$sum": 1},
@@ -186,7 +190,7 @@ async def list_purchase_orders(
     quotation_id: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = Query(200, ge=1, le=1000),
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """Search POs. Free-text `q` matches PO number, customer, brand, supplier, SKU."""
     query: dict = {}
@@ -211,13 +215,13 @@ async def list_purchase_orders(
             {"items.sku": term},
             {"items.name": term},
         ]
-    docs = await db.purchase_orders.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    docs = await db.purchase_orders.find(floor_query(user, query), {"_id": 0}).sort("created_at", -1).to_list(limit)
     return docs
 
 
 @router.get("/{po_id}", response_model=PurchaseOrder)
-async def get_purchase_order(po_id: str, _: UserPublic = Depends(get_current_user)):
-    doc = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+async def get_purchase_order(po_id: str, user: UserPublic = Depends(get_current_user)):
+    doc = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase order not found")
     return PurchaseOrder(**doc)
@@ -232,7 +236,7 @@ async def update_purchase_order(
     body: PurchaseOrderUpdate,
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    doc = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    doc = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
@@ -284,7 +288,7 @@ async def update_purchase_order(
         return PurchaseOrder(**doc)
 
     patch["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.purchase_orders.update_one({"id": po_id}, {"$set": patch})
+    await db.purchase_orders.update_one(floor_query(user, {"id": po_id}), {"$set": patch})
 
     for ev in events:
         await log_event(
@@ -297,7 +301,7 @@ async def update_purchase_order(
             **ev,
         )
 
-    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     return PurchaseOrder(**fresh)
 
 
@@ -307,7 +311,7 @@ async def change_status(
     body: PurchaseStatusPayload,
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    doc = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    doc = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase order not found")
     cur = doc.get("status", "draft")
@@ -317,8 +321,8 @@ async def change_status(
             detail=f"Cannot move from '{cur}' to '{body.to_status}'",
         )
     patch = await _apply_status_change(doc, body.to_status, user, body.note)
-    await db.purchase_orders.update_one({"id": po_id}, {"$set": patch})
-    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    await db.purchase_orders.update_one(floor_query(user, {"id": po_id}), {"$set": patch})
+    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     return PurchaseOrder(**fresh)
 
 
@@ -326,9 +330,9 @@ async def change_status(
 async def receive_items(
     po_id: str,
     body: PurchaseReceivePayload,
-    user: UserPublic = Depends(require_min_role("purchase")),
+    user: UserPublic = Depends(require_min_role("warehouse")),
 ):
-    doc = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    doc = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
@@ -376,7 +380,7 @@ async def receive_items(
         if inferred in ALLOWED_TRANSITIONS.get(cur, []) or cur in ("ordered", "awaiting_supplier", "partial_received"):
             patch.update(await _apply_status_change(doc, inferred, user, body.note))
 
-    await db.purchase_orders.update_one({"id": po_id}, {"$set": patch})
+    await db.purchase_orders.update_one(floor_query(user, {"id": po_id}), {"$set": patch})
 
     await log_event(
         event_type="purchase.received",
@@ -401,7 +405,7 @@ async def receive_items(
             payload={"item_id": sync["item_id"], "from_stage": sync["from_stage"], "to_stage": "delivered", "source": "receive_sync"},
         )
 
-    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     return PurchaseOrder(**fresh)
 
 
@@ -411,7 +415,7 @@ async def add_attachment(
     body: PurchaseAttachmentCreate,
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    doc = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    doc = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
@@ -423,18 +427,43 @@ async def add_attachment(
     size = len(body.data_url or "")
     if size > 15 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Attachment exceeds 15MB limit")
+
     att = PurchaseAttachment(
         by_user_id=user.id,
         by_user_name=user.full_name,
         filename=body.filename,
         mime=body.mime,
-        data_url=body.data_url,
         size_bytes=size,
         note=body.note,
     )
+
+    # BACKEND_AUDIT_2026-07-17.md High #17: upload to the private bucket
+    # instead of embedding base64 on the PO document — unlike ProductMedia,
+    # this had no cap on attachment count/aggregate size, trending toward
+    # MongoDB's 16MB document limit on a PO that accumulates delivery-note
+    # photos. Only the storage key + metadata is persisted; a signed URL is
+    # minted on demand (GET /{po_id}/attachments/{id}/url).
+    try:
+        import base64
+
+        from media_storage.factory import get_media_storage, private_bucket
+
+        head, b64 = body.data_url.split(",", 1)
+        raw = base64.b64decode(b64)
+        storage = get_media_storage()
+        key = f"purchase-orders/{po_id}/{att.id}-{body.filename}"
+        stored = await storage.upload(
+            bucket=private_bucket(), key=key, data=raw,
+            content_type=body.mime or "application/octet-stream",
+            cache_control="private, max-age=0",
+        )
+        att.storage_key = stored.key
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not store attachment: {e}") from e
+
     attachments = doc.get("attachments", []) + [att.dict()]
     await db.purchase_orders.update_one(
-        {"id": po_id},
+        floor_query(user, {"id": po_id}),
         {"$set": {"attachments": attachments, "updated_at": datetime.now(timezone.utc).isoformat()}},
     )
     await log_event(
@@ -448,8 +477,33 @@ async def add_attachment(
         summary=f"Attached {body.filename}",
         payload={"filename": body.filename, "mime": body.mime, "size_bytes": size},
     )
-    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     return PurchaseOrder(**fresh)
+
+
+@router.get("/{po_id}/attachments/{attachment_id}/url")
+async def get_attachment_url(
+    po_id: str,
+    attachment_id: str,
+    user: UserPublic = Depends(get_current_user),
+):
+    """Short-lived signed URL to view/download a private-bucket attachment.
+    Attachments written before storage migration still carry a `data_url`
+    directly — returned as-is so old POs keep working with no backfill."""
+    doc = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0, "attachments": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    att = next((a for a in doc.get("attachments", []) if a.get("id") == attachment_id), None)
+    if not att:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    if att.get("storage_key"):
+        from media_storage.factory import get_media_storage, private_bucket
+        storage = get_media_storage()
+        url = await storage.get_signed_url(bucket=private_bucket(), key=att["storage_key"], expires_in=300)
+        return {"url": url}
+    if att.get("data_url"):
+        return {"url": att["data_url"]}
+    raise HTTPException(status_code=404, detail="Attachment has no stored content")
 
 
 # -----------------------------------------------------------------------------

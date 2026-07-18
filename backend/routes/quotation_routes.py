@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from auth import get_current_customer, get_current_user, require_min_role
+from auth import floor_for_write, floor_query, get_current_customer, get_current_user, require_min_role
 from db import db
 from models import (
     CustomerPublic, PurchaseOrder, PurchaseOrderItem, PurchaseStatusEvent, PurchaseStageEvent,
@@ -27,15 +27,14 @@ from services.followup_engine import reconcile_followups
 from services.pricing import effective_discount_pct as _effective_discount_pct
 from services.pricing import per_line_net_amounts
 from services.pricing import recalc_quotation_totals as _recalc
+from services.sequence import next_number
 
 router = APIRouter(prefix="/quotations", tags=["quotations"])
 
 
 async def _next_number() -> str:
     year = datetime.now(timezone.utc).year
-    prefix = f"FQ-{year}-"
-    count = await db.quotations.count_documents({"number": {"$regex": f"^{prefix}"}})
-    return f"{prefix}{count + 1:04d}"
+    return await next_number("quotation", f"FQ-{year}-", collection="quotations")
 
 
 async def _track_product_usage(user_id: str, product_ids: list[str]):
@@ -53,15 +52,15 @@ async def _track_product_usage(user_id: str, product_ids: list[str]):
 
 
 @router.get("")
-async def list_quotations(_: UserPublic = Depends(get_current_user)):
-    docs = await db.quotations.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_quotations(user: UserPublic = Depends(get_current_user)):
+    docs = await db.quotations.find(floor_query(user), {"_id": 0}).sort("created_at", -1).to_list(500)
     return docs
 
 
 @router.get("/recent")
 async def recent_quotations(
     limit: int = 8,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """Compact list of recent quotations for the Builder V4 left-rail panel.
 
@@ -70,7 +69,7 @@ async def recent_quotations(
     updated_at DESC so the most-recently-touched quote sits on top.
     """
     docs = await db.quotations.find(
-        {},
+        floor_query(user),
         {
             "_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
             "project_name": 1, "phone_snapshot": 1, "grand_total": 1, "status": 1,
@@ -100,7 +99,7 @@ async def create_quotation(
     body: QuotationCreate,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
-    customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+    customer = await db.customers.find_one(floor_query(user, {"id": body.customer_id}), {"_id": 0})
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
@@ -129,6 +128,7 @@ async def create_quotation(
         valid_until=body.valid_until,
         created_by=user.id,
         created_by_name=user.full_name,
+        floor_id=floor_for_write(user),
         **totals,
     )
     await db.quotations.insert_one(quot.dict())
@@ -147,8 +147,8 @@ async def create_quotation(
 
 
 @router.get("/{quotation_id}", response_model=Quotation)
-async def get_quotation(quotation_id: str, _: UserPublic = Depends(get_current_user)):
-    doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+async def get_quotation(quotation_id: str, user: UserPublic = Depends(get_current_user)):
+    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     return Quotation(**doc)
@@ -160,14 +160,14 @@ async def update_quotation(
     body: QuotationUpdate,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
-    doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
 
     update: dict = {}
     customer_changed_from: str | None = None
     if body.customer_id is not None and body.customer_id != doc.get("customer_id"):
-        new_customer = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+        new_customer = await db.customers.find_one(floor_query(user, {"id": body.customer_id}), {"_id": 0})
         if not new_customer:
             raise HTTPException(status_code=404, detail="Customer not found")
         customer_changed_from = doc.get("customer_name")
@@ -253,7 +253,7 @@ async def update_quotation(
         update["revisions"] = revisions + [rev.dict()]
 
     update["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.quotations.update_one({"id": quotation_id}, {"$set": update})
+    await db.quotations.update_one(floor_query(user, {"id": quotation_id}), {"$set": update})
 
     # Activity logging (non-silent only — silent = autosave)
     if not body.silent:
@@ -315,7 +315,7 @@ async def update_quotation(
                 summary=summary, payload=payload,
             )
 
-    fresh = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    fresh = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if "status" in update:
         # Event-triggered (not cron) reconciliation — a status change is
         # exactly the moment quotation-stage follow-ups should refresh/close.
@@ -326,9 +326,31 @@ async def update_quotation(
 @router.delete("/{quotation_id}")
 async def delete_quotation(
     quotation_id: str,
-    _: UserPublic = Depends(require_min_role("manager")),
+    user: UserPublic = Depends(require_min_role("manager")),
 ):
-    res = await db.quotations.delete_one({"id": quotation_id})
+    existing = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0, "id": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    # BACKEND_AUDIT_2026-07-17.md Medium #20: deleting a quotation that
+    # already has purchase orders and/or payments recorded against it
+    # orphaned those documents — they still reference a quotation_id that no
+    # longer resolves to anything, silently breaking every screen that joins
+    # back to the quotation (order detail, payment history, PO lineage).
+    # A draft/pending quotation with nothing built on it yet is still safe
+    # to delete outright.
+    po_count, payment_count = await asyncio.gather(
+        db.purchase_orders.count_documents({"quotation_id": quotation_id}),
+        db.payments.count_documents({"quotation_id": quotation_id}),
+    )
+    if po_count or payment_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot delete — {po_count} purchase order(s) and {payment_count} payment(s) "
+                "reference this quotation. Cancel/void the order instead of deleting it."
+            ),
+        )
+    res = await db.quotations.delete_one(floor_query(user, {"id": quotation_id}))
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Quotation not found")
     return {"ok": True}
@@ -339,7 +361,7 @@ async def duplicate_quotation(
     quotation_id: str,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
-    src = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    src = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if not src:
         raise HTTPException(status_code=404, detail="Quotation not found")
 
@@ -370,9 +392,9 @@ async def duplicate_quotation(
 
 # --- Breakdown (for line + totals transparency) ---
 @router.get("/{quotation_id}/breakdown")
-async def quotation_breakdown(quotation_id: str, _: UserPublic = Depends(get_current_user)):
+async def quotation_breakdown(quotation_id: str, user: UserPublic = Depends(get_current_user)):
     """How the final numbers were calculated — per line + summary."""
-    doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
 
@@ -488,7 +510,7 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     The PDF is the primary output. Its outbox record is committed first; timeline
     and follow-up handlers only run after that commit succeeds.
     """
-    doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
@@ -645,8 +667,8 @@ async def _brand_grouped_preview(doc: dict) -> dict:
 
 
 @router.get("/{quotation_id}/place-order/preview")
-async def place_order_preview(quotation_id: str, _: UserPublic = Depends(require_min_role("sales"))):
-    doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+async def place_order_preview(quotation_id: str, user: UserPublic = Depends(require_min_role("sales"))):
+    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     if not doc.get("items"):
@@ -664,13 +686,13 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
         try:
             async with await client.start_session() as session:
                 async with session.start_transaction():
-                    doc = await db.quotations.find_one({"id": quotation_id}, {"_id": 0}, session=session)
+                    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0}, session=session)
                     if not doc:
                         raise HTTPException(status_code=404, detail="Quotation not found")
                     if not doc.get("items"):
                         raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
                     await db.quotations.update_one(
-                        {"id": quotation_id},
+                        floor_query(user, {"id": quotation_id}),
                         {"$set": {"status": "ordered", "updated_at": now_iso()}},
                         session=session,
                     )
@@ -695,10 +717,10 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
 @router.get("/{quotation_id}/workflow-status")
 async def workflow_status(
     quotation_id: str,
-    _: UserPublic = Depends(require_min_role("sales")),
+    user: UserPublic = Depends(require_min_role("sales")),
 ):
     """Read-only audit projection for the transactional quotation workflow."""
-    quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    quotation = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if not quotation:
         raise HTTPException(status_code=404, detail="Quotation not found")
     events = await db.event_outbox.find({"payload.quotation_id": quotation_id}, {"_id": 0}).sort("created_at", 1).to_list(50)

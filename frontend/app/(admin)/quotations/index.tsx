@@ -5,9 +5,10 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
+import { useBp } from "@/src/design/responsive";
 import {
   Avatar, Chip, EmptyState, SearchField, Skeleton, StatusBadge,
 } from "@/src/components/ui";
@@ -32,8 +33,8 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 export default function QuotationsList() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 900;
+  const { isPhone } = useBp();
+  const isTablet = !isPhone;
 
   const [items, setItems] = useState<Quotation[] | null>(null);
   const [q, setQ] = useState("");

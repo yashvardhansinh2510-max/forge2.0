@@ -14,13 +14,23 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import bcrypt
 import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from settings import ConfigurationError, Settings, settings
+
+logger = logging.getLogger("forge.bootstrap")
+
+# Historical, publicly-known demo password (was previously hardcoded in
+# seed.py as DEMO_PASSWORD — see BACKEND_AUDIT_2026-07-17.md Critical #1).
+# Kept here ONLY to detect accounts still on this value; never used to
+# authenticate or to seed anything.
+LEGACY_DEMO_PASSWORD = "Forge@2026"
 
 
 REQUIRED_COLLECTIONS = {
@@ -72,6 +82,13 @@ REQUIRED_INDEXES: dict[str, list[tuple[tuple[str, Any], ...]]] = {
     "users": [(("email", 1),)],
     "quotations": [(("number", 1),)],
     "purchase_orders": [(("number", 1),)],
+    # BACKEND_AUDIT_2026-07-17.md High #14/#15, Medium #31 — added alongside
+    # ensure_indexes.py so the startup gate actually enforces these instead
+    # of only user_sessions/quotations/purchase_orders/users being checked.
+    "customers": [(("email", 1),)],
+    "payments": [(("quotation_id", 1),)],
+    "suppliers": [(("id", 1),)],
+    "activity_events": [(("entity_type", 1), ("entity_id", 1), ("created_at", -1))],
 }
 
 
@@ -101,6 +118,32 @@ def _index_signature(spec: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
         (str(key), int(value) if isinstance(value, (int, float)) else str(value))
         for key, value in spec.get("key", [])
     )
+
+
+async def _check_demo_accounts(database: Any) -> list[str]:
+    """Detect staff accounts still on the historical, publicly-known demo
+    password. Uses bcrypt.checkpw (never a string compare) so only accounts
+    that genuinely still match are flagged. Returns the list of matching
+    emails — never raises, never added to report.errors: a pre-existing
+    credential problem must not crash startup and turn into an outage."""
+    from seed import DEMO_STAFF  # local import: avoids a module-level seed<->bootstrap coupling
+
+    detected: list[str] = []
+    emails = [email for email, _name, _role in DEMO_STAFF]
+    docs = await database.users.find(
+        {"email": {"$in": emails}}, {"_id": 0, "email": 1, "password_hash": 1},
+    ).to_list(len(emails) + 1)
+    legacy_bytes = LEGACY_DEMO_PASSWORD.encode("utf-8")
+    for doc in docs:
+        pw_hash = doc.get("password_hash")
+        if not pw_hash:
+            continue
+        try:
+            if bcrypt.checkpw(legacy_bytes, pw_hash.encode("utf-8")):
+                detected.append(doc["email"])
+        except (ValueError, TypeError):
+            continue
+    return detected
 
 
 async def _check_mongo(cfg: Settings, report: BootstrapReport) -> None:
@@ -137,6 +180,16 @@ async def _check_mongo(cfg: Settings, report: BootstrapReport) -> None:
             report.errors.append(
                 "MongoDB required indexes are missing; review bootstrap output before adding them: "
                 + ", ".join(sorted(missing_indexes))
+            )
+
+        # Security (BACKEND_AUDIT_2026-07-17.md Critical #1): report, never crash.
+        demo_accounts = await _check_demo_accounts(database)
+        report.checks["demo_accounts_detected"] = demo_accounts
+        if demo_accounts:
+            logger.critical(
+                "SECURITY: demo account(s) still have the known default password: %s. "
+                "Run `python -m scripts.rotate_demo_credentials --apply` to rotate.",
+                ", ".join(demo_accounts),
             )
     except Exception as exc:  # noqa: BLE001
         report.checks["mongo"] = {"connected": False, "database": cfg.db_name}

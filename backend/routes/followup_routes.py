@@ -23,7 +23,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from auth import get_current_user
+from auth import floor_for_write, floor_query, get_current_user
 from db import db
 from models import (
     Followup, FollowupCallOutcomePayload, FollowupCompletePayload,
@@ -53,8 +53,8 @@ async def _wake_snoozed() -> None:
     )
 
 
-async def _all_with_bucket() -> list[dict]:
-    docs = await db.followups.find({}, {"_id": 0}).to_list(10000)
+async def _all_with_bucket(user: UserPublic | None = None) -> list[dict]:
+    docs = await db.followups.find(floor_query(user, {}) if user else {}, {"_id": 0}).to_list(10000)
     for d in docs:
         d["bucket"] = compute_bucket(d)
         d["effective_priority_level"] = d.get("manual_priority_override") or d.get("priority_level")
@@ -99,9 +99,9 @@ async def assignees(_: UserPublic = Depends(get_current_user)):
 # KPIs / Today's Mission / Insights — all literal paths, MUST precede /{id}
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get("/stats")
-async def stats(_: UserPublic = Depends(get_current_user)):
+async def stats(user: UserPublic = Depends(get_current_user)):
     await _wake_snoozed()
-    docs = await _all_with_bucket()
+    docs = await _all_with_bucket(user)
 
     counts = {b: 0 for b in ("overdue", "today", "tomorrow", "this_week", "later", "completed", "snoozed")}
     overdue_critical = 0
@@ -154,7 +154,7 @@ async def stats(_: UserPublic = Depends(get_current_user)):
 @router.get("/mission")
 async def mission(user: UserPublic = Depends(get_current_user)):
     await _wake_snoozed()
-    docs = await _all_with_bucket()
+    docs = await _all_with_bucket(user)
     actionable = [d for d in docs if d["bucket"] in ("overdue", "today")]
 
     revenue_at_risk = sum(d.get("value", 0) for d in actionable)
@@ -223,11 +223,11 @@ async def export_followups(
     customer_tier: Optional[str] = None,
     assigned_to: Optional[str] = None,
     q: Optional[str] = None,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     rows = await list_followups(
         bucket=bucket, priority=priority, category=category, channel=None,
-        customer_tier=customer_tier, assigned_to=assigned_to, q=q, limit=3000, _=_,
+        customer_tier=customer_tier, assigned_to=assigned_to, q=q, limit=3000, user=user,
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
 
@@ -319,7 +319,7 @@ async def list_followups(
     assigned_to: Optional[str] = None,
     q: Optional[str] = None,
     limit: int = Query(1000, ge=1, le=3000),
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     await _wake_snoozed()
     query: dict = {}
@@ -338,7 +338,7 @@ async def list_followups(
             {"purchase_number": term}, {"project_name": term}, {"reason": term}, {"tags": term},
         ]
 
-    docs = await db.followups.find(query, {"_id": 0}).to_list(limit * 3)
+    docs = await db.followups.find(floor_query(user, query), {"_id": 0}).to_list(limit * 3)
     for d in docs:
         d["bucket"] = compute_bucket(d)
         d["effective_priority_level"] = d.get("manual_priority_override") or d.get("priority_level")
@@ -356,10 +356,10 @@ async def list_followups(
 # Detail — powers the Customer Context Panel
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get("/{followup_id}")
-async def get_detail(followup_id: str, _: UserPublic = Depends(get_current_user)):
+async def get_detail(followup_id: str, user: UserPublic = Depends(get_current_user)):
     from routes.payment_routes import ORDER_STATUSES, _paid_by_quotation
 
-    f = await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    f = await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
     if not f:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     f["bucket"] = compute_bucket(f)
@@ -444,10 +444,10 @@ async def get_detail(followup_id: str, _: UserPublic = Depends(get_current_user)
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post("", response_model=Followup)
 async def create_followup(body: FollowupCreate, user: UserPublic = Depends(get_current_user)):
-    cust = await db.customers.find_one({"id": body.customer_id}, {"_id": 0})
+    cust = await db.customers.find_one(floor_query(user, {"id": body.customer_id}), {"_id": 0})
     if not cust:
         raise HTTPException(status_code=404, detail="Customer not found")
-    quotation = await db.quotations.find_one({"id": body.quotation_id}, {"_id": 0}) if body.quotation_id else None
+    quotation = await db.quotations.find_one(floor_query(user, {"id": body.quotation_id}), {"_id": 0}) if body.quotation_id else None
     tier = cust.get("tier", "retail")
     value = float(quotation.get("grand_total", 0)) if quotation else 0.0
     score, level = score_followup(value, 0, 12, tier)
@@ -474,6 +474,7 @@ async def create_followup(body: FollowupCreate, user: UserPublic = Depends(get_c
         due_at=body.due_at or now_iso(), is_automated=False,
         assigned_to=body.assigned_to or user.id, assigned_to_name=assigned_to_name,
         notes=body.notes,
+        floor_id=floor_for_write(user),
     )
     await db.followups.insert_one(f.dict())
     await log_event(
@@ -486,7 +487,7 @@ async def create_followup(body: FollowupCreate, user: UserPublic = Depends(get_c
 
 @router.patch("/{followup_id}")
 async def update_followup(followup_id: str, body: FollowupUpdate, user: UserPublic = Depends(get_current_user)):
-    f = await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    f = await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
     if not f:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     patch = body.dict(exclude_unset=True)
@@ -513,8 +514,8 @@ async def update_followup(followup_id: str, body: FollowupUpdate, user: UserPubl
             summary=f"Note added: {patch['notes'][:120]}",
         )
     patch["updated_at"] = now_iso()
-    await db.followups.update_one({"id": followup_id}, {"$set": patch})
-    return await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    await db.followups.update_one(floor_query(user, {"id": followup_id}), {"$set": patch})
+    return await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -81,13 +81,19 @@ def test_revoked_session_is_never_cached(monkeypatch):
     assert auth._principal_cache == {}
 
 
-def test_legacy_staff_token_without_session_still_validates_user(monkeypatch):
+def test_legacy_staff_token_without_session_is_rejected(monkeypatch):
+    """A token with no session_id used to fall back to a legacy path that
+    validated purely off JWT signature + active-user check — meaning it had
+    no revocation lever short of deactivating the whole account (see
+    BACKEND_AUDIT_2026-07-17.md High #8). Every issuance path has embedded a
+    session_id since sessions were introduced, so a token without one is now
+    simply invalid rather than silently trusted."""
     fake = FakeDb(None, _staff_doc())
     monkeypatch.setattr(auth, "db", fake)
     token = auth.create_token("user-1", "staff", {"role": "owner"})
 
-    user = asyncio.run(auth.get_current_user(authorization=f"Bearer {token}"))
+    with pytest.raises(Exception) as exc:
+        asyncio.run(auth.get_current_user(authorization=f"Bearer {token}"))
 
-    assert user.id == "user-1"
-    assert fake.user_sessions.find_one_calls == 0
-    assert fake.users.find_one_calls == 1
+    assert getattr(exc.value, "status_code", None) == 401
+    assert fake.users.find_one_calls == 0  # rejected before ever touching `users`

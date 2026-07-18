@@ -1,0 +1,25 @@
+# Production runtime dependencies — the exact set the server imports.
+# requirements.txt is the Emergent preview environment freeze and includes
+# platform-private packages (emergentintegrations) that do not exist on
+# public PyPI; use THIS file for reproducible builds (see Dockerfile).
+# Versions are pinned to match requirements.txt.
+fastapi==0.110.1
+uvicorn[standard]==0.25.0
+motor==3.3.1
+pymongo==4.6.3
+pydantic==2.13.4
+python-dotenv==1.2.2
+PyJWT==2.13.0
+bcrypt==4.1.3
+passlib==1.7.4
+httpx==0.28.1
+openpyxl==3.1.5
+pillow==12.3.0
+python-multipart==0.0.32
+email-validator==2.3.0
+reportlab==5.0.0
+numpy==2.4.6
+imagecodecs==2026.3.6
+sentry-sdk[fastapi]==2.64.0
+posthog==4.0.1
+redis==5.2.1

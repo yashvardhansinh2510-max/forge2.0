@@ -45,7 +45,7 @@ export default function SettingsCatalog() {
 
         <Card style={{ gap: 6, backgroundColor: colors.surfaceTertiary, borderColor: colors.border }}>
           <Text style={type.overline}>Restore</Text>
-          <Text style={type.bodyMuted}>Not available in-app. A bad restore could overwrite live data — if you ever need to recover from a backup file, that's a hands-on job, not a self-serve button.</Text>
+          <Text style={type.bodyMuted}>Not available in-app. A bad restore could overwrite live data — if you ever need to recover from a backup file, that&apos;s a hands-on job, not a self-serve button.</Text>
         </Card>
       </ScrollView>
     </AdminPage>

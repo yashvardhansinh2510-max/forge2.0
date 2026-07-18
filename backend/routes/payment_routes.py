@@ -13,10 +13,10 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote_plus
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
-from auth import get_current_user, require_min_role
-from db import db
+from auth import floor_for_write, floor_query, get_current_user, require_min_role
+from db import client, db
 from models import Payment, PaymentCreate, UserPublic
 from services.activity_log import log_event
 from services.followup_engine import reconcile_followups
@@ -102,10 +102,10 @@ def _iso_month(iso_ts: str) -> str:
 # Stats (KPI cards at the top of the page)
 # ---------------------------------------------------------------------------
 @router.get("/stats")
-async def payment_stats(_: UserPublic = Depends(get_current_user)):
+async def payment_stats(user: UserPublic = Depends(get_current_user)):
     """Four KPIs: Total Outstanding · Collected This Month · Active Orders · Fully Paid."""
     orders = await db.quotations.find(
-        {"status": {"$in": list(ORDER_STATUSES)}},
+        floor_query(user, {"status": {"$in": list(ORDER_STATUSES)}}),
         {"_id": 0, "id": 1, "grand_total": 1},
     ).to_list(2000)
     ids = [o["id"] for o in orders]
@@ -127,7 +127,7 @@ async def payment_stats(_: UserPublic = Depends(get_current_user)):
     # Collected this month
     this_month = _iso_month(datetime.now(timezone.utc).isoformat())
     pipeline = [
-        {"$match": {"status": "completed"}},
+        {"$match": floor_query(user, {"status": "completed"})},
         {"$group": {"_id": {"$substr": [{"$ifNull": ["$paid_at", "$created_at"]}, 0, 7]}, "total": {"$sum": "$amount"}}},
     ]
     rows = await db.payments.aggregate(pipeline).to_list(60)
@@ -153,7 +153,7 @@ async def list_orders(
     q: Optional[str] = None,
     status_filter: Optional[str] = Query(None, description="paid | partial | due | all"),
     limit: int = Query(200, ge=1, le=1000),
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """Collectable orders sorted by outstanding-first."""
     query: dict = {"status": {"$in": list(ORDER_STATUSES)}}
@@ -164,7 +164,7 @@ async def list_orders(
         ]
 
     docs = await db.quotations.find(
-        query, {"_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
+        floor_query(user, query), {"_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
                 "grand_total": 1, "status": 1, "updated_at": 1, "created_at": 1, "notes": 1},
     ).sort("updated_at", -1).to_list(limit * 2)
 
@@ -204,8 +204,8 @@ async def list_orders(
 # Order detail (right column)
 # ---------------------------------------------------------------------------
 @router.get("/orders/{order_id}")
-async def order_detail(order_id: str, _: UserPublic = Depends(get_current_user)):
-    doc = await db.quotations.find_one({"id": order_id}, {"_id": 0})
+async def order_detail(order_id: str, user: UserPublic = Depends(get_current_user)):
+    doc = await db.quotations.find_one(floor_query(user, {"id": order_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Order not found")
     if doc.get("status") not in ORDER_STATUSES:
@@ -259,31 +259,21 @@ async def order_detail(order_id: str, _: UserPublic = Depends(get_current_user))
 @router.post("", response_model=Payment)
 async def create_payment(
     body: PaymentCreate,
+    idempotency_header: Optional[str] = Header(None, alias="Idempotency-Key"),
     user: UserPublic = Depends(require_min_role("accounts")),
 ):
-    quot = await db.quotations.find_one({"id": body.quotation_id}, {"_id": 0})
+    idempotency_key = (idempotency_header or body.idempotency_key or "").strip() or None
+    if idempotency_key:
+        existing = await db.payments.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+        if existing:
+            return existing
+    quot = await db.quotations.find_one(floor_query(user, {"id": body.quotation_id}), {"_id": 0})
     if not quot:
         raise HTTPException(status_code=404, detail="Order not found")
     if quot.get("status") not in ORDER_STATUSES:
         raise HTTPException(status_code=400, detail="Quotation is not a confirmed order yet")
     if body.amount <= 0:
         raise HTTPException(status_code=400, detail="Amount must be greater than zero")
-
-    # Overpayment guard — a payment can never push the order past its grand
-    # total. Computed BEFORE inserting so concurrent double-submits can't
-    # both squeak past the check.
-    grand = float(quot.get("grand_total") or 0)
-    paid_before_map = await _paid_by_quotation([body.quotation_id])
-    already_paid = paid_before_map.get(body.quotation_id, 0.0)
-    outstanding_before = round(grand - already_paid, 2)
-    if round(float(body.amount), 2) > outstanding_before + 0.01:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Payment of ₹{body.amount:,.2f} exceeds the outstanding balance of "
-                f"₹{max(outstanding_before, 0):,.2f} on {quot.get('number')}"
-            ),
-        )
 
     now = datetime.now(timezone.utc).isoformat()
     paid_at = body.paid_at or now
@@ -300,8 +290,65 @@ async def create_payment(
         paid_at=paid_at,
         recorded_by=user.id,
         recorded_by_name=user.full_name,
+        idempotency_key=idempotency_key,
+        floor_id=floor_for_write(user),
     )
-    await db.payments.insert_one(payment.dict())
+    async def _check_and_insert(session=None):
+        """Balance check + insert, optionally inside a transaction session."""
+        if idempotency_key:
+            existing = await db.payments.find_one({"idempotency_key": idempotency_key}, {"_id": 0}, session=session)
+            if existing:
+                return existing
+        quot_now = await db.quotations.find_one({"id": body.quotation_id}, {"_id": 0, "grand_total": 1, "number": 1}, session=session)
+        grand = float((quot_now or {}).get("grand_total") or 0)
+        paid_rows = await db.payments.aggregate([
+            {"$match": {"quotation_id": body.quotation_id, "status": "completed"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+        ], session=session).to_list(1)
+        already_paid = float(paid_rows[0].get("total") or 0) if paid_rows else 0.0
+        outstanding_before = round(grand - already_paid, 2)
+        if round(float(body.amount), 2) > outstanding_before + 0.01:
+            raise HTTPException(status_code=400, detail=(
+                f"Payment of ₹{body.amount:,.2f} exceeds the outstanding balance of "
+                f"₹{max(outstanding_before, 0):,.2f} on {quot.get('number')}"
+            ))
+        await db.payments.insert_one(payment.dict(), session=session)
+        return None
+
+    # Atlas transactions serialize the balance check with the insert. This
+    # prevents two simultaneous collectors from both spending the same balance.
+    # Standalone Mongo (local dev) has no transactions — fall back to the
+    # unserialized check there, still protected by the idempotency unique index.
+    try:
+        try:
+            async with await client.start_session() as session:
+                async with session.start_transaction():
+                    replay = await _check_and_insert(session=session)
+                    if replay is not None:
+                        return replay
+        except HTTPException:
+            raise
+        except Exception as exc:
+            message = str(exc)
+            txn_unsupported = (
+                "Transaction numbers" in message
+                or "replica set" in message
+                or "IllegalOperation" in message
+            )
+            if not txn_unsupported:
+                raise
+            replay = await _check_and_insert(session=None)
+            if replay is not None:
+                return replay
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # A unique-key race is safe to replay; return the committed payment.
+        if idempotency_key:
+            existing = await db.payments.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+            if existing:
+                return existing
+        raise HTTPException(status_code=503, detail="Payment could not be committed safely") from exc
 
     # If this settled the balance, we auto-flip the quotation to "won" ONLY if
     # it was already an ordered/won-tracked order; otherwise we leave it as-is.
@@ -343,10 +390,20 @@ async def create_payment(
 
 
 # Backwards-compat: keep GET /api/payments returning the raw list (used elsewhere).
+# `skip`/`limit` are additive and opt-in — omitting them preserves the exact
+# prior behavior (first 500, newest first). `X-Has-More` lets a future caller
+# detect truncation without a breaking response-shape change; see
+# PRODUCTION_FIXES_2026-07-16.md item 8 (pagination hardening).
 @router.get("")
-async def list_payments(_: UserPublic = Depends(get_current_user)):
-    docs = await db.payments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return docs
+async def list_payments(
+    response: Response,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=2000),
+    user: UserPublic = Depends(get_current_user),
+):
+    docs = await db.payments.find(floor_query(user), {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit + 1).to_list(limit + 1)
+    response.headers["X-Has-More"] = "true" if len(docs) > limit else "false"
+    return docs[:limit]
 
 
 # ---------------------------------------------------------------------------

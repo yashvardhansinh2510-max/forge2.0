@@ -23,24 +23,46 @@ def _client_ip(request: Request) -> str | None:
     return request.client.host if request and request.client else None
 
 
+async def _revoke_other_sessions(kind: str, user_id: str, authorization: Optional[str]) -> None:
+    """Sign out every other device after a password change — the standard
+    "someone might have my old password" response. Keeps the session the
+    request itself authenticated with alive (matches Google/GitHub UX: you
+    are not logged out of the device where you just changed the password).
+
+    Security (BACKEND_AUDIT_2026-07-17.md High #10): previously a password
+    change only cleared a 10-second in-memory cache — every other
+    already-issued session/token stayed valid for its full lifetime, so
+    changing a compromised password did not actually lock an attacker out."""
+    current_sid = None
+    if authorization and authorization.lower().startswith("bearer "):
+        try:
+            current_sid = decode_token(authorization.split(" ", 1)[1].strip()).get("session_id")
+        except HTTPException:
+            current_sid = None
+    query: dict = {"user_type": kind, "user_id": user_id, "revoked": {"$ne": True}}
+    if current_sid:
+        query["id"] = {"$ne": current_sid}
+    await db.user_sessions.update_many(query, {"$set": {"revoked": True}})
+
+
 @router.post("/login", response_model=TokenResponse)
 async def staff_login(body: LoginPayload, request: Request):
     ip = _client_ip(request)
-    check_login_rate_limit(ip, body.email)
+    await check_login_rate_limit(ip, body.email)
     doc = await db.users.find_one({"email": body.email.lower()}, {"_id": 0})
     if not doc or not verify_password(body.password, doc.get("password_hash", "")):
-        record_login_failure(ip, body.email)
+        await record_login_failure(ip, body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not doc.get("active", True):
-        record_login_failure(ip, body.email)
+        await record_login_failure(ip, body.email)
         raise HTTPException(status_code=403, detail="Account disabled")
     if doc.get("must_change_password") and is_temp_password_expired(doc.get("temp_password_expires_at")):
-        record_login_failure(ip, body.email)
+        await record_login_failure(ip, body.email)
         raise HTTPException(
             status_code=401,
             detail="This temporary password has expired. Ask an admin to reset it again.",
         )
-    clear_login_attempts(ip, body.email)
+    await clear_login_attempts(ip, body.email)
     sid = await create_session("staff", doc["id"], request, login_method="password")
     token = create_token(doc["id"], "staff", {"role": doc["role"], "session_id": sid})
     doc.pop("password_hash", None)
@@ -57,7 +79,11 @@ async def staff_me(user: UserPublic = Depends(get_current_user)):
 
 
 @router.post("/change-password")
-async def staff_change_password(body: ChangePasswordPayload, user: UserPublic = Depends(get_current_user)):
+async def staff_change_password(
+    body: ChangePasswordPayload,
+    user: UserPublic = Depends(get_current_user),
+    authorization: Optional[str] = Header(None),
+):
     """Settings > Account > Password. Also the exit path from a forced
     password change after Team > Reset Password issued a temporary one —
     clears must_change_password/temp_password_expires_at on success."""
@@ -74,27 +100,28 @@ async def staff_change_password(body: ChangePasswordPayload, user: UserPublic = 
         }},
     )
     invalidate_principal_cache("staff", user.id)
+    await _revoke_other_sessions("staff", user.id, authorization)
     return {"changed": True}
 
 
 @router.post("/customer/login", response_model=CustomerTokenResponse)
 async def customer_login(body: CustomerLoginPayload, request: Request):
     ip = _client_ip(request)
-    check_login_rate_limit(ip, body.email)
+    await check_login_rate_limit(ip, body.email)
     doc = await db.customers.find_one({"email": body.email.lower()}, {"_id": 0})
     if not doc or not doc.get("password_hash") or not verify_password(body.password, doc["password_hash"]):
-        record_login_failure(ip, body.email)
+        await record_login_failure(ip, body.email)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not doc.get("portal_enabled"):
-        record_login_failure(ip, body.email)
+        await record_login_failure(ip, body.email)
         raise HTTPException(status_code=403, detail="Portal access is disabled for this account. Contact your account manager.")
     if doc.get("must_change_password") and is_temp_password_expired(doc.get("temp_password_expires_at")):
-        record_login_failure(ip, body.email)
+        await record_login_failure(ip, body.email)
         raise HTTPException(
             status_code=401,
             detail="This temporary password has expired. Ask your account manager to resend the invite.",
         )
-    clear_login_attempts(ip, body.email)
+    await clear_login_attempts(ip, body.email)
     sid = await create_session("customer", doc["id"], request, login_method="password")
     token = create_token(doc["id"], "customer", {"session_id": sid})
     doc.pop("password_hash", None)
@@ -107,7 +134,11 @@ async def customer_login(body: CustomerLoginPayload, request: Request):
 
 
 @router.post("/customer/change-password")
-async def customer_change_password(body: ChangePasswordPayload, cust: CustomerPublic = Depends(get_current_customer)):
+async def customer_change_password(
+    body: ChangePasswordPayload,
+    cust: CustomerPublic = Depends(get_current_customer),
+    authorization: Optional[str] = Header(None),
+):
     """Customer Portal > exit path from a forced password change after
     Send Invite / Reset Password issued a temporary one."""
     doc = await db.customers.find_one({"id": cust.id}, {"_id": 0, "password_hash": 1})
@@ -123,6 +154,7 @@ async def customer_change_password(body: ChangePasswordPayload, cust: CustomerPu
         }},
     )
     invalidate_principal_cache("customer", cust.id)
+    await _revoke_other_sessions("customer", cust.id, authorization)
     return {"changed": True}
 
 

@@ -21,12 +21,14 @@ import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type Staff = {
   id: string; full_name: string; email: string; role: string;
-  phone?: string | null; active: boolean;
+  phone?: string | null; active: boolean; floor_ids?: string[];
 };
+type Floor = { id: string; name: string; slug: string };
 
 export default function Team() {
   const { staff: me } = useAuth();
   const { roles } = useRoles();
+  const [floors, setFloors] = useState<Floor[]>([]);
   const [items, setItems] = useState<Staff[] | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<Staff | null>(null);
@@ -37,6 +39,7 @@ export default function Team() {
     api.get<Staff[]>("/team").then(setItems).catch(() => setItems([]));
   }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { api.get<Floor[]>("/settings/floors").then(setFloors).catch(() => setFloors([])); }, []);
 
   return (
     <AdminPage
@@ -91,9 +94,10 @@ export default function Team() {
         </View>
       )}
 
-      <AddStaffSheet visible={addOpen} onClose={() => setAddOpen(false)} onCreated={load} />
+      <AddStaffSheet visible={addOpen} floors={floors} onClose={() => setAddOpen(false)} onCreated={load} />
       <EditStaffSheet
         staff={editing}
+        floors={floors}
         selfId={me?.id}
         onClose={() => setEditing(null)}
         onSaved={() => { load(); setEditing(null); }}
@@ -112,13 +116,14 @@ export default function Team() {
 // ──────────────────────────────────────────────────────────────────────────
 // Add Staff
 // ──────────────────────────────────────────────────────────────────────────
-function AddStaffSheet({ visible, onClose, onCreated }: { visible: boolean; onClose: () => void; onCreated: () => void }) {
+function AddStaffSheet({ visible, floors, onClose, onCreated }: { visible: boolean; floors: Floor[]; onClose: () => void; onCreated: () => void }) {
   const { roles } = useRoles();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<string>("");
+  const [floorIds, setFloorIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -128,7 +133,7 @@ function AddStaffSheet({ visible, onClose, onCreated }: { visible: boolean; onCl
     if (!role && roles.length > 0) setRole(roles[roles.length - 1].role);
   }, [roles, role]);
 
-  const reset = () => { setFullName(""); setEmail(""); setPhone(""); setPassword(""); setError(null); };
+  const reset = () => { setFullName(""); setEmail(""); setPhone(""); setPassword(""); setFloorIds([]); setError(null); };
 
   const save = async () => {
     if (!fullName.trim()) { setError("Full name is required"); return; }
@@ -137,7 +142,7 @@ function AddStaffSheet({ visible, onClose, onCreated }: { visible: boolean; onCl
     if (!role) { setError("Select a role"); return; }
     setSaving(true);
     try {
-      await api.post("/team", { full_name: fullName.trim(), email: email.trim(), phone: phone.trim() || null, password, role });
+      await api.post("/team", { full_name: fullName.trim(), email: email.trim(), phone: phone.trim() || null, password, role, floor_ids: floorIds });
       toast.success("Team member added");
       reset();
       onCreated();
@@ -165,6 +170,7 @@ function AddStaffSheet({ visible, onClose, onCreated }: { visible: boolean; onCl
               ))}
             </View>
           </View>
+          <FloorPicker floors={floors} value={floorIds} onChange={setFloorIds} hint="Owners and managers automatically see every floor." />
           <Button testID="add-staff-save" label={saving ? "Adding…" : "Add staff member"} variant="primary" size="lg" icon="check" disabled={saving} onPress={save} fullWidth />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -176,9 +182,10 @@ function AddStaffSheet({ visible, onClose, onCreated }: { visible: boolean; onCl
 // Edit Staff (role, active, reset password)
 // ──────────────────────────────────────────────────────────────────────────
 function EditStaffSheet({
-  staff, selfId, onClose, onSaved, onPasswordReset,
+  staff, floors, selfId, onClose, onSaved, onPasswordReset,
 }: {
   staff: Staff | null;
+  floors: Floor[];
   selfId?: string;
   onClose: () => void;
   onSaved: () => void;
@@ -189,6 +196,7 @@ function EditStaffSheet({
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState("");
   const [active, setActive] = useState(true);
+  const [floorIds, setFloorIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
 
@@ -198,6 +206,7 @@ function EditStaffSheet({
       setPhone(staff.phone || "");
       setRole(staff.role);
       setActive(staff.active);
+      setFloorIds(staff.floor_ids || []);
     }
   }, [staff]);
 
@@ -209,6 +218,7 @@ function EditStaffSheet({
     try {
       const patch: Record<string, any> = { full_name: fullName.trim(), phone: phone.trim() || null };
       if (!isSelf) { patch.role = role; patch.active = active; }
+      if (!isSelf) patch.floor_ids = floorIds;
       await api.patch(`/team/${staff.id}`, patch);
       toast.success("Team member updated");
       onSaved();
@@ -263,6 +273,8 @@ function EditStaffSheet({
             <Switch testID="edit-staff-active-switch" value={active} onValueChange={setActive} disabled={isSelf} />
           </View>
 
+          <FloorPicker floors={floors} value={floorIds} onChange={setFloorIds} hint="Owners and managers automatically see every floor." disabled={isSelf} />
+
           <Button testID="edit-staff-save" label={saving ? "Saving…" : "Save changes"} variant="primary" icon="check" disabled={saving} onPress={save} fullWidth />
 
           <View style={styles.divider} />
@@ -284,6 +296,21 @@ function EditStaffSheet({
         </ScrollView>
       </KeyboardAvoidingView>
     </Sheet>
+  );
+}
+
+function FloorPicker({ floors, value, onChange, hint, disabled }: { floors: Floor[]; value: string[]; onChange: (ids: string[]) => void; hint: string; disabled?: boolean }) {
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={type.label}>Floor access</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
+        {floors.map((floor) => {
+          const active = value.includes(floor.id);
+          return <Chip key={floor.id} label={floor.name} active={active} onPress={() => { if (disabled) return; onChange(active ? value.filter((id) => id !== floor.id) : [...value, floor.id]); }} />;
+        })}
+      </View>
+      <Text style={type.caption}>{hint}</Text>
+    </View>
   );
 }
 

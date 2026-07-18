@@ -23,6 +23,9 @@ class ConfigurationError(RuntimeError):
     """Raised when Forge cannot start safely with the supplied configuration."""
 
 
+VALID_ENVIRONMENTS = ("production", "staging", "development")
+
+
 @dataclass(frozen=True)
 class Settings:
     mongo_url: str
@@ -36,6 +39,10 @@ class Settings:
     supabase_anon_key: str
     supabase_public_bucket: str
     supabase_private_bucket: str
+    allow_demo_seed: bool
+    environment: str
+    demo_password: str | None
+    google_session_url: str
 
     def readiness_flags(self) -> dict[str, bool]:
         """Safe, non-secret status values for diagnostics and health responses."""
@@ -110,6 +117,36 @@ def load_settings(
             f"Unsupported MEDIA_STORAGE_DRIVER={driver!r}; Forge production currently requires 'supabase'."
         )
 
+    # Unset means assume the most restrictive setting — a missing ENVIRONMENT
+    # var must never be silently treated as a safe non-production default.
+    environment = (env.get("ENVIRONMENT") or "production").strip().lower()
+    if environment not in VALID_ENVIRONMENTS:
+        raise ConfigurationError(
+            f"ENVIRONMENT={environment!r} is not valid; must be one of {VALID_ENVIRONMENTS}."
+        )
+
+    allow_demo_seed = (env.get("FORGE_ALLOW_DEMO_SEED", "false").strip().lower() == "true")
+    if environment == "production" and allow_demo_seed:
+        raise ConfigurationError(
+            "FORGE_ALLOW_DEMO_SEED=true is not allowed when ENVIRONMENT=production. "
+            "Demo seeding must never be enabled in a production environment."
+        )
+
+    demo_password = (env.get("FORGE_DEMO_PASSWORD") or "").strip() or None
+    if allow_demo_seed and not demo_password:
+        raise ConfigurationError(
+            "FORGE_ALLOW_DEMO_SEED=true requires FORGE_DEMO_PASSWORD to be set explicitly — "
+            "no demo password ships as a hardcoded default anymore."
+        )
+
+    # Google Sign-In session verification. Defaults to Emergent's relay (the
+    # scaffold this app was built from) but MUST be overridable — a real
+    # production deployment should not have its auth flow silently depend on
+    # a third-party's demo domain name. See BACKEND_AUDIT_2026-07-17.md High #7.
+    google_session_url = (
+        env.get("GOOGLE_SESSION_URL") or "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+    ).strip()
+
     return Settings(
         mongo_url=mongo_url,
         db_name=db_name,
@@ -122,6 +159,10 @@ def load_settings(
         supabase_anon_key=anon_key,
         supabase_public_bucket=public_bucket,
         supabase_private_bucket=private_bucket,
+        allow_demo_seed=allow_demo_seed,
+        environment=environment,
+        demo_password=demo_password,
+        google_session_url=google_session_url,
     )
 
 

@@ -9,7 +9,7 @@
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useState } from "react";
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, money, radius, spacing, statusMeta, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
@@ -62,7 +62,12 @@ export function BuilderTopbar({ onBack }: { onBack: () => void }) {
       </View>
 
       {isDesktop ? (
-        <View style={styles.headerFieldsRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.headerFieldsRow}
+          contentContainerStyle={styles.headerFieldsRowContent}
+        >
           <Pressable
             testID="hdr-customer"
             onPress={() => b.setCustomerSwitcherOpen(true)}
@@ -97,7 +102,7 @@ export function BuilderTopbar({ onBack }: { onBack: () => void }) {
             placeholder="Walk-in · Architect · Instagram"
             testID="hdr-ref"
           />
-        </View>
+        </ScrollView>
       ) : null}
 
       <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
@@ -118,8 +123,8 @@ export function BuilderTopbar({ onBack }: { onBack: () => void }) {
               disabled={b.workflowBusy || b.s.lines.length === 0}
               style={({ pressed }) => [styles.workflowBtn, styles.orderBtn, { opacity: b.workflowBusy || b.s.lines.length === 0 ? 0.45 : pressed ? 0.76 : 1 }]}
             >
-              <Feather name="shopping-cart" size={14} color={colors.onAction} />
-              <Text style={[styles.workflowText, { color: colors.onAction }]}>Place Order</Text>
+              <Feather name="shopping-cart" size={14} color={colors.onBrand} />
+              <Text style={[styles.workflowText, { color: colors.onBrand }]}>Place Order</Text>
             </Pressable>
           </>
         ) : null}
@@ -209,13 +214,15 @@ const styles = StyleSheet.create({
   revText: { fontSize: 10, fontWeight: "700", color: colors.onSurfaceMuted, letterSpacing: 0.3 },
 
   headerFieldsRow: {
-    flex: 1, flexDirection: "row", gap: 8, justifyContent: "flex-end", alignItems: "center",
-    marginLeft: spacing.lg,
+    flex: 1, marginLeft: spacing.lg,
+  },
+  headerFieldsRowContent: {
+    flexDirection: "row", gap: 8, alignItems: "center", flexGrow: 1, justifyContent: "flex-end",
   },
   field: {
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
-    backgroundColor: colors.surface, minWidth: 120, maxWidth: 200,
+    backgroundColor: colors.surface, minWidth: 108, maxWidth: 200,
   },
   fieldFocused: { borderColor: ds.brass, backgroundColor: ds.brassTint },
   fieldPressable: {},

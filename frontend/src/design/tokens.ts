@@ -91,7 +91,7 @@ export const font = {
 
 // ── Type scale — 4pt baseline rhythm ────────────────────────────────────────
 type Style = Record<string, unknown>;
-const tabular = { fontVariant: ["tabular-nums" as const] };
+const tabular = { fontVariant: ["tabular-nums"] as any };
 
 export const text = {
   // Display — Fraunces. Two places only: greetings and auth. Never in chrome.

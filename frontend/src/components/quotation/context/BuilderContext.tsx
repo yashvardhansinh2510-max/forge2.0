@@ -20,6 +20,7 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { useHistory, useUndoRedoShortcuts } from "@/src/hooks/useHistory";
 import type { HistoryApi } from "@/src/hooks/useHistory";
+import { playAddProductSound } from "@/src/services/soundService";
 
 import { computeTotals, effectivePct } from "../helpers/pricing";
 import { productImageList } from "../helpers/media";
@@ -598,6 +599,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
 
   const addFromProduct = useCallback((p: Product, variant?: ProductVariant) => {
     Haptics.selectionAsync();
+    playAddProductSound();
     history.apply((cur) => {
       const sku = variant?.sku ?? p.sku;
       const idx = cur.lines.findIndex((l) => l.sku === sku && l.room === cur.activeRoom);
@@ -890,7 +892,14 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     : savedAt ? `Saved · ${savedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}`
     : "Draft — no changes yet";
 
-  const value: BuilderApi = {
+  // Memoized: without this, every add-product/state change built a brand-new
+  // object here, which re-rendered EVERY useBuilder() consumer in the tree —
+  // including closed sheets rendering null — producing the visible flicker
+  // right after adding a product. Each field below is itself stable
+  // (useCallback/useState setters) or a real state value that should trigger
+  // a refresh, so this only produces a new reference when something the UI
+  // actually depends on changes.
+  const value: BuilderApi = useMemo(() => ({
     history, s,
     customers, categories, categoryById,
     q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading,
@@ -917,7 +926,34 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     quickAddProduct, setQuickAddProduct,
     inlineRenameRoom, setInlineRenameRoom, inlineRenameValue, setInlineRenameValue,
     assistantFocus, setAssistantFocus, assistantOpenMobile, setAssistantOpenMobile,
-  };
+  }), [
+    history, s,
+    customers, categories, categoryById,
+    q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading,
+    productHasMore, productLoadingMore, loadMoreProducts, recent, frequent, searchRef,
+    brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
+    sortKey, setSortKey, favouriteIds, toggleFavourite,
+    setProjectName, setPhone, setReferenceSource,
+    productModal, openProductModal, closeProductModal, patchProduct,
+    customProductSheetOpen, setCustomProductSheetOpen,
+    recentQuotations, refreshRecentQuotations, restoreQuotation, startNewQuotation,
+    totals, usedCategoryIds, flatRows,
+    quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
+    workflowBusy, generateOfficialQuotation, placeOrder,
+    setCustomer, createCustomer, customerSwitcherOpen, setCustomerSwitcherOpen,
+    addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,
+    addRoom, renameRoom, duplicateRoom, deleteRoom, toggleCollapse, setActiveRoom, onRoomDragEnd, onLinesDragEnd,
+    setProjectDiscount, setCategoryDiscount, setRoomDiscount, setNotes,
+    swapItems, swapLoading, openSwap, commitSwap, closeSwap,
+    discountSheet, setDiscountSheet,
+    roomSheet, setRoomSheet, roomInput, setRoomInput,
+    descSheet, setDescSheet,
+    swapSheet,
+    pickerSheetOpen, setPickerSheetOpen,
+    quickAddProduct, setQuickAddProduct,
+    inlineRenameRoom, setInlineRenameRoom, inlineRenameValue, setInlineRenameValue,
+    assistantFocus, setAssistantFocus, assistantOpenMobile, setAssistantOpenMobile,
+  ]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

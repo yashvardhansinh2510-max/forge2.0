@@ -1,8 +1,8 @@
 """Customer CRUD (admin) + customer-portal self-serve endpoints."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from auth import (
-    get_current_customer, get_current_user, hash_password, invalidate_principal_cache, require_min_role,
+    floor_for_write, floor_query, get_current_customer, get_current_user, hash_password, invalidate_principal_cache, require_min_role,
 )
 from db import db
 from models import (
@@ -15,10 +15,22 @@ router = APIRouter(tags=["customers"])
 
 
 # ---------- Staff-side ----------
+# `skip`/`limit` are additive and opt-in — omitting them preserves the exact
+# prior behavior (first 500, newest first). `X-Has-More` lets a future caller
+# detect truncation without a breaking response-shape change; see
+# PRODUCTION_FIXES_2026-07-16.md item 8 (pagination hardening).
 @router.get("/customers", response_model=list[CustomerPublic])
-async def list_customers(_: UserPublic = Depends(get_current_user)):
-    docs = await db.customers.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(500)
-    return [CustomerPublic(**d) for d in docs]
+async def list_customers(
+    response: Response,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=2000),
+    user: UserPublic = Depends(get_current_user),
+):
+    docs = await db.customers.find(
+        floor_query(user), {"_id": 0, "password_hash": 0},
+    ).sort("created_at", -1).skip(skip).limit(limit + 1).to_list(limit + 1)
+    response.headers["X-Has-More"] = "true" if len(docs) > limit else "false"
+    return [CustomerPublic(**d) for d in docs[:limit]]
 
 
 @router.post("/customers", response_model=CustomerPublic)
@@ -31,6 +43,7 @@ async def create_customer(
     if not body.name or not body.name.strip():
         raise HTTPException(status_code=400, detail="Customer name is required")
     data = body.dict()
+    data["floor_id"] = floor_for_write(user)
     if data.get("email"):
         data["email"] = data["email"].lower()
     else:
@@ -50,8 +63,8 @@ async def create_customer(
 
 
 @router.get("/customers/{customer_id}", response_model=CustomerPublic)
-async def get_customer(customer_id: str, _: UserPublic = Depends(get_current_user)):
-    doc = await db.customers.find_one({"id": customer_id}, {"_id": 0, "password_hash": 0})
+async def get_customer(customer_id: str, user: UserPublic = Depends(get_current_user)):
+    doc = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0, "password_hash": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Customer not found")
     return CustomerPublic(**doc)
@@ -64,7 +77,7 @@ async def update_customer(
     """Customers > Edit Customer. Also where Portal Enabled is toggled — the
     only place that flag can be flipped besides Send Invite (which turns it
     on implicitly, see below)."""
-    existing = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    existing = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Customer not found")
 
@@ -99,7 +112,7 @@ async def update_customer(
             customer_id=customer_id, actor=user, summary="Customer Details Updated",
         )
 
-    doc = await db.customers.find_one({"id": customer_id}, {"_id": 0, "password_hash": 0})
+    doc = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0, "password_hash": 0})
     return CustomerPublic(**doc)
 
 
@@ -107,7 +120,7 @@ async def _issue_temp_password(customer_id: str, *, kind: str, user: UserPublic)
     """Shared core for Send Invite + Reset Password — generates, hashes,
     stores, and delivers a temporary password. `kind` only affects the
     delivery message/audit summary."""
-    target = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    target = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Customer not found")
     if not target.get("email"):
@@ -118,7 +131,7 @@ async def _issue_temp_password(customer_id: str, *, kind: str, user: UserPublic)
     temp_pw = generate_temp_password()
     expires_at = temp_password_expiry_iso()
     await db.customers.update_one(
-        {"id": customer_id},
+        floor_query(user, {"id": customer_id}),
         {"$set": {
             "password_hash": hash_password(temp_pw),
             "must_change_password": True,

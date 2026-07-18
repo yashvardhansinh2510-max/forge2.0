@@ -64,7 +64,9 @@ def invalidate_principal_cache(kind: str, subject: str, session_id: str | None =
     for key in [key for key in _principal_cache if key[0] == kind and key[1] == subject]:
         _principal_cache.pop(key, None)
 
-GOOGLE_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+# Configurable via GOOGLE_SESSION_URL (settings.py) — never hardcode a
+# production auth dependency on a third-party's demo domain.
+GOOGLE_SESSION_URL = settings.google_session_url
 
 
 def hash_password(pw: str) -> str:
@@ -111,30 +113,34 @@ async def _load_active_principal(payload: dict, *, kind: str, collection: str) -
     if cached:
         return cached
 
-    if session_id:
-        session_filter = {
-            "id": session_id,
-            "user_type": kind,
-            "user_id": subject,
-            "revoked": {"$ne": True},
-        }
-        session_doc, principal = await asyncio.gather(
-            db.user_sessions.find_one(session_filter, {"_id": 0, "id": 1}),
-            db[collection].find_one({"id": subject}, {"_id": 0, "password_hash": 0}),
-        )
-        if not session_doc:
-            raise HTTPException(status_code=401, detail="Session expired or was signed out. Please sign in again.")
-        # Best-effort "last seen" bump — never block the request on this.
-        asyncio.ensure_future(db.user_sessions.update_one(
-            {"id": session_id},
-            {"$set": {"last_seen_at": datetime.now(timezone.utc).isoformat()}},
-        ))
-    else:
-        # Legacy tokens had no session id; preserve compatibility while still
-        # requiring the principal to exist and remain active.
-        principal = await db[collection].find_one(
-            {"id": subject}, {"_id": 0, "password_hash": 0},
-        )
+    # Security (BACKEND_AUDIT_2026-07-17.md High #8): a token without a
+    # session_id used to skip the user_sessions check entirely and stay
+    # valid until raw JWT expiry (up to JWT_EXP_MINUTES), with no revocation
+    # path short of deactivating the whole account — logout/"sign out all
+    # devices"/credential rotation could not touch it. Every login path
+    # (staff, customer, Google, both) has embedded session_id since sessions
+    # were introduced, so this is no longer a compatibility branch worth
+    # keeping; a token without one is now simply invalid.
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Session expired or was signed out. Please sign in again.")
+
+    session_filter = {
+        "id": session_id,
+        "user_type": kind,
+        "user_id": subject,
+        "revoked": {"$ne": True},
+    }
+    session_doc, principal = await asyncio.gather(
+        db.user_sessions.find_one(session_filter, {"_id": 0, "id": 1}),
+        db[collection].find_one({"id": subject}, {"_id": 0, "password_hash": 0}),
+    )
+    if not session_doc:
+        raise HTTPException(status_code=401, detail="Session expired or was signed out. Please sign in again.")
+    # Best-effort "last seen" bump — never block the request on this.
+    asyncio.ensure_future(db.user_sessions.update_one(
+        {"id": session_id},
+        {"$set": {"last_seen_at": datetime.now(timezone.utc).isoformat()}},
+    ))
 
     if not principal or not principal.get("active", True):
         raise HTTPException(status_code=401, detail=(
@@ -210,20 +216,41 @@ async def verify_google_session(session_id: str) -> dict:
 
 async def get_current_user(
     authorization: Optional[str] = Header(None),
-    _t: Optional[str] = Query(None, description="Fallback token for browser downloads"),
+    x_floor_id: Optional[str] = Header(None, alias="X-Floor-Id"),
+    dl: Optional[str] = Query(None, description="Short-lived single-use token for browser-download URLs (see POST /downloads/token)"),
 ) -> UserPublic:
     token = None
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
-    elif _t:
-        token = _t
+    if not token and dl:
+        # Browser-download navigations (PDF/xlsx) can't send an Authorization
+        # header, so they use a one-shot opaque token minted moments earlier
+        # instead of embedding the real JWT in the URL. See services/download_tokens.py.
+        from services.download_tokens import consume_download_token
+        record = await consume_download_token(dl)
+        if not record:
+            raise HTTPException(status_code=401, detail="Download link expired or already used — reopen it from the app.")
+        doc = await _load_active_principal({"sub": record["user_id"]}, kind="staff", collection="users")
+        user = UserPublic(**doc)
+        if x_floor_id:
+            allowed = accessible_floor_ids(user)
+            if allowed is not None and x_floor_id not in allowed:
+                raise HTTPException(status_code=403, detail="You do not have access to this floor")
+            user.active_floor_id = x_floor_id
+        return user
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
     payload = decode_token(token)
     if payload.get("kind") != "staff":
         raise HTTPException(status_code=403, detail="Not a staff token")
     doc = await _load_active_principal(payload, kind="staff", collection="users")
-    return UserPublic(**doc)
+    user = UserPublic(**doc)
+    if x_floor_id:
+        allowed = accessible_floor_ids(user)
+        if allowed is not None and x_floor_id not in allowed:
+            raise HTTPException(status_code=403, detail="You do not have access to this floor")
+        user.active_floor_id = x_floor_id
+    return user
 
 
 async def get_current_customer(authorization: Optional[str] = Header(None)) -> CustomerPublic:
@@ -281,6 +308,25 @@ def require_min_role(min_role: Role):
     return _dep
 
 
+def has_all_floor_access(user: UserPublic) -> bool:
+    return user.role in {"owner", "manager"}
+
+
+def accessible_floor_ids(user: UserPublic) -> list[str] | None:
+    """None means all active floors; otherwise return explicit assignments."""
+    return None if has_all_floor_access(user) else list(user.floor_ids or [])
+
+
+def floor_query(user: UserPublic, base: dict | None = None) -> dict:
+    """Compose a Mongo filter that scopes staff to their assigned floors."""
+    base = base or {}
+    allowed = [user.active_floor_id] if user.active_floor_id else accessible_floor_ids(user)
+    if allowed is None:
+        return base
+    scope = {"floor_id": {"$in": allowed}}
+    return {"$and": [scope, base]} if base else scope
+
+
 def floor_scope_ids(user: UserPublic) -> Optional[list[str]]:
     """Resolve the caller's floor filter the same way `floor_query()` does
     for Mongo-filter-based queries, but as a plain list — for callers that
@@ -289,3 +335,17 @@ def floor_scope_ids(user: UserPublic) -> Optional[list[str]]:
     if user.active_floor_id:
         return [user.active_floor_id]
     return accessible_floor_ids(user)
+
+
+def floor_for_write(user: UserPublic) -> str:
+    if user.active_floor_id:
+        return user.active_floor_id
+    allowed = accessible_floor_ids(user)
+    return (allowed or ["first-floor"])[0] if allowed is not None else "first-floor"
+
+
+def require_floor_access(floor_id: str, user: UserPublic) -> UserPublic:
+    allowed = accessible_floor_ids(user)
+    if allowed is not None and floor_id not in allowed:
+        raise HTTPException(status_code=403, detail="You do not have access to this floor")
+    return user

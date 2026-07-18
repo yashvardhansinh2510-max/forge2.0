@@ -18,6 +18,7 @@ import { Swipeable } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
+import { useBp } from "@/src/design/responsive";
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
 import {
   Avatar, Badge, Button, Card, Chip, Dropdown, EmptyState, FilterBar,
@@ -223,9 +224,7 @@ function greeting(): string {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function FollowupsScreen() {
   const { staff } = useAuth();
-  const { width } = useWindowDimensions();
-  const isDesktop = width >= 900;
-  const isPhone = width < 640;
+  const { isPhone, isDesktop } = useBp();
   const pagePad = isPhone ? spacing.md : spacing.xl;
 
   const [loading, setLoading] = useState(true);
@@ -769,7 +768,7 @@ export default function FollowupsScreen() {
         ) : null}
 
         {/* Main layout — Inbox (left) · Context + Insights (right) */}
-        <View style={{ flexDirection: isDesktop ? "row" : "column", gap: spacing.lg, alignItems: "flex-start" }}>
+        <View style={{ flexDirection: isDesktop ? "row" : "column", gap: spacing.lg, alignItems: isDesktop ? "flex-start" : "stretch" }}>
           <View style={{ flex: isDesktop ? 1.5 : undefined, width: isDesktop ? undefined : "100%", gap: spacing.md, minWidth: 0 }}>
             {loading ? (
               <View style={{ gap: spacing.md }}>
@@ -1009,7 +1008,7 @@ function MissionHero({ mission, loading, onJumpTop, compact }: { mission: Missio
             <Feather name={clean ? "check-circle" : "zap"} size={18} color={clean ? colors.success : colors.brand} />
           </View>
           <View style={{ flex: 1, minWidth: 0, gap: 5 }}>
-            <Text style={type.overline}>TODAY'S MISSION</Text>
+            <Text style={type.overline}>TODAY&apos;S MISSION</Text>
             <Text style={styles.mobileMissionTitle} numberOfLines={3}>
               {clean ? `${greeting()}, ${mission.greeting_name}. You're clear.` : `${mission.due_count} follow-up${mission.due_count === 1 ? "" : "s"} need you.`}
             </Text>
@@ -1300,7 +1299,7 @@ function FollowupCard({
         {f.value > 0 ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 3 }}>
             <Feather name="trending-up" size={11} color={colors.onSurfaceSecondary} />
-            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurface }}>₹{moneyShort(f.value)}</Text>
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurface }}>{moneyShort(f.value)}</Text>
             <Text style={type.caption}>at stake</Text>
           </View>
         ) : null}
@@ -1471,9 +1470,9 @@ function ContextPanel({ detail, loading, embedded, compact }: { detail: Detail |
         <Panel title="Pending quotations" overline="QUOTATIONS">
           <View style={{ gap: spacing.sm }}>
             {quotations.slice(0, 5).map((q) => (
-              <View key={q.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={type.bodySm} numberOfLines={1}>{q.number}</Text>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.onSurface }}>{moneyShort(q.grand_total)}</Text>
+              <View key={q.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
+                <Text style={[type.bodySm, { flex: 1, minWidth: 0 }]} numberOfLines={1}>{q.number}</Text>
+                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.onSurface, flexShrink: 0 }}>{moneyShort(q.grand_total)}</Text>
               </View>
             ))}
           </View>
@@ -1484,8 +1483,8 @@ function ContextPanel({ detail, loading, embedded, compact }: { detail: Detail |
         <Panel title="Recent purchases" overline="PURCHASES">
           <View style={{ gap: spacing.sm }}>
             {purchases.slice(0, 5).map((p) => (
-              <View key={p.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={type.bodySm} numberOfLines={1}>{p.number}</Text>
+              <View key={p.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
+                <Text style={[type.bodySm, { flex: 1, minWidth: 0 }]} numberOfLines={1}>{p.number}</Text>
                 <Badge label={p.status.replace(/_/g, " ")} tone="neutral" size="sm" />
               </View>
             ))}
@@ -1638,8 +1637,7 @@ function NewFollowupSheet({ visible, onClose, customers, assignees, defaultAssig
   visible: boolean; onClose: () => void; customers: CustomerLite[]; assignees: Assignee[]; defaultAssignee?: string;
   onCreate: (payload: any) => void;
 }) {
-  const { width } = useWindowDimensions();
-  const isPhone = width < 640;
+  const { isPhone } = useBp();
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerQuery, setCustomerQuery] = useState("");
   const [category, setCategory] = useState<string>("general");

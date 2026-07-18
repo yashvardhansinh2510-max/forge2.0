@@ -8,7 +8,8 @@ import { Feather } from "@expo/vector-icons";
 import { Pressable, ScrollView, StyleSheet, Text, View, ViewStyle } from "react-native";
 
 import { PageHeader } from "@/src/components/ui";
-import { colors, layout, radius, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
+import { color, font, layout, radius, space } from "@/src/design/tokens";
 
 export function AdminPage({
   title,
@@ -32,9 +33,11 @@ export function AdminPage({
   headerBorder?: boolean;
 }) {
   const Container: any = scroll ? ScrollView : View;
+  const { gutter } = useBp();
+  const horizontalPadding = gutter;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface }}>
+    <View style={{ flex: 1, backgroundColor: color.surface }}>
       <PageHeader
         title={title}
         subtitle={subtitle || undefined}
@@ -47,10 +50,10 @@ export function AdminPage({
           ? {
               showsVerticalScrollIndicator: false,
               contentContainerStyle: {
-                paddingHorizontal: layout.screenPadding.tablet,
-                paddingTop: spacing.xl,
-                paddingBottom: spacing.xxxl,
-                gap: spacing.lg,
+                paddingHorizontal: horizontalPadding,
+                paddingTop: space.x8,
+                paddingBottom: space.x16,
+                gap: space.x5,
                 ...contentStyle,
               },
             }
@@ -58,8 +61,8 @@ export function AdminPage({
               style: [
                 {
                   flex: 1,
-                  paddingHorizontal: layout.screenPadding.tablet,
-                  paddingTop: spacing.xl,
+                  paddingHorizontal: horizontalPadding,
+                  paddingTop: space.x8,
                 },
                 contentStyle,
               ],
@@ -91,25 +94,26 @@ export function IconAction({
       style={({ pressed }) => [{
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
-        height: 40,
-        paddingHorizontal: label ? spacing.md : 0,
-        width: label ? undefined : 40,
+        gap: space.x2,
+        height: layout.tap,
+        paddingHorizontal: label ? space.x4 : 0,
+        width: label ? undefined : Math.max(44, 40),
+        minHeight: 44,
         borderRadius: radius.md,
-        backgroundColor: isBrand ? colors.brand : colors.surfaceSecondary,
+        backgroundColor: isBrand ? color.action : color.surface,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: isBrand ? colors.brand : colors.border,
+        borderColor: isBrand ? color.action : color.line,
         opacity: pressed ? 0.88 : 1,
         justifyContent: "center",
       }]}
     >
-      <Feather name={icon} size={16} color={isBrand ? colors.onBrand : colors.onSurface} />
+      <Feather name={icon} size={16} color={isBrand ? color.onAction : color.ink} />
       {label ? (
         <Text style={{
           fontSize: 13,
-          fontFamily: type.titleMd.fontFamily,
+          fontFamily: font.semibold,
           fontWeight: "600",
-          color: isBrand ? colors.onBrand : colors.onSurface,
+          color: isBrand ? color.onAction : color.ink,
         }}>{label}</Text>
       ) : null}
     </Pressable>

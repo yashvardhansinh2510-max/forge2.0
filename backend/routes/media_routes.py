@@ -25,9 +25,33 @@ router = APIRouter(tags=["media"])
 # abuse. MIME allowlist matches what `_ext_for_mime`/PIL actually understand.
 MAX_MEDIA_BYTES = 20 * 1024 * 1024
 ALLOWED_MEDIA_MIMES = {
-    "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/svg+xml",
+    "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif",
     "application/pdf",
 }
+
+
+# BACKEND_AUDIT_2026-07-17.md Medium #32: the MIME allowlist above only ever
+# checked the client-supplied `Content-Type` header — trivially spoofable
+# (rename a .html/.svg to end up served with an attacker-chosen extension,
+# or simply lie about the header). Magic-byte signatures verify what the
+# file actually IS, independent of anything the client claims.
+_MAGIC_SIGNATURES: dict[str, tuple[bytes, ...]] = {
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/jpg": (b"\xff\xd8\xff",),
+    "image/gif": (b"GIF87a", b"GIF89a"),
+    "application/pdf": (b"%PDF-",),
+    # WEBP has no fixed-offset-0 signature alone — RIFF....WEBP, checked separately below.
+}
+
+
+def _sniffed_mime_matches(data: bytes, mime: str) -> bool:
+    if mime == "image/webp":
+        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    sigs = _MAGIC_SIGNATURES.get(mime)
+    if not sigs:
+        return False
+    return any(data.startswith(sig) for sig in sigs)
 
 
 def _validate_media_upload(data: bytes, mime: str) -> None:
@@ -37,6 +61,18 @@ def _validate_media_upload(data: bytes, mime: str) -> None:
         raise HTTPException(status_code=413, detail=f"File exceeds {MAX_MEDIA_BYTES // (1024 * 1024)}MB limit")
     if mime not in ALLOWED_MEDIA_MIMES:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {mime}")
+    if not _sniffed_mime_matches(data, mime):
+        raise HTTPException(
+            status_code=400,
+            detail=f"File content does not match declared type {mime} — upload rejected.",
+        )
+
+
+async def _read_bounded_upload(file: UploadFile) -> bytes:
+    """Read only up to the configured limit, preventing unbounded body reads."""
+    data = await file.read(MAX_MEDIA_BYTES + 1)
+    _validate_media_upload(data, file.content_type or "application/octet-stream")
+    return data
 
 
 async def _brand_slug_for_product(product_id: str) -> tuple[str, Optional[str], Optional[str]]:
@@ -71,9 +107,8 @@ async def upload_product_media(
     if source_type not in ("supplier", "manufacturer", "internal"):
         raise HTTPException(status_code=400, detail="source_type must be supplier|manufacturer|internal")
     slug, brand_id, family_key = await _brand_slug_for_product(product_id)
-    data = await file.read()
+    data = await _read_bounded_upload(file)
     mime = file.content_type or "application/octet-stream"
-    _validate_media_upload(data, mime)
     doc = await media_service.upload_and_register(
         data=data, mime=mime, brand_slug=slug,
         product_id=product_id, family_key=family_key, brand_id=brand_id,
@@ -98,9 +133,8 @@ async def replace_product_media(
     old storage object is deleted as part of this call (no orphan left
     behind); both the upload and the deletion are separately audit-logged."""
     slug, _, _ = await _brand_slug_for_product(product_id)
-    data = await file.read()
+    data = await _read_bounded_upload(file)
     mime = file.content_type or "application/octet-stream"
-    _validate_media_upload(data, mime)
     doc = await media_service.replace_media(
         media_id, data=data, mime=mime, brand_slug=slug,
         uploaded_by=user.id, notes=notes, actor=user,
@@ -130,9 +164,8 @@ async def upload_family_media(
         raise HTTPException(status_code=404, detail="Family not found")
     brand = await db.brands.find_one({"id": sample["brand_id"]}, {"_id": 0, "slug": 1, "name": 1})
     slug = (brand or {}).get("slug") or (brand or {}).get("name") or "unknown"
-    data = await file.read()
+    data = await _read_bounded_upload(file)
     mime = file.content_type or "application/octet-stream"
-    _validate_media_upload(data, mime)
     doc = await media_service.upload_and_register(
         data=data, mime=mime, brand_slug=slug,
         family_key=family_key, brand_id=sample["brand_id"],

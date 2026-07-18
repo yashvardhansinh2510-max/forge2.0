@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import os
 
-from auth import get_current_user, hash_password, invalidate_principal_cache, require_min_role
+from auth import accessible_floor_ids, get_current_user, hash_password, invalidate_principal_cache, require_min_role
 from db import db
-from models import TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
+from models import FloorCreatePayload, FloorPublic, TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from services.activity_log import log_event
+from services.download_tokens import create_download_token
 from services.invite_service import generate_temp_password, get_invite_service, temp_password_expiry_iso
 from settings import settings
 from typing import Optional
@@ -20,6 +21,56 @@ router = APIRouter(tags=["ops"])
 # Settings > System > Version. Bump manually alongside meaningful releases —
 # there's no build pipeline yet to derive this automatically.
 FORGE_VERSION = "1.0.0"
+
+DEFAULT_FLOORS = [
+    {"id": "ground-floor", "name": "Ground floor", "slug": "ground-floor"},
+    {"id": "first-floor", "name": "The Sanitary Bathroom", "slug": "first-floor"},
+    {"id": "second-floor", "name": "Second floor", "slug": "second-floor"},
+]
+
+
+async def _ensure_default_floors() -> None:
+    if await db.floors.count_documents({}) == 0:
+        now = now_iso()
+        await db.floors.insert_many([{**floor, "active": True, "created_at": now, "updated_at": now} for floor in DEFAULT_FLOORS])
+
+
+@router.post("/downloads/token")
+async def mint_download_token(user: UserPublic = Depends(get_current_user)):
+    """Call this (normal Authorization-header request) right before opening a
+    browser-download URL (PDF/xlsx export). Returns a token good for one
+    download within 60 seconds — see services/download_tokens.py."""
+    token = await create_download_token(user.id)
+    return {"token": token, "expires_in": 60}
+
+
+@router.get("/settings/floors", response_model=list[FloorPublic])
+async def list_floors(user: UserPublic = Depends(get_current_user)):
+    await _ensure_default_floors()
+    floors = await db.floors.find({"active": True}, {"_id": 0}).sort("created_at", 1).to_list(50)
+    allowed = accessible_floor_ids(user)
+    return floors if allowed is None else [floor for floor in floors if floor["id"] in allowed]
+
+
+@router.get("/settings/floor-access")
+async def get_floor_access(user: UserPublic = Depends(get_current_user)):
+    await _ensure_default_floors()
+    floors = await db.floors.find({"active": True}, {"_id": 0}).sort("created_at", 1).to_list(50)
+    allowed = accessible_floor_ids(user)
+    visible = floors if allowed is None else [floor for floor in floors if floor["id"] in allowed]
+    return {"all_floors": allowed is None, "floors": visible, "floor_ids": [floor["id"] for floor in visible]}
+
+
+@router.post("/settings/floors", response_model=FloorPublic)
+async def create_floor(body: FloorCreatePayload, _: UserPublic = Depends(require_min_role("owner"))):
+    await _ensure_default_floors()
+    slug = (body.slug or body.name).strip().lower().replace(" ", "-")
+    if await db.floors.find_one({"slug": slug}):
+        raise HTTPException(status_code=409, detail="A floor with this name already exists")
+    floor = FloorPublic(name=body.name.strip(), slug=slug, active=body.active).dict()
+    await db.floors.insert_one(floor)
+    floor.pop("_id", None)
+    return floor
 
 
 def _sanitize_error(err: Optional[str]) -> Optional[str]:
@@ -139,11 +190,12 @@ async def create_team_member(body: TeamCreatePayload, user: UserPublic = Depends
         raise HTTPException(status_code=409, detail="A team member with this email already exists")
     doc = UserPublic(
         email=body.email.lower(), full_name=body.full_name, role=body.role, phone=body.phone,
+        floor_ids=body.floor_ids,
         # New staff must set their own password on first login — the admin-
         # supplied password here is only a onboarding credential, never a
         # long-term secret someone else chose for them.
         must_change_password=True, temp_password_expires_at=temp_password_expiry_iso(),
-    ).dict()
+    ).dict(exclude={"active_floor_id"})
     doc["password_hash"] = hash_password(body.password)
     await db.users.insert_one(doc)
     doc.pop("password_hash", None)

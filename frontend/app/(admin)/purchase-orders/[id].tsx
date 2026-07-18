@@ -13,10 +13,11 @@ import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
+import { useBp } from "@/src/design/responsive";
 import { Badge, Button, Card, IconButton } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { api } from "@/src/api/client";
@@ -57,7 +58,8 @@ type Attachment = {
   by_user_name: string;
   filename: string;
   mime: string;
-  data_url: string;
+  data_url?: string | null;
+  storage_key?: string | null;
   size_bytes: number;
   note?: string | null;
 };
@@ -120,8 +122,8 @@ const STAGE_TONE: Record<string, { bg: string; fg: string }> = {
 export default function PurchaseOrderDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 900;
+  const { isPhone, isDesktop } = useBp();
+  const isTablet = !isPhone;
 
   const [po, setPo] = useState<PO | null>(null);
   const [config, setConfig] = useState<StatusConfig | null>(null);
@@ -243,6 +245,19 @@ export default function PurchaseOrderDetail() {
     }
   };
 
+  const openAttachment = async (a: Attachment) => {
+    try {
+      // New attachments store only a private-bucket key — mint a short-lived
+      // signed URL on demand. Attachments written before this migration
+      // still carry data_url directly; the endpoint returns that as-is too.
+      const res = await api.get<{ url: string }>(`/purchase-orders/${id}/attachments/${a.id}/url`);
+      if (Platform.OS === "web") window.open(res.url, "_blank");
+      else await Linking.openURL(res.url);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not open attachment");
+    }
+  };
+
   if (!po || !config) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
 
   return (
@@ -293,40 +308,62 @@ export default function PurchaseOrderDetail() {
 
           {/* Items table */}
           <Card style={{ padding: 0 }}>
-            <View style={styles.itemsHeader}>
-              <Text style={[type.overline, { width: 40 }]}>#</Text>
-              <Text style={[type.overline, { flex: 1 }]}>Item</Text>
-              <Text style={[type.overline, { width: 70, textAlign: "right" }]}>QTY</Text>
-              <Text style={[type.overline, { width: 90, textAlign: "right" }]}>RECD</Text>
-              <Text style={[type.overline, { width: 90, textAlign: "right" }]}>COST</Text>
-              <Text style={[type.overline, { width: 100, textAlign: "right" }]}>AMOUNT</Text>
-            </View>
+            {isDesktop ? (
+              <View style={styles.itemsHeader}>
+                <Text style={[type.overline, { width: 40 }]}>#</Text>
+                <Text style={[type.overline, { flex: 1 }]}>Item</Text>
+                <Text style={[type.overline, { width: 70, textAlign: "right" }]}>QTY</Text>
+                <Text style={[type.overline, { width: 90, textAlign: "right" }]}>RECD</Text>
+                <Text style={[type.overline, { width: 90, textAlign: "right" }]}>COST</Text>
+                <Text style={[type.overline, { width: 100, textAlign: "right" }]}>AMOUNT</Text>
+              </View>
+            ) : null}
             {po.items.map((it, i) => {
               const full = it.qty_received >= it.qty - 1e-6 && it.qty > 0;
               const partial = it.qty_received > 0 && !full;
               const stage = it.stage || "order_in_company";
               return (
                 <View key={it.id} style={{ borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
-                  <View style={styles.itemRow}>
-                    <Text style={[type.mono, { width: 40 }]}>{String(i + 1).padStart(2, "0")}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, fontWeight: "600" }} numberOfLines={2}>{it.name}</Text>
-                      <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
-                    </View>
-                    <Text style={[type.mono, { width: 70, textAlign: "right" }]}>{it.qty}</Text>
-                    <View style={{ width: 90, alignItems: "flex-end" }}>
-                      <Text style={[type.mono, { fontWeight: "600", color: full ? colors.success : partial ? colors.warning : colors.onSurfaceMuted }]}>
-                        {it.qty_received}
+                  {isDesktop ? (
+                    <View style={styles.itemRow}>
+                      <Text style={[type.mono, { width: 40 }]}>{String(i + 1).padStart(2, "0")}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 13, fontWeight: "600" }} numberOfLines={2}>{it.name}</Text>
+                        <Text style={type.caption}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
+                      </View>
+                      <Text style={[type.mono, { width: 70, textAlign: "right" }]}>{it.qty}</Text>
+                      <View style={{ width: 90, alignItems: "flex-end" }}>
+                        <Text style={[type.mono, { fontWeight: "600", color: full ? colors.success : partial ? colors.warning : colors.onSurfaceMuted }]}>
+                          {it.qty_received}
+                        </Text>
+                        {partial ? (
+                          <Text style={[type.caption, { fontSize: 10 }]}>{Math.round((it.qty_received / it.qty) * 100)}%</Text>
+                        ) : null}
+                      </View>
+                      <Text style={[type.mono, { width: 90, textAlign: "right" }]} numberOfLines={1}>{money(it.unit_cost)}</Text>
+                      <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]} numberOfLines={1}>
+                        {money(it.qty * it.unit_cost)}
                       </Text>
-                      {partial ? (
-                        <Text style={[type.caption, { fontSize: 10 }]}>{Math.round((it.qty_received / it.qty) * 100)}%</Text>
-                      ) : null}
                     </View>
-                    <Text style={[type.mono, { width: 90, textAlign: "right" }]} numberOfLines={1}>{money(it.unit_cost)}</Text>
-                    <Text style={[type.mono, { width: 100, textAlign: "right", fontWeight: "700" }]} numberOfLines={1}>
-                      {money(it.qty * it.unit_cost)}
-                    </Text>
-                  </View>
+                  ) : (
+                    <View style={styles.itemRowCompact}>
+                      <Text style={[type.mono, { width: 28 }]}>{String(i + 1).padStart(2, "0")}</Text>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={{ fontSize: 13, fontWeight: "600" }} numberOfLines={2}>{it.name}</Text>
+                        <Text style={type.caption} numberOfLines={1}>{it.sku}{it.room ? ` · ${it.room}` : ""}</Text>
+                        <Text style={[type.caption, { marginTop: 2 }]}>
+                          Qty {it.qty} · Recd{" "}
+                          <Text style={{ fontWeight: "600", color: full ? colors.success : partial ? colors.warning : colors.onSurfaceMuted }}>
+                            {it.qty_received}{partial ? ` (${Math.round((it.qty_received / it.qty) * 100)}%)` : ""}
+                          </Text>
+                          {" "}· {money(it.unit_cost)} ea
+                        </Text>
+                      </View>
+                      <Text style={[type.mono, { fontWeight: "700", textAlign: "right" }]} numberOfLines={1}>
+                        {money(it.qty * it.unit_cost)}
+                      </Text>
+                    </View>
+                  )}
                   <View style={styles.itemActionsRow}>
                     <View style={[styles.stagePill, { backgroundColor: STAGE_TONE[stage]?.bg || colors.surfaceTertiary }]}>
                       <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: STAGE_TONE[stage]?.fg || colors.onSurfaceMuted, marginRight: 5 }} />
@@ -408,14 +445,14 @@ export default function PurchaseOrderDetail() {
             ) : (
               <View style={{ gap: 6 }}>
                 {po.attachments.map((a) => (
-                  <View key={a.id} style={styles.attachRow}>
+                  <Pressable key={a.id} onPress={() => openAttachment(a)} style={styles.attachRow}>
                     <Feather name="file" size={14} color={colors.onSurfaceMuted} />
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 13, fontWeight: "500" }} numberOfLines={1}>{a.filename}</Text>
                       <Text style={type.caption}>{a.by_user_name} · {new Date(a.at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</Text>
                     </View>
                     <Text style={type.caption}>{(a.size_bytes / 1024).toFixed(1)} KB</Text>
-                  </View>
+                  </Pressable>
                 ))}
               </View>
             )}
@@ -678,6 +715,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md, alignItems: "center",
   },
   itemRow: { flexDirection: "row", padding: spacing.md, alignItems: "center", gap: 8, flexWrap: "wrap" },
+  itemRowCompact: { flexDirection: "row", padding: spacing.md, alignItems: "flex-start", gap: 8 },
   itemActionsRow: {
     flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6,
     paddingHorizontal: spacing.md, paddingBottom: spacing.sm, marginTop: -4,

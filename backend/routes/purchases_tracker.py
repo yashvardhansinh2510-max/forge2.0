@@ -24,6 +24,7 @@ The tracker does NOT concern itself with taxes — Forge uses final prices only.
 from __future__ import annotations
 import asyncio
 import io
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
@@ -45,9 +46,11 @@ from routes.purchase_routes import ALLOWED_TRANSITIONS, STATUS_LABELS
 from routes.quotation_routes import _next_number as _next_quotation_number
 from services.activity_log import log_event, timeline_for
 from services.followup_engine import reconcile_followups
+from services.sequence import next_number
 from services.transfer_workflow import execute_transfer, transfer_history
 
 router = APIRouter(prefix="/purchases", tags=["purchases"])
+logger = logging.getLogger("forge.purchases_tracker")
 
 
 # =============================================================================
@@ -628,9 +631,41 @@ async def _sync_po_status_with_stages(po_id: str, user: UserPublic) -> Optional[
 
 async def _apply_stage_change(
     item_id: str, to_stage: str, user: UserPublic, note: Optional[str],
+    qty: Optional[float] = None, *, max_attempts: int = 3,
+) -> dict:
+    """Retry wrapper around `_attempt_stage_change`. Each attempt re-reads the
+    item fresh, so a lost optimistic-concurrency race (another move landed
+    first) is resolved transparently by recomputing against the new state —
+    this is what makes an accidental double-click/near-simultaneous request
+    "just work" instead of surfacing an error in the common case. Only after
+    `max_attempts` genuine conflicts in a row do we give up and tell the
+    caller, with enough state to refresh intelligently."""
+    for _ in range(max_attempts):
+        result = await _attempt_stage_change(item_id, to_stage, user, note, qty)
+        if not result.get("conflict"):
+            return result
+
+    logger.warning("Concurrent inventory conflict on item %s after %d attempts", item_id, max_attempts)
+    po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0})
+    it = next((i for i in (po or {}).get("items", []) if i.get("id") == item_id), None) if po else None
+    raise HTTPException(status_code=409, detail={
+        "error": "concurrent_modification",
+        "message": "This item was modified concurrently — refresh and try again",
+        "item_id": item_id,
+        "expected_qty": result.get("expected_qty"),
+        "current_qty": (it or {}).get("qty"),
+        "current_stage": (it or {}).get("stage"),
+    })
+
+
+async def _attempt_stage_change(
+    item_id: str, to_stage: str, user: UserPublic, note: Optional[str],
     qty: Optional[float] = None,
 ) -> dict:
-    """Atomic update of a single item's stage — writes stage_history entry.
+    """One attempt at an atomic update of a single item's stage — writes a
+    stage_history entry. Returns `{"conflict": True, "expected_qty": ...}`
+    (never raises) when another request changed the item first, so the
+    caller (`_apply_stage_change`) can decide whether to retry.
 
     If `qty` is given and is LESS than the item's current quantity, this is a
     PARTIAL move ("3 of 20") — the line is split: a brand-new tracked item is
@@ -694,8 +729,22 @@ async def _apply_stage_change(
             ref_item_id=new_item_id, ref_po_id=po["id"], qty=move_qty,
         ).dict()
 
-        await db.purchase_orders.update_one(
-            {"id": po["id"], "items.id": item_id},
+        # Optimistic concurrency: the filter requires items.qty to still equal
+        # the value this request read (`full_qty`). Two concurrent partial
+        # moves on the same item both read the same starting qty; MongoDB
+        # serializes the two update_one calls, so whichever lands first
+        # changes qty away from full_qty and the second call's filter no
+        # longer matches — it gets matched_count=0 instead of silently
+        # clobbering the first move's result with a stale computation.
+        #
+        # $elemMatch (not two separate "items.id"/"items.qty" conditions) is
+        # required for correctness here: without it, Mongo only needs id and
+        # qty to each match *some* element of the array, not the same one —
+        # if another line item in this PO happens to share the same qty
+        # value, a plain dotted-path filter could false-positive-match even
+        # though THIS item's qty actually changed underneath us.
+        cas_result = await db.purchase_orders.update_one(
+            {"id": po["id"], "items": {"$elemMatch": {"id": item_id, "qty": full_qty}}},
             {
                 "$set": {
                     "items.$.qty": remaining,
@@ -708,6 +757,8 @@ async def _apply_stage_change(
                 "$push": {"items.$.stage_history": src_ev},
             },
         )
+        if cas_result.matched_count == 0:
+            return {"conflict": True, "expected_qty": full_qty}
         await db.purchase_orders.update_one(
             {"id": po["id"]},
             {"$push": {"items": new_item}},
@@ -750,8 +801,12 @@ async def _apply_stage_change(
         note=note, action="move", qty=move_qty,
     ).dict()
 
-    await db.purchase_orders.update_one(
-        {"id": po["id"], "items.id": item_id},
+    # Same $elemMatch CAS guard as the partial-move branch, applied to `stage`
+    # instead of `qty` — lower severity here (a lost update just means a
+    # last-write-wins stage instead of corrupted quantities), but the same
+    # primitive is essentially free and keeps both branches consistent.
+    cas_result = await db.purchase_orders.update_one(
+        {"id": po["id"], "items": {"$elemMatch": {"id": item_id, "stage": from_stage}}},
         {
             "$set": {
                 "items.$.stage": to_stage,
@@ -763,6 +818,8 @@ async def _apply_stage_change(
             "$push": {"items.$.stage_history": ev},
         },
     )
+    if cas_result.matched_count == 0:
+        return {"conflict": True, "expected_qty": full_qty}
 
     await log_event(
         event_type="purchase.stage_moved",
@@ -800,7 +857,7 @@ async def _apply_stage_change(
 async def move_item(
     item_id: str,
     body: MoveBody,
-    user: UserPublic = Depends(require_min_role("sales")),
+    user: UserPublic = Depends(require_min_role("warehouse")),
 ):
     if body.stage not in PURCHASE_STAGES:
         raise HTTPException(status_code=400, detail=f"Unknown stage '{body.stage}'")
@@ -810,7 +867,7 @@ async def move_item(
 @router.post("/items/bulk-move")
 async def bulk_move(
     body: BulkMoveBody,
-    user: UserPublic = Depends(require_min_role("sales")),
+    user: UserPublic = Depends(require_min_role("warehouse")),
 ):
     if body.stage not in PURCHASE_STAGES:
         raise HTTPException(status_code=400, detail=f"Unknown stage '{body.stage}'")
@@ -827,19 +884,13 @@ async def bulk_move(
 
 
 async def _next_po_number() -> str:
-    """Same simple counter used by quotation → PO creation."""
+    """Atomic PO numbering — shares the same counter (kind="purchase_order")
+    as domain_outbox.py's order-placed path, since both write into the same
+    `purchase_orders.number` space. BACKEND_AUDIT_2026-07-17.md High #13: this
+    previously sorted-then-parsed-then-incremented — a check-then-act race
+    that let two concurrent transfers/creates collide on the same number."""
     year = datetime.now(timezone.utc).year
-    prefix = f"FPO-{year}-"
-    last = await db.purchase_orders.find(
-        {"number": {"$regex": f"^{prefix}"}}, {"_id": 0, "number": 1}
-    ).sort("number", -1).limit(1).to_list(1)
-    n = 1
-    if last:
-        try:
-            n = int(last[0]["number"].split("-")[-1]) + 1
-        except Exception:
-            n = 1
-    return f"{prefix}{n:04d}"
+    return await next_number("purchase_order", f"FPO-{year}-", collection="purchase_orders")
 
 
 async def _selling_price_for(item: dict, po: dict) -> float:
@@ -952,7 +1003,7 @@ async def _reconcile_shortage_for_line(
 async def transfer_item_command(
     item_id: str,
     body: TransferBody,
-    user: UserPublic = Depends(require_min_role("sales")),
+    user: UserPublic = Depends(require_min_role("warehouse")),
 ):
     """Transactional, idempotent transfer command for existing or new customers."""
     return await execute_transfer(
@@ -977,7 +1028,7 @@ async def item_transfer_history(item_id: str, _: UserPublic = Depends(get_curren
 async def transfer_item(
     item_id: str,
     body: TransferBody,
-    user: UserPublic = Depends(require_min_role("sales")),
+    user: UserPublic = Depends(require_min_role("warehouse")),
 ):
     """Move `qty` units of an item to another customer.
 

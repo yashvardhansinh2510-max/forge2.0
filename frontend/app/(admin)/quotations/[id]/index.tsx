@@ -1,10 +1,11 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
+import { useBp } from "@/src/design/responsive";
 import { Button, Card, IconButton, PriceTag, StatusBadge } from "@/src/components/ui";
 import { api, getToken } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
@@ -36,8 +37,8 @@ type PoStub = { id: string; number: string; brand_name?: string | null; status: 
 export default function QuotationDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 900;
+  const { isPhone } = useBp();
+  const isTablet = !isPhone;
 
   const [q, setQ] = useState<Quotation | null>(null);
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
@@ -65,7 +66,13 @@ export default function QuotationDetail() {
       reader.onloadend = () => Linking.openURL(reader.result as string);
       reader.readAsDataURL(blob);
     } catch {
-      Linking.openURL(`${api.base}/api/quotations/${id}/pdf?_t=${encodeURIComponent(token)}`);
+      // Fallback for environments where blob/dataURL conversion fails (some
+      // native runtimes on very large PDFs): open the PDF as a plain browser
+      // navigation using a short-lived single-use download token, never the
+      // long-lived bearer JWT itself — a `?_t=<jwt>` URL leaks into browser
+      // history/proxy logs and stays valid for the token's full lifetime.
+      const { token: dl } = await api.post<{ token: string }>("/downloads/token", {});
+      Linking.openURL(`${api.base}/api/quotations/${id}/pdf?dl=${encodeURIComponent(dl)}`);
     }
   };
 

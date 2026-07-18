@@ -19,6 +19,7 @@ from models import (
     Quotation, QuotationLineItem, UserPublic,
 )
 from services.domain_outbox import enqueue_after_primary_commit
+from services.sequence import next_number as _atomic_next_number
 
 EVENT_PURCHASE_TRANSFERRED = "PurchaseTransferred"
 
@@ -35,10 +36,23 @@ async def ensure_transfer_indexes() -> None:
 
 
 async def _next_number(collection: str, prefix: str, session: Any) -> str:
+    # BACKEND_AUDIT_2026-07-17.md High #13: was count_documents-then-format
+    # (check-then-act race — two concurrent transfers could be handed the
+    # same number). Delegates to the atomic findOneAndUpdate counter that
+    # quotation_routes.py/domain_outbox.py already use for the primary
+    # create/order-placed paths.
+    #
+    # CRITICAL: `kind` here MUST exactly match what the primary path for the
+    # same collection uses ("quotation" / "purchase_order") — transfer-
+    # created and normally-created documents share the same number space
+    # (both live in `db.quotations` / `db.purchase_orders`), so they must
+    # draw from the same counter. Using a different kind string here would
+    # give transfers their own independent counter starting at 1, which
+    # would re-introduce exactly the duplicate-number bug this fixes.
+    kind = "quotation" if collection == "quotations" else "purchase_order"
     year = datetime.now(timezone.utc).year
     stem = f"{prefix}-{year}-"
-    count = await db[collection].count_documents({"number": {"$regex": f"^{stem}"}}, session=session)
-    return f"{stem}{count + 1:04d}"
+    return await _atomic_next_number(kind, stem, collection=collection, session=session)
 
 
 async def execute_transfer(

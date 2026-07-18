@@ -8,13 +8,21 @@ import os
 import pytest
 import requests
 
-BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://ux-audit-2.preview.emergentagent.com").rstrip("/")
+# Never a hardcoded stale preview URL or the known demo password — the whole
+# module skips cleanly if a real test environment isn't configured, instead
+# of hitting production or a dead preview host.
+BASE_URL = os.environ.get("TEST_BACKEND_URL", "").rstrip("/")
 API = f"{BASE_URL}/api"
-PASSWORD = "Forge@2026"
-OWNER_EMAIL = "owner@forge.app"
-WORKER_EMAIL = "worker@forge.app"
-SALES_EMAIL = "sales@forge.app"
-CUSTOMER_EMAIL = "customer@forge.app"
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "")
+OWNER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "")
+WORKER_EMAIL = os.environ.get("TEST_WORKER_EMAIL", "worker@forge.app")
+SALES_EMAIL = os.environ.get("TEST_SALES_EMAIL", "sales@forge.app")
+CUSTOMER_EMAIL = os.environ.get("TEST_CUSTOMER_EMAIL", "customer@forge.app")
+
+pytestmark = pytest.mark.skipif(
+    not (BASE_URL and OWNER_EMAIL and PASSWORD),
+    reason="TEST_BACKEND_URL/TEST_OWNER_EMAIL/TEST_OWNER_PASSWORD not set",
+)
 
 
 # ----------- fixtures -----------

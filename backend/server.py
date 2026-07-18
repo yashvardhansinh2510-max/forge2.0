@@ -1,10 +1,14 @@
 """Forge backend entrypoint. Wires routes and boots demo data on first run."""
+import asyncio
 import logging
+from time import monotonic
+from typing import Any
 
 from fastapi import APIRouter, FastAPI
+from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
-from bootstrap import run_bootstrap
+from bootstrap import _check_demo_accounts, run_bootstrap
 from services.monitoring import init_monitoring
 
 from db import db  # noqa: E402
@@ -27,9 +31,12 @@ from routes.roles_routes import router as roles_router  # noqa: E402
 from routes.permissions_routes import router as permissions_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
 from services import catalog_service  # noqa: E402
-from services.domain_outbox import dispatch_pending, ensure_outbox_indexes  # noqa: E402
+from services.domain_outbox import dispatch_pending, ensure_outbox_indexes, outbox_worker  # noqa: E402
 from services.transfer_workflow import ensure_transfer_indexes  # noqa: E402
+from services.download_tokens import ensure_download_token_indexes  # noqa: E402
+from migrations.runner import run_migrations  # noqa: E402
 from services.followup_engine import reconcile_followups  # noqa: E402
+from services.floor_scope import ensure_floor_scope  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("forge")
@@ -42,6 +49,24 @@ _monitoring_status = init_monitoring()
 app = FastAPI(title="Forge API", version="0.1.0")
 api = APIRouter(prefix="/api")
 
+# TTL-cached demo-account detection for /api/health — reuses the same
+# lazy-refresh idiom as auth.py's principal cache. bcrypt is deliberately
+# slow, so this must not run on every health poll; re-checking at most every
+# 10 minutes still lets the "degraded" status self-clear soon after a real
+# credential rotation, without needing a restart.
+_DEMO_CHECK_TTL_SECONDS = 600.0
+_demo_check_cache: dict[str, Any] = {"checked_at": 0.0, "emails": []}
+
+
+async def _demo_accounts_detected() -> list[str]:
+    if monotonic() - _demo_check_cache["checked_at"] > _DEMO_CHECK_TTL_SECONDS:
+        try:
+            _demo_check_cache["emails"] = await _check_demo_accounts(db)
+        except Exception as e:  # noqa: BLE001 — health checks must never crash on this
+            logger.warning("Demo-account health re-check failed: %s", e)
+        _demo_check_cache["checked_at"] = monotonic()
+    return _demo_check_cache["emails"]
+
 
 @api.get("/")
 async def root():
@@ -52,9 +77,16 @@ async def root():
 async def health():
     try:
         await db.command("ping")
-        return {"status": "ok"}
-    except Exception as e:  # noqa: BLE001
-        return {"status": "error", "detail": str(e)}
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=503, content={"status": "error", "detail": "database unavailable"})
+
+    demo_accounts = await _demo_accounts_detected()
+    if demo_accounts:
+        return {
+            "status": "degraded",
+            "reasons": [f"Demo account still using known default password: {email}" for email in demo_accounts],
+        }
+    return {"status": "ok"}
 
 
 # Feature routers
@@ -102,11 +134,20 @@ async def _startup():
     preflight = await run_bootstrap()
     preflight.require_healthy()
 
+    applied = await run_migrations(db)
+    if applied:
+        logger.info("Applied %d migration(s) on startup: %s", len(applied), ", ".join(applied))
+
+    await ensure_floor_scope()
     await seed_if_empty()
     await resync_catalog_if_needed()
     await ensure_outbox_indexes()
     await ensure_transfer_indexes()
+    await ensure_download_token_indexes()
     await dispatch_pending()
+    # Durable background dispatcher — pending events retry on a schedule and
+    # dead-letter after repeated failure instead of waiting for a restart.
+    app.state.outbox_worker = asyncio.create_task(outbox_worker())
     snapshot = await catalog_service.refresh_catalog_snapshot()
     logger.info("Catalog read model ready: %d products.", len(snapshot.products))
     try:
@@ -119,4 +160,7 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
+    worker = getattr(app.state, "outbox_worker", None)
+    if worker:
+        worker.cancel()
     logger.info("Forge API shutting down.")

@@ -16,6 +16,7 @@ from db import client, db
 from models import ActivityEvent, Followup, Payment, PurchaseOrder, PurchaseOrderItem, PurchaseStageEvent, PurchaseStatusEvent, UserPublic
 from services.notifications import notify
 from services.pricing import per_line_net_amounts
+from services.sequence import next_number
 
 EVENT_QUOTATION_GENERATED = "QuotationGenerated"
 EVENT_ORDER_PLACED = "OrderPlaced"
@@ -32,6 +33,7 @@ async def ensure_outbox_indexes() -> None:
     await db.event_outbox.create_index([("status", 1), ("created_at", 1)], name="outbox_dispatch_queue")
     await db.purchase_orders.create_index("automation_key", unique=True, sparse=True, name="po_automation_key")
     await db.payments.create_index("automation_key", unique=True, sparse=True, name="payment_automation_key")
+    await db.payments.create_index("idempotency_key", unique=True, sparse=True, name="payment_idempotency_key")
     await db.activity_events.create_index("automation_key", unique=True, sparse=True, name="activity_automation_key")
     await db.followups.create_index("automation_key", unique=True, sparse=True, name="followup_automation_key")
 
@@ -105,9 +107,7 @@ async def _upsert_followup(*, key: str, quotation: dict, reason: str, category: 
 
 async def _next_po_number(session: Any) -> str:
     year = datetime.now(timezone.utc).year
-    prefix = f"FPO-{year}-"
-    count = await db.purchase_orders.count_documents({"number": {"$regex": f"^{prefix}"}}, session=session)
-    return f"{prefix}{count + 1:04d}"
+    return await next_number("purchase_order", f"FPO-{year}-", collection="purchase_orders", session=session)
 
 
 async def _brand_groups(quotation: dict, session: Any) -> list[dict]:
@@ -254,12 +254,41 @@ async def dispatch_event(event_id: str) -> dict:
             return result
 
 
+MAX_DISPATCH_ATTEMPTS = 8
+WORKER_INTERVAL_SECONDS = 30
+
+
 async def dispatch_pending(limit: int = 100) -> list[dict]:
-    events = await db.event_outbox.find({"status": "pending"}, {"_id": 0, "id": 1}).sort("created_at", 1).to_list(limit)
+    events = await db.event_outbox.find(
+        {"status": "pending", "attempts": {"$lt": MAX_DISPATCH_ATTEMPTS}},
+        {"_id": 0, "id": 1, "attempts": 1},
+    ).sort("created_at", 1).to_list(limit)
     results = []
     for event in events:
         try:
             results.append(await dispatch_event(event["id"]))
         except Exception as exc:  # Persist failure safely; retry remains possible.
-            await db.event_outbox.update_one({"id": event["id"]}, {"$set": {"last_error": str(exc), "updated_at": now_iso()}, "$inc": {"attempts": 1}})
+            exhausted = int(event.get("attempts") or 0) + 1 >= MAX_DISPATCH_ATTEMPTS
+            patch: dict = {"last_error": str(exc), "updated_at": now_iso()}
+            if exhausted:
+                # Dead-letter: stop retrying, keep the event for operator review
+                # via GET /api/ops/outbox. Nothing is deleted.
+                patch["status"] = "dead_letter"
+            await db.event_outbox.update_one({"id": event["id"]}, {"$set": patch, "$inc": {"attempts": 1}})
     return results
+
+
+async def outbox_worker() -> None:
+    """Continuously drain committed events so automation never waits for a
+    restart or a lucky request. Runs for the process lifetime; each cycle is
+    isolated so one bad event or a transient DB error can't kill the loop."""
+    import logging
+    logger = logging.getLogger("forge.outbox")
+    while True:
+        try:
+            await dispatch_pending()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Outbox dispatch cycle failed; retrying next cycle")
+        await asyncio.sleep(WORKER_INTERVAL_SECONDS)

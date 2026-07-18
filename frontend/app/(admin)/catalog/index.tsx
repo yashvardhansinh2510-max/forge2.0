@@ -18,7 +18,7 @@ import { ActivityIndicator, FlatList, Platform, Pressable, ScrollView, StyleShee
 import { ProductImage } from "@/src/components/ProductImage";
 import { BottomSheet } from "@/src/components/BottomSheet";
 import { Chip, EmptyState, IconButton, PriceTag, ScreenTitle, SegmentedControl, Skeleton, Button } from "@/src/components/ui";
-import { api } from "@/src/api/client";
+import { catalogReferences, fetchCatalogPage } from "@/src/services/catalogService";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { supplierLogoFor } from "@/src/design/BrandLogo";
@@ -103,6 +103,7 @@ export default function Catalog() {
   const [seriesList, setSeriesList] = useState<string[]>([]);
   const [brandCounts, setBrandCounts] = useState<Record<string, number>>({});
   const [categoriesForBrand, setCategoriesForBrand] = useState<Category[] | null>(null);
+  const [hierarchyTree, setHierarchyTree] = useState<any[]>([]);
   const [families, setFamilies] = useState<Family[] | null>(null);
   const [products, setProducts] = useState<Product[] | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -123,66 +124,60 @@ export default function Catalog() {
     (async () => {
       try {
         const [bs, cs] = await Promise.all([
-          api.get<Brand[]>("/brands"),
-          api.get<Category[]>("/categories"),
+          catalogReferences.brands<Brand[]>(),
+          catalogReferences.categories<Category[]>(),
         ]);
         setBrands(bs); setCategories(cs);
       } catch { /* ignore */ }
     })();
   }, []);
 
-  // Hierarchy → derive brand counts, brand-scoped categories, subcategory & series options
+  // Hierarchy is invariant across filter changes. Load and parse it once; the
+  // filter-derived rail options below are computed from this stable snapshot.
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.get<{ tree: any[] }>(`/catalog/hierarchy`);
-        const bc: Record<string, number> = {};
-        for (const b of res.tree) bc[b.brand.id] = b.product_count;
-        setBrandCounts(bc);
-
-        if (brandId) {
-          const bNode = res.tree.find((b) => b.brand.id === brandId);
-          setCategoriesForBrand(bNode ? bNode.categories.map((c: any) => c.category) : []);
-        } else {
-          setCategoriesForBrand(null);
-        }
-
-        const subs = new Set<string>();
-        const ser = new Set<string>();
-        for (const b of res.tree) {
-          if (brandId && b.brand.id !== brandId) continue;
-          for (const c of b.categories) {
-            if (cat && c.category.id !== cat) continue;
-            for (const s of c.subcategories) {
-              subs.add(s.name);
-              for (const se of s.series) {
-                if (!subcat || subcat === s.name) ser.add(se.name);
-              }
-            }
-          }
-        }
-        setSubcategories(Array.from(subs).sort());
-        setSeriesList(Array.from(ser).sort());
+        const res = await catalogReferences.hierarchy<{ tree: any[] }>();
+        setHierarchyTree(res.tree);
       } catch {
-        setSubcategories([]); setSeriesList([]);
+        setHierarchyTree([]);
       }
     })();
-  }, [cat, brandId, subcat]);
+  }, []);
+
+  // Hierarchy → derive brand counts, brand-scoped categories, subcategory & series options
+  useEffect(() => {
+    const bc: Record<string, number> = {};
+    for (const b of hierarchyTree) bc[b.brand.id] = b.product_count;
+    setBrandCounts(bc);
+
+    if (brandId) {
+      const bNode = hierarchyTree.find((b) => b.brand.id === brandId);
+      setCategoriesForBrand(bNode ? bNode.categories.map((c: any) => c.category) : []);
+    } else {
+      setCategoriesForBrand(null);
+    }
+
+    const subs = new Set<string>();
+    const ser = new Set<string>();
+    for (const b of hierarchyTree) {
+      if (brandId && b.brand.id !== brandId) continue;
+      for (const c of b.categories) {
+        if (cat && c.category.id !== cat) continue;
+        for (const s of c.subcategories) {
+          subs.add(s.name);
+          for (const se of s.series) {
+            if (!subcat || subcat === s.name) ser.add(se.name);
+          }
+        }
+      }
+    }
+    setSubcategories(Array.from(subs).sort());
+    setSeriesList(Array.from(ser).sort());
+  }, [hierarchyTree, cat, brandId, subcat]);
 
   const PAGE_SIZE = 60;
   const requestIdRef = useRef(0);
-  const buildParams = useCallback((skip: number) => {
-    const params = new URLSearchParams();
-    if (q)         params.set("q", q);
-    if (cat)       params.set("category_id", cat);
-    if (brandId)   params.set("brand_id", brandId);
-    if (subcat)    params.set("subcategory", subcat);
-    if (series)    params.set("series", series);
-    params.set("limit", String(PAGE_SIZE));
-    params.set("skip", String(skip));
-    return params;
-  }, [q, cat, brandId, subcat, series]);
-
   // A filter/search/mode change replaces the current query result with page 1.
   // Subsequent pages are appended exclusively by `loadMore`, never simulated.
   const load = useCallback(async () => {
@@ -190,15 +185,18 @@ export default function Catalog() {
     loadingMoreRef.current = false;
     setLoadingMore(false);
     setProducts(null); setFamilies(null); setTotal(null); setHasMore(false);
-    const params = buildParams(0);
     try {
       if (mode === "families") {
-        const res = await api.get<{ total: number; items: Family[] }>(`/products/families?${params}`);
+        const res = await fetchCatalogPage<Family>({
+          mode: "families", q, brandId, categoryId: cat, subcategory: subcat, series,
+        }, 0, PAGE_SIZE);
         if (requestId !== requestIdRef.current) return;
         const items = res.items || [];
         setFamilies(items); setTotal(res.total); setHasMore(items.length < res.total);
       } else {
-        const res = await api.get<{ total: number; items: Product[] }>(`/products?${params}`);
+        const res = await fetchCatalogPage<Product>({
+          mode: "products", q, brandId, categoryId: cat, subcategory: subcat, series, sort: "popular",
+        }, 0, PAGE_SIZE);
         if (requestId !== requestIdRef.current) return;
         const items = res.items || [];
         setProducts(items); setTotal(res.total); setHasMore(items.length < res.total);
@@ -208,7 +206,7 @@ export default function Catalog() {
       if (mode === "families") setFamilies([]); else setProducts([]);
       setTotal(0); setHasMore(false);
     }
-  }, [buildParams, mode]);
+  }, [q, cat, brandId, subcat, series, mode]);
 
   useEffect(() => {
     const t = setTimeout(load, 250);
@@ -216,28 +214,33 @@ export default function Catalog() {
   }, [load]);
 
   const loadMore = useCallback(async () => {
-    const currentItems = mode === "families" ? (families || []) : (products || []);
     if (loadingMoreRef.current || total === null || !hasMore) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const requestId = requestIdRef.current;
-    const params = buildParams(currentItems.length);
+    const currentLength = mode === "families" ? (families || []).length : (products || []).length;
     try {
       if (mode === "families") {
-        const res = await api.get<{ total: number; items: Family[] }>(`/products/families?${params}`);
+        const currentFamilies = families || [];
+        const res = await fetchCatalogPage<Family>({
+          mode: "families", q, brandId, categoryId: cat, subcategory: subcat, series,
+        }, currentLength, PAGE_SIZE);
         if (requestId !== requestIdRef.current) return;
         const incoming = res.items || [];
-        const known = new Set(currentItems.map((item) => item.family_key));
+        const known = new Set(currentFamilies.map((item) => item.family_key));
         const appended = incoming.filter((item) => !known.has(item.family_key));
-        const merged = [...currentItems, ...appended];
+        const merged = [...currentFamilies, ...appended];
         setFamilies(merged); setTotal(res.total); setHasMore(merged.length < res.total && incoming.length > 0);
       } else {
-        const res = await api.get<{ total: number; items: Product[] }>(`/products?${params}`);
+        const currentProducts = products || [];
+        const res = await fetchCatalogPage<Product>({
+          mode: "products", q, brandId, categoryId: cat, subcategory: subcat, series, sort: "popular",
+        }, currentLength, PAGE_SIZE);
         if (requestId !== requestIdRef.current) return;
         const incoming = res.items || [];
-        const known = new Set(currentItems.map((item) => item.id));
+        const known = new Set(currentProducts.map((item) => item.id));
         const appended = incoming.filter((item) => !known.has(item.id));
-        const merged = [...currentItems, ...appended];
+        const merged = [...currentProducts, ...appended];
         setProducts(merged); setTotal(res.total); setHasMore(merged.length < res.total && incoming.length > 0);
       }
     } catch {
@@ -248,7 +251,7 @@ export default function Catalog() {
         setLoadingMore(false);
       }
     }
-  }, [buildParams, families, hasMore, mode, products, total]);
+  }, [q, cat, brandId, subcat, series, families, hasMore, mode, products, total]);
 
   const brandById: Record<string, string> = useMemo(
     () => Object.fromEntries(brands.map((b) => [b.id, b.name])), [brands],
@@ -635,7 +638,7 @@ function SkeletonCard({ tall }: { tall?: boolean }) {
   return (
     <View style={styles.card}>
       <View style={[styles.imageWrap, { height: tall ? 180 : 160 }]}>
-        <Skeleton w="100%" h="100%" />
+        <Skeleton w="100%" h={tall ? 180 : 160} />
       </View>
       <View style={{ padding: 12, gap: 8 }}>
         <Skeleton w="70%" />
@@ -703,6 +706,7 @@ function FilterSection({ title, children }: { title: string; children: React.Rea
 }
 
 const styles = StyleSheet.create({
+  skeletonGrid: { flexDirection: "row", flexWrap: "wrap" },
   searchWrap: {
     flex: 1, flexDirection: "row", alignItems: "center", gap: 10,
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,

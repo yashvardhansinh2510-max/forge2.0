@@ -50,6 +50,7 @@ class UserBase(BaseModel):
     phone: Optional[str] = None
     active: bool = True
     avatar_url: Optional[str] = None
+    floor_ids: list[str] = Field(default_factory=list)
 
 
 class UserCreate(UserBase):
@@ -61,6 +62,8 @@ class UserPublic(UserBase, TimestampedModel):
     # member must set their own password before using the app further.
     must_change_password: bool = False
     temp_password_expires_at: Optional[str] = None
+    # Request-scoped selection; never persisted to the users collection.
+    active_floor_id: Optional[str] = None
 
 
 class UserInDB(UserPublic):
@@ -93,6 +96,7 @@ class CustomerBase(BaseModel):
     # Customer Portal login gate — a customer can only sign into the portal
     # when this is true, regardless of whether a password_hash exists.
     portal_enabled: bool = False
+    floor_id: str = "first-floor"
 
 
 class CustomerCreate(CustomerBase):
@@ -152,6 +156,7 @@ class TeamCreatePayload(BaseModel):
     role: Role
     phone: Optional[str] = None
     password: str = Field(..., min_length=8)
+    floor_ids: list[str] = Field(default_factory=list)
 
 
 class TeamUpdatePayload(BaseModel):
@@ -159,6 +164,19 @@ class TeamUpdatePayload(BaseModel):
     role: Optional[Role] = None
     phone: Optional[str] = None
     active: Optional[bool] = None
+    floor_ids: Optional[list[str]] = None
+
+
+class FloorPublic(TimestampedModel):
+    name: str
+    slug: str
+    active: bool = True
+
+
+class FloorCreatePayload(BaseModel):
+    name: str = Field(..., min_length=2, max_length=80)
+    slug: Optional[str] = None
+    active: bool = True
 
 
 # ---------- Settings: Company profile (Settings > Company) ----------
@@ -255,6 +273,7 @@ class ProductVariant(BaseModel):
 
 
 class Product(TimestampedModel):
+    floor_id: str = "first-floor"
     name: str
     sku: str
     brand_id: str
@@ -272,8 +291,8 @@ class Product(TimestampedModel):
     material: Optional[str] = None
     dimensions: Optional[str] = None
     warranty: Optional[str] = None
-    mrp: float
-    price: float                            # trade price
+    mrp: float = Field(ge=0)
+    price: float = Field(ge=0)              # trade price
     stock: int = 0
     # DEPRECATED (kept for read-back compatibility) — new media lives in
     # `product_media` collection referenced via ProductMedia.
@@ -349,9 +368,13 @@ class QuotationLineItem(BaseModel):
     colour: Optional[str] = None
     category_id: Optional[str] = None      # denormalized for category-level discounts
     room: Optional[str] = None
-    qty: float = 1
-    unit_price: float = 0                  # final selling price per unit
-    discount_pct: Optional[float] = None   # None → inherit from category/project
+    qty: float = Field(default=1, gt=0)
+    unit_price: float = Field(default=0, ge=0)  # final selling price per unit
+    # BACKEND_AUDIT_2026-07-17.md Medium #36: unbounded before this — a
+    # negative discount_pct silently acts as a MARKUP (net price goes up),
+    # and anything over 100 makes net go negative (the business pays the
+    # customer). Neither is ever a valid quotation state.
+    discount_pct: Optional[float] = Field(default=None, ge=0, le=100)  # None → inherit from category/project
     notes: Optional[str] = None
     description: Optional[str] = None      # inline override of product description
     sort_order: int = 0
@@ -391,6 +414,7 @@ class RoomDiscountCfg(BaseModel):
 
 
 class Quotation(TimestampedModel):
+    floor_id: str = "first-floor"
     number: str                          # human-readable e.g. FQ-2026-0001
     customer_id: str
     customer_name: str
@@ -403,7 +427,7 @@ class Quotation(TimestampedModel):
     items: list[QuotationLineItem] = []
     rooms: list[str] = []                # ordered list of room labels
     collapsed_rooms: list[str] = []      # ui state — persisted so it survives reloads
-    project_discount_pct: float = 0      # applied on top of item net (after item discount)
+    project_discount_pct: float = Field(default=0, ge=0, le=100)  # applied on top of item net (after item discount)
     category_discounts: dict[str, float] = {}  # {category_id: discount_pct}
     room_discounts: dict[str, RoomDiscountCfg] = {}  # {room_name: {type, value}}
     # Full UI state blob — active_room, scroll positions, expanded panels,
@@ -463,6 +487,7 @@ class QuotationUpdate(BaseModel):
 # ---------- Ops modules (scaffold) ----------
 class Supplier(TimestampedModel):
     """A dealership/supplier we buy from — normally one per brand but not strict."""
+    floor_id: str = "first-floor"
     name: str
     brand_id: Optional[str] = None
     brand_name: Optional[str] = None
@@ -578,12 +603,21 @@ class PurchaseAttachment(BaseModel):
     by_user_name: str
     filename: str
     mime: str = "application/octet-stream"
-    data_url: str                          # base64 data URL (kept simple per system rules)
+    # BACKEND_AUDIT_2026-07-17.md High #17: base64 used to be embedded
+    # directly on this document (no cap on attachment count/aggregate size,
+    # trending toward MongoDB's 16MB document limit). New attachments upload
+    # to the private Supabase bucket and store only `storage_key`; a signed
+    # URL is minted on demand via GET /{po_id}/attachments/{id}/url.
+    # `data_url` stays Optional so PO documents written before this change
+    # keep rendering — it is never populated for new attachments.
+    data_url: Optional[str] = None
+    storage_key: Optional[str] = None
     size_bytes: int = 0
     note: Optional[str] = None
 
 
 class PurchaseOrder(TimestampedModel):
+    floor_id: str = "first-floor"
     number: str                            # human — e.g. FPO-2026-0001
     quotation_id: Optional[str] = None
     quotation_number: Optional[str] = None
@@ -699,11 +733,13 @@ class PurchaseOrder_Legacy(TimestampedModel):
 
 
 class Payment(TimestampedModel):
+    floor_id: str = "first-floor"
+    idempotency_key: Optional[str] = None
     quotation_id: Optional[str] = None
     quotation_number: Optional[str] = None
     customer_id: str
     customer_name: Optional[str] = None
-    amount: float
+    amount: float = Field(gt=0)
     mode: Literal["cash", "upi", "bank", "card", "cheque"] = "upi"
     status: Literal["pending", "completed", "failed"] = "completed"
     reference: Optional[str] = None            # cheque no. / UTR / short note
@@ -715,11 +751,12 @@ class Payment(TimestampedModel):
 
 class PaymentCreate(BaseModel):
     quotation_id: str
-    amount: float
+    amount: float = Field(gt=0)
     mode: Literal["cash", "upi", "bank", "card", "cheque"] = "cash"
     reference: Optional[str] = None
     note: Optional[str] = None
     paid_at: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 # ---------- Follow-ups (Sales Command Center) ----------
@@ -743,6 +780,7 @@ class Followup(TimestampedModel):
     produced (and kept in sync / auto-resolved) by services/followup_engine.py —
     never created ad-hoc elsewhere. Manual rows (is_automated=False) are created
     by staff via the '+ New Follow-up' action or a logged call outcome."""
+    floor_id: str = "first-floor"
     source_key: Optional[str] = None        # dedupe key for automated rules, e.g. "payment_overdue:<qid>"
     rule_type: FollowupRuleType = "manual"
     category: FollowupCategory = "general"

@@ -54,8 +54,10 @@ function OrDivider() {
 
 export default function Login() {
   const { loginStaff, loginCustomer, loginWithGoogle, googleBusy, googleError, clearGoogleError } = useAuth();
-  const { isPhone, isTablet } = useBp();
+  const { isPhone, isTablet, height } = useBp();
+  const compactPhone = isPhone && height < 700;
   const insets = useSafeAreaInsets();
+  const showDemoAccount = process.env.NODE_ENV !== "production" && process.env.EXPO_PUBLIC_ENABLE_DEMO_AUTH === "true";
 
   const [mode, setMode] = useState<Mode>("staff");
   const [email, setEmail] = useState("");
@@ -93,7 +95,7 @@ export default function Login() {
   };
 
   const form = (
-    <View style={{ width: "100%", maxWidth: 384, alignSelf: "center", gap: space.x5 }}>
+    <View style={{ width: "100%", maxWidth: 384, alignSelf: "center", gap: compactPhone ? space.x3 : space.x5 }}>
       <View style={{ gap: 8 }}>
         {!isPhone ? <BuildConLogo height={44} style={{ marginBottom: 4 }} /> : null}
         <Txt v="display" style={isPhone ? { fontSize: 30, lineHeight: 38 } : undefined}>
@@ -104,7 +106,7 @@ export default function Login() {
         </Txt>
       </View>
 
-      <View style={{ gap: space.x4 }}>
+      <View style={{ gap: compactPhone ? space.x3 : space.x4 }}>
         <GoogleButton
           label="Continue with Google"
           loading={googleBusy}
@@ -146,9 +148,11 @@ export default function Login() {
       </View>
 
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: space.x1 }}>
-        <Pressable onPress={fillDemo} hitSlop={8}>
-          <Text style={{ fontFamily: font.medium, fontSize: 13, color: color.inkSoft }}>Use demo account</Text>
-        </Pressable>
+        {showDemoAccount ? (
+          <Pressable onPress={fillDemo} hitSlop={8}>
+            <Text style={{ fontFamily: font.medium, fontSize: 13, color: color.inkSoft }}>Use demo account</Text>
+          </Pressable>
+        ) : <View />}
         <Pressable
           testID="toggle-portal"
           onPress={() => { setMode((m) => (m === "staff" ? "customer" : "staff")); setError(null); clearGoogleError(); setEmail(""); setPassword(""); }}
@@ -167,14 +171,14 @@ export default function Login() {
     return (
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, backgroundColor: color.canvas }}>
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <View style={{ height: 216 }}>
+          <View style={{ height: compactPhone ? 128 : 216 }}>
             <Image source={{ uri: HERO }} style={{ flex: 1 }} contentFit="cover" transition={300} />
             <LinearGradient colors={["rgba(20,17,12,0.05)", "rgba(20,17,12,0.55)"]} style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }} />
             <View style={{ position: "absolute", left: 20, bottom: 16, right: 20 }}>
-              <BuildConLogo height={40} />
+              <BuildConLogo height={compactPhone ? 32 : 40} />
             </View>
           </View>
-          <View style={{ flex: 1, padding: 24, paddingTop: 32, paddingBottom: Math.max(24, insets.bottom + 16) }}>
+          <View style={{ flex: 1, padding: compactPhone ? 16 : 24, paddingTop: compactPhone ? 12 : 32, paddingBottom: Math.max(24, insets.bottom + 16) }}>
             {form}
           </View>
         </ScrollView>

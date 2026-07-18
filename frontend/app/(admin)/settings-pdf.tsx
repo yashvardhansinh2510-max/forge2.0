@@ -78,7 +78,7 @@ export default function SettingsPDF() {
           <Switch
             testID="pdf-watermark-switch"
             value={form.show_watermark}
-            onValueChange={(v) => canEdit && setForm((f) => (f ? { ...f, show_watermark: v } : f))}
+            onValueChange={(v) => { if (canEdit) setForm((f) => (f ? { ...f, show_watermark: v } : f)); }}
             disabled={!canEdit}
             trackColor={{ false: colors.border, true: colors.brand }}
           />

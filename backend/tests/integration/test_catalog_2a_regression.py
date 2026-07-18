@@ -15,9 +15,16 @@ import os
 import pytest
 import requests
 
-BASE = os.environ["EXPO_PUBLIC_BACKEND_URL"].rstrip("/")
-LOGIN = {"email": "owner@forge.app", "password": "Forge@2026"}
-SUPABASE_HOST = "vburaxruvbnbahegtbya.supabase.co"
+# Never a hardcoded stale preview URL or the known demo password — the whole
+# module skips cleanly if a real test environment isn't configured.
+BASE = os.environ.get("TEST_BACKEND_URL", "").rstrip("/")
+LOGIN = {"email": os.environ.get("TEST_OWNER_EMAIL", ""), "password": os.environ.get("TEST_OWNER_PASSWORD", "")}
+SUPABASE_HOST = os.environ.get("TEST_SUPABASE_HOST", "vburaxruvbnbahegtbya.supabase.co")
+
+pytestmark = pytest.mark.skipif(
+    not (BASE and LOGIN["email"] and LOGIN["password"]),
+    reason="TEST_BACKEND_URL/TEST_OWNER_EMAIL/TEST_OWNER_PASSWORD not set",
+)
 
 
 # ---------- fixtures ----------

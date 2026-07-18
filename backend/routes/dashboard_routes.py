@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 
-from auth import get_current_user
+from auth import floor_query, get_current_user
 from db import db
 from models import UserPublic
 
@@ -15,8 +15,9 @@ async def dashboard_stats(user: UserPublic = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
-    quotations = await db.quotations.find({}, {"_id": 0}).to_list(1000)
-    customers = await db.customers.count_documents({})
+    quotations = await db.quotations.find(floor_query(user, {}), {"_id": 0}).to_list(1000)
+    customers = await db.customers.count_documents(floor_query(user, {}))
+    # Catalog has no floor scoping yet (tracked separately) — product count stays global.
     products = await db.products.count_documents({"active": True})
 
     # revenue = grand_total of won quotations this month

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from auth import hash_password
 from db import db
+from settings import settings
 from models import (
     Brand, Category, CustomerInDB, Notification,
     Product, Quotation, QuotationLineItem, UserInDB,
@@ -27,7 +28,8 @@ DEMO_STAFF = [
     ("worker@forge.app", "Devansh Patel", "worker"),
 ]
 
-DEMO_PASSWORD = "Forge@2026"
+# No hardcoded demo password ships in source anymore — settings.py fails fast
+# at startup if demo seeding is enabled without an explicit FORGE_DEMO_PASSWORD.
 
 BRANDS = [
     ("Hansgrohe", "Germany"),
@@ -107,7 +109,14 @@ async def resync_catalog_if_needed():
     set doesn't exactly match the 5 demo brand names (e.g. Axor folded into
     Hansgrohe as a collection) would cause this function to WIPE the entire
     products/brands/categories collections and replace them with demo data on the
-    very next backend restart. This must never happen again."""
+    very next backend restart. This must never happen again.
+
+    SECOND GUARD (2026-07): this used to run unconditionally on every startup,
+    regardless of `FORGE_ALLOW_DEMO_SEED` — meaning demo catalog data could
+    reappear in a "production" deployment any time the products collection was
+    momentarily empty. Now gated behind the same flag as `seed_if_empty`."""
+    if not settings.allow_demo_seed:
+        return
     real_products = await db.products.count_documents({"tags": {"$ne": "demo"}})
     if real_products > 0:
         return
@@ -166,6 +175,8 @@ async def seed_if_empty():
     (e.g. a real catalog was restored but users hasn't been touched yet, or
     vice versa), skip entirely. Per explicit requirement: products > 0 => skip;
     database empty => seed."""
+    if not settings.allow_demo_seed:
+        return
     if not await _empty("users"):
         return
     if not await _empty("products"):
@@ -178,7 +189,7 @@ async def seed_if_empty():
     for email, name, role in DEMO_STAFF:
         u = UserInDB(
             email=email, full_name=name, role=role,  # type: ignore[arg-type]
-            password_hash=hash_password(DEMO_PASSWORD),
+            password_hash=hash_password(settings.demo_password),
         )
         users[role] = u
         await db.users.insert_one(u.dict())
@@ -224,7 +235,7 @@ async def seed_if_empty():
         c = CustomerInDB(
             name=name, company=company, email=email.lower(), phone=phone,
             tier=tier, city=city,  # type: ignore[arg-type]
-            password_hash=hash_password(DEMO_PASSWORD),
+            password_hash=hash_password(settings.demo_password),
         )
         await db.customers.insert_one(c.dict())
         customer_ids.append(c.id)
