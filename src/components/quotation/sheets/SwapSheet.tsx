@@ -10,6 +10,7 @@ import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { VariantSwatchStrip } from "../shared/VariantChip";
 import { productImageList } from "../helpers/media";
+import { variantDescriptor } from "../helpers/pricing";
 
 export function SwapSheet() {
   const b = useBuilder();
@@ -45,7 +46,7 @@ export function SwapSheet() {
                 <ProductImage source={productImageList(p)} style={styles.thumb} fallbackLabel={p.sku} />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
-                  <Text style={type.caption}>{p.sku}{p.finish ? ` · ${p.finish}` : ""}</Text>
+                  <Text style={type.caption}>{p.sku}{variantDescriptor(p) ? ` · ${variantDescriptor(p)}` : ""}</Text>
                 </View>
                 <Text style={{ fontFamily: "System", fontVariant: ["tabular-nums"], fontSize: 13, fontWeight: "600" }}>{money(p.price)}</Text>
                 <Feather name="corner-down-right" size={14} color={colors.brand} />

@@ -18,6 +18,7 @@ import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens
 import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { productImageList } from "../helpers/media";
+import { variantDescriptor } from "../helpers/pricing";
 import type { Product, ProductVariant } from "../helpers/types";
 
 export function ProductModal() {
@@ -195,7 +196,7 @@ export function ProductModal() {
                             testID={`pm-variant-${v.sku}`}
                           >
                             <View style={[styles.swatch, { backgroundColor: colourHex(v.color || v.finish) }]} />
-                            <Text style={[styles.variantLabel, on && { color: colors.onBrand }]}>{v.finish || v.color || v.size || v.sku}</Text>
+                            <Text style={[styles.variantLabel, on && { color: colors.onBrand }]}>{variantDescriptor(v) || v.sku}</Text>
                             {v.price !== product.price ? (
                               <Text style={[styles.variantDelta, on && { color: colors.onBrand }]}>
                                 {v.price > product.price ? "+" : ""}{money(v.price - product.price)}
