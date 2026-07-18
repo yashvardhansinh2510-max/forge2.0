@@ -72,6 +72,13 @@ REQUIRED_INDEXES: dict[str, list[tuple[tuple[str, Any], ...]]] = {
         (("user_id", 1), ("count", -1)),
     ],
     "user_sessions": [(("id", 1),), (("user_type", 1), ("user_id", 1))],
+    # Task 17 code-review finding: brands.slug/categories.slug uniqueness is
+    # load-bearing for POST /brands and POST /categories (routes/catalog_routes.py)
+    # but was never in this startup gate — only ensure_indexes.py (brands) and
+    # migrations/0005_add_categories_slug_unique_index.py (categories) created
+    # them, with nothing confirming they actually exist on every boot.
+    "brands": [(("id", 1),), (("slug", 1),)],
+    "categories": [(("id", 1),), (("slug", 1),)],
     # Data Integrity Audit (Phase 2, 2026-08) — duplicate-prevention indexes.
     # `products` (sku, brand_id) unique index is deliberately NOT listed here
     # yet: a real pre-existing same-brand duplicate SKU was found live and
