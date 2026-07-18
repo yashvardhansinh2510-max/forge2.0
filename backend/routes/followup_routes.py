@@ -632,6 +632,7 @@ async def log_call(followup_id: str, body: FollowupCallOutcomePayload, user: Use
             due_at=due.isoformat(), is_automated=False,
             assigned_to=f.get("assigned_to") or user.id, assigned_to_name=f.get("assigned_to_name") or user.full_name,
             tags=f.get("tags", []),
+            floor_id=f.get("floor_id", "first-floor"),
         )
         await db.followups.insert_one(nf.dict())
         next_created = nf.id

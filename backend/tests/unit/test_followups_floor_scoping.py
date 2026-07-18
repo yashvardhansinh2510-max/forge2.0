@@ -79,3 +79,38 @@ def test_insights_scopes_every_query_to_the_active_floor(monkeypatch):
     # last_count_filter only captures the final call, which is enough to prove
     # the floor filter reaches this collection too.
     assert _floor_id_constraint(fake_db.followups.last_count_filter) == expected
+
+
+class _FakeFollowups:
+    def __init__(self, existing: dict):
+        self._existing = existing
+        self.inserted: list[dict] = []
+
+    async def find_one(self, *_args, **_kwargs):
+        return dict(self._existing)
+
+    async def insert_one(self, doc):
+        self.inserted.append(doc)
+
+    async def update_one(self, *_args, **_kwargs):
+        pass
+
+
+def test_log_call_reschedule_inherits_source_followup_floor(monkeypatch):
+    from models import FollowupCallOutcomePayload
+
+    fake_followups = _FakeFollowups({
+        "id": "f-1", "customer_id": "cust-1", "customer_name": "Test Customer",
+        "floor_id": "ground-floor",
+    })
+
+    class _Db:
+        followups = fake_followups
+
+    monkeypatch.setattr(followups, "db", _Db())
+
+    asyncio.run(followups.log_call(
+        "f-1", FollowupCallOutcomePayload(outcome="call_back"), user=_user("ground-floor"),
+    ))
+
+    assert fake_followups.inserted[0]["floor_id"] == "ground-floor"
