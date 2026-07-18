@@ -60,10 +60,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (!kind && !inAuth) {
       router.replace("/(auth)/login");
-    } else if (kind === "staff" && (!inAdmin || segments.length === 0)) {
-      if (inAuth || segments.length === 0) router.replace("/(admin)/dashboard");
-    } else if (kind === "customer" && !inCustomer) {
-      if (inAuth || segments.length === 0) router.replace("/(customer)/home");
+  } else if (kind === "staff" && !inAdmin) {
+    if (inAuth) router.replace("/(admin)/dashboard");
+  } else if (kind === "customer" && !inCustomer) {
+    if (inAuth) router.replace("/(customer)/home");
     }
   }, [kind, loading, isNavigationReady, segments, router, staff, customer]);
 

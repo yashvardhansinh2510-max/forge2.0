@@ -5,11 +5,12 @@ import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import {
-  Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View,
+  Pressable, ScrollView, StyleSheet, Text, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
+import { useBp } from "@/src/design/responsive";
 import {
   Avatar, Badge, Button, Chip, EmptyState, PageHeader,
   SearchField, Skeleton, StatTile,
@@ -36,8 +37,7 @@ type TierFilter = "all" | "vip" | "trade" | "retail";
 
 export default function Customers() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isDesktop = width >= 900;
+  const { isDesktop } = useBp();
 
   const [items, setItems] = useState<Customer[] | null>(null);
   const [q, setQ] = useState("");

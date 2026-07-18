@@ -109,7 +109,7 @@ export function Button({
   // button rendered a different height depending only on which screen it
   // was on. Every button in the app now shares one height/padding/icon-size
   // per size name, regardless of which component file renders it.
-  const h = size === "sm" ? 34 : size === "lg" ? 52 : 44;
+  const h = size === "sm" ? 44 : size === "lg" ? 52 : 44;
   const px = size === "sm" ? 12 : size === "lg" ? 20 : 16;
   const fs = size === "sm" ? 13 : size === "lg" ? 15 : 14;
   const iconPx = size === "sm" ? 14 : size === "lg" ? 18 : 16;
@@ -184,7 +184,7 @@ export function IconButton({
       hitSlop={layout.hitSlop}
       style={({ pressed, hovered }: any) => [
         {
-          width: size, height: size, borderRadius: radius.sm,
+          width: Math.max(size, layout.tap), height: Math.max(size, layout.tap), borderRadius: radius.sm,
           alignItems: "center", justifyContent: "center",
           backgroundColor: pressed ? color.pressWash : hovered ? color.hoverWash : "transparent",
         },

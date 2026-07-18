@@ -6,6 +6,7 @@ import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleShee
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 export function BottomSheet({
   visible, onClose, title, children, footer, testID, maxHeight = 0.85,
@@ -19,7 +20,8 @@ export function BottomSheet({
   maxHeight?: number;
 }) {
   const { height, width } = useWindowDimensions();
-  const isTablet = width >= 900;
+  const { isPhone } = useBp();
+  const isTablet = !isPhone;
   const targetWidth = isTablet ? Math.min(560, width - 80) : width;
 
   return (
@@ -35,7 +37,10 @@ export function BottomSheet({
                   <Feather name="x" size={20} color={colors.onSurfaceMuted} />
                 </Pressable>
               </View>
-              <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingBottom: 0 }} keyboardShouldPersistTaps="handled">
+              <ScrollView
+                contentContainerStyle={{ padding: spacing.lg, paddingBottom: footer ? spacing.lg + 68 : spacing.lg }}
+                keyboardShouldPersistTaps="handled"
+              >
                 {children}
               </ScrollView>
               {footer ? <View style={styles.foot}>{footer}</View> : null}

@@ -19,6 +19,7 @@ export type StaffUser = {
   active: boolean;
   avatar_url?: string | null;
   must_change_password?: boolean;
+  floor_ids: string[];
 };
 
 export type CustomerUser = {

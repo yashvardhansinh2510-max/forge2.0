@@ -1,18 +1,19 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "BuildCon House",
+    "slug": "buildcon-house",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "buildconhouse",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.forgesanitaryware.x4kuaf",
+      "bundleIdentifier": "com.buildconhouse.app",
       "infoPlist": {
-        "NSPhotoLibraryUsageInfo": "Choose your company logo for quotations"
+        "NSPhotoLibraryUsageDescription": "Choose your company logo for quotations",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -21,7 +22,7 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.forgesanitaryware.x4kuaf",
+      "package": "com.buildconhouse.app",
       "permissions": [
         "READ_MEDIA_IMAGES"
       ]
@@ -48,7 +49,8 @@
           "photosPermission": "Choose your company logo for quotations"
         }
       ],
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true

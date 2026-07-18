@@ -96,6 +96,7 @@ export default function Settings() {
     { icon: "bell", label: "Notifications", hint: "Channels & follow-up rules", href: "/(admin)/settings-notifications", testId: "settings-nav-notifications" },
     { icon: "database", label: "Catalog tools", hint: "Import, export, backup", href: "/(admin)/settings-catalog", testId: "settings-nav-catalog" },
     { icon: "activity", label: "System", hint: "Health, version, storage", href: "/(admin)/settings-system", testId: "settings-nav-system" },
+    { icon: "file-text", label: "Privacy & data", hint: "What we collect, deletion requests", href: "/(admin)/settings-privacy", testId: "settings-nav-privacy" },
   ];
 
   return (
@@ -282,5 +283,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.errorBorder,
+  },
+  logoutAllRow: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    minHeight: 44, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+  },
+  logoutAllLabel: {
+    color: colors.error, fontSize: 14,
+    fontFamily: type.titleMd.fontFamily, fontWeight: "600",
   },
 });

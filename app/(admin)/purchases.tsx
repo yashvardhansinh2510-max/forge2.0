@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
+import { useBp } from "@/src/design/responsive";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, shadow, spacing, type } from "@/src/theme/tokens";
@@ -111,9 +112,7 @@ function fmtDate(iso?: string | null): string {
 // -----------------------------------------------------------------------------
 export default function PurchasesScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isDesktop = width >= 1024;
-  const isTablet = width >= 768;
+  const { isDesktop } = useBp();
 
   // View + filter state
   const [view, setView] = useState<ViewMode>("today");
@@ -314,7 +313,7 @@ export default function PurchasesScreen() {
         </View>
 
         {/* Body — left rail + main table */}
-        <View style={[styles.body, !isDesktop && { flexDirection: "column" }]}>
+        <View style={[styles.body, !isDesktop && { flexDirection: "column", alignItems: "stretch" }]}>
           {/* LEFT RAIL — view selector + brand filter */}
           <View style={[styles.rail, isDesktop ? { width: 240 } : { width: "100%" }]}>
             <View style={styles.railBlock}>
@@ -416,7 +415,7 @@ export default function PurchasesScreen() {
                 rows={items}
                 shortages={shortages}
                 stages={stages}
-                isTablet={isTablet}
+                isDesktop={isDesktop}
                 selected={selected}
                 setSelected={setSelected}
                 onMove={setRowMoveTarget}
@@ -556,8 +555,8 @@ function TodayWorkspace({ loading, rows, blockedRows, slaDays, onMove, onTransfe
   );
 }
 
-function StockWorkspace({ loading, rows, shortages, stages, isTablet, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo }: {
-  loading: boolean; rows: Item[]; shortages: Shortage[]; stages: StageMeta[]; isTablet: boolean; selected: Set<string>;
+function StockWorkspace({ loading, rows, shortages, stages, isDesktop, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo }: {
+  loading: boolean; rows: Item[]; shortages: Shortage[]; stages: StageMeta[]; isDesktop: boolean; selected: Set<string>;
   setSelected: Dispatch<SetStateAction<Set<string>>>; onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void;
 }) {
   const pending = rows.filter((r) => ["order_in_company", "company_billing", "in_box"].includes(r.stage));
@@ -575,7 +574,7 @@ function StockWorkspace({ loading, rows, shortages, stages, isTablet, selected, 
         <OpsMetric label="Stock shortages" value={shortages.length} icon="alert-triangle" tone={shortages.length ? "risk" : "ok"} />
       </View>
       {shortages.length > 0 ? <View style={styles.shortageBanner}><Feather name="alert-triangle" size={15} color={colors.error} /><Text style={{ color: colors.error, fontWeight: "700" }}>{shortages.length} shortage{shortages.length === 1 ? "" : "s"} awaiting reorder</Text></View> : null}
-      <TrackerRows rows={rows} isTablet={isTablet} selected={selected} setSelected={setSelected} onMove={onMove} onTransfer={onTransfer} onHistory={onHistory} onOpenPo={onOpenPo} />
+      <TrackerRows rows={rows} isDesktop={isDesktop} selected={selected} setSelected={setSelected} onMove={onMove} onTransfer={onTransfer} onHistory={onHistory} onOpenPo={onOpenPo} />
     </View>
   );
 }
@@ -629,23 +628,44 @@ function DispatchWorkspace({ loading, rows, onHistory, onOpenPo }: { loading: bo
   );
 }
 
-function TrackerRows({ rows, isTablet, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo }: {
-  rows: Item[]; isTablet: boolean; selected: Set<string>; setSelected: Dispatch<SetStateAction<Set<string>>>;
+// The desktop ItemRow table assumes it gets most of the window width, but it
+// actually renders inside the admin shell's own sidebar plus this page's rail
+// (styles.rail, 240 wide) — so window-based isDesktop is the wrong signal for
+// how many table columns fit. Measure this container's own width instead,
+// mirroring BuilderShell's container-width responsive strategy.
+const TABLE_FULL = 900;
+const TABLE_STACK = 620;
+
+function TrackerRows({ rows, isDesktop, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo }: {
+  rows: Item[]; isDesktop: boolean; selected: Set<string>; setSelected: Dispatch<SetStateAction<Set<string>>>;
   onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void;
 }) {
+  const [tableW, setTableW] = useState(Infinity);
   if (rows.length === 0) return <View style={styles.workspaceCard}><Text style={type.bodyMuted}>No inventory items match this stock view.</Text></View>;
-  return <View style={styles.tableCard}>{rows.map((row) => <ItemRow key={row.item_id} row={row} isTablet={isTablet} checked={selected.has(row.item_id)} onToggle={() => setSelected((current) => { const next = new Set(current); if (next.has(row.item_id)) next.delete(row.item_id); else next.add(row.item_id); return next; })} onOpenMove={() => onMove(row)} onTransfer={() => onTransfer(row)} onHistory={() => onHistory(row.item_id)} onOpenPo={() => onOpenPo(row.po_id)} />)}</View>;
+  return (
+    <View style={styles.tableCard} onLayout={(e) => setTableW(e.nativeEvent.layout.width)}>
+      {rows.map((row) => (
+        <ItemRow
+          key={row.item_id} row={row} isDesktop={isDesktop} tableW={tableW}
+          checked={selected.has(row.item_id)}
+          onToggle={() => setSelected((current) => { const next = new Set(current); if (next.has(row.item_id)) next.delete(row.item_id); else next.add(row.item_id); return next; })}
+          onOpenMove={() => onMove(row)} onTransfer={() => onTransfer(row)} onHistory={() => onHistory(row.item_id)} onOpenPo={() => onOpenPo(row.po_id)}
+        />
+      ))}
+    </View>
+  );
 }
 
 // -----------------------------------------------------------------------------
 // Row + card components
 // -----------------------------------------------------------------------------
 function ItemRow(props: {
-  row: Item; isTablet: boolean; checked: boolean;
+  row: Item; isDesktop: boolean; tableW: number; checked: boolean;
   onToggle: () => void; onOpenMove: () => void; onTransfer: () => void; onHistory: () => void; onOpenPo: () => void;
 }) {
-  const { row, isTablet, checked, onToggle, onOpenMove, onTransfer, onHistory, onOpenPo } = props;
-  if (!isTablet) {
+  const { row, isDesktop, tableW, checked, onToggle, onOpenMove, onTransfer, onHistory, onOpenPo } = props;
+  const desktopTable = isDesktop && tableW >= TABLE_STACK;
+  if (!desktopTable) {
     return (
       <View style={styles.mobileRow}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -669,13 +689,14 @@ function ItemRow(props: {
       </View>
     );
   }
+  const compact = tableW < TABLE_FULL;
   return (
     <View style={[styles.tr, row.blocked && { backgroundColor: ds.riskTint }]}>
       <View style={{ width: 30 }}>
         <BulkChk checked={checked} onToggle={onToggle} />
       </View>
       {/* Product */}
-      <Pressable onPress={onOpenPo} style={{ flex: 2, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
+      <Pressable onPress={onOpenPo} style={{ flex: compact ? 3 : 2, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
         <ProductImage
           source={row.image}
           style={styles.thumb}
@@ -686,18 +707,20 @@ function ItemRow(props: {
         />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{row.name}</Text>
-          <Text style={styles.mono}>{row.sku}</Text>
+          <Text style={styles.mono} numberOfLines={1}>{row.sku}{compact ? ` · ${row.brand_name}` : ""}</Text>
         </View>
       </Pressable>
       {/* Customer */}
-      <View style={{ flex: 1.2, minWidth: 0 }}>
+      <View style={{ flex: compact ? 1.4 : 1.2, minWidth: 0 }}>
         <Text style={{ fontSize: 13, color: colors.onSurface }} numberOfLines={1}>{row.customer_name}</Text>
         <Text style={styles.mono} numberOfLines={1}>{row.po_number}{row.supplier_name ? ` · ${row.supplier_name}` : ""}</Text>
       </View>
-      {/* Brand */}
-      <Text style={{ width: 96, fontSize: 13, color: colors.onSurface, textTransform: "uppercase", fontWeight: "600" }} numberOfLines={1}>
-        {row.brand_name}
-      </Text>
+      {/* Brand — folded into the SKU line below TABLE_FULL, where it's the least essential fixed column */}
+      {!compact ? (
+        <Text style={{ width: 96, fontSize: 13, color: colors.onSurface, textTransform: "uppercase", fontWeight: "600" }} numberOfLines={1}>
+          {row.brand_name}
+        </Text>
+      ) : null}
       {/* Stage */}
       <View style={{ width: 130 }}>
         <StageBadge stage={row.stage} tone={row.stage_tone} label={row.stage_label} />
@@ -706,11 +729,13 @@ function ItemRow(props: {
       <Text style={{ width: 44, textAlign: "right", fontSize: 13, fontWeight: "600", color: colors.onSurface }}>
         {row.qty}
       </Text>
-      {/* Last move */}
-      <View style={{ flex: 1.1, minWidth: 0 }}>
-        <Text style={{ fontSize: 12, color: colors.onSurface }} numberOfLines={1}>{fmtDate(row.last_moved_at)}</Text>
-        <Text style={type.caption} numberOfLines={1}>{row.last_moved_by_name || "—"}</Text>
-      </View>
+      {/* Last move — dropped below TABLE_FULL to give Product/Customer room */}
+      {!compact ? (
+        <View style={{ flex: 1.1, minWidth: 0 }}>
+          <Text style={{ fontSize: 12, color: colors.onSurface }} numberOfLines={1}>{fmtDate(row.last_moved_at)}</Text>
+          <Text style={type.caption} numberOfLines={1}>{row.last_moved_by_name || "—"}</Text>
+        </View>
+      ) : null}
       {/* Action */}
       <View style={{ width: 118, alignItems: "flex-end", flexDirection: "row", justifyContent: "flex-end", gap: 6 }}>
         <Pressable onPress={onHistory} testID={`row-history-${row.item_id}`} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}>

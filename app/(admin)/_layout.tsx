@@ -18,6 +18,7 @@ import { brand, color, font, layout, radius, space } from "@/src/design/tokens";
 import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 
 type NavItem = { href: string; label: string; icon: FeatherName; match: string; roles?: string[] };
 
@@ -100,6 +101,41 @@ function SearchTrigger() {
   );
 }
 
+function FloorSwitcher({ compact = false }: { compact?: boolean }) {
+  const { access, floors, selectedFloorId, selectFloor } = useFloorAccess();
+  const selected = floors.find((floor) => floor.id === selectedFloorId);
+  if (!access || floors.length < 2) return null;
+  const pick = async (id: string) => {
+    if (id === selectedFloorId) return;
+    await selectFloor(id);
+    // Data on every mounted screen is scoped by the request header, so a
+    // floor change requires a clean reload to refetch everything.
+    if (Platform.OS === "web" && typeof window !== "undefined") window.location.reload();
+  };
+  const items = [
+    ...(access.all_floors ? [{
+      label: `All floors${selectedFloorId === "" ? " · Active" : ""}`,
+      icon: (selectedFloorId === "" ? "check" : "layers") as FeatherName,
+      onPress: () => { void pick(""); },
+    }] : []),
+    ...floors.map((floor) => ({
+      label: `${floor.name}${floor.id === selectedFloorId ? " · Active" : ""}`,
+      icon: (floor.id === selectedFloorId ? "check" : "layers") as FeatherName,
+      onPress: () => { void pick(floor.id); },
+    })),
+  ];
+  const currentLabel = selectedFloorId === "" ? "All floors" : selected?.name || "Select floor";
+  return (
+    <Menu align={compact ? "right" : "left"} items={items}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, height: 40, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: layout.hairline, borderColor: color.line }}>
+        <Feather name="layers" size={15} color={color.brass} />
+        {!compact ? <Text numberOfLines={1} style={{ flex: 1, fontFamily: font.medium, fontSize: 12.5, color: color.ink }}>{currentLabel}</Text> : null}
+        <Feather name="chevron-down" size={14} color={color.inkSoft} />
+      </View>
+    </Menu>
+  );
+}
+
 // ── Desktop sidebar ─────────────────────────────────────────────────────────
 function Sidebar() {
   const router = useRouter();
@@ -113,6 +149,7 @@ function Sidebar() {
       <View style={{ paddingHorizontal: space.x4, paddingTop: space.x5, paddingBottom: space.x4 }}>
         <Wordmark />
       </View>
+      <View style={{ paddingHorizontal: space.x3, paddingBottom: space.x3 }}><FloorSwitcher /></View>
       <View style={{ paddingHorizontal: space.x3, paddingBottom: space.x3 }}>
         <SearchTrigger />
       </View>
@@ -184,6 +221,7 @@ function Rail() {
     <SafeAreaView edges={["top", "left", "bottom"]} style={styles.rail}>
       <View style={{ alignItems: "center", paddingVertical: space.x4, gap: space.x4 }}>
         <Wordmark compact />
+        <FloorSwitcher compact />
         <Pressable accessibilityLabel="Search" onPress={palette.open} style={styles.railItem}>
           <Feather name="search" size={18} color={color.inkSoft} />
         </Pressable>
@@ -283,6 +321,7 @@ function PhoneBar() {
           <Feather name="search" size={17} color={color.inkMid} />
           <Text style={styles.moreLabel}>Search everything</Text>
         </Pressable>
+        <View style={{ paddingVertical: 6 }}><FloorSwitcher /></View>
         <Hairline style={{ marginVertical: 6 }} />
         {visibleMore.map((n) => (
           <Pressable

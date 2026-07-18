@@ -318,7 +318,7 @@ export const type = {
   label: { fontFamily: font.medium, fontSize: 12, lineHeight: 16, color: colors.onSurfaceSecondary, fontWeight: "500" as const },
 
   // Numeric (tabular)
-  mono:    { fontFamily: font.mono, fontSize: 13, lineHeight: 18, color: colors.onSurface, fontVariant: ["tabular-nums" as const] },
+  mono:    { fontFamily: font.mono, fontSize: 13, lineHeight: 18, color: colors.onSurface, fontVariant: ["tabular-nums"] as any },
   monoLg:  { fontFamily: font.mono, fontSize: 18, lineHeight: 24, color: colors.onSurface, fontWeight: "600" as const, fontVariant: ["tabular-nums" as const] },
   numeric: { fontFamily: font.semibold, fontSize: 16, lineHeight: 22, color: colors.onSurface, fontWeight: "600" as const, fontVariant: ["tabular-nums" as const] },
 } as const;

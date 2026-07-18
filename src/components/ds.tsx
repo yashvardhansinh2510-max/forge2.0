@@ -26,6 +26,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  StyleProp,
   Text,
   useWindowDimensions,
   View,
@@ -64,7 +65,7 @@ export function HoverCard({
 }: {
   onPress?: () => void;
   children: React.ReactNode;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   disabled?: boolean;
   testID?: string;
   radius?: number;
@@ -113,7 +114,7 @@ export function HeroCard({
   icon?: FeatherName;
   iconTone?: "brand" | "success" | "warning" | "danger" | "neutral";
   actions?: React.ReactNode;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   metaRow?: React.ReactNode;
 }) {
   const iconMap = {
@@ -173,7 +174,7 @@ export function Panel({
   overline?: string;
   actions?: React.ReactNode;
   children: React.ReactNode;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   padding?: number;
   testID?: string;
 }) {
@@ -296,7 +297,7 @@ export function BrandCard({
   productCount?: number;
   active?: boolean;
   onPress?: () => void;
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   testID?: string;
 }) {
   const initials = name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
@@ -359,7 +360,7 @@ export function ProductCard({
   favourite?: boolean;
   onToggleFavourite?: () => void;
   badge?: { label: string; tone: "brand" | "success" | "warning" | "danger" };
-  style?: ViewStyle;
+  style?: StyleProp<ViewStyle>;
   testID?: string;
   dense?: boolean;
 }) {
@@ -532,7 +533,7 @@ export function CustomerCard({
     success: { bg: colors.successBg, fg: colors.success },
     info:    { bg: colors.infoBg,    fg: colors.info },
     neutral: { bg: colors.surfaceTertiary, fg: colors.onSurfaceSecondary },
-  }[tierTone];
+  }[tierTone] ?? { bg: colors.surfaceTertiary, fg: colors.onSurfaceSecondary };
 
   return (
     <HoverCard onPress={onPress} testID={testID} padding={spacing.md}>

@@ -131,7 +131,7 @@ export function Button({
 // IconButton — circular icon-only affordance
 // ──────────────────────────────────────────────────────────────────────────
 export function IconButton({
-  icon, onPress, size = 40, tone = "surface", testID, accessibilityLabel, active, disabled, badge,
+  icon, onPress, size = 44, tone = "surface", testID, accessibilityLabel, active, disabled, badge,
 }: {
   icon: FeatherName;
   onPress?: () => void;
@@ -161,7 +161,7 @@ export function IconButton({
       disabled={disabled}
       hitSlop={layout.hitSlop}
       style={({ pressed }) => [{
-        width: size, height: size, borderRadius: size / 2,
+        width: Math.max(size, 44), height: Math.max(size, 44), borderRadius: Math.max(size, 44) / 2,
         backgroundColor: skin.bg,
         borderWidth: tone === "ghost" ? 0 : StyleSheet.hairlineWidth,
         borderColor: skin.border,
@@ -448,7 +448,7 @@ export function SectionHeader({
   return (
     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: spacing.md, gap: spacing.md }}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={titleStyle} numberOfLines={1}>{title}</Text>
+        <Text style={titleStyle} numberOfLines={2}>{title}</Text>
         {subtitle ? <Text style={[type.bodyMuted, { marginTop: 2 }]} numberOfLines={2}>{subtitle}</Text> : null}
       </View>
       {right}
@@ -467,10 +467,10 @@ export function ScreenTitle({
       paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md,
       backgroundColor: colors.surface,
     }}>
-      {back ? <IconButton icon="chevron-left" onPress={back} size={38} tone="surface" accessibilityLabel="Back" /> : null}
+      {back ? <IconButton icon="chevron-left" onPress={back} size={44} tone="surface" accessibilityLabel="Back" /> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={1} style={type.displayMd}>{title}</Text>
-        {subtitle ? <Text numberOfLines={1} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
+        <Text numberOfLines={2} style={type.displayMd}>{title}</Text>
+        {subtitle ? <Text numberOfLines={2} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
       </View>
       {right}
     </View>
@@ -490,7 +490,7 @@ export function SegmentedControl<T extends string>({
   testID?: string;
   fullWidth?: boolean;
 }) {
-  const h = size === "sm" ? 32 : 40;
+  const h = size === "sm" ? 44 : 44;
   return (
     <View testID={testID} style={{
       flexDirection: "row",
@@ -509,7 +509,7 @@ export function SegmentedControl<T extends string>({
             onPress={() => onChange(o.value)}
             style={{
               flex: 1, borderRadius: radius.sm + 2,
-              paddingHorizontal: 12, minWidth: 60,
+              paddingHorizontal: 12, minWidth: 60, minHeight: 44,
               alignItems: "center", justifyContent: "center",
               flexDirection: "row", gap: 6,
               backgroundColor: on ? colors.surfaceSecondary : "transparent",
@@ -560,7 +560,7 @@ export function Tabs<T extends string>({
             testID={testID ? `${testID}-${o.value}` : undefined}
             onPress={() => onChange(o.value)}
             style={{
-              paddingVertical: 10,
+              paddingVertical: 10, minHeight: 44,
               paddingHorizontal: 4,
               marginRight: 20,
               borderBottomWidth: 2,
@@ -639,7 +639,7 @@ export function TextField({
           }, rest.style]}
         />
         {rightIcon ? (
-          <Pressable onPress={onRightPress} hitSlop={layout.hitSlop} style={{ marginLeft: 8 }}>
+          <Pressable onPress={onRightPress} hitSlop={layout.hitSlop} style={{ marginLeft: 8, minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }}>
             <Feather name={rightIcon} size={16} color={colors.onSurfaceMuted} />
           </Pressable>
         ) : null}
@@ -661,7 +661,7 @@ export function SearchField(props: TextInputProps & { onClear?: () => void }) {
       backgroundColor: colors.surfaceTertiary,
       borderRadius: radius.md,
       paddingHorizontal: 12,
-      height: 40,
+      minHeight: 44,
     }}>
       <Feather name="search" size={15} color={colors.onSurfaceMuted} style={{ marginRight: 8 }} />
       <TextInput
@@ -1172,7 +1172,7 @@ export function PageHeader({
         <View style={{ flex: 1, minWidth: 0 }}>
           {overline ? <Text style={[type.overline, { marginBottom: 4 }]}>{overline}</Text> : null}
           <Text
-            numberOfLines={1}
+            numberOfLines={2}
             style={
               dense
                 ? type.titleLg

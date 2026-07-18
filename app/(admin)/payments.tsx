@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
+import { useBp } from "@/src/design/responsive";
 import { toast } from "@/src/components/Toast";
 import {
   Alert as UIAlert,
@@ -83,8 +84,7 @@ const paymentTone = (s: "paid" | "partial" | "due"): "success" | "warning" | "da
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function PaymentsScreen() {
-  const { width } = useWindowDimensions();
-  const isDesktop = width >= 900;
+  const { isDesktop } = useBp();
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);

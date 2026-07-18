@@ -124,7 +124,7 @@ export default function SettingsPermissions() {
                       testID={`perm-switch-${activeRole}-${m.key}`}
                       value={allowed}
                       disabled={!isOwner || isLockedRow || saving}
-                      onValueChange={() => activeRole && toggle(activeRole, m.key)}
+                      onValueChange={() => { if (activeRole) toggle(activeRole, m.key); }}
                       trackColor={{ false: colors.border, true: colors.brand }}
                       thumbColor="#fff"
                     />

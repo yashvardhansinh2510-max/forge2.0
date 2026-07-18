@@ -23,7 +23,11 @@ import { productImageList } from "../helpers/media";
 import { quotationGridColumns } from "../helpers/responsive";
 import type { Product, ProductVariant } from "../helpers/types";
 
-const PHONE_BREAKPOINT = 640;
+// Matches BuilderShell's THREE_PANE threshold: below that width, BuilderShell
+// always renders this component full-screen inside ProductPickerSheet with no
+// adjacent BrandRail (see BuilderShell.tsx), so the mobile brand/category
+// chips below need to cover that entire range — not just narrow phones.
+const PHONE_BREAKPOINT = 1180;
 const RECENT_SEARCHES_KEY = "forge.builder.recentSearches.v1";
 const MAX_RECENT_SEARCHES = 8;
 
