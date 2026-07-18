@@ -493,7 +493,10 @@ async def list_products_page(
 
 async def list_brands_with_counts(floor_ids: Optional[list[str]] = None) -> list[dict]:
     snapshot = await get_catalog_snapshot()
-    counts = Counter(row.get("brand_id") for row in snapshot.products)
+    products = snapshot.products if floor_ids is None else [
+        p for p in snapshot.products if p.get("floor_id") in floor_ids
+    ]
+    counts = Counter(row.get("brand_id") for row in products)
     brands = snapshot.brands if floor_ids is None else [
         b for b in snapshot.brands if b.get("floor_id") in floor_ids
     ]
@@ -507,7 +510,8 @@ async def list_categories_with_counts(brand_id: Optional[str], floor_ids: Option
     snapshot = await get_catalog_snapshot()
     counts = Counter(
         row.get("category_id") for row in snapshot.products
-        if not brand_id or row.get("brand_id") == brand_id
+        if (not brand_id or row.get("brand_id") == brand_id)
+        and (floor_ids is None or row.get("floor_id") in floor_ids)
     )
     out = []
     categories = snapshot.categories if floor_ids is None else [
