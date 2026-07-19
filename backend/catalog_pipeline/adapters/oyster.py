@@ -117,3 +117,181 @@ def family_key_for(category_slug: str, family_name: str) -> str:
 def sku_for(category_compact: str, family_name: str, finish_code: str) -> str:
     family_compact = _compact(family_name)[:32] or "FAMILY"
     return f"OYSTER-{category_compact}-{family_compact}-{finish_code}"
+
+
+# "Brook CP FITTINGS ..." / "BROOK UP FITINGS ..." prefix appears (with
+# inconsistent spacing/typos) at the start of every "Product Discription"
+# cell across all 4 files — strip it to get a clean family display name.
+_COLLECTION_PREFIX_RE = re.compile(r"^\s*BROOK\s+(CP|UP)\s+FIT[TI]*INGS?\s*[-:]?\s*", re.I)
+
+
+def _family_name(raw_description) -> str:
+    """The Shower sheet ships a two-line description
+    ("<collection line>\\n<product line>") for every row; the other 3 files
+    ship one line with the "Brook CP/UP Fit(t)ings" prefix inline. Either
+    way, strip the collection prefix to get the family display name."""
+    s = str(raw_description or "").strip()
+    if "\n" in s:
+        _, _, rest = s.partition("\n")
+        s = rest.strip() or s
+        # For multi-line descriptions, also strip any residual collection prefix
+        s = _COLLECTION_PREFIX_RE.sub("", s).strip()
+    # For single-line descriptions, keep the full name (e.g., "Brook CP Fittings WAVE JET")
+    s = re.sub(r"\s+", " ", s)
+    return s or "Unnamed"
+
+
+def _find_header_row(all_rows: list[list]) -> int:
+    for i, r in enumerate(all_rows[:5]):
+        cells = [str(c or "").lower().replace("\n", " ").strip() for c in r]
+        if "finishes" in cells:
+            return i
+    return 1  # fallback: row 2 (0-indexed 1), the observed layout in all 4 files
+
+
+def _build_col_map(header_row: list) -> dict[str, int]:
+    col_map: dict[str, int] = {}
+    for c, val in enumerate(header_row):
+        key = str(val or "").lower().replace("\n", " ").strip()
+        if not key:
+            continue
+        if key == "finishes":
+            col_map["finish"] = c
+        elif key.startswith("article"):
+            # Shower-only column; its content is actually a size string
+            # (e.g. "1000 x 700"), recovered into `dimensions`.
+            col_map["article_no"] = c
+        elif "discription" in key or "description" in key:
+            col_map["description"] = c
+        elif "image" in key:
+            col_map["image"] = c
+        elif key == "mrp":
+            col_map["mrp"] = c
+        elif key == "offer rate":
+            col_map["offer_rate"] = c
+    return col_map
+
+
+class OysterAdapter(BrandAdapter):
+    brand = BRAND
+    supported_extensions = (".xlsx", ".xls")
+
+    def extract(self, data: bytes, filename: str) -> tuple[list[ProductRow], ExtractionReport]:
+        report = ExtractionReport(brand=self.brand, filename=filename, source_type="excel")
+        rows: list[ProductRow] = []
+        try:
+            from openpyxl import load_workbook
+        except Exception as e:  # pragma: no cover
+            report.warnings.append(f"openpyxl missing: {e}")
+            return rows, report
+
+        try:
+            category, category_code = category_from_filename(filename)
+        except ValueError as e:
+            report.warnings.append(str(e))
+            return rows, report
+        category_slug = _slug(category)
+
+        try:
+            wb = load_workbook(io.BytesIO(data), data_only=True)
+        except Exception as e:
+            report.warnings.append(f"xlsx open failed: {e}")
+            return rows, report
+
+        # Image mapping: one photo per data row — verified 1:1 across all 4
+        # files (no side-by-side finishes sharing a row, unlike Vitra), so
+        # row-only anchoring (Hansgrohe-style) is safe. Highest-quality
+        # candidate wins if an anchor somehow has more than one blip.
+        by_sheet_row: dict[tuple[str, int], ExtractedImage] = {}
+        for sheet, row_idx, _col_idx, img in extract_images_from_xlsx_ex(data):
+            key = (sheet, row_idx)
+            prev = by_sheet_row.get(key)
+            qrank = {"excellent": 4, "good": 3, "acceptable": 2, "poor": 1}
+            if prev is None or (qrank.get(img.quality, 0), img.longest_edge) > (qrank.get(prev.quality, 0), prev.longest_edge):
+                by_sheet_row[key] = img
+        report.images_found = len(by_sheet_row)
+
+        for ws in wb.worksheets:
+            all_rows = [list(r) for r in ws.iter_rows(values_only=True)]
+            if not all_rows:
+                continue
+            hdr_idx = _find_header_row(all_rows)
+            col_map = _build_col_map(all_rows[hdr_idx])
+            if not {"finish", "description", "mrp"} <= col_map.keys():
+                report.warnings.append(
+                    f"Sheet {ws.title!r} in {filename}: could not locate finish/description/MRP columns"
+                )
+                continue
+
+            for r_idx, row in enumerate(all_rows[hdr_idx + 1:], start=hdr_idx + 2):
+                desc_cell = row[col_map["description"]] if col_map["description"] < len(row) else None
+                finish_cell = row[col_map["finish"]] if col_map["finish"] < len(row) else None
+                if not desc_cell or not finish_cell:
+                    continue  # blank / section / trailer row
+
+                family_name = _family_name(desc_cell)
+                finish_label, finish_code, finish_note = normalize_finish(finish_cell)
+
+                mrp = self.to_number(row[col_map["mrp"]] if col_map["mrp"] < len(row) else None)
+                offer_rate = self.to_number(
+                    row[col_map["offer_rate"]] if "offer_rate" in col_map and col_map["offer_rate"] < len(row) else None
+                )
+                dealer_price = offer_rate if offer_rate not in (MISSING, None, 0) else mrp
+
+                dimensions = MISSING
+                if "article_no" in col_map:
+                    art_cell = row[col_map["article_no"]] if col_map["article_no"] < len(row) else None
+                    if art_cell:
+                        dimensions = str(art_cell).strip()
+
+                family_key = family_key_for(category_slug, family_name)
+                sku = sku_for(category_code, family_name, finish_code) if finish_code else MISSING
+
+                img = by_sheet_row.get((ws.title, r_idx))
+                image_urls = [img.data_url] if img else []
+                image_meta = [img.to_dict()] if img else []
+                image_quality = img.quality if img else "missing"
+                if img:
+                    report.images_mapped += 1
+
+                pr = ProductRow(
+                    brand=self.brand,
+                    sku=sku,
+                    name=f"{family_name} - {finish_label}" if finish_label else family_name,
+                    category=category,
+                    subcategory=MISSING,
+                    series=MISSING,
+                    family_key=family_key,
+                    variant=finish_label or MISSING,
+                    finish=finish_label or MISSING,
+                    finish_code=finish_code or MISSING,
+                    colour=finish_label or MISSING,
+                    material=MISSING,
+                    dimensions=dimensions,
+                    description=str(desc_cell).strip(),
+                    mrp=mrp,
+                    dealer_price=dealer_price,
+                    warranty=MISSING,
+                    collection=COLLECTION_NAME,
+                    images=image_urls,
+                    image_meta=image_meta,
+                    image_quality=image_quality,
+                    image_page=None,
+                    specs={"collection": COLLECTION_NAME, "source_file": filename},
+                    tags=dedupe_iter([
+                        category.lower(), self.brand.lower(), COLLECTION_NAME.lower(), (finish_label or "").lower(),
+                    ]),
+                    confidence=0.94 if (finish_label and mrp != MISSING) else 0.5,
+                )
+                if not finish_label:
+                    pr.issues.append(finish_note or f"Unrecognized finish {finish_cell!r} — needs manual review")
+                elif finish_note:
+                    pr.issues.append(finish_note)
+                if mrp == MISSING:
+                    pr.issues.append("Missing MRP")
+                if not img:
+                    pr.issues.append("No image mapped from supplier file")
+                rows.append(pr)
+
+        report.parsed_rows = len(rows)
+        return rows, report

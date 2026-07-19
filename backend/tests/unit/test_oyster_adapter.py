@@ -68,3 +68,91 @@ def test_sku_differs_by_finish_within_same_family():
     sku_chrome = sku_for("BODYJET", "Wave Jet", "CR")
     sku_black = sku_for("BODYJET", "Wave Jet", "MB")
     assert sku_chrome != sku_black
+
+
+import io
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XLImage
+from PIL import Image as PILImage
+
+from catalog_pipeline.adapters.oyster import OysterAdapter
+from catalog_pipeline.base import MISSING
+
+
+def _tiny_png_bytes() -> bytes:
+    buf = io.BytesIO()
+    PILImage.new("RGB", (200, 200), color=(120, 120, 120)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _build_body_jet_workbook() -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BODY JET"
+    ws.append(["OYSTER BODY JET"])
+    ws.append(["Sr.\nNo.", "finishes", "Product Discription", "Product Image", "MRP",
+               "QTY", "MRP TOTAL", "DISCOUNT", None, "OFFER RATE", "TOTAL"])
+    # One family ("Wave Jet"), two finishes — one WITH a discount/offer rate,
+    # one WITHOUT (offer rate must fall back to MRP), one row has NO image.
+    ws.append([1, "CROME", "Brook CP Fittings WAVE JET", None, 18500, None, 0, 50, 9250, 9250, 0])
+    ws.append([2, "MAAT BALCK", "Brook CP Fittings WAVE JET", None, 19500, None, 0, None, 0, 19500, 0])
+    # A second family with only one finish and no MRP (missing-data case).
+    ws.append([3, "GUN METAL", "BROOK UP FITTINGS JET-X", None, None, None, 0, None, 0, 0, 0])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    # openpyxl doesn't easily re-embed a floating image keyed to a specific
+    # cell through the public API after save+reload in one step here, so this
+    # fixture builds the image via a second pass using openpyxl's own
+    # add_image on row 3 (Sr.No.=1) only, leaving rows 4 and 5 imageless —
+    # exactly mirroring the real Basin Mixer/Shower files' "a few rows have
+    # no image" reality.
+    wb2 = Workbook()
+    ws2 = wb2.active
+    ws2.title = "BODY JET"
+    for row in ws.iter_rows(values_only=True):
+        ws2.append(list(row))
+    img = XLImage(io.BytesIO(_tiny_png_bytes()))
+    img.anchor = "D3"  # row 3 = first data row (Sr.No.=1, CROME)
+    ws2.add_image(img)
+    out = io.BytesIO()
+    wb2.save(out)
+    return out.getvalue()
+
+
+def test_extract_groups_variants_into_one_family_and_generates_stable_skus():
+    data = _build_body_jet_workbook()
+    adapter = OysterAdapter()
+    rows, report = adapter.extract(data, "OYSTER BODY JET.xlsx")
+
+    assert report.parsed_rows == 3
+    wave_jet_rows = [r for r in rows if "WAVE JET" in (r.description or "")]
+    assert len(wave_jet_rows) == 2
+    assert wave_jet_rows[0].family_key == wave_jet_rows[1].family_key == "oyster:body-jet:brook-cp-fittings-wave-jet"
+    assert {r.finish for r in wave_jet_rows} == {"Chrome", "Matt Black"}
+    assert len({r.sku for r in wave_jet_rows}) == 2  # different finishes -> different SKUs
+
+    chrome_row = next(r for r in wave_jet_rows if r.finish == "Chrome")
+    assert chrome_row.sku == "OYSTER-BODYJET-BROOKCPFITTINGSWAVEJET-CR"
+    assert chrome_row.mrp == 18500.0
+    assert chrome_row.dealer_price == 9250.0
+    assert chrome_row.images  # image anchored at D3
+
+    matt_black_row = next(r for r in wave_jet_rows if r.finish == "Matt Black")
+    assert matt_black_row.dealer_price == 19500.0  # no discount -> falls back to MRP
+    assert not matt_black_row.images  # no image anchored on this row
+    assert "No image mapped" in " ".join(matt_black_row.issues)
+
+    jetx_row = next(r for r in rows if "JET-X" in (r.description or ""))
+    assert jetx_row.mrp == MISSING
+    assert "Missing MRP" in jetx_row.issues
+
+
+def test_extract_returns_empty_with_warning_for_unmappable_filename():
+    data = _build_body_jet_workbook()
+    adapter = OysterAdapter()
+    rows, report = adapter.extract(data, "totally_unrelated.xlsx")
+    assert rows == []
+    assert report.warnings
