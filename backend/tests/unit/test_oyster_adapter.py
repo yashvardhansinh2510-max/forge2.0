@@ -189,12 +189,12 @@ def test_extract_groups_variants_into_one_family_and_generates_stable_skus():
     assert report.parsed_rows == 3
     wave_jet_rows = [r for r in rows if "WAVE JET" in (r.description or "")]
     assert len(wave_jet_rows) == 2
-    assert wave_jet_rows[0].family_key == wave_jet_rows[1].family_key == "oyster:body-jet:brook-cp-fittings-wave-jet"
+    assert wave_jet_rows[0].family_key == wave_jet_rows[1].family_key == "oyster:body-jet:wave-jet"
     assert {r.finish for r in wave_jet_rows} == {"Chrome", "Matt Black"}
     assert len({r.sku for r in wave_jet_rows}) == 2  # different finishes -> different SKUs
 
     chrome_row = next(r for r in wave_jet_rows if r.finish == "Chrome")
-    assert chrome_row.sku == "OYSTER-BODYJET-BROOKCPFITTINGSWAVEJET-CR"
+    assert chrome_row.sku == "OYSTER-BODYJET-WAVEJET-CR"
     assert chrome_row.mrp == 18500.0
     assert chrome_row.dealer_price == 9250.0
     assert chrome_row.images  # image anchored at D3

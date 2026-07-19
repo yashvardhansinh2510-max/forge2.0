@@ -134,9 +134,13 @@ def _family_name(raw_description) -> str:
     if "\n" in s:
         _, _, rest = s.partition("\n")
         s = rest.strip() or s
-        # For multi-line descriptions, also strip any residual collection prefix
-        s = _COLLECTION_PREFIX_RE.sub("", s).strip()
-    # For single-line descriptions, keep the full name (e.g., "Brook CP Fittings WAVE JET")
+    # Collection prefix stripping applies unconditionally to the final
+    # description string, whether it came from a single-line source (Body
+    # Jet, Basin Mixer, Outlet/HS/Angle) or the post-newline-split remainder
+    # of a multi-line source (Shower) — the "Brook" collection is already
+    # captured separately in every row's `collection` field, so repeating it
+    # in the family name/SKU/family_key would be redundant.
+    s = _COLLECTION_PREFIX_RE.sub("", s).strip()
     s = re.sub(r"\s+", " ", s)
     return s or "Unnamed"
 
