@@ -1,0 +1,42 @@
+{
+  "processed_files": [
+    "oyster_body_jet",
+    "oyster_shower",
+    "oyster_spout&hs&angle_w&_tigger",
+    "oyster_besin_mixer"
+  ],
+  "batches": [
+    {
+      "at": "2026-07-19T03:40:13Z",
+      "files": [
+        "OYSTER BODY JET.xlsx",
+        "OYSTER SHOWER.xlsx",
+        "OYSTER SPOUT&HS&ANGLE W& TIGGER.xlsx",
+        "OYSTER BESIN MIXER.xlsx"
+      ],
+      "stats": {
+        "imported": 213,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "errors": []
+      }
+    },
+    {
+      "at": "2026-07-19T03:54:30Z",
+      "files": [
+        "OYSTER BODY JET.xlsx",
+        "OYSTER SHOWER.xlsx",
+        "OYSTER SPOUT&HS&ANGLE W& TIGGER.xlsx",
+        "OYSTER BESIN MIXER.xlsx"
+      ],
+      "stats": {
+        "imported": 7,
+        "updated": 213,
+        "skipped": 0,
+        "failed": 0,
+        "errors": []
+      }
+    }
+  ]
+}
