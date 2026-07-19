@@ -24,7 +24,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from catalog_pipeline.adapters.oyster import OysterAdapter  # noqa: E402
 from catalog_pipeline.certifier import validate  # noqa: E402
 from catalog_pipeline.base import MISSING  # noqa: E402
-from catalog_pipeline.orchestrator import import_accepted  # noqa: E402
+from catalog_pipeline.orchestrator import import_accepted, _offload_row_images  # noqa: E402
 from catalog_pipeline.integrity_guard import scan_catalog  # noqa: E402
 from db import db  # noqa: E402
 from models import CatalogImportJob  # noqa: E402
@@ -117,6 +117,11 @@ async def main(dry_run: bool) -> None:
         print(f"[{filename}] rows={rep.parsed_rows} images_mapped={rep.images_mapped}/{rep.images_found}")
 
     if not all_rows:
+        if errors:
+            print("ABORTING — every file in this batch failed to read or extract:")
+            for e in errors:
+                print(f"  - {e}")
+            raise SystemExit(1)
         print("Nothing new to process.")
         return
 
@@ -158,6 +163,11 @@ async def main(dry_run: bool) -> None:
     owner = await db.users.find_one({"email": "owner@forge.app"}, {"id": 1, "_id": 0})
     cats_before = {c["name"] for c in await db.categories.find({}, {"_id": 0, "name": 1}).to_list(200)}
 
+    # Offload embedded base64 images out of the row dicts into a dedicated
+    # collection so the CatalogImportJob document stays well under MongoDB's
+    # 16MB BSON cap (mutates all_rows_dicts in place).
+    blob_map = await _offload_row_images(all_rows_dicts)
+
     job = CatalogImportJob(
         filename=f"Oyster batch ({len(to_process)} files)",
         source_type="excel",  # type: ignore[arg-type]
@@ -177,7 +187,7 @@ async def main(dry_run: bool) -> None:
 
     stats = {"imported": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
     if accepted:
-        stats = await import_accepted(doc, (owner or {}).get("id", "system"))
+        stats = await import_accepted(doc, (owner or {}).get("id", "system"), blob_map=blob_map)
         await db.catalog_imports.update_one(
             {"id": doc["id"]},
             {"$set": {"status": "imported", "accepted_rows": stats["imported"] + stats["updated"],
