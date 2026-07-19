@@ -3,6 +3,7 @@ from .grohe import GroheAdapter
 from .geberit import GeberitAdapter
 from .vitra import VitraAdapter
 from .hansgrohe import HansgroheAdapter
+from .oyster import OysterAdapter
 
 REGISTRY = {
     "grohe": GroheAdapter,
@@ -12,6 +13,7 @@ REGISTRY = {
     "hansgrohe": HansgroheAdapter,
     # AXOR routed to Hansgrohe adapter — same file format, brand folded.
     "axor": HansgroheAdapter,
+    "oyster": OysterAdapter,
 }
 
 
