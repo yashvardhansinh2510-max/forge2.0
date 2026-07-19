@@ -71,8 +71,8 @@ def test_sku_differs_by_finish_within_same_family():
 
 
 import io
+import zipfile
 from openpyxl import Workbook
-from openpyxl.drawing.image import Image as XLImage
 from PIL import Image as PILImage
 
 from catalog_pipeline.adapters.oyster import OysterAdapter
@@ -83,6 +83,47 @@ def _tiny_png_bytes() -> bytes:
     buf = io.BytesIO()
     PILImage.new("RGB", (200, 200), color=(120, 120, 120)).save(buf, format="PNG")
     return buf.getvalue()
+
+
+# Hand-written drawing XML/rels + media, spliced into an openpyxl-produced
+# workbook after the fact. `extract_images_from_xlsx_ex` (image_extractor.py)
+# parses the xlsx zip's raw XML relationship files itself (it never uses
+# openpyxl's image API), and its hand-rolled `_resolve_relative()` only
+# correctly resolves RELATIVE relationship targets (e.g.
+# "../drawings/drawing1.xml") of the kind real supplier files (and this
+# fixture) use — not whatever a live `ws.add_image()` round-trip produces.
+# This mirrors the proven pattern in
+# tests/integration/test_catalog_pipeline_fixes.py::_build_synthetic_xlsx.
+_DRAWING_XML = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    b'<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" '
+    b'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+    b'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    b'<xdr:oneCellAnchor>'
+    b'<xdr:from><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff>'
+    b'<xdr:row>2</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'
+    b'<xdr:ext cx="200000" cy="200000"/>'
+    b'<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="chrome"/><xdr:cNvPicPr/></xdr:nvPicPr>'
+    b'<xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill>'
+    b'<xdr:spPr/></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>'
+    b'</xdr:wsDr>'
+)
+_DRAWING_RELS = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    b'<Relationship Id="rId1" '
+    b'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+    b'Target="../media/image1.png"/>'
+    b'</Relationships>'
+)
+_SHEET_RELS = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    b'<Relationship Id="rId1" '
+    b'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" '
+    b'Target="../drawings/drawing1.xml"/>'
+    b'</Relationships>'
+)
 
 
 def _build_body_jet_workbook() -> bytes:
@@ -102,24 +143,42 @@ def _build_body_jet_workbook() -> bytes:
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
+    base_bytes = buf.getvalue()
 
-    # openpyxl doesn't easily re-embed a floating image keyed to a specific
-    # cell through the public API after save+reload in one step here, so this
-    # fixture builds the image via a second pass using openpyxl's own
-    # add_image on row 3 (Sr.No.=1) only, leaving rows 4 and 5 imageless —
-    # exactly mirroring the real Basin Mixer/Shower files' "a few rows have
-    # no image" reality.
-    wb2 = Workbook()
-    ws2 = wb2.active
-    ws2.title = "BODY JET"
-    for row in ws.iter_rows(values_only=True):
-        ws2.append(list(row))
-    img = XLImage(io.BytesIO(_tiny_png_bytes()))
-    img.anchor = "D3"  # row 3 = first data row (Sr.No.=1, CROME)
-    ws2.add_image(img)
-    out = io.BytesIO()
-    wb2.save(out)
-    return out.getvalue()
+    # Find the actual worksheet part path for "BODY JET" via workbook rels
+    # (openpyxl names it xl/worksheets/sheet1.xml for a single-sheet workbook,
+    # but resolve it properly rather than hardcoding).
+    with zipfile.ZipFile(io.BytesIO(base_bytes), "r") as zin:
+        sheet_xml = zin.read("xl/worksheets/sheet1.xml")
+        names = set(zin.namelist())
+
+    # Splice a `<drawing r:id="rId1"/>` reference into the sheet XML (order
+    # relative to other elements doesn't matter for the hand-rolled
+    # ElementTree-based parser this fixture targets, nor does openpyxl choke
+    # on it when merely reading cell values back).
+    # openpyxl's worksheet root element doesn't declare the "r" (relationships)
+    # namespace prefix, so declare it inline on the <drawing> element itself.
+    sheet_xml = sheet_xml.replace(
+        b"</worksheet>",
+        b'<drawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        b'r:id="rId1"/></worksheet>',
+    )
+
+    out_buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(base_bytes), "r") as zin, \
+            zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = sheet_xml
+            zout.writestr(item, data)
+        if "xl/worksheets/_rels/sheet1.xml.rels" not in names:
+            zout.writestr("xl/worksheets/_rels/sheet1.xml.rels", _SHEET_RELS)
+        zout.writestr("xl/drawings/drawing1.xml", _DRAWING_XML)
+        zout.writestr("xl/drawings/_rels/drawing1.xml.rels", _DRAWING_RELS)
+        zout.writestr("xl/media/image1.png", _tiny_png_bytes())
+
+    return out_buf.getvalue()
 
 
 def test_extract_groups_variants_into_one_family_and_generates_stable_skus():
