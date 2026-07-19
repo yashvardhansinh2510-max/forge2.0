@@ -187,16 +187,18 @@ async def main(dry_run: bool) -> None:
     cats_after = {c["name"] for c in await db.categories.find({}, {"_id": 0, "name": 1}).to_list(200)}
     missing_images = sum(1 for r in all_rows_dicts if r.get("status") == "accepted" and not r.get("images"))
 
-    manifest["processed_files"].extend(_norm(f) for f in to_process)
-    manifest["batches"].append({
-        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "files": [Path(f).name for f in to_process],
-        "stats": stats,
-    })
-    _save_manifest(manifest)
-
     post_report = await scan_catalog(baseline_snapshot_dir=str(pre_snapshot_dir))
     integrity_ok = post_report.ok
+
+    if integrity_ok:
+        manifest["processed_files"].extend(_norm(f) for f in to_process)
+        manifest["batches"].append({
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "files": [Path(f).name for f in to_process],
+            "stats": stats,
+        })
+        _save_manifest(manifest)
+
     post_snapshot_dir = await backup_db(
         ["products", "product_media", "brands", "categories", "customers",
          "quotations", "purchase_orders", "payments", "followups", "users", "suppliers"]
