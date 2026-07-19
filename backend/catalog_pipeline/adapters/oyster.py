@@ -28,7 +28,13 @@ Rules:
   discarded. SKU is therefore synthesized, not supplier-provided:
   `OYSTER-{CATEGORY_COMPACT}-{FAMILY_COMPACT}-{FINISH_CODE}`, deterministic
   from category+family+finish so re-running the import always regenerates
-  the same SKU (required for idempotency).
+  the same SKU (required for idempotency). A handful of rows in the source
+  files are exact duplicate listings (same product+finish+price repeated on
+  a later row) — the first occurrence keeps the plain SKU and each repeat
+  gets a numeric suffix (`-2`, `-3`, ...) so it still imports as its own
+  product instead of being dropped. Rows with no MRP anywhere in the source
+  import at MRP/price = 0.0 with an explicit `needs_pricing` flag (in both
+  `specs` and `tags`) rather than being held back.
 * Family key groups sibling finishes of the same product:
   `oyster:{category_slug}:{family_slug}`.
 * "OFFER RATE" column is the dealer/selling price (supplier-computed as
@@ -206,6 +212,7 @@ class OysterAdapter(BrandAdapter):
         # files (no side-by-side finishes sharing a row, unlike Vitra), so
         # row-only anchoring (Hansgrohe-style) is safe. Highest-quality
         # candidate wins if an anchor somehow has more than one blip.
+        sku_counts: dict[str, int] = {}
         by_sheet_row: dict[tuple[str, int], ExtractedImage] = {}
         for sheet, row_idx, _col_idx, img in extract_images_from_xlsx_ex(data):
             key = (sheet, row_idx)
@@ -236,7 +243,9 @@ class OysterAdapter(BrandAdapter):
                 family_name = _family_name(desc_cell)
                 finish_label, finish_code, finish_note = normalize_finish(finish_cell)
 
-                mrp = self.to_number(row[col_map["mrp"]] if col_map["mrp"] < len(row) else None)
+                mrp_raw = self.to_number(row[col_map["mrp"]] if col_map["mrp"] < len(row) else None)
+                needs_pricing = mrp_raw == MISSING
+                mrp = 0.0 if needs_pricing else mrp_raw
                 offer_rate = self.to_number(
                     row[col_map["offer_rate"]] if "offer_rate" in col_map and col_map["offer_rate"] < len(row) else None
                 )
@@ -249,7 +258,16 @@ class OysterAdapter(BrandAdapter):
                         dimensions = str(art_cell).strip()
 
                 family_key = family_key_for(category_slug, family_name)
-                sku = sku_for(category_code, family_name, finish_code) if finish_code else MISSING
+                is_duplicate_listing = False
+                occurrence = 1
+                if finish_code:
+                    base_sku = sku_for(category_code, family_name, finish_code)
+                    occurrence = sku_counts.get(base_sku, 0) + 1
+                    sku_counts[base_sku] = occurrence
+                    sku = base_sku if occurrence == 1 else f"{base_sku}-{occurrence}"
+                    is_duplicate_listing = occurrence > 1
+                else:
+                    sku = MISSING
 
                 img = by_sheet_row.get((ws.title, r_idx))
                 image_urls = [img.data_url] if img else []
@@ -281,18 +299,26 @@ class OysterAdapter(BrandAdapter):
                     image_meta=image_meta,
                     image_quality=image_quality,
                     image_page=None,
-                    specs={"collection": COLLECTION_NAME, "source_file": filename},
+                    specs={
+                        "collection": COLLECTION_NAME,
+                        "source_file": filename,
+                        **({"needs_pricing": True} if needs_pricing else {}),
+                        **({"duplicate_listing": True} if is_duplicate_listing else {}),
+                    },
                     tags=dedupe_iter([
                         category.lower(), self.brand.lower(), COLLECTION_NAME.lower(), (finish_label or "").lower(),
+                        *(["needs-pricing"] if needs_pricing else []),
                     ]),
-                    confidence=0.94 if (finish_label and mrp != MISSING) else 0.5,
+                    confidence=0.94 if finish_label else 0.5,
                 )
                 if not finish_label:
                     pr.issues.append(finish_note or f"Unrecognized finish {finish_cell!r} — needs manual review")
                 elif finish_note:
                     pr.issues.append(finish_note)
-                if mrp == MISSING:
-                    pr.issues.append("Missing MRP")
+                if needs_pricing:
+                    pr.issues.append("Missing MRP in source — imported at ₹0, needs manual pricing")
+                if is_duplicate_listing:
+                    pr.issues.append(f"Duplicate listing in source file (occurrence {occurrence}) — SKU suffixed to keep as a separate product")
                 if not img:
                     pr.issues.append("No image mapped from supplier file")
                 rows.append(pr)

@@ -205,8 +205,8 @@ def test_extract_groups_variants_into_one_family_and_generates_stable_skus():
     assert "No image mapped" in " ".join(matt_black_row.issues)
 
     jetx_row = next(r for r in rows if "JET-X" in (r.description or ""))
-    assert jetx_row.mrp == MISSING
-    assert "Missing MRP" in jetx_row.issues
+    assert jetx_row.mrp == 0.0
+    assert any("Missing MRP" in i for i in jetx_row.issues)
 
 
 def test_extract_returns_empty_with_warning_for_unmappable_filename():
@@ -215,3 +215,58 @@ def test_extract_returns_empty_with_warning_for_unmappable_filename():
     rows, report = adapter.extract(data, "totally_unrelated.xlsx")
     assert rows == []
     assert report.warnings
+
+
+def test_extract_suffixes_duplicate_finish_listings_within_same_family():
+    # Two rows: same family, same finish, same price — an exact duplicate
+    # listing as it actually occurs in the real Oyster source files (verified:
+    # supplier lists the identical line twice by mistake). Both must become
+    # separate products rather than being collapsed/dropped.
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BODY JET"
+    ws.append(["OYSTER BODY JET"])
+    ws.append(["Sr.\nNo.", "finishes", "Product Discription", "Product Image", "MRP",
+               "QTY", "MRP TOTAL", "DISCOUNT", None, "OFFER RATE", "TOTAL"])
+    ws.append([1, "BRUSHED ROSE GOLD", "Brook CP Fittings WAVE JET", None, 19500, None, 0, None, 0, 19500, 0])
+    ws.append([2, "BRUSHED ROSE GOLD", "Brook CP Fittings WAVE JET", None, 19500, None, 0, None, 0, 19500, 0])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    adapter = OysterAdapter()
+    rows, report = adapter.extract(buf.getvalue(), "OYSTER BODY JET.xlsx")
+
+    assert report.parsed_rows == 2
+    skus = sorted(r.sku for r in rows)
+    assert skus == ["OYSTER-BODYJET-WAVEJET-BRG", "OYSTER-BODYJET-WAVEJET-BRG-2"]
+    # Both belong to the same family and neither SKU is MISSING/rejected.
+    assert rows[0].family_key == rows[1].family_key == "oyster:body-jet:wave-jet"
+    second = next(r for r in rows if r.sku.endswith("-2"))
+    assert second.specs.get("duplicate_listing") is True
+    assert any("Duplicate listing" in i for i in second.issues)
+    first = next(r for r in rows if not r.sku.endswith("-2"))
+    assert "duplicate_listing" not in first.specs
+
+
+def test_extract_imports_missing_mrp_as_zero_with_needs_pricing_flag():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BODY JET"
+    ws.append(["OYSTER BODY JET"])
+    ws.append(["Sr.\nNo.", "finishes", "Product Discription", "Product Image", "MRP",
+               "QTY", "MRP TOTAL", "DISCOUNT", None, "OFFER RATE", "TOTAL"])
+    ws.append([1, "CROME", "Brook CP Fittings TORRENT SHOWER", None, None, None, None, None, None, None, None])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    adapter = OysterAdapter()
+    rows, report = adapter.extract(buf.getvalue(), "OYSTER BODY JET.xlsx")
+
+    assert report.parsed_rows == 1
+    row = rows[0]
+    assert row.mrp == 0.0
+    assert row.dealer_price == 0.0
+    assert row.sku != None  # still gets a real SKU, just priced at 0
+    assert row.specs.get("needs_pricing") is True
+    assert "needs-pricing" in row.tags
+    assert any("Missing MRP" in i for i in row.issues)
