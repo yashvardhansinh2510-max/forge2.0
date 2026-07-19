@@ -34,13 +34,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MANIFEST_PATH = REPO_ROOT / "memory" / "oyster_import_manifest.json"
 REPORT_PATH = REPO_ROOT / "memory" / "oyster_qa_report.json"
 
-# Local absolute paths to the 4 source files (WhatsApp-forwarded, not tracked
-# in the repo). Each maps 1:1 to a category — see oyster.py FILE_TO_CATEGORY.
+# Local absolute paths to the 4 source files, copied into a stable in-repo
+# location (backend/temp/oyster_source_files/, matching the existing
+# backend/temp/grohe_source_files_2026_migration/ precedent) — the original
+# WhatsApp-forwarded copies live in an ephemeral app temp-cache directory
+# that gets cleared periodically, which happened once already during this
+# import's development. Each file maps 1:1 to a category — see oyster.py
+# FILE_TO_CATEGORY.
+_SOURCE_DIR = REPO_ROOT / "backend" / "temp" / "oyster_source_files"
 SOURCE_FILES = [
-    "/Users/yashvardhansinhjhala/Library/Containers/net.whatsapp.WhatsApp/Data/tmp/documents/B1E380AC-8A21-45BD-8C12-15C4A6F54C43/OYSTER BODY JET.xlsx",
-    "/Users/yashvardhansinhjhala/Library/Containers/net.whatsapp.WhatsApp/Data/tmp/documents/F2E32EBF-98EE-467D-B3FD-548197F58C13/OYSTER SHOWER.xlsx",
-    "/Users/yashvardhansinhjhala/Library/Containers/net.whatsapp.WhatsApp/Data/tmp/documents/26A837B9-F18D-463C-854F-D3638C3A49DD/OYSTER SPOUT&HS&ANGLE W& TIGGER.xlsx",
-    "/Users/yashvardhansinhjhala/Library/Containers/net.whatsapp.WhatsApp/Data/tmp/documents/3B5CD583-BE86-4304-884E-1A7DE7FFBEBD/OYSTER BESIN MIXER.xlsx",
+    str(_SOURCE_DIR / "OYSTER BODY JET.xlsx"),
+    str(_SOURCE_DIR / "OYSTER SHOWER.xlsx"),
+    str(_SOURCE_DIR / "OYSTER SPOUT&HS&ANGLE W& TIGGER.xlsx"),
+    str(_SOURCE_DIR / "OYSTER BESIN MIXER.xlsx"),
 ]
 
 
