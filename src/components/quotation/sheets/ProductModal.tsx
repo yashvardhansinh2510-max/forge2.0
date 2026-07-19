@@ -17,7 +17,7 @@ import { useAuth } from "@/src/state/auth";
 import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
-import { productImageList } from "../helpers/media";
+import { productImageList, resolveVariantImages } from "../helpers/media";
 import { variantDescriptor } from "../helpers/pricing";
 import type { Product, ProductVariant } from "../helpers/types";
 
@@ -75,17 +75,14 @@ export function ProductModal() {
 
   // Variant-aware gallery — when a finish/colour is selected AND that
   // sibling product has its own real photo, it takes priority; the base
-  // product's gallery always follows as fallback/additional angles.
-  const heroImages = useMemo(() => {
-    if (!product) return [];
-    const base = productImageList(product);
-    if (selectedVariant?.image && !base.includes(selectedVariant.image)) {
-      return [selectedVariant.image, ...base];
-    }
-    if (selectedVariant?.image) {
-      return [selectedVariant.image, ...base.filter((u) => u !== selectedVariant.image)];
-    }
-    return base;
+  // product's gallery always follows as fallback/additional angles. When the
+  // selected finish has NO photo of its own (a real gap in some supplier
+  // rows), resolveVariantImages() falls back to any sibling finish's photo
+  // rather than leaving the gallery empty — isFallback flags that case so we
+  // can say "Representative photo" instead of silently implying it's exact.
+  const { images: heroImages, isFallback: heroIsFallback } = useMemo(() => {
+    if (!product) return { images: [] as string[], isFallback: false };
+    return resolveVariantImages(product, selectedVariant);
   }, [product, selectedVariant]);
 
   useEffect(() => {
@@ -142,13 +139,21 @@ export function ProductModal() {
               {/* Left: gallery + price */}
               <View style={styles.left}>
                 <Pressable onPress={() => setZoomOpen(true)} disabled={!activeImage} testID="pm-hero-zoom">
-                  <ProductImage source={activeImage ? [activeImage] : []} style={styles.hero} fallbackLabel={selectedVariant?.sku || product.sku} key={selectedVariant?.sku || product.sku} />
+                  {/* No `key` here on purpose — keeping the same ProductImage
+                      instance across finish switches lets expo-image's own
+                      transition crossfade smoothly between photos instead of
+                      unmounting/remounting (which was causing a flash to the
+                      empty/skeleton state on every swatch tap). */}
+                  <ProductImage source={activeImage ? [activeImage] : []} style={styles.hero} fallbackLabel={selectedVariant?.sku || product.sku} />
                   {activeImage ? (
                     <View style={styles.zoomHint}>
                       <Feather name="maximize-2" size={11} color="#fff" />
                     </View>
                   ) : null}
                 </Pressable>
+                {activeImage && heroIsFallback ? (
+                  <Text style={styles.repImageNote}>Representative photo — exact finish photo not available</Text>
+                ) : null}
                 {heroImages.length > 1 ? (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }}>
                     {heroImages.slice(0, 8).map((url, i) => (
@@ -436,6 +441,7 @@ const styles = StyleSheet.create({
   right: { flex: 1, minWidth: 260, gap: 14 },
 
   hero: { width: "100%", aspectRatio: 1, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
+  repImageNote: { fontSize: 10, color: colors.onSurfaceMuted, fontStyle: "italic", marginTop: -4 },
   thumb: { width: 52, height: 52, borderRadius: 8, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
   thumbActive: { borderWidth: 2, borderColor: ds.brass },
   zoomHint: {

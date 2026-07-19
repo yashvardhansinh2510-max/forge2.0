@@ -28,7 +28,7 @@ import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { effectivePct } from "../helpers/pricing";
-import { productImageList } from "../helpers/media";
+import { productImageList, resolveVariantImages } from "../helpers/media";
 import { VariantChip } from "../shared/VariantChip";
 import type { Line, Product, ProductVariant } from "../helpers/types";
 
@@ -136,6 +136,9 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
 
   const activeSku = focusedLine?.sku ?? product.sku;
   const activeVariant: ProductVariant | undefined = (product.variants || []).find((v) => v.sku === activeSku);
+  // Falls back to a sibling finish's photo when the active one has none of
+  // its own, rather than leaving the gallery empty (see helpers/media.ts).
+  const { images: heroImages, isFallback: heroIsFallback } = resolveVariantImages(product, activeVariant);
   const price = focusedLine?.unit_price ?? activeVariant?.price ?? product.price;
   const mrp = activeVariant?.mrp ?? product.mrp ?? product.price;
   const brand = product.brand_name || product.brand_id;
@@ -161,7 +164,7 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
         name: displayName,
         unit_price: v.price ?? product.price,
         finish,
-        image: v.image ?? productImageList(product)[0] ?? focusedLine.image,
+        image: resolveVariantImages(product, v).images[0] ?? focusedLine.image,
       });
     } else if (v.id) {
       b.setAssistantFocus({ kind: "product", product_id: v.id, product });
@@ -184,12 +187,17 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
       <ScrollView contentContainerStyle={{ padding: spacing.md, gap: spacing.lg, paddingBottom: 40 }}>
         {/* --- Image --- */}
         <View style={styles.hero}>
+          {/* No `key` here — keeping the same ProductImage instance across
+              finish switches lets expo-image's own transition crossfade
+              smoothly instead of a hard remount/flash. */}
           <ProductImage
-            source={activeVariant?.image ? [activeVariant.image, ...productImageList(product)] : productImageList(product)}
+            source={heroImages}
             style={{ width: "100%", aspectRatio: 1, borderRadius: radius.md }}
             fallbackLabel={activeVariant?.sku || product.sku}
-            key={activeSku}
           />
+          {heroImages.length && heroIsFallback ? (
+            <Text style={styles.repImageNote}>Representative photo — exact finish photo not available</Text>
+          ) : null}
         </View>
 
         {/* --- Title block --- */}
@@ -428,6 +436,7 @@ const styles = StyleSheet.create({
     padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  repImageNote: { fontSize: 10, color: colors.onSurfaceMuted, fontStyle: "italic", marginTop: 4 },
   priceBlock: {
     padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,

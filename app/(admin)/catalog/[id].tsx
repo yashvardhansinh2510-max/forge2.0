@@ -149,16 +149,43 @@ export default function ProductDetail() {
 
   useEffect(() => {
     if (!id) return;
-    setP(null); setSiblings([]); setAlternates([]); setImageIdx(0);
+    // Deliberately NOT clearing `p` here. Switching finishes on this screen
+    // is a full navigation (each variant is its own route/id, with its own
+    // pipeline/alternates/editor state) — clearing `p` immediately used to
+    // blank the whole screen for the duration of the fetch, then pop the new
+    // product in, which read as an abrupt flash rather than a smooth finish
+    // switch. Keeping the previous product on screen until the new one is
+    // ready (then swapping everything in one commit) gives a seamless
+    // transition instead, with the trade-off that stale content lingers for
+    // one fetch round-trip — imperceptible on a same-origin API call.
+    setAlternates([]); setImageIdx(0);
     loadProduct(id);
   }, [id]);
 
-  const galleryUrls: string[] = useMemo(() => {
-    if (!p) return [];
-    if (p.gallery && p.gallery.length > 0) return p.gallery.map((g) => g.url).filter(Boolean);
-    if (p.hero_image_url) return [p.hero_image_url, ...(p.images || [])];
-    return p.images || [];
-  }, [p]);
+  const ownImageUrls = (item: Pick<Product, "gallery" | "hero_image_url" | "images">): string[] => {
+    if (item.gallery && item.gallery.length > 0) return item.gallery.map((g) => g.url).filter(Boolean);
+    if (item.hero_image_url) return [item.hero_image_url, ...(item.images || [])];
+    return item.images || [];
+  };
+
+  // Some supplier rows ship a finish with no photo of its own — never leave
+  // the gallery empty when a real photo exists anywhere in this family.
+  // Falls back to the first sibling finish (in swatch order) that has one;
+  // `isFallbackGallery` lets the UI say so rather than silently implying
+  // it's this exact finish's own photograph. Siblings are filtered to the
+  // current product's family_key defensively, in case `siblings` state is
+  // momentarily stale from the previous product during a finish switch.
+  const { urls: galleryUrls, isFallbackGallery } = useMemo(() => {
+    if (!p) return { urls: [] as string[], isFallbackGallery: false };
+    const own = ownImageUrls(p);
+    if (own.length > 0) return { urls: own, isFallbackGallery: false };
+    const familySiblings = siblings.filter((s) => s.family_key === p.family_key);
+    for (const s of familySiblings) {
+      const sOwn = ownImageUrls(s);
+      if (sOwn.length > 0) return { urls: sOwn, isFallbackGallery: true };
+    }
+    return { urls: [], isFallbackGallery: false };
+  }, [p, siblings]);
 
   if (!p) {
     return (
@@ -259,6 +286,9 @@ export default function ProductDetail() {
           ) : null}
         </View>
       )}
+      {galleryUrls.length > 0 && isFallbackGallery ? (
+        <Text style={styles.repImageNote}>Representative photo — exact finish photo not available</Text>
+      ) : null}
     </View>
   );
 
@@ -579,6 +609,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 4,
   },
   countPillText: { color: "#fff", fontSize: 11, fontWeight: "700" },
+  repImageNote: { fontSize: 11, color: colors.onSurfaceMuted, fontStyle: "italic", padding: 8, textAlign: "center" },
 
   thumb: {
     width: 64, height: 64, borderRadius: radius.sm, overflow: "hidden",
