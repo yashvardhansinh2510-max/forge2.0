@@ -384,7 +384,8 @@ class QuotationLineItem(BaseModel):
     category_id: Optional[str] = None      # denormalized for category-level discounts
     room: Optional[str] = None
     qty: float = Field(default=1, gt=0)
-    unit_price: float = Field(default=0, ge=0)  # final selling price per unit
+    unit_price: float = Field(default=0, ge=0)  # final selling price per unit ("offer rate")
+    mrp: Optional[float] = Field(default=None, ge=0)  # catalog MRP at the time this line was added; None → PDF falls back to unit_price
     # BACKEND_AUDIT_2026-07-17.md Medium #36: unbounded before this — a
     # negative discount_pct silently acts as a MARKUP (net price goes up),
     # and anything over 100 makes net go negative (the business pays the
@@ -393,6 +394,12 @@ class QuotationLineItem(BaseModel):
     notes: Optional[str] = None
     description: Optional[str] = None      # inline override of product description
     sort_order: int = 0
+    # Tiles document fields (Ground Floor → Tiles Selection / Quotation).
+    # On tiles docs `room` doubles as the free-text AREA cell, `unit_price` is
+    # the rate per box and `qty` the box count — so existing totals math holds.
+    size: Optional[str] = None             # e.g. "1200X1800"
+    rate_sqft: Optional[float] = Field(default=None, ge=0)
+    pcs_per_box: Optional[str] = None      # free text — reference docs print "BOX"
 
     @property
     def net(self) -> float:
@@ -433,6 +440,16 @@ class Quotation(TimestampedModel):
     number: str                          # human-readable e.g. FQ-2026-0001
     customer_id: str
     customer_name: str
+    # Which document builder owns this record. "standard" = the classic
+    # sanitaryware quotation builder; the tiles types are the Ground Floor →
+    # Tiles Selection / Quotation pages (their PDFs replicate the official
+    # printed formats and use the tiles fields below).
+    doc_type: Literal["standard", "tiles_selection", "tiles_quotation"] = "standard"
+    attended_by: Optional[str] = None
+    prepared_by: Optional[str] = None
+    address_snapshot: Optional[str] = None    # tiles quotation ADDRESS line
+    doc_date: Optional[str] = None            # printed date (selection/quotation dt); None → created_at
+    doc_number: Optional[str] = None          # editable printed number; None → `number`
     # V4 header fields — captured on the builder header so the sales rep never
     # leaves the workspace. All optional and safely backward-compatible.
     project_name: Optional[str] = None
@@ -478,6 +495,12 @@ class QuotationCreate(BaseModel):
     project_discount_pct: float = 0
     category_discounts: dict[str, float] = {}
     room_discounts: dict[str, RoomDiscountCfg] = {}
+    doc_type: Literal["standard", "tiles_selection", "tiles_quotation"] = "standard"
+    attended_by: Optional[str] = None
+    prepared_by: Optional[str] = None
+    address_snapshot: Optional[str] = None
+    doc_date: Optional[str] = None
+    doc_number: Optional[str] = None
 
 
 class QuotationUpdate(BaseModel):
@@ -495,6 +518,11 @@ class QuotationUpdate(BaseModel):
     project_discount_pct: Optional[float] = None
     category_discounts: Optional[dict[str, float]] = None
     room_discounts: Optional[dict[str, RoomDiscountCfg]] = None
+    attended_by: Optional[str] = None
+    prepared_by: Optional[str] = None
+    address_snapshot: Optional[str] = None
+    doc_date: Optional[str] = None
+    doc_number: Optional[str] = None
     reason: Optional[str] = None         # for revision log
     silent: bool = False                 # if true, skip revision snapshot (autosave)
 
@@ -946,6 +974,7 @@ class CatalogImportJob(TimestampedModel):
     rows: list[dict] = []
     error: Optional[str] = None
     created_by: str
+    floor_id: str = "first-floor"
 
 
 
@@ -965,6 +994,7 @@ class ProductMedia(TimestampedModel):
     product_id: Optional[str] = None        # attach to specific variant (SKU-level)
     family_key: Optional[str] = None        # attach to the whole family (shared across variants)
     brand_id: Optional[str] = None
+    floor_id: str = "first-floor"
     source_type: MediaSourceType = "supplier"
     role: MediaRole = "gallery"
     bucket: str                              # "forge-products" | "forge-private"

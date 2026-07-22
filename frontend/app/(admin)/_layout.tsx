@@ -136,12 +136,44 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
   );
 }
 
+// ── Ground Floor → Tiles module nav ────────────────────────────────────────
+// The tiles document builders (Selection / Quotation) are Ground-floor pages:
+// their catalog search AND the floor stamped onto saved documents both follow
+// the active-floor request header, so opening them from another floor first
+// switches the active floor to Ground floor (same reload semantics as the
+// FloorSwitcher) before navigating.
+const TILES_ITEMS: NavItem[] = [
+  { href: "/(admin)/tiles/selection", label: "Tiles Selection", icon: "grid", match: "selection" },
+  { href: "/(admin)/tiles/quotation", label: "Tiles Quotation", icon: "layout", match: "quotation" },
+];
+
+function useTilesNav() {
+  const router = useRouter();
+  const { access, selectedFloorId, selectFloor } = useFloorAccess();
+  const groundAccessible = Boolean(access && (access.all_floors || access.floor_ids.includes("ground-floor")));
+  const items = groundAccessible ? TILES_ITEMS : [];
+  const open = async (item: NavItem) => {
+    if (selectedFloorId !== "ground-floor") {
+      await selectFloor("ground-floor");
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        // Full reload so every mounted screen refetches under the new floor
+        // scope — mirrors FloorSwitcher.pick().
+        window.location.assign(item.href.replace("/(admin)", ""));
+        return;
+      }
+    }
+    router.push(item.href as any);
+  };
+  return { items, open };
+}
+
 // ── Desktop sidebar ─────────────────────────────────────────────────────────
 function Sidebar() {
   const router = useRouter();
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
   const hasAccess = useModuleAccess();
+  const tilesNav = useTilesNav();
   const isActive = (m: string) => segments.includes(m);
 
   return (
@@ -156,6 +188,9 @@ function Sidebar() {
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: space.x3, gap: 1 }} showsVerticalScrollIndicator={false}>
         {PRIMARY.filter((n) => hasAccess(n.match)).map((n) => (
           <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} />
+        ))}
+        {hasAccess("quotations") && tilesNav.items.map((n) => (
+          <SideItem key={n.href} item={n} active={segments.includes("tiles") && isActive(n.match)} onPress={() => { void tilesNav.open(n); }} />
         ))}
         <View style={{ height: space.x5 }} />
         {SECONDARY.filter((n) => hasAccess(n.match)).map((n) => (
@@ -197,6 +232,7 @@ function Rail() {
   const { staff, logout } = useAuth();
   const hasAccess = useModuleAccess();
   const palette = usePalette();
+  const tilesNav = useTilesNav();
   const isActive = (m: string) => segments.includes(m);
 
   const RailBtn = ({ item }: { item: NavItem }) => {
@@ -228,6 +264,21 @@ function Rail() {
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 2 }} showsVerticalScrollIndicator={false}>
         {PRIMARY.filter((n) => hasAccess(n.match)).map((n) => <RailBtn key={n.href} item={n} />)}
+        {hasAccess("quotations") && tilesNav.items.map((n) => (
+          <Pressable
+            key={n.href}
+            testID={`nav-${n.match}`}
+            accessibilityLabel={n.label}
+            onPress={() => { void tilesNav.open(n); }}
+            style={({ pressed, hovered }: any) => [
+              styles.railItem,
+              { backgroundColor: segments.includes("tiles") && isActive(n.match) ? color.sunken : pressed || hovered ? color.hoverWash : "transparent" },
+            ]}
+          >
+            <View style={[styles.brassBarRail, { backgroundColor: segments.includes("tiles") && isActive(n.match) ? color.brass : "transparent" }]} />
+            <Feather name={n.icon} size={18} color={segments.includes("tiles") && isActive(n.match) ? color.ink : color.inkSoft} />
+          </Pressable>
+        ))}
         <View style={{ height: space.x4 }} />
         {SECONDARY.filter((n) => hasAccess(n.match)).map((n) => (
           <RailBtn key={n.href} item={n} />
@@ -272,6 +323,7 @@ function PhoneBar() {
   const { staff, logout } = useAuth();
   const hasAccess = useModuleAccess();
   const palette = usePalette();
+  const tilesNav = useTilesNav();
   const [moreOpen, setMoreOpen] = useState(false);
   const isActive = (m: string) => segments.includes(m);
   const visibleMore = MORE_ITEMS.filter((n) => hasAccess(n.match));
@@ -323,6 +375,17 @@ function PhoneBar() {
         </Pressable>
         <View style={{ paddingVertical: 6 }}><FloorSwitcher /></View>
         <Hairline style={{ marginVertical: 6 }} />
+        {hasAccess("quotations") && tilesNav.items.map((n) => (
+          <Pressable
+            key={n.href}
+            onPress={() => { setMoreOpen(false); void tilesNav.open(n); }}
+            style={styles.moreRow}
+          >
+            <Feather name={n.icon} size={17} color={color.inkMid} />
+            <Text style={styles.moreLabel}>{n.label}</Text>
+          </Pressable>
+        ))}
+        {tilesNav.items.length ? <Hairline style={{ marginVertical: 6 }} /> : null}
         {visibleMore.map((n) => (
           <Pressable
             key={n.href}

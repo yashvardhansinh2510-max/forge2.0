@@ -54,6 +54,12 @@ async def create_customer(
     to_store = cust.dict()
     if password:
         to_store["password_hash"] = hash_password(password)
+    # customers_email_unique is sparse, but sparse only skips ABSENT fields —
+    # an explicit null still gets indexed, so the second no-email customer
+    # ever created crashed with a duplicate-key error on {email: null}.
+    # Store no key at all when there is no email.
+    if to_store.get("email") is None:
+        to_store.pop("email", None)
     await db.customers.insert_one(to_store)
     await log_event(
         event_type="customer.created", entity_type="customer", entity_id=cust.id,
@@ -98,7 +104,7 @@ async def update_customer(
     if not patch:
         raise HTTPException(status_code=400, detail="Nothing to update")
     patch["updated_at"] = now_iso()
-    await db.customers.update_one({"id": customer_id}, {"$set": patch})
+    await db.customers.update_one(floor_query(user, {"id": customer_id}), {"$set": patch})
 
     if "portal_enabled" in patch and patch["portal_enabled"] != existing.get("portal_enabled", False):
         await log_event(
