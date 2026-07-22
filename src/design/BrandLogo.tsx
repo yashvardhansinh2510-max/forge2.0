@@ -10,9 +10,9 @@
 // should fall back to an initials badge for that one brand only.
 import { Image, ImageStyle, StyleProp } from "react-native";
 
-// Native aspect ratio of the source lockup (900×307) — always size by height
+// Native aspect ratio of the source lockup (1414×412) — always size by height
 // and let width follow, so the wordmark never looks stretched.
-export const BUILDCON_LOGO_RATIO = 900 / 307;
+export const BUILDCON_LOGO_RATIO = 1414 / 412;
 
 export function BuildConLogo({
   height = 26,
