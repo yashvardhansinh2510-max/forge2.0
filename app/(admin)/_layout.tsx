@@ -145,6 +145,7 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
 const TILES_ITEMS: NavItem[] = [
   { href: "/(admin)/tiles/selection", label: "Tiles Selection", icon: "grid", match: "selection" },
   { href: "/(admin)/tiles/quotation", label: "Tiles Quotation", icon: "layout", match: "quotation" },
+  { href: "/(admin)/tiles/orders", label: "Tile Orders", icon: "truck", match: "orders" },
 ];
 
 function useTilesNav() {
