@@ -1507,6 +1507,116 @@ async def generate_chalan(
     return {"po_id": po_id, "chalan": chalan.dict(), "stage": stage}
 
 
+@router.post("/{po_id}/chalans/{chalan_id}/godown-received")
+async def mark_chalan_godown_received(
+    po_id: str, chalan_id: str,
+    user: UserPublic = Depends(require_min_role("warehouse")),
+):
+    """Records that this batch reached the Buildcon Godown — optional, only
+    used on the "via godown" route (Route B). A chalan can also go straight
+    from released to dispatched with this step skipped entirely."""
+    po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    chalan = next((c for c in po.get("chalans", []) if c.get("id") == chalan_id), None)
+    if not chalan:
+        raise HTTPException(status_code=404, detail="Chalan not found")
+    if chalan.get("stage") != "released":
+        raise HTTPException(status_code=400, detail=f"Chalan is already {chalan.get('stage')}")
+
+    now = now_iso()
+    await db.purchase_orders.update_one(
+        {"id": po_id, "chalans.id": chalan_id},
+        {"$set": {
+            "chalans.$.stage": "at_godown",
+            "chalans.$.godown_received_at": now,
+            "chalans.$.godown_received_by": user.id,
+            "chalans.$.godown_received_by_name": user.full_name,
+            "updated_at": now,
+        }},
+    )
+    await log_event(
+        event_type="purchase.chalan_godown_received",
+        entity_type="purchase", entity_id=po_id, actor=user,
+        customer_id=po.get("customer_id"), purchase_id=po_id,
+        summary=f"Chalan {chalan.get('number')} received at Godown",
+        payload={"chalan_id": chalan_id},
+    )
+    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    return {"po_id": po_id, "chalan_id": chalan_id, "stage": compute_order_stage(fresh)}
+
+
+class DispatchChalanBody(BaseModel):
+    dispatch_note: Optional[str] = None
+
+
+@router.post("/{po_id}/chalans/{chalan_id}/dispatch")
+async def dispatch_chalan(
+    po_id: str, chalan_id: str, body: DispatchChalanBody,
+    user: UserPublic = Depends(require_min_role("warehouse")),
+):
+    """Final delivery for this batch — from the supplier directly, or from
+    the Godown. When this is the LAST outstanding chalan on the order, the
+    order-level stage becomes "completed" and the creator/assignee are
+    notified the order has fully shipped."""
+    po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    chalan = next((c for c in po.get("chalans", []) if c.get("id") == chalan_id), None)
+    if not chalan:
+        raise HTTPException(status_code=404, detail="Chalan not found")
+    if chalan.get("stage") == "dispatched":
+        raise HTTPException(status_code=400, detail="Chalan is already dispatched")
+
+    now = now_iso()
+    await db.purchase_orders.update_one(
+        {"id": po_id, "chalans.id": chalan_id},
+        {"$set": {
+            "chalans.$.stage": "dispatched",
+            "chalans.$.dispatched_at": now,
+            "chalans.$.dispatched_by": user.id,
+            "chalans.$.dispatched_by_name": user.full_name,
+            "chalans.$.dispatch_note": body.dispatch_note,
+            "updated_at": now,
+        }},
+    )
+    await log_event(
+        event_type="purchase.chalan_dispatched",
+        entity_type="purchase", entity_id=po_id, actor=user,
+        customer_id=po.get("customer_id"), purchase_id=po_id,
+        summary=f"Chalan {chalan.get('number')} dispatched" + (f" · {body.dispatch_note}" if body.dispatch_note else ""),
+        payload={"chalan_id": chalan_id},
+    )
+    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    stage = compute_order_stage(fresh)
+    if stage == "completed":
+        for recipient in {po.get("created_by"), po.get("assigned_to")} - {None}:
+            await notify(
+                recipient, "Your tile order has been dispatched",
+                body=f"{po.get('number')} for {po.get('customer_name')} is fully dispatched",
+                kind="success", link=f"/tiles/orders/{po_id}",
+            )
+    return {"po_id": po_id, "chalan_id": chalan_id, "stage": stage}
+
+
+@router.get("/{po_id}/chalans/{chalan_id}/pdf")
+async def chalan_pdf(po_id: str, chalan_id: str, user: UserPublic = Depends(get_current_user)):
+    po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    chalan = next((c for c in po.get("chalans", []) if c.get("id") == chalan_id), None)
+    if not chalan:
+        raise HTTPException(status_code=404, detail="Chalan not found")
+    customer = await db.customers.find_one({"id": po.get("customer_id")}, {"_id": 0, "password_hash": 0}) or {}
+    from pdf_chalan import build_chalan_pdf, chalan_pdf_filename
+    pdf_bytes = build_chalan_pdf(chalan, po, customer, await _pdf_branding())
+    filename = chalan_pdf_filename(chalan, po.get("customer_name") or "")
+    return StreamingResponse(
+        iter([pdf_bytes]), media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
 # =============================================================================
 # Excel export (real .xlsx via openpyxl)
 # =============================================================================
