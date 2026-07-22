@@ -39,13 +39,15 @@ from pydantic import BaseModel, Field
 from auth import floor_inherit, floor_query, floor_scope_ids, get_current_user, require_min_role
 from db import db
 from models import (
-    PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
+    Chalan, ChalanLineItem, PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
     PURCHASE_STAGES, PurchaseStage, Quotation, QuotationLineItem, UserPublic, now_iso,
 )
 from routes.purchase_routes import ALLOWED_TRANSITIONS, STATUS_LABELS
-from routes.quotation_routes import _next_number as _next_quotation_number
+from routes.quotation_routes import _next_number as _next_quotation_number, _pdf_branding
 from services.activity_log import log_event, timeline_for
+from services.chalan_stage import compute_order_stage, remaining_qty_by_item
 from services.followup_engine import reconcile_followups
+from services.notifications import notify
 from services.sequence import next_number
 from services.transfer_workflow import execute_transfer, transfer_history
 
@@ -1426,6 +1428,83 @@ async def dismiss_shortage(
     )
     asyncio.create_task(reconcile_followups())
     return {"ok": True}
+
+
+# =============================================================================
+# Chalan / material-release workflow (Ground Floor Tiles) — see design doc
+# docs/superpowers/specs/2026-07-22-ground-floor-tiles-purchase-workflow-design.md
+# =============================================================================
+class ChalanItemInput(BaseModel):
+    po_item_id: str
+    qty: float = Field(gt=0)
+
+
+class GenerateChalanBody(BaseModel):
+    items: list[ChalanItemInput] = Field(min_length=1)
+    reference_number: Optional[str] = None
+    receiver_name: Optional[str] = None
+    sender_name: Optional[str] = None
+
+
+@router.post("/{po_id}/chalans")
+async def generate_chalan(
+    po_id: str, body: GenerateChalanBody,
+    user: UserPublic = Depends(require_min_role("warehouse")),
+):
+    """'Release Material' — generates a Chalan covering the given quantities.
+    Multiple chalans can cover one order over time (batched release); the
+    order only reaches the "material_released" customer-facing stage once
+    every item's quantity is covered (see services/chalan_stage.py)."""
+    po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    items_by_id = {item["id"]: item for item in po.get("items", [])}
+    remaining = remaining_qty_by_item(po)
+    chalan_items: list[ChalanLineItem] = []
+    for entry in body.items:
+        source = items_by_id.get(entry.po_item_id)
+        if not source:
+            raise HTTPException(status_code=400, detail=f"Unknown item {entry.po_item_id}")
+        available = remaining.get(entry.po_item_id, 0.0)
+        if entry.qty > available + 1e-6:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {available:g} of '{source.get('name')}' remains to release",
+            )
+        chalan_items.append(ChalanLineItem(
+            po_item_id=entry.po_item_id, name=source.get("name", ""),
+            size=source.get("finish"), qty=entry.qty, unit="Box",
+        ))
+
+    chalan = Chalan(
+        number=await next_number("chalan", "CH", collection="purchase_orders", width=4),
+        created_by=user.id, created_by_name=user.full_name,
+        items=chalan_items, reference_number=body.reference_number,
+        receiver_name=body.receiver_name, sender_name=body.sender_name,
+    )
+    now = now_iso()
+    await db.purchase_orders.update_one(
+        {"id": po_id},
+        {"$push": {"chalans": chalan.dict()}, "$set": {"updated_at": now}},
+    )
+    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    stage = compute_order_stage(fresh)
+
+    await log_event(
+        event_type="purchase.chalan_generated",
+        entity_type="purchase", entity_id=po_id, actor=user,
+        customer_id=po.get("customer_id"), purchase_id=po_id,
+        summary=f"Generated Chalan {chalan.number} · {len(chalan_items)} item(s)",
+        payload={"chalan_id": chalan.id, "chalan_number": chalan.number},
+    )
+    for recipient in {po.get("created_by"), po.get("assigned_to")} - {None}:
+        await notify(
+            recipient, "Material released by the supplier",
+            body=f"Chalan {chalan.number} generated for {po.get('customer_name')} · {po.get('number')}",
+            kind="success", link=f"/tiles/orders/{po_id}",
+        )
+    return {"po_id": po_id, "chalan": chalan.dict(), "stage": stage}
 
 
 # =============================================================================
