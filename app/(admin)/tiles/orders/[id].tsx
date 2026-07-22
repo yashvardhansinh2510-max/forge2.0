@@ -42,17 +42,21 @@ export default function TileOrderDetailScreen() {
   const router = useRouter();
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showChalanForm, setShowChalanForm] = useState(false);
   const [busyChalanId, setBusyChalanId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const r = await api.get<OrderDetail>(`/purchases/${id}/order-detail`);
       setOrder(r);
     } catch (e: any) {
-      toast.error(e?.detail || "Could not load order");
+      const message = e?.detail || "Could not load order";
+      setLoadError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -97,10 +101,25 @@ export default function TileOrderDetailScreen() {
     await downloadApiFile(`/purchases/${id}/chalans/${chalan.id}/pdf`, filename, "chalan");
   };
 
-  if (loading || !order) {
+  if (loading) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface, justifyContent: "center" }}>
         <ActivityIndicator color={colors.brand} />
+      </SafeAreaView>
+    );
+  }
+
+  if (loadError || !order) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface, justifyContent: "center", alignItems: "center", gap: spacing.md, padding: spacing.xl }}>
+        <Text style={type.bodyStrong}>{loadError || "Order not found"}</Text>
+        <Pressable style={styles.primaryButton} onPress={() => load()}>
+          <Text style={[type.bodyStrong, { color: colors.onBrand }]}>Retry</Text>
+        </Pressable>
+        <Pressable onPress={() => router.back()} style={styles.backRow}>
+          <Feather name="arrow-left" size={16} color={colors.onSurfaceMuted} />
+          <Text style={type.bodyMuted}>Back to Tile Orders</Text>
+        </Pressable>
       </SafeAreaView>
     );
   }
