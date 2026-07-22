@@ -77,8 +77,8 @@ REQUIRED_INDEXES: dict[str, list[tuple[tuple[str, Any], ...]]] = {
     # but was never in this startup gate — only ensure_indexes.py (brands) and
     # migrations/0005_add_categories_slug_unique_index.py (categories) created
     # them, with nothing confirming they actually exist on every boot.
-    "brands": [(("id", 1),), (("slug", 1),)],
-    "categories": [(("id", 1),), (("slug", 1),)],
+    "brands": [(("id", 1),), (("floor_id", 1), ("slug", 1))],
+    "categories": [(("id", 1),), (("floor_id", 1), ("slug", 1))],
     # Data Integrity Audit (Phase 2, 2026-08) — duplicate-prevention indexes.
     # `products` (sku, brand_id) unique index is deliberately NOT listed here
     # yet: a real pre-existing same-brand duplicate SKU was found live and

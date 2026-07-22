@@ -70,11 +70,11 @@ class _FakeCollection:
 
 class _FakeDb:
     def __init__(self):
-        self.brands = _FakeCollection([{"id": "brand-1", "name": "Grohe", "slug": "grohe"}])
-        self.categories = _FakeCollection([{"id": "cat-1", "name": "Faucets", "slug": "faucets"}])
+        self.brands = _FakeCollection([{"id": "brand-1", "name": "Grohe", "slug": "grohe", "floor_id": "first-floor"}])
+        self.categories = _FakeCollection([{"id": "cat-1", "name": "Faucets", "slug": "faucets", "floor_id": "first-floor"}])
         self.products = _FakeCollection([{
             "id": "existing-product", "sku": "SKU-EXIST", "brand_id": "brand-1",
-            "name": "Old Name", "mrp": 1000.0, "price": 800.0,
+            "name": "Old Name", "mrp": 1000.0, "price": 800.0, "floor_id": "first-floor",
         }])
         self.catalog_import_snapshots = _FakeCollection()
         self.catalog_imports = _FakeCollection()

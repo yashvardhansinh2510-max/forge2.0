@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from auth import floor_for_write, floor_scope_ids, get_current_user, require_min_role
+from auth import floor_for_write, floor_query, floor_scope_ids, get_current_user, require_min_role
 from db import db, strip_ids
 from models import Brand, BrandCreate, Category, CategoryCreate, Product, ProductCreate, ProductPatch, UserPublic
 from services import catalog_service, media_service
@@ -42,7 +42,7 @@ async def create_brand(
     body: BrandCreate,
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    if await db.brands.find_one({"slug": body.slug}):
+    if await db.brands.find_one({"slug": body.slug, "floor_id": floor_for_write(user)}):
         raise HTTPException(status_code=409, detail="A brand with this slug already exists")
     payload = body.dict()
     payload["floor_id"] = floor_for_write(user)
@@ -57,7 +57,7 @@ async def create_category(
     body: CategoryCreate,
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    if await db.categories.find_one({"slug": body.slug}):
+    if await db.categories.find_one({"slug": body.slug, "floor_id": floor_for_write(user)}):
         raise HTTPException(status_code=409, detail="A category with this slug already exists")
     payload = body.dict()
     payload["floor_id"] = floor_for_write(user)
@@ -328,12 +328,14 @@ async def catalog_facets(
 
 # ---------- Family-first canonical page (Iteration 2A shell — used by 2B) ----------
 @router.get("/families/{family_key}")
-async def get_family(family_key: str, _: UserPublic = Depends(get_current_user)):
+async def get_family(family_key: str, user: UserPublic = Depends(get_current_user)):
     """Return everything the Shopify-style family page needs in a single
     call: family metadata + variants + gallery + specs union. Missing data
     is honestly reported (nulls / empty arrays), never fabricated.
     """
-    doc = await catalog_service.family_detail(family_key)
+    if not await db.products.find_one(floor_query(user, {"family_key": family_key}), {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=404, detail="Family not found")
+    doc = await catalog_service.family_detail(family_key, floor_ids=floor_scope_ids(user))
     if not doc:
         raise HTTPException(status_code=404, detail="Family not found")
     return doc
@@ -362,8 +364,10 @@ async def frequent_products(
 
 
 @router.get("/products/{product_id}")
-async def get_product(product_id: str, _: UserPublic = Depends(get_current_user)):
-    doc = await catalog_service.product_by_id(product_id)
+async def get_product(product_id: str, user: UserPublic = Depends(get_current_user)):
+    if not await db.products.find_one(floor_query(user, {"id": product_id}), {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=404, detail="Product not found")
+    doc = await catalog_service.product_by_id(product_id, floor_ids=floor_scope_ids(user))
     if not doc:
         raise HTTPException(status_code=404, detail="Product not found")
     return doc
@@ -386,7 +390,9 @@ async def product_alternates(
     the salesperson sees products they actually reach for. The current product
     itself is always excluded.
     """
-    result = await catalog_service.alternate_products(product_id, user.id, limit)
+    if not await db.products.find_one(floor_query(user, {"id": product_id}), {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=404, detail="Product not found")
+    result = await catalog_service.alternate_products(product_id, user.id, limit, floor_ids=floor_scope_ids(user))
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
@@ -396,13 +402,15 @@ async def product_alternates(
 async def complete_the_set(
     product_id: str,
     limit: int = 12,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """"Complete the set" — same family (Series/Collection) but different
     category. E.g. viewing a Talis E basin mixer suggests the Talis E shower
     valve, spout, robe hook — the classic bathroom cross-sell.
     """
-    result = await catalog_service.complete_set_products(product_id, limit)
+    if not await db.products.find_one(floor_query(user, {"id": product_id}), {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=404, detail="Product not found")
+    result = await catalog_service.complete_set_products(product_id, limit, floor_ids=floor_scope_ids(user))
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
@@ -477,7 +485,7 @@ async def update_product(
     generated (and its PDF) is unaffected by construction, not by any special
     case here.
     """
-    existing = await db.products.find_one({"id": product_id}, {"_id": 0})
+    existing = await db.products.find_one(floor_query(user, {"id": product_id}), {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
 
@@ -499,7 +507,7 @@ async def update_product(
             raise HTTPException(status_code=409, detail="SKU already exists")
 
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.products.update_one({"id": product_id}, {"$set": updates})
+    await db.products.update_one(floor_query(user, {"id": product_id}), {"$set": updates})
 
     catalog_service.patch_product_in_snapshot(product_id, updates)
 
@@ -512,28 +520,29 @@ async def update_product(
         summary=f"Updated {', '.join(sorted(k for k in updates if k != 'updated_at'))}",
     )
 
-    updated = await catalog_service.product_by_id(product_id)
+    updated = await catalog_service.product_by_id(product_id, floor_ids=floor_scope_ids(user))
     return Product(**{k: v for k, v in updated.items() if k in Product.__fields__})
 
 
 # ---------- Catalog import (AI-assisted scaffold) ----------
 @router.get("/catalog/imports")
-async def list_import_jobs(_: UserPublic = Depends(require_min_role("purchase"))):
-    docs = await db.catalog_imports.find({}, {"_id": 0, "rows": 0}).sort("created_at", -1).to_list(200)
+async def list_import_jobs(user: UserPublic = Depends(require_min_role("purchase"))):
+    docs = await db.catalog_imports.find(floor_query(user), {"_id": 0, "rows": 0}).sort("created_at", -1).to_list(200)
     return docs
 
 
 # ---------- Catalog export (Settings > Catalog > Export) ----------
 @router.get("/catalog/export.xlsx")
-async def export_catalog_xlsx(_: UserPublic = Depends(get_current_user)):
+async def export_catalog_xlsx(user: UserPublic = Depends(require_min_role("manager"))):
     from io import BytesIO
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
 
-    products = await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(10000)
-    brands = {b["id"]: b["name"] for b in await db.brands.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
-    categories = {c["id"]: c["name"] for c in await db.categories.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    scope = floor_query(user)
+    products = await db.products.find(scope, {"_id": 0}).sort("name", 1).to_list(10000)
+    brands = {b["id"]: b["name"] for b in await db.brands.find(scope, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    categories = {c["id"]: c["name"] for c in await db.categories.find(scope, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
 
     wb = Workbook()
     ws = wb.active

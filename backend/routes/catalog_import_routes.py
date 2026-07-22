@@ -9,7 +9,7 @@ import logging
 import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 
-from auth import get_current_user, require_min_role
+from auth import floor_for_write, floor_query, get_current_user, require_min_role
 from catalog_pipeline.orchestrator import import_accepted, rollback_job, run_pipeline
 from db import db
 from models import CatalogImportJob, UserPublic
@@ -93,7 +93,7 @@ async def _fetch_public_url(url: str, *, max_redirects: int = 5) -> bytes:
     raise HTTPException(status_code=502, detail="Too many redirects while fetching URL")
 
 
-async def _persist_job(brand: str, filename: str, source_type: str, result: dict, user_id: str) -> dict:
+async def _persist_job(brand: str, filename: str, source_type: str, result: dict, user: UserPublic) -> dict:
     job = CatalogImportJob(
         filename=filename,
         source_type=source_type,  # type: ignore[arg-type]
@@ -103,7 +103,8 @@ async def _persist_job(brand: str, filename: str, source_type: str, result: dict
         rejected_rows=sum(1 for r in result["rows"] if r.get("status") == "rejected"),
         status="classified",  # type: ignore[arg-type]
         rows=result["rows"],
-        created_by=user_id,
+        created_by=user.id,
+        floor_id=floor_for_write(user),
     )
     doc = job.dict()
     doc["extraction"] = result["extraction"]
@@ -114,16 +115,16 @@ async def _persist_job(brand: str, filename: str, source_type: str, result: dict
 
 
 @router.get("")
-async def list_jobs(_: UserPublic = Depends(require_min_role("purchase"))):
-    docs = await db.catalog_imports.find({}, {"_id": 0, "rows": 0}).sort("created_at", -1).to_list(200)
+async def list_jobs(user: UserPublic = Depends(require_min_role("purchase"))):
+    docs = await db.catalog_imports.find(floor_query(user), {"_id": 0, "rows": 0}).sort("created_at", -1).to_list(200)
     return docs
 
 
 @router.get("/{job_id}")
-async def get_job(job_id: str, _: UserPublic = Depends(require_min_role("purchase"))):
+async def get_job(job_id: str, user: UserPublic = Depends(require_min_role("purchase"))):
     # Unapproved rows carry unverified MRP/dealer pricing — same access tier
     # as every mutating endpoint on this resource, not every authenticated user.
-    doc = await db.catalog_imports.find_one({"id": job_id}, {"_id": 0})
+    doc = await db.catalog_imports.find_one(floor_query(user, {"id": job_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Import job not found")
     return doc
@@ -149,7 +150,7 @@ async def upload_and_extract(
     result = await run_pipeline(brand, filename, data)
     if not result["rows"]:
         raise HTTPException(status_code=422, detail="Extraction produced 0 rows. Check the file format.")
-    return await _persist_job(brand, filename, source_type, result, user.id)
+    return await _persist_job(brand, filename, source_type, result, user)
 
 
 @router.post("/from-url")
@@ -183,7 +184,7 @@ async def import_from_url(
     result = await run_pipeline(brand, filename, data)
     if not result["rows"]:
         raise HTTPException(status_code=422, detail="Extraction produced 0 rows.")
-    return await _persist_job(brand, filename, source_type, result, user.id)
+    return await _persist_job(brand, filename, source_type, result, user)
 
 
 _ROW_STRING_FIELDS = ("name", "sku", "category", "finish", "material", "dimensions", "warranty", "status")
@@ -215,9 +216,9 @@ def _coerce_row_patch_value(key: str, value):
 @router.patch("/{job_id}/rows/{row_id}")
 async def update_row(
     job_id: str, row_id: str, patch: dict,
-    _: UserPublic = Depends(require_min_role("purchase")),
+    user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    doc = await db.catalog_imports.find_one({"id": job_id}, {"_id": 0})
+    doc = await db.catalog_imports.find_one(floor_query(user, {"id": job_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Import job not found")
     rows = doc.get("rows", [])
@@ -228,7 +229,7 @@ async def update_row(
             break
     else:
         raise HTTPException(status_code=404, detail="Row not found")
-    await db.catalog_imports.update_one({"id": job_id}, {"$set": {"rows": rows}})
+    await db.catalog_imports.update_one(floor_query(user, {"id": job_id}), {"$set": {"rows": rows}})
     return {"ok": True}
 
 
@@ -241,7 +242,7 @@ async def approve_and_import(
     # approval as a manager action; this endpoint now matches it.
     user: UserPublic = Depends(require_min_role("manager")),
 ):
-    doc = await db.catalog_imports.find_one({"id": job_id}, {"_id": 0})
+    doc = await db.catalog_imports.find_one(floor_query(user, {"id": job_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Import job not found")
 
@@ -250,10 +251,10 @@ async def approve_and_import(
         # Not fatal but flagged in response
         pass
 
-    stats = await import_accepted(doc, user.id)
+    stats = await import_accepted(doc, user.id, floor_id=doc.get("floor_id", "first-floor"))
     catalog_service.schedule_catalog_refresh()
     await db.catalog_imports.update_one(
-        {"id": job_id},
+        floor_query(user, {"id": job_id}),
         {"$set": {
             "status": "imported",
             "accepted_rows": stats["imported"] + stats["updated"],
@@ -266,8 +267,11 @@ async def approve_and_import(
 @router.post("/{job_id}/rollback")
 async def rollback(
     job_id: str,
-    _: UserPublic = Depends(require_min_role("manager")),
+    user: UserPublic = Depends(require_min_role("manager")),
 ):
+    doc = await db.catalog_imports.find_one(floor_query(user, {"id": job_id}), {"_id": 0, "id": 1})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Import job not found")
     stats = await rollback_job(job_id)
     catalog_service.schedule_catalog_refresh()
     return stats
@@ -276,9 +280,9 @@ async def rollback(
 @router.delete("/{job_id}")
 async def delete_job(
     job_id: str,
-    _: UserPublic = Depends(require_min_role("purchase")),
+    user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    res = await db.catalog_imports.delete_one({"id": job_id})
+    res = await db.catalog_imports.delete_one(floor_query(user, {"id": job_id}))
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Import job not found")
     return {"ok": True}

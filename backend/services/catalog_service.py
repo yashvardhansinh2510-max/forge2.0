@@ -542,9 +542,11 @@ async def recent_or_frequent_products(user_id: str, *, limit: int, recent: bool)
     return out
 
 
-async def product_by_id(product_id: str) -> dict | None:
+async def product_by_id(product_id: str, floor_ids: Optional[list[str]] = None) -> dict | None:
     snapshot = await get_catalog_snapshot()
     product = snapshot.product_by_id.get(product_id)
+    if product and floor_ids is not None and product.get("floor_id") not in floor_ids:
+        product = None
     return hydrate_product(product, snapshot) if product else None
 
 
@@ -779,10 +781,10 @@ async def search_catalog(
 
 
 
-async def family_detail(family_key: str) -> dict | None:
+async def family_detail(family_key: str, floor_ids: Optional[list[str]] = None) -> dict | None:
     snapshot = await get_catalog_snapshot()
     products = sorted(
-        snapshot.products_by_family.get(family_key, ()),
+        [p for p in snapshot.products_by_family.get(family_key, ()) if floor_ids is None or p.get("floor_id") in floor_ids],
         key=lambda row: (row.get("colour") or "", row.get("finish") or "", row.get("sku") or ""),
     )
     if not products:
@@ -846,9 +848,11 @@ async def family_detail(family_key: str) -> dict | None:
     }
 
 
-async def alternate_products(product_id: str, user_id: str, limit: int) -> dict | None:
+async def alternate_products(product_id: str, user_id: str, limit: int, floor_ids: Optional[list[str]] = None) -> dict | None:
     snapshot = await get_catalog_snapshot()
     source = snapshot.product_by_id.get(product_id)
+    if source and floor_ids is not None and source.get("floor_id") not in floor_ids:
+        source = None
     if not source:
         return None
     name_prefix = " ".join((source.get("name") or "").split()[:2]).strip().lower()
@@ -856,6 +860,7 @@ async def alternate_products(product_id: str, user_id: str, limit: int) -> dict 
     pool = [
         row for row in snapshot.products
         if row["id"] != product_id and row.get("category_id") == source.get("category_id")
+        and (floor_ids is None or row.get("floor_id") in floor_ids)
     ][:400]
 
     def tier(product: dict) -> int:
@@ -886,14 +891,18 @@ async def alternate_products(product_id: str, user_id: str, limit: int) -> dict 
     }
 
 
-async def complete_set_products(product_id: str, limit: int) -> dict | None:
+async def complete_set_products(product_id: str, limit: int, floor_ids: Optional[list[str]] = None) -> dict | None:
     snapshot = await get_catalog_snapshot()
     source = snapshot.product_by_id.get(product_id)
+    if source and floor_ids is not None and source.get("floor_id") not in floor_ids:
+        source = None
     if not source:
         return None
     candidates = []
     for product in snapshot.products:
         if product["id"] == product_id or product.get("category_id") == source.get("category_id"):
+            continue
+        if floor_ids is not None and product.get("floor_id") not in floor_ids:
             continue
         matches = (
             (source.get("family_key") and product.get("family_key") == source.get("family_key"))
@@ -919,12 +928,14 @@ async def complete_set_products(product_id: str, limit: int) -> dict | None:
     }
 
 
-async def media_for_product(product_id: str) -> list[ProductMedia] | None:
+async def media_for_product(product_id: str, floor_ids: Optional[list[str]] = None) -> list[ProductMedia] | None:
     snapshot = await get_catalog_snapshot()
     product = snapshot.product_by_id.get(product_id)
     if not product:
         return None
-    rows = list(snapshot.media_by_product.get(product_id, ()))
+    if floor_ids is not None and product.get("floor_id") not in floor_ids:
+        return None
+    rows = [m for m in snapshot.media_by_product.get(product_id, ()) if floor_ids is None or m.floor_id in floor_ids]
     if product.get("family_key"):
-        rows.extend(snapshot.media_by_family.get(product["family_key"], ()))
+        rows.extend(m for m in snapshot.media_by_family.get(product["family_key"], ()) if floor_ids is None or m.floor_id in floor_ids)
     return _dedup_media(rows)

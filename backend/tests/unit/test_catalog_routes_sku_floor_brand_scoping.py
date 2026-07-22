@@ -41,8 +41,14 @@ class _FakeProducts:
     @staticmethod
     def _matches(doc: dict, query: dict) -> bool:
         for key, value in query.items():
+            if key == "$and":
+                return all(_FakeProducts._matches(doc, clause) for clause in value)
             if key == "id" and isinstance(value, dict) and "$ne" in value:
                 if doc.get("id") == value["$ne"]:
+                    return False
+                continue
+            if isinstance(value, dict) and "$in" in value:
+                if doc.get(key) not in value["$in"]:
                     return False
                 continue
             if doc.get(key) != value:
@@ -62,7 +68,7 @@ class _FakeProducts:
     async def update_one(self, filt, update):
         self.updated = (filt, update)
         for doc in self.docs:
-            if doc.get("id") == filt.get("id"):
+            if self._matches(doc, filt):
                 doc.update(update.get("$set", {}))
 
 
@@ -170,7 +176,8 @@ def test_update_product_allows_new_sku_that_collides_only_under_a_different_bran
     ))
 
     filt, update = fake_db.products.updated
-    assert filt == {"id": "p1"}
+    assert filt["$and"][0] == {"floor_id": {"$in": ["first-floor"]}}
+    assert filt["$and"][1] == {"id": "p1"}
     assert update["$set"]["sku"] == "SKU-X"
 
 

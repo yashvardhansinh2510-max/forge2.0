@@ -104,8 +104,15 @@ async def ensure_all() -> None:
 
     # brands + categories
     await _safe_create_index(db.brands, "id", unique=True, name="brands_id")
-    await _safe_create_index(db.brands, "slug", unique=True, name="brands_slug", sparse=True)
+    await _safe_create_index(
+        db.brands, [("floor_id", 1), ("slug", 1)],
+        unique=True, name="brands_floor_slug", sparse=True,
+    )
     await _safe_create_index(db.categories, "id", unique=True, name="categories_id")
+    await _safe_create_index(
+        db.categories, [("floor_id", 1), ("slug", 1)],
+        unique=True, name="categories_floor_slug", sparse=True,
+    )
 
     # legacy blob store
     await _safe_create_index(db.catalog_image_blobs, "sha1", unique=True, name="blob_sha1")

@@ -102,7 +102,7 @@ async def run_pipeline(brand: str, filename: str, data: bytes) -> dict:
     }
 
 
-async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | None = None) -> dict:
+async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | None = None, floor_id: str | None = None) -> dict:
     """Persist all rows in job['rows'] with status == 'accepted' into products.
 
     Idempotent: existing SKUs are updated (not duplicated). Never deletes anything.
@@ -113,11 +113,12 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
     falls back to the ``catalog_image_blobs`` collection.
     """
     supplier = job["supplier_name"]
-    brand_doc = await db.brands.find_one({"name": supplier}, {"_id": 0})
+    floor_id = floor_id or job.get("floor_id", "first-floor")
+    brand_doc = await db.brands.find_one({"name": supplier, "floor_id": floor_id}, {"_id": 0})
     if not brand_doc:
         # Autocreate brand if missing
         from models import Brand
-        b = Brand(name=supplier, slug=supplier.lower(), country=None)
+        b = Brand(name=supplier, slug=supplier.lower(), country=None, floor_id=floor_id)
         await db.brands.insert_one(b.dict())
         brand_doc = b.dict()
 
@@ -136,23 +137,23 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
         name = "Axor" if override.upper() == "AXOR" else supplier
         if name in brand_cache:
             return brand_cache[name]
-        doc = await db.brands.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}, {"_id": 0})
+        doc = await db.brands.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}, "floor_id": floor_id}, {"_id": 0})
         if not doc:
             from models import Brand
-            b = Brand(name=name, slug=name.lower(), country=None)
+            b = Brand(name=name, slug=name.lower(), country=None, floor_id=floor_id)
             await db.brands.insert_one(b.dict())
             doc = b.dict()
         brand_cache[name] = doc
         return doc
 
-    cats = await db.categories.find({}, {"_id": 0}).to_list(80)
+    cats = await db.categories.find({"floor_id": floor_id}, {"_id": 0}).to_list(80)
     cat_by_name = {c["name"].lower(): c for c in cats}
     # Autocreate categories that don't exist yet (only for allowed labels)
     from catalog_pipeline.base import ALLOWED_CATEGORIES
     from models import Category
     for label in ALLOWED_CATEGORIES:
         if label.lower() not in cat_by_name:
-            c = Category(name=label, slug=label.lower().replace(" ", "-"))
+            c = Category(name=label, slug=label.lower().replace(" ", "-"), floor_id=floor_id)
             await db.categories.insert_one(c.dict())
             cat_by_name[label.lower()] = c.dict()
 
@@ -270,6 +271,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
                     (series or "").lower(),
                 ],
                 "active": True,
+                "floor_id": floor_id,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             # Drop any tags that ended up empty strings
@@ -286,7 +288,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
             # (e.g. an 8-digit Hansgrohe/AXOR code coincidentally matching a
             # Grohe SKU). A global `{"sku": sku}` lookup would silently
             # overwrite a completely unrelated brand's product. Never again.
-            existing = await db.products.find_one({"sku": sku, "brand_id": row_brand["id"]}, {"_id": 0})
+            existing = await db.products.find_one({"sku": sku, "brand_id": row_brand["id"], "floor_id": floor_id}, {"_id": 0})
             if existing:
                 if job_id:
                     snapshots.append({
@@ -294,12 +296,12 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
                         "previous": existing, "created_at": datetime.now(timezone.utc).isoformat(),
                     })
                 await db.products.update_one(
-                    {"sku": sku, "brand_id": row_brand["id"]}, {"$set": payload}
+                    {"sku": sku, "brand_id": row_brand["id"], "floor_id": floor_id}, {"$set": payload}
                 )
                 await _upload_supplier_images(
                     resolved_images, image_meta, image_quality,
                     product_id=existing["id"], family_key=family_key,
-                    brand_id=row_brand["id"], brand_slug=row_brand.get("slug") or supplier.lower(),
+                    brand_id=row_brand["id"], brand_slug=row_brand.get("slug") or supplier.lower(), floor_id=floor_id,
                 )
                 updated += 1
                 continue
@@ -315,7 +317,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
             await _upload_supplier_images(
                 resolved_images, image_meta, image_quality,
                 product_id=p.id, family_key=family_key,
-                brand_id=row_brand["id"], brand_slug=row_brand.get("slug") or supplier.lower(),
+                brand_id=row_brand["id"], brand_slug=row_brand.get("slug") or supplier.lower(), floor_id=floor_id,
             )
             imported += 1
         except Exception as e:  # noqa: BLE001
@@ -334,7 +336,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
 
 async def _upload_supplier_images(
     images: list[str], metas: list[dict], quality: str, *,
-    product_id: str, family_key: str | None, brand_id: str, brand_slug: str,
+    product_id: str, family_key: str | None, brand_id: str, brand_slug: str, floor_id: str,
 ) -> None:
     """Import base64 supplier images into Supabase via the MediaStorage layer.
 
@@ -365,6 +367,7 @@ async def _upload_supplier_images(
             await upload_and_register(
                 data=data, mime=mime, brand_slug=brand_slug,
                 product_id=product_id, family_key=family_key, brand_id=brand_id,
+                floor_id=floor_id,
                 source_type="supplier", role=role,
                 is_primary=(i == 0), sort_order=i * 10,
             )
