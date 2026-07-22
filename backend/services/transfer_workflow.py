@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
-from auth import floor_inherit
+from auth import floor_inherit, floor_query
 from db import client, db
 from models import (
     ActivityEvent, CustomerPublic, Followup, Payment, PurchaseOrder,
@@ -69,7 +69,7 @@ async def execute_transfer(
 
     async with await client.start_session() as session:
         async with session.start_transaction():
-            source_po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0}, session=session)
+            source_po = await db.purchase_orders.find_one(floor_query(user, {"items.id": item_id}), {"_id": 0}, session=session)
             if not source_po:
                 raise HTTPException(status_code=404, detail="Source item not found")
             source_item = next((item for item in source_po.get("items", []) if item.get("id") == item_id), None)
@@ -80,7 +80,7 @@ async def execute_transfer(
                 raise HTTPException(status_code=400, detail=f"Only {source_qty:g} available for transfer")
 
             source_customer_id = source_item.get("customer_id") or source_po.get("customer_id")
-            source_customer = await db.customers.find_one({"id": source_customer_id}, {"_id": 0}, session=session)
+            source_customer = await db.customers.find_one(floor_query(user, {"id": source_customer_id}), {"_id": 0}, session=session)
             if not source_customer:
                 raise HTTPException(status_code=409, detail="Source customer is unavailable")
 
@@ -89,13 +89,13 @@ async def execute_transfer(
             if destination_customer_id:
                 if destination_customer_id == source_customer_id:
                     raise HTTPException(status_code=400, detail="Destination customer must differ from source")
-                destination = await db.customers.find_one({"id": destination_customer_id}, {"_id": 0}, session=session)
+                destination = await db.customers.find_one(floor_query(user, {"id": destination_customer_id}), {"_id": 0}, session=session)
                 if not destination:
                     raise HTTPException(status_code=404, detail="Destination customer not found")
             elif new_customer:
                 email = (new_customer.get("email") or "").strip().lower() or None
                 if email:
-                    destination = await db.customers.find_one({"email": email}, {"_id": 0}, session=session)
+                    destination = await db.customers.find_one(floor_query(user, {"email": email}), {"_id": 0}, session=session)
                 if not destination:
                     name = (new_customer.get("name") or "").strip()
                     if not name:
@@ -107,6 +107,7 @@ async def execute_transfer(
                         phone=(new_customer.get("phone") or None),
                         address=(new_customer.get("address") or None),
                         city=(new_customer.get("city") or None),
+                        floor_id=floor_inherit(source_po),
                     ).dict()
                     await db.customers.insert_one(destination, session=session)
                     created_customer = True

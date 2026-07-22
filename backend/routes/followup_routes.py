@@ -529,7 +529,7 @@ async def update_followup(followup_id: str, body: FollowupUpdate, user: UserPubl
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post("/{followup_id}/snooze")
 async def snooze_followup(followup_id: str, body: FollowupSnoozePayload, user: UserPublic = Depends(get_current_user)):
-    f = await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    f = await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
     if not f:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     now = datetime.now(timezone.utc)
@@ -548,7 +548,7 @@ async def snooze_followup(followup_id: str, body: FollowupSnoozePayload, user: U
     else:
         until = now + timedelta(hours=1)
 
-    await db.followups.update_one({"id": followup_id}, {"$set": {
+    await db.followups.update_one(floor_query(user, {"id": followup_id}), {"$set": {
         "status": "snoozed", "snoozed_until": until.isoformat(), "updated_at": now_iso(),
     }})
     await log_event(
@@ -556,15 +556,15 @@ async def snooze_followup(followup_id: str, body: FollowupSnoozePayload, user: U
         customer_id=f.get("customer_id"),
         summary=f"Snoozed until {until.strftime('%d %b, %I:%M %p')}",
     )
-    return await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    return await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
 
 
 @router.post("/{followup_id}/complete")
 async def complete_followup(followup_id: str, body: FollowupCompletePayload, user: UserPublic = Depends(get_current_user)):
-    f = await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    f = await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
     if not f:
         raise HTTPException(status_code=404, detail="Follow-up not found")
-    await db.followups.update_one({"id": followup_id}, {"$set": {
+    await db.followups.update_one(floor_query(user, {"id": followup_id}), {"$set": {
         "status": "done", "completed_at": now_iso(),
         "notes": body.notes if body.notes is not None else f.get("notes"),
         "updated_at": now_iso(),
@@ -574,18 +574,18 @@ async def complete_followup(followup_id: str, body: FollowupCompletePayload, use
         customer_id=f.get("customer_id"), quotation_id=f.get("quotation_id"), purchase_id=f.get("purchase_id"),
         summary=f"Follow-up marked complete — {f.get('reason')}",
     )
-    return await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    return await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
 
 
 @router.post("/{followup_id}/contact")
 async def contact_followup(followup_id: str, body: FollowupContactPayload, user: UserPublic = Depends(get_current_user)):
     from routes.payment_routes import _clean_phone
 
-    f = await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    f = await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
     if not f:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     now = now_iso()
-    await db.followups.update_one({"id": followup_id}, {"$set": {"last_contacted_at": now, "updated_at": now}})
+    await db.followups.update_one(floor_query(user, {"id": followup_id}), {"$set": {"last_contacted_at": now, "updated_at": now}})
     await log_event(
         event_type="followup.contacted", entity_type="followup", entity_id=followup_id, actor=user,
         customer_id=f.get("customer_id"), quotation_id=f.get("quotation_id"), purchase_id=f.get("purchase_id"),
@@ -606,7 +606,7 @@ async def contact_followup(followup_id: str, body: FollowupContactPayload, user:
 
 @router.post("/{followup_id}/log-call")
 async def log_call(followup_id: str, body: FollowupCallOutcomePayload, user: UserPublic = Depends(get_current_user)):
-    f = await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    f = await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
     if not f:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     now_dt = datetime.now(timezone.utc)
@@ -661,11 +661,11 @@ async def log_call(followup_id: str, body: FollowupCallOutcomePayload, user: Use
             "completed_outcome": "converted", "resolution_note": "Converted!",
         })
 
-    await db.followups.update_one({"id": followup_id}, {"$set": patch})
+    await db.followups.update_one(floor_query(user, {"id": followup_id}), {"$set": patch})
     await log_event(
         event_type="followup.call_logged", entity_type="followup", entity_id=followup_id, actor=user,
         customer_id=f.get("customer_id"), quotation_id=f.get("quotation_id"), purchase_id=f.get("purchase_id"),
         payload={"outcome": body.outcome, "next_followup_id": next_created},
         summary=f"Call logged — {body.outcome.replace('_', ' ').title()}",
     )
-    return await db.followups.find_one({"id": followup_id}, {"_id": 0})
+    return await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})

@@ -514,7 +514,7 @@ async def dispatch_record(
 
 @router.get("/items/{item_id}")
 async def get_item(item_id: str, user: UserPublic = Depends(get_current_user)):
-    po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0})
+    po = await db.purchase_orders.find_one(floor_query(user, {"items.id": item_id}), {"_id": 0})
     if not po:
         raise HTTPException(status_code=404, detail="Item not found")
     floor_ids = floor_scope_ids(user)
@@ -612,7 +612,7 @@ async def _sync_po_status_with_stages(po_id: str, user: UserPublic) -> Optional[
     """Fetch the fresh PO, derive the correct status from item stages, and
     persist it (+ status_history + qty_received bookkeeping + activity event)
     if a forward sync is warranted. Returns the new status, or None."""
-    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not fresh:
         return None
     target = _derive_po_status_from_stages(fresh.get("items", []), fresh.get("status", "draft"))
@@ -667,7 +667,7 @@ async def _apply_stage_change(
             return result
 
     logger.warning("Concurrent inventory conflict on item %s after %d attempts", item_id, max_attempts)
-    po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0})
+    po = await db.purchase_orders.find_one(floor_query(user, {"items.id": item_id}), {"_id": 0})
     it = next((i for i in (po or {}).get("items", []) if i.get("id") == item_id), None) if po else None
     raise HTTPException(status_code=409, detail={
         "error": "concurrent_modification",
@@ -696,7 +696,7 @@ async def _attempt_stage_change(
     new piece) so the Movement History for either piece traces back to the
     other.
     """
-    po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0})
+    po = await db.purchase_orders.find_one(floor_query(user, {"items.id": item_id}), {"_id": 0})
     if not po:
         raise HTTPException(status_code=404, detail="Item not found")
     it = next((i for i in po.get("items", []) if i.get("id") == item_id), None)
@@ -1041,7 +1041,7 @@ async def transfer_item_command(
 
 @router.get("/items/{item_id}/transfer-history")
 async def item_transfer_history(item_id: str, user: UserPublic = Depends(get_current_user)):
-    po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0, "floor_id": 1})
+    po = await db.purchase_orders.find_one(floor_query(user, {"items.id": item_id}), {"_id": 0, "floor_id": 1})
     if not po:
         raise HTTPException(status_code=404, detail="Item not found")
     floor_ids = floor_scope_ids(user)
@@ -1072,7 +1072,7 @@ async def transfer_item(
     if body.qty <= 0:
         raise HTTPException(status_code=400, detail="Transfer qty must be > 0")
 
-    po = await db.purchase_orders.find_one({"items.id": item_id}, {"_id": 0})
+    po = await db.purchase_orders.find_one(floor_query(user, {"items.id": item_id}), {"_id": 0})
     if not po:
         raise HTTPException(status_code=404, detail="Source item not found")
     it = next((i for i in po.get("items", []) if i.get("id") == item_id), None)

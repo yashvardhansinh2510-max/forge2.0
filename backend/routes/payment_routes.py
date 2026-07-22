@@ -21,6 +21,7 @@ from models import Payment, PaymentCreate, UserPublic
 from services.activity_log import log_event
 from services.followup_engine import reconcile_followups
 from services.notifications import notify
+from settings import settings
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
@@ -337,6 +338,11 @@ async def create_payment(
             )
             if not txn_unsupported:
                 raise
+            if settings.environment == "production":
+                raise HTTPException(
+                    status_code=503,
+                    detail="Payment recording requires a MongoDB replica set in production",
+                )
             replay = await _check_and_insert(session=None)
             if replay is not None:
                 return replay

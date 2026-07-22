@@ -90,6 +90,7 @@ async def upload_and_register(
     product_id: Optional[str] = None,
     family_key: Optional[str] = None,
     brand_id: Optional[str] = None,
+    floor_id: str = "first-floor",
     source_type: MediaSourceType = "manufacturer",
     role: MediaRole = "gallery",
     is_primary: bool = False,
@@ -132,7 +133,7 @@ async def upload_and_register(
     obj = await storage.upload(bucket=bucket, key=key, data=data, content_type=mime)
 
     doc = ProductMedia(
-        product_id=product_id, family_key=family_key, brand_id=brand_id,
+        product_id=product_id, family_key=family_key, brand_id=brand_id, floor_id=floor_id,
         source_type=source_type, role=role, bucket=bucket, storage_key=key,
         public_url=obj.public_url, width=width, height=height, quality=quality,
         sha1=sha1, mime=mime, size_bytes=len(data), is_primary=is_primary,
@@ -236,6 +237,7 @@ async def replace_media(
     new_doc = await upload_and_register(
         data=data, mime=mime, brand_slug=brand_slug,
         product_id=old.get("product_id"), family_key=old.get("family_key"), brand_id=old.get("brand_id"),
+        floor_id=old.get("floor_id", "first-floor"),
         source_type=old.get("source_type", "internal"), role=old.get("role", "gallery"),
         is_primary=old.get("is_primary", False), sort_order=old.get("sort_order", 100),
         uploaded_by=uploaded_by, notes=notes, actor=actor,

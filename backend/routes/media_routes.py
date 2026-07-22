@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from auth import get_current_user, require_min_role
+from auth import floor_query, floor_scope_ids, get_current_user, require_min_role
 from db import db
 from models import ProductMedia, UserPublic
 from services import catalog_service, media_service
@@ -75,19 +75,33 @@ async def _read_bounded_upload(file: UploadFile) -> bytes:
     return data
 
 
-async def _brand_slug_for_product(product_id: str) -> tuple[str, Optional[str], Optional[str]]:
-    """Return (brand_slug, brand_id, family_key) for a product."""
-    prod = await db.products.find_one({"id": product_id}, {"_id": 0, "brand_id": 1, "family_key": 1})
+async def _brand_slug_for_product(product_id: str, user: UserPublic) -> tuple[str, Optional[str], Optional[str], str]:
+    """Return (brand_slug, brand_id, family_key, floor_id) for a product."""
+    prod = await db.products.find_one(floor_query(user, {"id": product_id}), {"_id": 0, "brand_id": 1, "family_key": 1, "floor_id": 1})
     if not prod:
         raise HTTPException(status_code=404, detail="Product not found")
     brand = await db.brands.find_one({"id": prod.get("brand_id")}, {"_id": 0, "slug": 1, "name": 1})
     slug = (brand or {}).get("slug") or (brand or {}).get("name") or "unknown"
-    return slug, prod.get("brand_id"), prod.get("family_key")
+    return slug, prod.get("brand_id"), prod.get("family_key"), prod.get("floor_id", "first-floor")
+
+
+async def _assert_media_access(media_id: str, user: UserPublic) -> dict:
+    doc = await db.product_media.find_one({"id": media_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Media not found")
+    if doc.get("product_id"):
+        allowed = await db.products.find_one(floor_query(user, {"id": doc["product_id"]}), {"_id": 0, "id": 1})
+    else:
+        allowed = await db.products.find_one(floor_query(user, {"family_key": doc.get("family_key")}), {"_id": 0, "id": 1})
+    if not allowed:
+        raise HTTPException(status_code=404, detail="Media not found")
+    return doc
 
 
 @router.get("/products/{product_id}/media", response_model=list[ProductMedia])
-async def list_product_media(product_id: str, _: UserPublic = Depends(get_current_user)):
-    media = await catalog_service.media_for_product(product_id)
+async def list_product_media(product_id: str, user: UserPublic = Depends(get_current_user)):
+    await _brand_slug_for_product(product_id, user)
+    media = await catalog_service.media_for_product(product_id, floor_ids=floor_scope_ids(user))
     if media is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return media
@@ -106,12 +120,13 @@ async def upload_product_media(
 ):
     if source_type not in ("supplier", "manufacturer", "internal"):
         raise HTTPException(status_code=400, detail="source_type must be supplier|manufacturer|internal")
-    slug, brand_id, family_key = await _brand_slug_for_product(product_id)
+    slug, brand_id, family_key, floor_id = await _brand_slug_for_product(product_id, user)
     data = await _read_bounded_upload(file)
     mime = file.content_type or "application/octet-stream"
     doc = await media_service.upload_and_register(
         data=data, mime=mime, brand_slug=slug,
         product_id=product_id, family_key=family_key, brand_id=brand_id,
+        floor_id=floor_id,
         source_type=source_type, role=role,  # type: ignore[arg-type]
         is_primary=is_primary, sort_order=sort_order,
         uploaded_by=user.id, notes=notes, actor=user,
@@ -132,7 +147,10 @@ async def replace_product_media(
     status and sort position instead of appending a new one at the end. The
     old storage object is deleted as part of this call (no orphan left
     behind); both the upload and the deletion are separately audit-logged."""
-    slug, _, _ = await _brand_slug_for_product(product_id)
+    slug, _, _, _ = await _brand_slug_for_product(product_id, user)
+    existing = await _assert_media_access(media_id, user)
+    if existing.get("product_id") != product_id:
+        raise HTTPException(status_code=404, detail="Media not found")
     data = await _read_bounded_upload(file)
     mime = file.content_type or "application/octet-stream"
     doc = await media_service.replace_media(
@@ -159,7 +177,7 @@ async def upload_family_media(
     if source_type not in ("supplier", "manufacturer", "internal"):
         raise HTTPException(status_code=400, detail="source_type must be supplier|manufacturer|internal")
     # Look up any product in this family to pick a brand slug
-    sample = await db.products.find_one({"family_key": family_key}, {"_id": 0, "brand_id": 1})
+    sample = await db.products.find_one(floor_query(user, {"family_key": family_key}), {"_id": 0, "brand_id": 1, "floor_id": 1})
     if not sample:
         raise HTTPException(status_code=404, detail="Family not found")
     brand = await db.brands.find_one({"id": sample["brand_id"]}, {"_id": 0, "slug": 1, "name": 1})
@@ -169,6 +187,7 @@ async def upload_family_media(
     doc = await media_service.upload_and_register(
         data=data, mime=mime, brand_slug=slug,
         family_key=family_key, brand_id=sample["brand_id"],
+        floor_id=sample.get("floor_id", "first-floor"),
         source_type=source_type, role=role,  # type: ignore[arg-type]
         is_primary=is_primary, sort_order=sort_order,
         uploaded_by=user.id, notes=notes,
@@ -179,6 +198,7 @@ async def upload_family_media(
 
 @router.delete("/media/{media_id}")
 async def delete_media(media_id: str, user: UserPublic = Depends(require_min_role("purchase"))):
+    await _assert_media_access(media_id, user)
     ok = await media_service.delete_media(media_id, actor=user)
     if not ok:
         raise HTTPException(status_code=404, detail="Media not found")
@@ -190,15 +210,13 @@ async def delete_media(media_id: str, user: UserPublic = Depends(require_min_rol
 async def patch_media(
     media_id: str,
     payload: dict,
-    _: UserPublic = Depends(require_min_role("purchase")),
+    user: UserPublic = Depends(require_min_role("purchase")),
 ):
     allowed = {"is_primary", "role", "sort_order", "notes", "source_type"}
     updates = {k: v for k, v in (payload or {}).items() if k in allowed}
     if not updates:
         raise HTTPException(status_code=400, detail="No supported fields to update")
-    doc = await db.product_media.find_one({"id": media_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Media not found")
+    doc = await _assert_media_access(media_id, user)
     await db.product_media.update_one({"id": media_id}, {"$set": updates})
     if updates.get("is_primary"):
         await media_service._demote_other_primaries(  # type: ignore[attr-defined]

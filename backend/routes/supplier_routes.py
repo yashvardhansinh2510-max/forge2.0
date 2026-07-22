@@ -64,5 +64,5 @@ async def update_supplier(
     from datetime import datetime, timezone
     patch["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.suppliers.update_one(floor_query(user, {"id": supplier_id}), {"$set": patch})
-    fresh = await db.suppliers.find_one({"id": supplier_id}, {"_id": 0})
+    fresh = await db.suppliers.find_one(floor_query(user, {"id": supplier_id}), {"_id": 0})
     return Supplier(**fresh)

@@ -18,6 +18,7 @@ from models import ActivityEvent, Followup, Payment, PurchaseOrder, PurchaseOrde
 from services.notifications import notify
 from services.pricing import per_line_net_amounts
 from services.sequence import next_number
+from pymongo import ReturnDocument
 
 EVENT_QUOTATION_GENERATED = "QuotationGenerated"
 EVENT_ORDER_PLACED = "OrderPlaced"
@@ -223,26 +224,65 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         payload={"event": EVENT_ORDER_PLACED, "purchase_order_ids": created_po_ids, "outstanding": payment["amount"]}, session=session,
     )
     await _upsert_followup(key=f"{key}:followup", quotation=quotation, reason=f"Order {quotation.get('number')} placed — confirm payment and delivery plan.", category="payment", session=session)
-    asyncio.create_task(notify(
-        quotation.get("created_by"),
-        f"Order confirmed · {quotation.get('number')}",
-        body=f"{len(created_po_ids)} purchase order(s) created for {quotation.get('customer_name')} — outstanding ₹{payment['amount']:,.0f}",
-        kind="success",
-        link=f"/quotations/{quotation_id}",
-    ))
-    return {"quotation_id": quotation_id, "purchase_order_ids": created_po_ids, "payment_amount": payment["amount"], "count": len(created_po_ids)}
+    return {
+        "quotation_id": quotation_id,
+        "purchase_order_ids": created_po_ids,
+        "payment_amount": payment["amount"],
+        "count": len(created_po_ids),
+        "post_commit_notification": {
+            "user_id": quotation.get("created_by"),
+            "title": f"Order confirmed · {quotation.get('number')}",
+            "body": f"{len(created_po_ids)} purchase order(s) created for {quotation.get('customer_name')} — outstanding ₹{payment['amount']:,.0f}",
+            "kind": "success",
+            "link": f"/quotations/{quotation_id}",
+        },
+    }
 
 
-async def dispatch_event(event_id: str) -> dict:
+async def _claim_event(event_id: str) -> dict | None:
+    """Atomically claim one event so multiple workers cannot process it twice."""
+    now = datetime.now(timezone.utc)
+    stale_before = (now.timestamp() - 120)
+    return await db.event_outbox.find_one_and_update(
+        {
+            "id": event_id,
+            "$or": [
+                {"status": "pending"},
+                {"status": "processing", "claimed_at_epoch": {"$lt": stale_before}},
+            ],
+        },
+        {"$set": {
+            "status": "processing",
+            "claim_id": str(uuid4()),
+            "claimed_at": now.isoformat(),
+            "claimed_at_epoch": now.timestamp(),
+            "updated_at": now_iso(),
+        }},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+async def dispatch_event(event_id: str, *, claim_id: str | None = None) -> dict:
     """Run one committed outbox event. Any failure leaves it pending for retry."""
     event = await db.event_outbox.find_one({"id": event_id}, {"_id": 0})
     if not event:
         raise RuntimeError("Outbox event not found")
     if event.get("status") == "completed":
         return event.get("result") or {"already_processed": True}
+    if claim_id is None:
+        event = await _claim_event(event_id)
+        if not event:
+            current = await db.event_outbox.find_one({"id": event_id}, {"_id": 0})
+            if current and current.get("status") == "completed":
+                return current.get("result") or {"already_processed": True}
+            return {"already_processing": True}
+        claim_id = event.get("claim_id")
+    result: dict
+    notification: dict | None = None
     async with await client.start_session() as session:
         async with session.start_transaction():
-            current = await db.event_outbox.find_one({"id": event_id}, {"_id": 0}, session=session)
+            current = await db.event_outbox.find_one({"id": event_id, "status": "processing", "claim_id": claim_id}, {"_id": 0}, session=session)
             if not current or current.get("status") == "completed":
                 return (current or {}).get("result") or {"already_processed": True}
             if current["event_type"] == EVENT_QUOTATION_GENERATED:
@@ -254,8 +294,17 @@ async def dispatch_event(event_id: str) -> dict:
                 result = await handle_purchase_transferred(current, session)
             else:
                 raise RuntimeError(f"Unsupported outbox event type {current['event_type']}")
-            await db.event_outbox.update_one({"id": event_id}, {"$set": {"status": "completed", "result": result, "processed_at": now_iso(), "updated_at": now_iso()}, "$inc": {"attempts": 1}}, session=session)
-            return result
+            notification = result.pop("post_commit_notification", None)
+            await db.event_outbox.update_one({"id": event_id, "claim_id": claim_id}, {"$set": {"status": "completed", "result": result, "processed_at": now_iso(), "updated_at": now_iso()}, "$inc": {"attempts": 1}}, session=session)
+    if notification and notification.get("user_id"):
+        try:
+            await notify(**notification)
+        except Exception:
+            # The business transaction is already committed. Notification
+            # delivery must not turn a completed order into a failed command.
+            import logging
+            logging.getLogger("forge.outbox").exception("Post-commit order notification failed")
+    return result
 
 
 MAX_DISPATCH_ATTEMPTS = 8
@@ -263,14 +312,24 @@ WORKER_INTERVAL_SECONDS = 30
 
 
 async def dispatch_pending(limit: int = 100) -> list[dict]:
+    stale_before = datetime.now(timezone.utc).timestamp() - 120
     events = await db.event_outbox.find(
-        {"status": "pending", "attempts": {"$lt": MAX_DISPATCH_ATTEMPTS}},
+        {
+            "attempts": {"$lt": MAX_DISPATCH_ATTEMPTS},
+            "$or": [
+                {"status": "pending"},
+                {"status": "processing", "claimed_at_epoch": {"$lt": stale_before}},
+            ],
+        },
         {"_id": 0, "id": 1, "attempts": 1},
     ).sort("created_at", 1).to_list(limit)
     results = []
     for event in events:
         try:
-            results.append(await dispatch_event(event["id"]))
+            claimed = await _claim_event(event["id"])
+            if not claimed:
+                continue
+            results.append(await dispatch_event(event["id"], claim_id=claimed["claim_id"]))
         except Exception as exc:  # Persist failure safely; retry remains possible.
             exhausted = int(event.get("attempts") or 0) + 1 >= MAX_DISPATCH_ATTEMPTS
             patch: dict = {"last_error": str(exc), "updated_at": now_iso()}
@@ -278,7 +337,7 @@ async def dispatch_pending(limit: int = 100) -> list[dict]:
                 # Dead-letter: stop retrying, keep the event for operator review
                 # via GET /api/ops/outbox. Nothing is deleted.
                 patch["status"] = "dead_letter"
-            await db.event_outbox.update_one({"id": event["id"]}, {"$set": patch, "$inc": {"attempts": 1}})
+            await db.event_outbox.update_one({"id": event["id"], "status": "processing"}, {"$set": patch, "$inc": {"attempts": 1}})
     return results
 
 
