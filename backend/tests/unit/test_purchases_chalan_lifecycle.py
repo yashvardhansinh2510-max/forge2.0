@@ -118,9 +118,18 @@ def test_dispatch_rejects_when_already_dispatched(monkeypatch):
     assert getattr(exc.value, "status_code", None) == 400
 
 
+async def _fake_pdf_branding():
+    return {}
+
+
 def test_chalan_pdf_returns_pdf_response(monkeypatch):
     fake_db = _FakeDb(_po_with_chalan("released"))
     monkeypatch.setattr(tracker, "db", fake_db)
+    # _pdf_branding is imported from routes.quotation_routes, which resolves
+    # its own `db` reference against that module's globals, not tracker.db —
+    # monkeypatching tracker.db above does not stop it from hitting the real
+    # database. Mock it directly so this stays a real unit test.
+    monkeypatch.setattr(tracker, "_pdf_branding", _fake_pdf_branding)
 
     response = asyncio.run(tracker.chalan_pdf("po-1", "ch-1", user=_user()))
 
