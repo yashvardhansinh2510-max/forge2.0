@@ -70,7 +70,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       style={{ flex: 1, backgroundColor: colors.surface }}
       onLayout={onLayout}
     >
-      <BuilderTopbar onBack={onBack} />
+      <BuilderTopbar onBack={onBack} isPhone={isPhone} isDesktop={threePane} />
 
       {w === 0 ? (
         <View style={{ flex: 1, backgroundColor: colors.surface }} />

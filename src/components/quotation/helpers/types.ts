@@ -63,7 +63,7 @@ export type RecentQuotation = {
 export type Line = {
   id: string; product_id: string; sku: string; name: string; image?: string | null;
   category_id?: string | null; room?: string;
-  qty: number; unit_price: number;
+  qty: number; unit_price: number; mrp?: number | null;
   discount_pct: number | null;
   description?: string | null; notes?: string | null;
   finish?: string | null;

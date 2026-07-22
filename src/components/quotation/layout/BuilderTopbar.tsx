@@ -13,13 +13,21 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } fr
 
 import { colors, money, radius, spacing, statusMeta, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
-import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 
 import { useBuilder } from "../context/BuilderContext";
 
-export function BuilderTopbar({ onBack }: { onBack: () => void }) {
+// isPhone/isDesktop are measured off the builder's own container width by
+// BuilderShell (threePane/twoPane/isPhone), not off raw window width via
+// useBreakpoint() — the admin shell's sidebar eats into the available width,
+// so a window that's plenty wide can still leave this topbar with phone-
+// sized real estate. Using the container measurement keeps this in sync with
+// the rest of the builder (see BuilderShell.tsx's compactCatalog comment).
+export function BuilderTopbar({
+  onBack, isPhone, isDesktop,
+}: {
+  onBack: () => void; isPhone: boolean; isDesktop: boolean;
+}) {
   const b = useBuilder();
-  const { isDesktop, isPhone } = useBreakpoint();
 
   const revs = b.recentQuotations.find((q) => q.id === b.quotationId)?.revision_count ?? 0;
   const status = b.recentQuotations.find((q) => q.id === b.quotationId)?.status || "draft";
@@ -106,28 +114,30 @@ export function BuilderTopbar({ onBack }: { onBack: () => void }) {
       ) : null}
 
       <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
-        {!isPhone ? (
-          <>
-            <Pressable
-              testID="generate-quotation"
-              onPress={b.generateOfficialQuotation}
-              disabled={b.workflowBusy || b.s.lines.length === 0}
-              style={({ pressed }) => [styles.workflowBtn, styles.quotationBtn, { opacity: b.workflowBusy || b.s.lines.length === 0 ? 0.45 : pressed ? 0.76 : 1 }]}
-            >
-              <Feather name="file-text" size={14} color={colors.onSurface} />
-              <Text style={styles.workflowText}>Quotation</Text>
-            </Pressable>
-            <Pressable
-              testID="place-order"
-              onPress={b.placeOrder}
-              disabled={b.workflowBusy || b.s.lines.length === 0}
-              style={({ pressed }) => [styles.workflowBtn, styles.orderBtn, { opacity: b.workflowBusy || b.s.lines.length === 0 ? 0.45 : pressed ? 0.76 : 1 }]}
-            >
-              <Feather name="shopping-cart" size={14} color={colors.onBrand} />
-              <Text style={[styles.workflowText, { color: colors.onBrand }]}>Place Order</Text>
-            </Pressable>
-          </>
-        ) : null}
+        {/* Always rendered — these are the only way to generate the official
+            quotation PDF or place an order from inside the builder. They used
+            to disappear below the phone breakpoint with no fallback anywhere
+            else on screen; now they just shrink to icon-only. */}
+        <Pressable
+          testID="generate-quotation"
+          onPress={b.generateOfficialQuotation}
+          disabled={b.workflowBusy || b.s.lines.length === 0}
+          style={({ pressed }) => [styles.workflowBtn, styles.quotationBtn, { opacity: b.workflowBusy || b.s.lines.length === 0 ? 0.45 : pressed ? 0.76 : 1 }]}
+        >
+          <Feather name="file-text" size={14} color={colors.onSurface} />
+          {isPhone ? null : <Text style={styles.workflowText}>Quotation</Text>}
+        </Pressable>
+        <Pressable
+          testID="place-order"
+          onPress={b.placeOrder}
+          disabled={b.workflowBusy || b.s.lines.length === 0}
+          style={({ pressed }) => [styles.workflowBtn, styles.orderBtn, { opacity: b.workflowBusy || b.s.lines.length === 0 ? 0.45 : pressed ? 0.76 : 1 }]}
+        >
+          <Feather name="shopping-cart" size={14} color={colors.onBrand} />
+          {isPhone ? null : <Text style={[styles.workflowText, { color: colors.onBrand }]}>Place Order</Text>}
+        </Pressable>
+      </View>
+      <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
         {isDesktop && Platform.OS === "web" ? (
           <View style={styles.hint} testID="shortcut-hint">
             <Text style={styles.hintKey}>⌘Z</Text>
