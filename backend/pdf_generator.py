@@ -32,6 +32,7 @@ ZEBRA = colors.HexColor("#F0F0F0")
 WHITE = colors.white
 PDF_DIR = Path(__file__).resolve().parent
 LOGO_PATH = PDF_DIR / "buildcon_logo.png"
+LOGO_RATIO = 1414 / 412  # native W/H of buildcon_logo.png — size by one edge only
 
 # --- Dynamic pagination geometry (item/product table, pages 2+) -----------
 # Page size + margins are unchanged (preserving the exact print template),
@@ -128,7 +129,7 @@ def _draw_room_watermark(cv, doc, branding: dict | None = None) -> None:
     cv.translate(A4[0] / 2, A4[1] / 2 - 8 * mm)
     cv.rotate(26)
     watermark_w = 87 * mm
-    watermark_h = watermark_w / (1913 / 474)
+    watermark_h = watermark_w / LOGO_RATIO
     cv.drawImage(str(LOGO_PATH), -watermark_w / 2, -watermark_h / 2, width=watermark_w, height=watermark_h, mask="auto")
     cv.restoreState()
 
@@ -137,7 +138,7 @@ def _brand_header(right_title: str, styles: dict, style_key: str = "titleRight")
     logo: Flowable
     if LOGO_PATH.exists():
         logo_width = 43 * mm
-        logo = Image(str(LOGO_PATH), width=logo_width, height=logo_width / (1913 / 474), kind="proportional")
+        logo = Image(str(LOGO_PATH), width=logo_width, height=logo_width / LOGO_RATIO, kind="proportional")
     else:
         logo = Paragraph("<b>BUILDCON HOUSE</b><br/><font size='8'>Let You Live Better</font>", styles["brandFallback"])
     table = Table([[logo, Paragraph(right_title, styles[style_key])]], colWidths=[105 * mm, 65 * mm])
@@ -146,13 +147,20 @@ def _brand_header(right_title: str, styles: dict, style_key: str = "titleRight")
 
 
 def _room_totals(items: Iterable[dict]) -> tuple[float, float, float]:
-    subtotal = discount = 0.0
+    """Returns (mrp_total, discount, net). `mrp_total` uses each line's real
+    catalog MRP (falling back to unit_price for older quotations saved before
+    the mrp field existed) — it is NOT the pre-discount offer subtotal."""
+    mrp_total = subtotal = discount = 0.0
     for item in items:
-        gross = float(item.get("qty") or 0) * float(item.get("unit_price") or 0)
+        qty = float(item.get("qty") or 0)
+        unit_price = float(item.get("unit_price") or 0)
+        mrp = float(item.get("mrp") or unit_price)
+        gross = qty * unit_price
         disc = gross * float(item.get("discount_pct") or 0) / 100
+        mrp_total += qty * mrp
         subtotal += gross
         discount += disc
-    return subtotal, discount, subtotal - discount
+    return mrp_total, discount, subtotal - discount
 
 
 def _format_pdf_date(raw: str | None) -> str:
@@ -348,9 +356,10 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             Paragraph("SR.<br/>NO.", styles["tableHead"]), Paragraph("PRODUCT IMAGE", styles["tableHead"]),
             Paragraph("ARTICLE<br/>NO.", styles["tableHead"]), Paragraph("DESCRIPTION", styles["tableHead"]),
             Paragraph("MRP<br/>(Rs.)", styles["tableHead"]), Paragraph("QTY", styles["tableHead"]),
+            Paragraph("MRP<br/>TOTAL (Rs.)", styles["tableHead"]),
             Paragraph("OFFER<br/>RATE", styles["tableHead"]), Paragraph("OFFER<br/>TOTAL (Rs.)", styles["tableHead"]),
         ]
-        item_widths = [12 * mm, 33 * mm, 18 * mm, 38 * mm, 18 * mm, 8 * mm, 20 * mm, 23 * mm]
+        item_widths = [12 * mm, 33 * mm, 18 * mm, 30 * mm, 18 * mm, 8 * mm, 18 * mm, 20 * mm, 23 * mm]
     else:
         item_header = [
             Paragraph("SR.<br/>NO.", styles["tableHead"]), Paragraph("PRODUCT IMAGE", styles["tableHead"]),
@@ -389,6 +398,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                         Paragraph(str(sr_no), styles["cellCenter"]), _img(item.get("image")),
                         Paragraph(_escape(item.get("sku")), styles["cell"]), Paragraph(description, styles["tiny"]),
                         Paragraph(_money(listed_mrp), styles["cellCenter"]), Paragraph(f"{qty:g}", styles["cellCenter"]),
+                        Paragraph(_money(qty * listed_mrp), styles["cellCenter"]),
                         Paragraph(_money(offer_rate), styles["cellCenter"]), Paragraph(_money(line_total), styles["cellCenter"]),
                     ])
                 else:

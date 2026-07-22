@@ -14,13 +14,14 @@
 // -----------------------------------------------------------------------------
 import * as Haptics from "expo-haptics";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Linking, Platform, TextInput } from "react-native";
+import { Platform, TextInput } from "react-native";
 
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { useHistory, useUndoRedoShortcuts } from "@/src/hooks/useHistory";
 import type { HistoryApi } from "@/src/hooks/useHistory";
 import { playAddProductSound } from "@/src/services/soundService";
+import { openApiFile } from "@/src/utils/downloadFile";
 
 import { computeTotals, effectivePct } from "../helpers/pricing";
 import { productImageList } from "../helpers/media";
@@ -485,7 +486,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         lines: (doc.items || []).map((it: any) => ({
           id: it.id, product_id: it.product_id, sku: it.sku, name: it.name,
           image: it.image, category_id: it.category_id, room: it.room,
-          qty: it.qty, unit_price: it.unit_price,
+          qty: it.qty, unit_price: it.unit_price, mrp: it.mrp ?? null,
           discount_pct: it.discount_pct ?? null,
           description: it.description, notes: it.notes,
           finish: it.finish ?? null, family_key: it.family_key ?? null,
@@ -618,7 +619,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
           product_id: p.id, sku,
           name: displayName, image: variant?.image ?? productImageList(p)[0] ?? null,
           category_id: p.category_id, room: cur.activeRoom,
-          qty: 1, unit_price: variant?.price ?? p.price,
+          qty: 1, unit_price: variant?.price ?? p.price, mrp: variant?.mrp ?? p.mrp,
           discount_pct: null, finish,
           family_key: p.family_key ?? null,
         }],
@@ -821,6 +822,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         image: variant?.image ?? productImageList(target)[0] ?? src.image,
         category_id: target.category_id,
         unit_price: variant?.price ?? target.price,
+        mrp: variant?.mrp ?? target.mrp,
         finish,
         family_key: target.family_key ?? src.family_key ?? null,
       };
@@ -845,11 +847,11 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     if (!persistedId) return;
     setWorkflowBusy(true);
     try {
-      const url = await api.authenticatedUrl(`/quotations/${persistedId}/pdf`);
-      await Linking.openURL(url);
-      toast.success("Official quotation generated");
-    } catch (e: any) {
-      toast.error(e?.detail || "Could not generate quotation PDF");
+      // openApiFile opens the PDF via a blob: URL (not a data: URL, and not
+      // a bare window.open() on a URL minted after two awaited round-trips —
+      // both of which browsers can silently refuse) and shows its own toast
+      // on failure, so there's no separate success/error toast to add here.
+      await openApiFile(`/quotations/${persistedId}/pdf`, "quotation PDF");
     } finally {
       setWorkflowBusy(false);
     }

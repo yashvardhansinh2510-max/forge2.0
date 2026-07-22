@@ -1,13 +1,14 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
 import { useBp } from "@/src/design/responsive";
 import { Button, Card, IconButton, PriceTag, StatusBadge } from "@/src/components/ui";
-import { api, getToken } from "@/src/api/client";
+import { api } from "@/src/api/client";
+import { openApiFile } from "@/src/utils/downloadFile";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
 type Line = { id: string; sku: string; name: string; qty: number; unit_price: number; discount_pct: number | null; room?: string; description?: string | null; category_id?: string | null };
@@ -57,23 +58,13 @@ export default function QuotationDetail() {
   useEffect(() => { load(); }, [load]);
 
   const openPdf = async () => {
-    const token = await getToken();
-    if (!token) return;
-    try {
-      const res = await fetch(`${api.base}/api/quotations/${id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
-      const blob = await res.blob();
-      const reader = new FileReader();
-      reader.onloadend = () => Linking.openURL(reader.result as string);
-      reader.readAsDataURL(blob);
-    } catch {
-      // Fallback for environments where blob/dataURL conversion fails (some
-      // native runtimes on very large PDFs): open the PDF as a plain browser
-      // navigation using a short-lived single-use download token, never the
-      // long-lived bearer JWT itself — a `?_t=<jwt>` URL leaks into browser
-      // history/proxy logs and stays valid for the token's full lifetime.
-      const { token: dl } = await api.post<{ token: string }>("/downloads/token", {});
-      Linking.openURL(`${api.base}/api/quotations/${id}/pdf?dl=${encodeURIComponent(dl)}`);
-    }
+    // On web this used to convert the whole PDF into a base64 data: URL and
+    // hand it to window.open() — Chrome refuses to navigate a new tab
+    // straight to a data: URL (a hard security block, not a popup-blocker
+    // timing issue), so the tab silently never opened. openApiFile already
+    // does this correctly elsewhere (customer portal, catalog export) via a
+    // short-lived blob: URL instead.
+    await openApiFile(`/quotations/${id}/pdf`, "quotation PDF");
   };
 
   const advance = async () => {

@@ -15,6 +15,7 @@ from models import (
     QuotationUpdate, RoomDiscountCfg, UserPublic, now_iso,
 )
 from pdf_generator import build_quotation_pdf
+from pdf_tiles import build_tiles_quotation_pdf, build_tiles_selection_pdf, tiles_pdf_filename
 from services import catalog_service
 from services.activity_log import log_event
 from services.domain_outbox import (
@@ -126,6 +127,12 @@ async def create_quotation(
         room_discounts=body.room_discounts or {},
         notes=body.notes,
         valid_until=body.valid_until,
+        doc_type=body.doc_type,
+        attended_by=body.attended_by,
+        prepared_by=body.prepared_by,
+        address_snapshot=body.address_snapshot,
+        doc_date=body.doc_date,
+        doc_number=body.doc_number,
         created_by=user.id,
         created_by_name=user.full_name,
         floor_id=floor_for_write(user),
@@ -166,11 +173,15 @@ async def update_quotation(
 
     update: dict = {}
     customer_changed_from: str | None = None
-    if body.customer_id is not None and body.customer_id != doc.get("customer_id"):
+    if body.customer_id is not None:
+        # Re-sending the SAME customer_id is a legal snapshot refresh — the
+        # tiles builders PATCH the customer record (name/phone corrections)
+        # and then re-send the id so customer_name here follows suit.
         new_customer = await db.customers.find_one(floor_query(user, {"id": body.customer_id}), {"_id": 0})
         if not new_customer:
             raise HTTPException(status_code=404, detail="Customer not found")
-        customer_changed_from = doc.get("customer_name")
+        if body.customer_id != doc.get("customer_id"):
+            customer_changed_from = doc.get("customer_name")
         update["customer_id"] = new_customer["id"]
         update["customer_name"] = new_customer.get("company") or new_customer["name"]
         # Refresh the frozen phone snapshot to the new customer's phone unless
@@ -216,6 +227,16 @@ async def update_quotation(
         update["phone_snapshot"] = body.phone_snapshot
     if body.reference_source is not None:
         update["reference_source"] = body.reference_source
+    if body.attended_by is not None:
+        update["attended_by"] = body.attended_by
+    if body.prepared_by is not None:
+        update["prepared_by"] = body.prepared_by
+    if body.address_snapshot is not None:
+        update["address_snapshot"] = body.address_snapshot
+    if body.doc_date is not None:
+        update["doc_date"] = body.doc_date
+    if body.doc_number is not None:
+        update["doc_number"] = body.doc_number
     if body.ui_state is not None:
         update["ui_state"] = body.ui_state
 
@@ -499,6 +520,7 @@ async def _pdf_branding() -> dict:
         "signature_name": pdf.get("signature_name"),
         "signature_title": pdf.get("signature_title"),
         "show_watermark": pdf.get("show_watermark", True),
+        "company_address": company.get("address"),
     }
 
 
@@ -514,8 +536,17 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
-    pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
-    pdf_bytes = build_quotation_pdf(pdf_doc, customer, await _pdf_branding())
+    doc_type = doc.get("doc_type") or "standard"
+    if doc_type == "tiles_selection":
+        pdf_bytes = build_tiles_selection_pdf(doc, customer, await _pdf_branding())
+        filename = tiles_pdf_filename(doc)
+    elif doc_type == "tiles_quotation":
+        pdf_bytes = build_tiles_quotation_pdf(doc, customer, await _pdf_branding())
+        filename = tiles_pdf_filename(doc)
+    else:
+        pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
+        pdf_bytes = build_quotation_pdf(pdf_doc, customer, await _pdf_branding())
+        filename = f'{doc["number"]}.pdf'
     revision = len(doc.get("revisions") or [])
     key = f"quotation-generated:{quotation_id}:revision:{revision}"
     event = await db.event_outbox.find_one({"idempotency_key": key}, {"_id": 0})
@@ -540,7 +571,7 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     return StreamingResponse(
         iter([pdf_bytes]),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{doc["number"]}.pdf"'},
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
 
 
