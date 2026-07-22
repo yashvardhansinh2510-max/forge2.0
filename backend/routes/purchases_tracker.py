@@ -1617,6 +1617,76 @@ async def chalan_pdf(po_id: str, chalan_id: str, user: UserPublic = Depends(get_
     )
 
 
+def _order_card(po: dict, customer_phone: Optional[str]) -> dict:
+    total_value = round(sum(float(i.get("qty") or 0) * float(i.get("unit_cost") or 0) for i in po.get("items", [])), 2)
+    return {
+        "po_id": po["id"],
+        "po_number": po.get("number"),
+        "customer_id": po.get("customer_id"),
+        "customer_name": po.get("customer_name"),
+        "customer_phone": customer_phone,
+        "supplier_id": po.get("supplier_id"),
+        "supplier_name": po.get("supplier_name"),
+        "status": po.get("status"),
+        "stage": compute_order_stage(po),
+        "total_products": len(po.get("items", [])),
+        "total_value": total_value,
+        "chalan_count": len(po.get("chalans", [])),
+        "created_at": po.get("created_at"),
+    }
+
+
+@router.get("/orders/customer-view")
+async def customer_view_orders(user: UserPublic = Depends(get_current_user)):
+    """Order cards grouped by customer — Ground Floor Tiles Customer-wise
+    view. Reads live from purchase_orders; nothing is cached or
+    denormalized, so this always reflects the exact same record the
+    Company-wise view and order-detail page show."""
+    pos = await db.purchase_orders.find(floor_query(user), {"_id": 0}).sort("created_at", -1).to_list(2000)
+    customer_ids = list({po.get("customer_id") for po in pos if po.get("customer_id")})
+    customers = await db.customers.find(
+        {"id": {"$in": customer_ids}}, {"_id": 0, "id": 1, "phone": 1},
+    ).to_list(len(customer_ids) or 1)
+    phone_by_customer = {c["id"]: c.get("phone") for c in customers}
+    return {"orders": [_order_card(po, phone_by_customer.get(po.get("customer_id"))) for po in pos]}
+
+
+@router.get("/orders/company-view")
+async def company_view_orders(user: UserPublic = Depends(get_current_user)):
+    """Same orders as customer-view, grouped by supplier instead — Ground
+    Floor Tiles Company-wise view. Same underlying documents, no separate
+    write path, so an update here is the exact same update the
+    Customer-wise view sees."""
+    pos = await db.purchase_orders.find(floor_query(user), {"_id": 0}).sort("created_at", -1).to_list(2000)
+    grouped: dict[str, dict] = {}
+    for po in pos:
+        key = po.get("supplier_id") or "unassigned"
+        bucket = grouped.setdefault(key, {
+            "supplier_id": po.get("supplier_id"),
+            "supplier_name": po.get("supplier_name") or "Unassigned",
+            "orders": [],
+        })
+        bucket["orders"].append(_order_card(po, None))
+    return {"suppliers": sorted(grouped.values(), key=lambda g: -len(g["orders"]))}
+
+
+@router.get("/{po_id}/order-detail")
+async def order_detail(po_id: str, user: UserPublic = Depends(get_current_user)):
+    """Full order (items + every chalan) plus the computed stage and
+    per-item remaining-to-release quantity — everything the order detail
+    page and the Generate Chalan form need in one call."""
+    po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    customer = await db.customers.find_one({"id": po.get("customer_id")}, {"_id": 0, "phone": 1}) or {}
+    return {
+        **po,
+        "customer_phone": customer.get("phone"),
+        "stage": compute_order_stage(po),
+        "remaining_qty_by_item": remaining_qty_by_item(po),
+    }
+
+
 # =============================================================================
 # Excel export (real .xlsx via openpyxl)
 # =============================================================================
