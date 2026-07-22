@@ -9,6 +9,7 @@ import pytest
 
 from models import UserPublic
 from routes import purchases_tracker as tracker
+from services import sequence as sequence_service
 
 
 def _user() -> UserPublic:
@@ -65,6 +66,27 @@ async def _fake_next_number(*_args, **_kwargs):
     return "CH-0001"
 
 
+class _FakeCounters:
+    """Backs services.sequence.next_number's `db.counters` calls with an
+    already-seeded counter doc, so _seed_from_existing's collection scan
+    never runs."""
+
+    def __init__(self):
+        self.doc = {"_id": "chalan:CH-", "seq": 0}
+
+    async def find_one(self, query, *_a, **_kw):
+        return dict(self.doc) if query.get("_id") == self.doc["_id"] else None
+
+    async def find_one_and_update(self, _query, update, **_kw):
+        self.doc["seq"] += update["$inc"]["seq"]
+        return dict(self.doc)
+
+
+class _FakeSequenceDb:
+    def __init__(self):
+        self.counters = _FakeCounters()
+
+
 def test_generate_chalan_happy_path(monkeypatch):
     fake_db = _FakeDb(_po())
     monkeypatch.setattr(tracker, "db", fake_db)
@@ -82,6 +104,27 @@ def test_generate_chalan_happy_path(monkeypatch):
     assert result["chalan"]["items"][0]["qty"] == 15
     assert result["stage"] == "order"  # only 15 of 40 released — not fully released yet
     assert fake_db.purchase_orders.update_calls == 1
+
+
+def test_generate_chalan_number_uses_hyphenated_prefix(monkeypatch):
+    """Regression: services.sequence.next_number concatenates prefix+seq
+    with no separator — every other caller in this codebase passes the
+    hyphen IN the prefix (e.g. "FPO-2026-"). generate_chalan must do the
+    same so the printed Chalan number reads "CH-0001", not "CH0001". Runs
+    the REAL next_number (not the tracker.next_number mock used elsewhere
+    in this file), so a wrong prefix argument can't hide behind a mock
+    that always returns a fixed string regardless of what it was called
+    with — which is exactly how this bug shipped undetected the first time."""
+    fake_db = _FakeDb(_po())
+    monkeypatch.setattr(tracker, "db", fake_db)
+    monkeypatch.setattr(tracker, "log_event", _noop_log_event)
+    monkeypatch.setattr(tracker, "notify", _noop_notify)
+    monkeypatch.setattr(sequence_service, "db", _FakeSequenceDb())
+
+    body = tracker.GenerateChalanBody(items=[tracker.ChalanItemInput(po_item_id="item-1", qty=15)])
+    result = asyncio.run(tracker.generate_chalan("po-1", body, user=_user()))
+
+    assert result["chalan"]["number"] == "CH-0001"
 
 
 def test_generate_chalan_rejects_over_release(monkeypatch):

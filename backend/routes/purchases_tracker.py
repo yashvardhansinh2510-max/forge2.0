@@ -1478,7 +1478,7 @@ async def generate_chalan(
         ))
 
     chalan = Chalan(
-        number=await next_number("chalan", "CH", collection="purchase_orders", width=4),
+        number=await next_number("chalan", "CH-", collection="purchase_orders", width=4),
         created_by=user.id, created_by_name=user.full_name,
         items=chalan_items, reference_number=body.reference_number,
         receiver_name=body.receiver_name, sender_name=body.sender_name,

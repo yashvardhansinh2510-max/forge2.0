@@ -84,21 +84,31 @@ No new top-level stage field is stored. The order's customer-facing stage is
 - `order` — no chalans yet, or cumulative released qty (across all
   non-cancelled chalans, per `po_item_id`) doesn't yet cover every
   `PurchaseOrderItem.qty` on the order.
-- `material_released` — every item's qty is fully covered by chalans, but the
-  weakest-link chalan (see below) is still `released`.
-- `godown` — the weakest-link chalan is `at_godown`.
-- `dispatch` — the weakest-link chalan is `dispatched`, but not every chalan
-  is `dispatched` yet.
+- `material_released` — every item's qty is fully covered by chalans, but no
+  chalan has progressed past `released` yet.
+- `godown` — every chalan is fully released and at least one has reached
+  `at_godown`, but none have reached `dispatched` yet.
+- `dispatch` — at least one chalan is `dispatched`, but not every chalan is.
 - `completed` — every chalan is `dispatched`.
 
-"Weakest-link chalan" = the chalan with the least-advanced `stage`, ranked
-`released < at_godown < dispatched`. This is what drives the single 4-node
-progress bar shown in both Customer-wise and Company-wise views, alongside a
-supporting per-chalan breakdown (e.g. "2 of 3 batches dispatched") in the
-order detail view — since Godown/Dispatch are tracked per batch (per your
-explicit choice), a single order can have batches at different points
-simultaneously; the rollup above is what collapses that into one customer-
-facing indicator without losing the per-batch detail underneath.
+This is a **furthest-progress** rollup, not a weakest-link one: it reflects
+the most-advanced stage reached by any chalan, not the least. (An earlier
+draft of this doc specified weakest-link — corrected during implementation
+planning, since weakest-link makes the `dispatch` state mathematically
+unreachable: if the least-advanced chalan has reached `dispatched`, every
+chalan must be at rank ≥ `dispatched`, which since `dispatched` is the
+maximum rank forces the order straight to `completed` and skips `dispatch`
+entirely.) This is what drives the single 4-node progress bar shown in both
+Customer-wise and Company-wise views, alongside a supporting per-chalan
+breakdown (e.g. "2 of 3 batches dispatched") in the order detail view —
+since Godown/Dispatch are tracked per batch (per your explicit choice), a
+single order can have batches at different points simultaneously; the
+rollup above is what collapses that into one customer-facing indicator
+without losing the per-batch detail underneath. One consequence worth
+noting: a furthest-progress rollup is optimistic — it shows the order's
+best-case batch, not its worst-case — so "Godown" or "Dispatch" on a card
+does not mean every batch has reached that point, only that at least one
+has (the per-chalan breakdown on the detail page shows the full picture).
 
 **Visibility**: an order appears in the Customer-wise/Company-wise views the
 instant it's placed — while `PurchaseOrder.status` is still `draft`, before
