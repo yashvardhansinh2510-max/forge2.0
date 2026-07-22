@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 
 import services.domain_outbox as domain_outbox
+import services.notifications as notifications
 
 
 class _Recorder:
@@ -58,9 +59,16 @@ def test_order_placed_purchase_order_and_payment_inherit_quotation_floor(monkeyp
         activity_events = _Recorder()
         customers = _Recorder()
         followups = _Recorder()
+        notifications = _Recorder()
 
     fake_db = _FakeDb()
     monkeypatch.setattr(domain_outbox, "db", fake_db)
+    # notify() imports its own `db` from services.notifications rather than
+    # going through domain_outbox's, so it isn't covered by the patch above.
+    # _handle_order_placed doesn't call notify() today, but pin this so a
+    # future refactor that does can't slip through onto the real Atlas
+    # cluster undetected.
+    monkeypatch.setattr(notifications, "db", fake_db)
 
     event = {
         "id": "evt-1", "idempotency_key": "order-placed:q-1",
@@ -74,6 +82,7 @@ def test_order_placed_purchase_order_and_payment_inherit_quotation_floor(monkeyp
         assert po["floor_id"] == "ground-floor"
     assert fake_db.payments.upserts, "expected a pending Payment to be upserted"
     assert fake_db.payments.upserts[0]["floor_id"] == "ground-floor"
+    assert not fake_db.notifications.inserted, "test must never write to the real db.notifications"
 
 
 def test_upsert_followup_inherits_quotation_floor(monkeypatch):
