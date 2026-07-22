@@ -104,6 +104,22 @@ def test_order_detail_includes_stage_and_remaining_qty(monkeypatch):
     assert result["customer_phone"] == "+91 98765 43210"
 
 
+def test_order_detail_defaults_chalans_when_field_is_absent(monkeypatch):
+    """Regression: orders written before the Chalan field existed have no
+    "chalans" key at all in Mongo — Pydantic's list default never backfills
+    already-stored documents. The frontend detail page does
+    `order.chalans.length`, which crashes on `undefined` if this endpoint
+    ever omits the key instead of defaulting it to []."""
+    po_without_chalans = _sample_po()
+    del po_without_chalans["chalans"]
+    fake_db = _FakeDb([po_without_chalans])
+    monkeypatch.setattr(tracker, "db", fake_db)
+
+    result = asyncio.run(tracker.order_detail("po-1", user=_user("ground-floor")))
+
+    assert result["chalans"] == []
+
+
 def test_order_detail_404s_when_not_found(monkeypatch):
     fake_db = _FakeDb([])
     monkeypatch.setattr(tracker, "db", fake_db)

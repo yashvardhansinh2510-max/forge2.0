@@ -1681,6 +1681,11 @@ async def order_detail(po_id: str, user: UserPublic = Depends(get_current_user))
     customer = await db.customers.find_one({"id": po.get("customer_id")}, {"_id": 0, "phone": 1}) or {}
     return {
         **po,
+        # Orders written before the Chalan field existed have no "chalans"
+        # key at all in Mongo (Pydantic's list default never backfills
+        # already-stored documents) — default it so every consumer of this
+        # endpoint can rely on `chalans` always being an array.
+        "chalans": po.get("chalans") or [],
         "customer_phone": customer.get("phone"),
         "stage": compute_order_stage(po),
         "remaining_qty_by_item": remaining_qty_by_item(po),
