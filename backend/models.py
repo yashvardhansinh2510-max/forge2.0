@@ -631,6 +631,43 @@ class PurchaseAttachment(BaseModel):
     note: Optional[str] = None
 
 
+class ChalanLineItem(BaseModel):
+    """One product line within a single material-release batch — a subset
+    (or all) of a PurchaseOrderItem's quantity."""
+    po_item_id: str          # references PurchaseOrderItem.id this batch covers
+    name: str
+    size: Optional[str] = None
+    qty: float
+    unit: str = "Box"        # "Box" | "PCS" — free text, printed as-is
+
+
+ChalanStage = Literal["released", "at_godown", "dispatched"]
+
+
+class Chalan(BaseModel):
+    """A Delivery Release Receipt — proof that this batch of material was
+    released from the supplier's factory. Embedded on PurchaseOrder.chalans
+    (not a separate collection) so there is exactly one order document and
+    nothing to keep in sync between views."""
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    number: str                              # "CH-1052"
+    created_at: str = Field(default_factory=now_iso)
+    created_by: str
+    created_by_name: str
+    items: list[ChalanLineItem] = []
+    reference_number: Optional[str] = None
+    receiver_name: Optional[str] = None
+    sender_name: Optional[str] = None        # "Supplier Representative"
+    stage: ChalanStage = "released"
+    godown_received_at: Optional[str] = None
+    godown_received_by: Optional[str] = None
+    godown_received_by_name: Optional[str] = None
+    dispatched_at: Optional[str] = None
+    dispatched_by: Optional[str] = None
+    dispatched_by_name: Optional[str] = None
+    dispatch_note: Optional[str] = None
+
+
 class PurchaseOrder(TimestampedModel):
     floor_id: str = "first-floor"
     number: str                            # human — e.g. FPO-2026-0001
@@ -657,6 +694,7 @@ class PurchaseOrder(TimestampedModel):
     created_by_name: str
     assigned_to: Optional[str] = None
     assigned_to_name: Optional[str] = None
+    chalans: list[Chalan] = []
 
 
 class PurchaseOrderUpdate(BaseModel):
