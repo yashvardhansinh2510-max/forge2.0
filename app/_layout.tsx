@@ -35,10 +35,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (loading || !isNavigationReady) return;
-    // Public route, reachable with or without a session — App Store Connect /
-    // Google Play Console both require a hosted privacy-policy URL a
-    // reviewer (or anyone) can open with no account. See app/privacy.tsx.
-    if (segments[0] === "privacy") return;
+    // Public routes, reachable with or without a session — App Store
+    // Connect / Google Play Console both require hosted privacy-policy and
+    // terms-of-service URLs a reviewer (or anyone) can open with no
+    // account. See app/privacy.tsx and app/terms.tsx.
+    if (segments[0] === "privacy" || (segments[0] as any) === "terms") return;
     const inAuth = segments[0] === "(auth)";
     const inAdmin = segments[0] === "(admin)";
     const inCustomer = segments[0] === "(customer)";
