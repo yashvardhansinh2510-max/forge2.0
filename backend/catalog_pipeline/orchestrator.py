@@ -148,14 +148,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
 
     cats = await db.categories.find({"floor_id": floor_id}, {"_id": 0}).to_list(80)
     cat_by_name = {c["name"].lower(): c for c in cats}
-    # Autocreate categories that don't exist yet (only for allowed labels)
-    from catalog_pipeline.base import ALLOWED_CATEGORIES
     from models import Category
-    for label in ALLOWED_CATEGORIES:
-        if label.lower() not in cat_by_name:
-            c = Category(name=label, slug=label.lower().replace(" ", "-"), floor_id=floor_id)
-            await db.categories.insert_one(c.dict())
-            cat_by_name[label.lower()] = c.dict()
 
     imported = 0
     updated = 0
