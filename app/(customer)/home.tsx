@@ -146,6 +146,15 @@ export default function CustomerDashboard() {
               <Text style={{ color: colors.brand, fontSize: 13, fontWeight: "700" }}>Contact</Text>
             </Pressable>
           </Card>
+
+          <View style={{ flexDirection: "row", justifyContent: "center", gap: spacing.lg, paddingTop: spacing.sm }}>
+            <Pressable testID="portal-privacy-link" onPress={() => router.push("/privacy")} hitSlop={8}>
+              <Text style={{ fontSize: 12, color: colors.onSurfaceMuted }}>Privacy</Text>
+            </Pressable>
+            <Pressable testID="portal-terms-link" onPress={() => router.push("/terms")} hitSlop={8}>
+              <Text style={{ fontSize: 12, color: colors.onSurfaceMuted }}>Terms</Text>
+            </Pressable>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
