@@ -60,6 +60,9 @@ function SideItem({ item, active, onPress }: { item: NavItem; active: boolean; o
     <Pressable
       testID={`nav-${item.match}`}
       onPress={onPress}
+      accessibilityRole="link"
+      accessibilityLabel={item.label}
+      accessibilityState={{ selected: active }}
       style={({ pressed, hovered }: any) => [
         styles.sideItem,
         { backgroundColor: active ? color.sunken : pressed || hovered ? color.hoverWash : "transparent" },
@@ -87,6 +90,8 @@ function SearchTrigger() {
   return (
     <Pressable
       testID="open-palette"
+      accessibilityRole="button"
+      accessibilityLabel="Search"
       onPress={palette.open}
       style={({ hovered }: any) => [
         styles.searchTrigger,
@@ -241,7 +246,9 @@ function Rail() {
     return (
       <Pressable
         testID={`nav-${item.match}`}
+        accessibilityRole="link"
         accessibilityLabel={item.label}
+        accessibilityState={{ selected: on }}
         onPress={() => router.push(item.href as any)}
         style={({ pressed, hovered }: any) => [
           styles.railItem,
@@ -259,7 +266,7 @@ function Rail() {
       <View style={{ alignItems: "center", paddingVertical: space.x4, gap: space.x4 }}>
         <Wordmark compact />
         <FloorSwitcher compact />
-        <Pressable accessibilityLabel="Search" onPress={palette.open} style={styles.railItem}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Search" onPress={palette.open} style={styles.railItem}>
           <Feather name="search" size={18} color={color.inkSoft} />
         </Pressable>
       </View>
@@ -269,7 +276,9 @@ function Rail() {
           <Pressable
             key={n.href}
             testID={`nav-${n.match}`}
+            accessibilityRole="link"
             accessibilityLabel={n.label}
+            accessibilityState={{ selected: segments.includes("tiles") && isActive(n.match) }}
             onPress={() => { void tilesNav.open(n); }}
             style={({ pressed, hovered }: any) => [
               styles.railItem,
@@ -333,7 +342,14 @@ function PhoneBar() {
   const Tab = ({ item }: { item: NavItem }) => {
     const on = isActive(item.match);
     return (
-      <Pressable testID={`bottom-nav-${item.match}`} onPress={() => router.push(item.href as any)} style={styles.tab}>
+      <Pressable
+        testID={`bottom-nav-${item.match}`}
+        onPress={() => router.push(item.href as any)}
+        accessibilityRole="tab"
+        accessibilityLabel={item.label}
+        accessibilityState={{ selected: on }}
+        style={styles.tab}
+      >
         <View style={[styles.tabIconWrap, on && styles.tabIconWrapActive]}>
           <Feather name={item.icon} size={19} color={on ? color.brass : color.inkFaint} />
         </View>
@@ -349,6 +365,7 @@ function PhoneBar() {
         <View style={styles.fabSlot}>
           <Pressable
             testID="bottom-fab-new-quotation"
+            accessibilityRole="button"
             accessibilityLabel="New quotation"
             onPress={() => router.push("/(admin)/quotations/new" as any)}
             style={({ pressed }) => [styles.fab, { transform: [{ scale: pressed ? 0.94 : 1 }] }]}
@@ -357,7 +374,14 @@ function PhoneBar() {
           </Pressable>
         </View>
         {PHONE_TABS_RIGHT.filter((t) => hasAccess(t.match)).map((t) => <Tab key={t.href} item={t} />)}
-        <Pressable testID="bottom-nav-more" onPress={() => setMoreOpen(true)} style={styles.tab}>
+        <Pressable
+          testID="bottom-nav-more"
+          onPress={() => setMoreOpen(true)}
+          accessibilityRole="tab"
+          accessibilityLabel="More"
+          accessibilityState={{ selected: moreActive }}
+          style={styles.tab}
+        >
           <View style={[styles.tabIconWrap, moreActive && styles.tabIconWrapActive]}>
             <Feather name="menu" size={19} color={moreActive ? color.brass : color.inkFaint} />
           </View>
@@ -369,6 +393,8 @@ function PhoneBar() {
 
         <Pressable
           onPress={() => { setMoreOpen(false); setTimeout(palette.open, 250); }}
+          accessibilityRole="button"
+          accessibilityLabel="Search everything"
           style={styles.moreRow}
         >
           <Feather name="search" size={17} color={color.inkMid} />
@@ -380,6 +406,8 @@ function PhoneBar() {
           <Pressable
             key={n.href}
             onPress={() => { setMoreOpen(false); void tilesNav.open(n); }}
+            accessibilityRole="link"
+            accessibilityLabel={n.label}
             style={styles.moreRow}
           >
             <Feather name={n.icon} size={17} color={color.inkMid} />
@@ -391,6 +419,8 @@ function PhoneBar() {
           <Pressable
             key={n.href}
             onPress={() => { setMoreOpen(false); router.push(n.href as any); }}
+            accessibilityRole="link"
+            accessibilityLabel={n.label}
             style={styles.moreRow}
           >
             <Feather name={n.icon} size={17} color={color.inkMid} />

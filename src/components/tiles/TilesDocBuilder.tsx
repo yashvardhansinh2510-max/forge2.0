@@ -7,6 +7,19 @@
 // workflow. Product rows are added manually with the "+" button (max 11) and
 // filled through the text-only SKU/name picker; every populated value stays
 // editable afterwards.
+//
+// Recorded design decision (Production readiness audit, 2026-07-23): this
+// component deliberately bypasses both the shared design-token system
+// (colors.ts / tokens.ts) and the app's useBp() breakpoint standard. Both
+// are consequences of the same constraint — the "paper" is a fixed-size,
+// pixel-faithful replica of a specific printed form (see PAPER_W below), not
+// a responsive app screen, so it renders inside a horizontal ScrollView on
+// narrow viewports instead of reflowing. The hardcoded hex values throughout
+// this file mirror the printed document's own fixed colors (its blue sheet
+// background, ruled borders, red highlight text) rather than the app's
+// theme, which would drift the on-screen replica away from what actually
+// prints. Not a defect to fix — recorded here so it reads as an intentional
+// choice rather than an unexplained gap the next person has to re-diagnose.
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -538,7 +551,7 @@ function ProductCell({
   return (
     <View style={{ flex: 1, alignSelf: "stretch", justifyContent: "center" }}>
       <CellInput value={row.name} onChangeText={onChangeName} bold={bold} multiline testID={testID ? `${testID}-name` : undefined} />
-      <Pressable onPress={onOpenPicker} hitSlop={8} style={productStyles.swapBtn} testID={testID ? `${testID}-swap` : undefined}>
+      <Pressable onPress={onOpenPicker} hitSlop={13} style={productStyles.swapBtn} testID={testID ? `${testID}-swap` : undefined}>
         <Feather name="refresh-cw" size={11} color="#666" />
       </Pressable>
     </View>
@@ -565,13 +578,33 @@ function RowSideControls({
 }) {
   return (
     <View style={sideStyles.wrap}>
+      {/*
+        Add/remove sit 8px apart in a 40px rail. Their hitSlop is deliberately
+        asymmetric rather than a uniform ~44px pad on both: expanding evenly
+        would make the two tap zones overlap in the gap between them, which
+        turns "reach for add, land on remove" from a risk into a certainty.
+        Each button's hitSlop is generous on the sides that face empty space
+        and small on the side that faces the other button.
+      */}
       {isLast && canAdd ? (
-        <Pressable onPress={onAdd} style={sideStyles.addBtn} testID="tiles-add-row" accessibilityLabel="Add product row">
+        <Pressable
+          onPress={onAdd}
+          style={sideStyles.addBtn}
+          hitSlop={{ top: 12, left: 12, right: 12, bottom: 3 }}
+          testID="tiles-add-row"
+          accessibilityLabel="Add product row"
+        >
           <Feather name="plus" size={16} color="#fff" />
         </Pressable>
       ) : null}
       {showRemove ? (
-        <Pressable onPress={onRemove} style={sideStyles.removeBtn} testID="tiles-remove-row" accessibilityLabel="Remove row">
+        <Pressable
+          onPress={onRemove}
+          style={sideStyles.removeBtn}
+          hitSlop={{ top: 3, left: 14, right: 14, bottom: 14 }}
+          testID="tiles-remove-row"
+          accessibilityLabel="Remove row"
+        >
           <Feather name="x" size={12} color="#8A3333" />
         </Pressable>
       ) : null}
@@ -1111,12 +1144,12 @@ const shellStyles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   backBtn: {
-    width: 34, height: 34, borderRadius: radius.md, alignItems: "center", justifyContent: "center",
+    width: 44, height: 44, borderRadius: radius.md, alignItems: "center", justifyContent: "center",
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
   },
   actionBtn: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 12, height: 34, borderRadius: radius.md,
+    paddingHorizontal: 12, height: 44, borderRadius: radius.md,
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
   actionLabel: { fontSize: 13, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface },

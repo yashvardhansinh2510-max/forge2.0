@@ -139,6 +139,9 @@ export function Button({
       testID={testID}
       onPress={dim ? undefined : onPress}
       disabled={dim}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: dim }}
       style={({ pressed, hovered }: any) => [
         {
           height: h, paddingHorizontal: px, borderRadius: btnRadius,
@@ -179,6 +182,7 @@ export function IconButton({
   return (
     <Pressable
       testID={testID}
+      accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={layout.hitSlop}

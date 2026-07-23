@@ -259,6 +259,7 @@ export default function Catalog() {
   const activeFilterCount = [brandId, subcat, series].filter(Boolean).length;
   const resetFilters = () => { setBrandId(null); setSubcat(null); setSeries(null); };
   const clearAll = () => { setQ(""); setCat(null); resetFilters(); };
+  const hasActiveFilters = Boolean(q) || Boolean(cat) || activeFilterCount > 0;
 
   const subtitle = total === null
     ? "Loading…"
@@ -427,7 +428,16 @@ export default function Catalog() {
             </View>
           ) : showEmpty ? (
             <View style={{ paddingHorizontal: gridPadding }}>
-              <EmptyState icon="package" title="Nothing matches" subtitle="Try clearing filters or adjusting your search." action={<Button label="Reset filters" variant="secondary" onPress={clearAll} />} />
+              {hasActiveFilters ? (
+                <EmptyState icon="package" title="Nothing matches" subtitle="Try clearing filters or adjusting your search." action={<Button label="Reset filters" variant="secondary" onPress={clearAll} />} />
+              ) : (
+                <EmptyState
+                  icon="package"
+                  title="No products on this floor yet"
+                  subtitle="This floor's catalog is empty — import products to get started."
+                  action={<Button label="Import catalog" variant="secondary" onPress={() => router.push("/(admin)/catalog/import" as any)} />}
+                />
+              )}
             </View>
           ) : null
         }

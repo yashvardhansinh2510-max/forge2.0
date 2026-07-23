@@ -56,6 +56,8 @@ function QueueRow({
       onPress={onOpen}
       onHoverIn={() => setHover(true)}
       onHoverOut={() => setHover(false)}
+      accessibilityRole="button"
+      accessibilityLabel={`${fu.customer_name}, ${fu.next_action || fu.reason}`}
       style={[
         {
           flexDirection: "row", alignItems: "center", gap: space.x3,
@@ -262,7 +264,12 @@ export default function Today() {
 
       <View style={{ gap: space.x2 }}>
         <Section eyebrow="Pipeline" right={
-          <Pressable onPress={() => router.push("/(admin)/quotations" as any)} hitSlop={layout.hitSlop}>
+          <Pressable
+            onPress={() => router.push("/(admin)/quotations" as any)}
+            hitSlop={layout.hitSlop}
+            accessibilityRole="link"
+            accessibilityLabel="View all quotations"
+          >
             <Txt v="caption" tone="soft">View all</Txt>
           </Pressable>
         } />
@@ -276,6 +283,8 @@ export default function Today() {
           <Pressable
             key={q2.id}
             onPress={() => router.push(`/(admin)/quotations/${q2.id}` as any)}
+            accessibilityRole="button"
+            accessibilityLabel={`${q2.number}, ${q2.customer_name}`}
             style={({ hovered }: any) => [
               {
                 paddingVertical: 10, gap: 3,

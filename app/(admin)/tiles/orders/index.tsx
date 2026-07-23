@@ -11,6 +11,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { TileOrderCard, type OrderCard } from "@/src/components/tiles/TileOrderCard";
+import { useBp } from "@/src/design/responsive";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type TabKey = "customer" | "company";
@@ -23,13 +24,18 @@ type SupplierGroup = {
 
 export default function TileOrdersScreen() {
   const router = useRouter();
+  const { isPhone, isTablet } = useBp();
+  const cols = isPhone ? 1 : isTablet ? 2 : 3;
+  const cardSlotStyle = { width: `${100 / cols}%` as const, padding: spacing.sm };
   const [tab, setTab] = useState<TabKey>("customer");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [customerOrders, setCustomerOrders] = useState<OrderCard[]>([]);
   const [supplierGroups, setSupplierGroups] = useState<SupplierGroup[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       if (tab === "customer") {
         const r = await api.get<{ orders: OrderCard[] }>("/purchases/orders/customer-view");
@@ -39,7 +45,9 @@ export default function TileOrdersScreen() {
         setSupplierGroups(r.suppliers);
       }
     } catch (e: any) {
-      toast.error(e?.detail || "Could not load orders");
+      const message = e?.detail || "Could not load orders";
+      setLoadError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -72,13 +80,20 @@ export default function TileOrdersScreen() {
 
         {loading ? (
           <ActivityIndicator style={{ marginTop: spacing.xl }} color={colors.brand} />
+        ) : loadError ? (
+          <View style={{ marginTop: spacing.xl, alignItems: "flex-start", gap: spacing.md }}>
+            <Text style={type.bodyStrong}>{loadError}</Text>
+            <Pressable style={styles.retryButton} onPress={() => load()}>
+              <Text style={[type.bodyStrong, { color: colors.onBrand }]}>Retry</Text>
+            </Pressable>
+          </View>
         ) : tab === "customer" ? (
           customerOrders.length === 0 ? (
             <Text style={[type.bodyMuted, { marginTop: spacing.lg }]}>No tile orders yet.</Text>
           ) : (
             <View style={styles.cardGrid}>
               {customerOrders.map((order) => (
-                <View key={order.po_id} style={styles.cardSlot}>
+                <View key={order.po_id} style={cardSlotStyle}>
                   <TileOrderCard order={order} onPress={() => openOrder(order.po_id)} />
                 </View>
               ))}
@@ -91,14 +106,16 @@ export default function TileOrdersScreen() {
             <View key={group.supplier_id || "unassigned"} style={{ marginTop: spacing.xl }}>
               <View style={styles.supplierHeader}>
                 <Feather name="briefcase" size={16} color={colors.onSurfaceMuted} />
-                <Text style={type.titleMd}>{group.supplier_name}</Text>
+                <Text style={[type.titleMd, { flex: 1, minWidth: 0 }]} numberOfLines={1}>
+                  {group.supplier_name}
+                </Text>
                 <Text style={type.bodyMuted}>
                   {group.orders.length} order{group.orders.length === 1 ? "" : "s"}
                 </Text>
               </View>
               <View style={styles.cardGrid}>
                 {group.orders.map((order) => (
-                  <View key={order.po_id} style={styles.cardSlot}>
+                  <View key={order.po_id} style={cardSlotStyle}>
                     <TileOrderCard order={order} onPress={() => openOrder(order.po_id)} />
                   </View>
                 ))}
@@ -120,7 +137,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   tabActive: { backgroundColor: colors.brandTint, borderColor: colors.brandBorder },
+  retryButton: {
+    backgroundColor: colors.brand, borderRadius: radius.md,
+    paddingVertical: spacing.md, paddingHorizontal: spacing.xl,
+  },
   cardGrid: { flexDirection: "row", flexWrap: "wrap", marginHorizontal: -spacing.sm, marginTop: spacing.sm },
-  cardSlot: { width: 340, padding: spacing.sm },
   supplierHeader: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
 });
