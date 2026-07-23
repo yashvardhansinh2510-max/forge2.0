@@ -8,6 +8,7 @@ import {
   Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 
 import { Button, Field, IconButton, Input, Txt } from "@/src/design/components";
 import { BuildConLogo } from "@/src/design/BrandLogo";
@@ -24,6 +25,7 @@ export default function Login() {
   const { isPhone, isTablet, height } = useBp();
   const compactPhone = isPhone && height < 700;
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const showDemoAccount = process.env.NODE_ENV !== "production" && process.env.EXPO_PUBLIC_ENABLE_DEMO_AUTH === "true";
 
   const [mode, setMode] = useState<Mode>("staff");
@@ -119,6 +121,15 @@ export default function Login() {
           <Text style={{ fontFamily: font.medium, fontSize: 13, color: color.brassDeep }}>
             {mode === "staff" ? "Customer portal →" : "← Staff sign-in"}
           </Text>
+        </Pressable>
+      </View>
+
+      <View style={{ flexDirection: "row", justifyContent: "center", gap: space.x4 }}>
+        <Pressable testID="login-privacy-link" onPress={() => router.push("/privacy")} hitSlop={8}>
+          <Text style={{ fontFamily: font.regular, fontSize: 12, color: color.inkSoft }}>Privacy</Text>
+        </Pressable>
+        <Pressable testID="login-terms-link" onPress={() => router.push("/terms")} hitSlop={8}>
+          <Text style={{ fontFamily: font.regular, fontSize: 12, color: color.inkSoft }}>Terms</Text>
         </Pressable>
       </View>
     </View>
