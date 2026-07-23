@@ -30,6 +30,7 @@ class ProductRow:
     colour: str = MISSING
     material: str = MISSING
     dimensions: str = MISSING
+    size: str = MISSING            # tile nominal size, e.g. "600X600" — distinct from `dimensions`
     description: str = MISSING
     mrp: Any = MISSING              # float or MISSING
     dealer_price: Any = MISSING     # float or MISSING
@@ -52,7 +53,7 @@ class ProductRow:
             "category": self.category, "subcategory": self.subcategory, "series": self.series,
             "family_key": self.family_key, "variant": self.variant, "finish": self.finish,
             "finish_code": self.finish_code, "colour": self.colour, "material": self.material,
-            "dimensions": self.dimensions, "description": self.description,
+            "dimensions": self.dimensions, "size": self.size, "description": self.description,
             "mrp": self.mrp, "dealer_price": self.dealer_price, "warranty": self.warranty,
             "collection": self.collection, "accessories": self.accessories,
             "images": self.images, "image_meta": self.image_meta,

@@ -257,6 +257,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
                 "finish": None if finish is None else str(finish),
                 "material": _clean(r.get("material")),
                 "dimensions": _clean(r.get("dimensions")),
+                "size": _clean(r.get("size")),
                 "warranty": _clean(r.get("warranty")),
                 "mrp": mrp,
                 "price": price_val,
