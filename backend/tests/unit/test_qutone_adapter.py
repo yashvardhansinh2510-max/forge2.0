@@ -146,3 +146,17 @@ def test_row_with_embedded_image_is_mapped_with_correct_dimensions():
     assert len(imaged) == 1
     assert imaged[0].image_meta[0]["width"] == 240
     assert imaged[0].image_meta[0]["height"] == 360
+
+
+def test_qutone_is_registered_in_the_adapter_registry():
+    from catalog_pipeline.adapters import get_adapter
+
+    adapter = get_adapter("qutone")
+    assert isinstance(adapter, QutoneAdapter)
+
+
+def test_qutone_case_insensitive_lookup():
+    from catalog_pipeline.adapters import get_adapter
+
+    assert get_adapter("Qutone").brand == "Qutone"
+    assert get_adapter("QUTONE").brand == "Qutone"
