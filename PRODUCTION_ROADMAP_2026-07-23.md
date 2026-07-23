@@ -166,8 +166,13 @@ Still open:
 - ⬜ CORS is `allow_origins=["*"]` — deliberate and defensible today (Bearer-JWT auth, not
   cookie-based), but should lock to the production domain once one exists. Don't do this before
   a real domain is live, or you'll break local dev / preview builds.
-- ⬜ No unique index on `customers.email`; `user_sessions`' documented required indexes are never
-  created by any script in the repo (per `bootstrap.py`).
+- ⬜ No unique index on `customers.email` in the *automatic* migration path — `scripts/ensure_indexes.py`
+  creates it manually, but nothing guarantees that script is ever run on a fresh environment.
+  **Correction to this doc, found while scoping the implementation plan**: `user_sessions`'
+  required indexes are *not* an open item — `migrations/0003_add_user_sessions_indexes.py` (added
+  07-17) already handles this automatically on every boot; the "never created by any script" claim
+  in earlier memory was stale by the time this doc was written and shouldn't have been carried
+  forward without re-checking. `customers.email` gets the same treatment as a new migration.
 - ⬜ Automated dependency scanning in CI (Dependabot or equivalent) — the 23 Jul fix was a
   one-off `npm audit fix` pass, not a standing process. One moderate npm advisory remains, needs
   an Expo major-version bump (breaking) — deliberately deferred to a separate, device-tested
