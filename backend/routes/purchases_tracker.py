@@ -1466,28 +1466,53 @@ async def generate_chalan(
         source = items_by_id.get(entry.po_item_id)
         if not source:
             raise HTTPException(status_code=400, detail=f"Unknown item {entry.po_item_id}")
+        # Decrement the running snapshot as each line is accepted (not just
+        # validated against the pre-loop read) so two lines in the SAME
+        # request against the same po_item_id can't both pass against the
+        # same stale "available" figure and jointly over-release it.
         available = remaining.get(entry.po_item_id, 0.0)
         if entry.qty > available + 1e-6:
             raise HTTPException(
                 status_code=400,
                 detail=f"Only {available:g} of '{source.get('name')}' remains to release",
             )
+        remaining[entry.po_item_id] = available - entry.qty
         chalan_items.append(ChalanLineItem(
             po_item_id=entry.po_item_id, name=source.get("name", ""),
             size=source.get("finish"), qty=entry.qty, unit="Box",
         ))
 
     chalan = Chalan(
-        number=await next_number("chalan", "CH-", collection="purchase_orders", width=4),
+        number=await next_number("chalan", "CH-", collection="purchase_orders", width=4, array_field="chalans"),
         created_by=user.id, created_by_name=user.full_name,
         items=chalan_items, reference_number=body.reference_number,
         receiver_name=body.receiver_name, sender_name=body.sender_name,
     )
     now = now_iso()
-    await db.purchase_orders.update_one(
-        {"id": po_id},
+    # Optimistic concurrency: the filter requires the chalans array to still
+    # have the length we just validated `remaining` against. If another
+    # release lands between our read and this write, the length filter no
+    # longer matches (matched_count == 0) and we retry against fresh state
+    # instead of silently stacking a new chalan on top of a stale snapshot —
+    # the same race `_attempt_stage_change` above already guards against for
+    # stock moves, applied here to the chalans array. `$exists: False` covers
+    # purchase orders that predate the Chalan field entirely (see the
+    # order-detail 500 fixed in 765e26b) where the key isn't stored at all.
+    chalan_count = len(po.get("chalans", []))
+    size_filter = (
+        {"$or": [{"chalans": {"$exists": False}}, {"chalans": {"$size": 0}}]}
+        if chalan_count == 0
+        else {"chalans": {"$size": chalan_count}}
+    )
+    cas_result = await db.purchase_orders.update_one(
+        {"id": po_id, **size_filter},
         {"$push": {"chalans": chalan.dict()}, "$set": {"updated_at": now}},
     )
+    if cas_result.matched_count == 0:
+        raise HTTPException(status_code=409, detail={
+            "error": "concurrent_modification",
+            "message": "Material was just released against this order by someone else — refresh and try again",
+        })
     fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
     stage = compute_order_stage(fresh)
 
@@ -1525,8 +1550,14 @@ async def mark_chalan_godown_received(
         raise HTTPException(status_code=400, detail=f"Chalan is already {chalan.get('stage')}")
 
     now = now_iso()
-    await db.purchase_orders.update_one(
-        {"id": po_id, "chalans.id": chalan_id},
+    # Compare-and-swap: the filter re-requires stage == "released" at write
+    # time, not just at the read above. Two near-simultaneous calls (double
+    # tap, retried request) both pass the read-time check above, but Mongo
+    # serializes the two update_one calls — whichever lands first flips the
+    # stage away from "released" and the second call's filter no longer
+    # matches (matched_count == 0) instead of both silently writing.
+    cas_result = await db.purchase_orders.update_one(
+        {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": "released"}}},
         {"$set": {
             "chalans.$.stage": "at_godown",
             "chalans.$.godown_received_at": now,
@@ -1535,6 +1566,11 @@ async def mark_chalan_godown_received(
             "updated_at": now,
         }},
     )
+    if cas_result.matched_count == 0:
+        raise HTTPException(status_code=409, detail={
+            "error": "concurrent_modification",
+            "message": "This chalan's stage changed concurrently — refresh and try again",
+        })
     await log_event(
         event_type="purchase.chalan_godown_received",
         entity_type="purchase", entity_id=po_id, actor=user,
@@ -1569,8 +1605,12 @@ async def dispatch_chalan(
         raise HTTPException(status_code=400, detail="Chalan is already dispatched")
 
     now = now_iso()
-    await db.purchase_orders.update_one(
-        {"id": po_id, "chalans.id": chalan_id},
+    # Compare-and-swap on the stage we just read (either "released" or
+    # "at_godown" — dispatch can happen from either route), same reasoning as
+    # the godown-received guard above: a second near-simultaneous dispatch
+    # call can't land once the first has already flipped the stage.
+    cas_result = await db.purchase_orders.update_one(
+        {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": chalan.get("stage")}}},
         {"$set": {
             "chalans.$.stage": "dispatched",
             "chalans.$.dispatched_at": now,
@@ -1580,6 +1620,11 @@ async def dispatch_chalan(
             "updated_at": now,
         }},
     )
+    if cas_result.matched_count == 0:
+        raise HTTPException(status_code=409, detail={
+            "error": "concurrent_modification",
+            "message": "This chalan's stage changed concurrently — refresh and try again",
+        })
     await log_event(
         event_type="purchase.chalan_dispatched",
         entity_type="purchase", entity_id=po_id, actor=user,
@@ -1623,7 +1668,7 @@ def _order_card(po: dict, customer_phone: Optional[str]) -> dict:
         "po_id": po["id"],
         "po_number": po.get("number"),
         "customer_id": po.get("customer_id"),
-        "customer_name": po.get("customer_name"),
+        "customer_name": po.get("customer_name") or "Unknown customer",
         "customer_phone": customer_phone,
         "supplier_id": po.get("supplier_id"),
         "supplier_name": po.get("supplier_name"),

@@ -91,6 +91,9 @@ export function Button({
       testID={testID}
       onPress={onPress}
       disabled={loading || disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: loading || disabled }}
       style={({ pressed }) => [
         {
           backgroundColor: skin.bg,
@@ -156,7 +159,9 @@ export function IconButton({
   return (
     <Pressable
       testID={testID}
+      accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled, selected: active }}
       onPress={onPress}
       disabled={disabled}
       hitSlop={layout.hitSlop}

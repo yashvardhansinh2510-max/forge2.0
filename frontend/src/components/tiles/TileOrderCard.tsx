@@ -79,7 +79,7 @@ export function TileOrderCard({ order, onPress }: { order: OrderCard; onPress: (
     >
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={type.titleSm}>{order.customer_name}</Text>
+          <Text numberOfLines={2} style={type.titleSm}>{order.customer_name || "Unknown customer"}</Text>
           <Text numberOfLines={1} style={type.bodyMuted}>{order.customer_phone || "No phone on file"}</Text>
         </View>
         <Text style={type.captionStrong}>{order.po_number}</Text>

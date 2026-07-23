@@ -21,7 +21,7 @@ ecdsa==0.19.2
 email-validator==2.3.0
 # emergentintegrations==0.2.0  # platform-private, not available
 et_xmlfile==2.0.0
-fastapi==0.110.1
+fastapi==0.139.2
 fastuuid==0.14.0
 filelock==3.29.4
 flake8==7.3.0
@@ -59,7 +59,7 @@ markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 mccabe==0.7.0
 mdurl==0.1.2
-motor==3.3.1
+motor==3.7.1
 multidict==6.7.1
 mypy==2.1.0
 mypy_extensions==1.1.0
@@ -87,7 +87,7 @@ pydantic_core==2.46.4
 pyflakes==3.4.0
 Pygments==2.20.0
 PyJWT==2.13.0
-pymongo==4.6.3
+pymongo==4.17.0
 pyparsing==3.3.2
 pypdf==6.14.2
 pytest==9.1.1
@@ -111,7 +111,7 @@ sentry-sdk[fastapi]==2.64.0
 shellingham==1.5.4
 six==1.17.0
 sniffio==1.3.1
-starlette==0.37.2
+starlette==1.3.1
 stripe==14.4.1
 tenacity==9.1.4
 tiktoken==0.13.0
@@ -123,9 +123,8 @@ typing_extensions==4.16.0
 tzdata==2026.2
 uritemplate==4.2.0
 urllib3==2.7.0
-uvicorn==0.25.0
+uvicorn==0.51.0
 watchfiles==1.2.0
 websockets==16.0
 yarl==1.24.2
 zipp==4.1.0
-openpyxl==3.1.5

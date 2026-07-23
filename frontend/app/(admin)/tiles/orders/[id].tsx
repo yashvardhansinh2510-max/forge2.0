@@ -30,7 +30,7 @@ type PoItem = { id: string; name: string; finish?: string | null; qty: number };
 type OrderDetail = {
   id: string; number: string; customer_name: string; customer_phone?: string | null;
   supplier_name?: string | null; status: string; stage: OrderStage;
-  items: PoItem[]; chalans: Chalan[]; remaining_qty_by_item: Record<string, number>;
+  items: PoItem[]; chalans?: Chalan[] | null; remaining_qty_by_item?: Record<string, number> | null;
 };
 
 const CHALAN_STAGE_LABEL: Record<ChalanStage, string> = {
@@ -124,7 +124,7 @@ export default function TileOrderDetailScreen() {
     );
   }
 
-  const hasRemaining = Object.values(order.remaining_qty_by_item).some((qty) => qty > 0);
+  const hasRemaining = Object.values(order.remaining_qty_by_item ?? {}).some((qty) => qty > 0);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -153,10 +153,10 @@ export default function TileOrderDetailScreen() {
         ) : null}
 
         <Text style={[type.titleMd, { marginTop: spacing.xl }]}>Chalans</Text>
-        {order.chalans.length === 0 ? (
+        {(order.chalans ?? []).length === 0 ? (
           <Text style={[type.bodyMuted, { marginTop: spacing.sm }]}>No material released yet.</Text>
         ) : (
-          order.chalans.map((chalan) => (
+          (order.chalans ?? []).map((chalan) => (
             <View key={chalan.id} style={styles.chalanCard}>
               <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
                 <Text style={type.bodyStrong}>{chalan.number}</Text>
@@ -200,7 +200,7 @@ export default function TileOrderDetailScreen() {
         <ChalanFormSheet
           poId={order.id}
           items={order.items}
-          remainingQtyByItem={order.remaining_qty_by_item}
+          remainingQtyByItem={order.remaining_qty_by_item ?? {}}
           onClose={() => setShowChalanForm(false)}
           onGenerated={async () => {
             setShowChalanForm(false);
@@ -220,9 +220,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: spacing.md,
   },
   secondaryButton: {
-    flexDirection: "row", alignItems: "center", gap: spacing.xs,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs,
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
-    paddingVertical: spacing.xs, paddingHorizontal: spacing.sm,
+    minHeight: 44, paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
   },
   chalanCard: {
     backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1,

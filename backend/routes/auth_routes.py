@@ -81,15 +81,27 @@ async def staff_me(user: UserPublic = Depends(get_current_user)):
 @router.post("/change-password")
 async def staff_change_password(
     body: ChangePasswordPayload,
+    request: Request,
     user: UserPublic = Depends(get_current_user),
     authorization: Optional[str] = Header(None),
 ):
     """Settings > Account > Password. Also the exit path from a forced
     password change after Team > Reset Password issued a temporary one —
-    clears must_change_password/temp_password_expires_at on success."""
+    clears must_change_password/temp_password_expires_at on success.
+
+    Security: a valid session token alone (stolen or leaked) doesn't hand an
+    attacker the account — they still need the CURRENT password, and this
+    endpoint was the one path into that check with no throttling at all.
+    Reuses the same (ip, identifier) rate limiter as /login, keyed on the
+    user's own id rather than email so it's scoped per-account regardless of
+    what email is on file."""
+    ip = _client_ip(request)
+    await check_login_rate_limit(ip, f"staff-pw:{user.id}")
     doc = await db.users.find_one({"id": user.id}, {"_id": 0, "password_hash": 1})
     if not doc or not verify_password(body.current_password, doc.get("password_hash", "")):
+        await record_login_failure(ip, f"staff-pw:{user.id}")
         raise HTTPException(status_code=401, detail="Current password is incorrect")
+    await clear_login_attempts(ip, f"staff-pw:{user.id}")
     await db.users.update_one(
         {"id": user.id},
         {"$set": {
@@ -136,14 +148,20 @@ async def customer_login(body: CustomerLoginPayload, request: Request):
 @router.post("/customer/change-password")
 async def customer_change_password(
     body: ChangePasswordPayload,
+    request: Request,
     cust: CustomerPublic = Depends(get_current_customer),
     authorization: Optional[str] = Header(None),
 ):
     """Customer Portal > exit path from a forced password change after
-    Send Invite / Reset Password issued a temporary one."""
+    Send Invite / Reset Password issued a temporary one. Same rate-limit
+    reasoning as staff_change_password above."""
+    ip = _client_ip(request)
+    await check_login_rate_limit(ip, f"customer-pw:{cust.id}")
     doc = await db.customers.find_one({"id": cust.id}, {"_id": 0, "password_hash": 1})
     if not doc or not doc.get("password_hash") or not verify_password(body.current_password, doc["password_hash"]):
+        await record_login_failure(ip, f"customer-pw:{cust.id}")
         raise HTTPException(status_code=401, detail="Current password is incorrect")
+    await clear_login_attempts(ip, f"customer-pw:{cust.id}")
     await db.customers.update_one(
         {"id": cust.id},
         {"$set": {

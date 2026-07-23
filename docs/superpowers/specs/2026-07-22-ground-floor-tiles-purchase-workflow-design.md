@@ -69,8 +69,16 @@ class Chalan(BaseModel):
     dispatched_by: Optional[str] = None
     dispatched_by_name: Optional[str] = None
     dispatch_note: Optional[str] = None
-    pdf_storage_key: Optional[str] = None    # Supabase private bucket, same pattern as PurchaseAttachment.storage_key
 ```
+
+Shipped without `pdf_storage_key` — an earlier draft of this doc called for
+persisting each Chalan PDF to the private Supabase bucket, but the
+implementation regenerates the PDF on demand from the chalan's own fields
+every time `GET .../chalans/{chalan_id}/pdf` is hit instead, the same as the
+existing quotation-PDF pattern. Functionally equivalent (nothing in the
+Chalan's data changes after creation, so every regeneration is byte-for-byte
+the same document) and one less field to keep in sync — corrected here to
+match what shipped instead of leaving spec and code silently disagreeing.
 
 ### `PurchaseOrder` gains one field
 
@@ -136,16 +144,17 @@ actions), reusing existing patterns already in that file (`floor_query`,
   release this batch (form pre-fills each item's remaining unreleased qty as
   the default) + reference_number/receiver_name/sender_name. Allocates a
   `CH-` number via `services/sequence.py::next_number(kind="chalan",
-  prefix="CH", collection="purchase_orders", width=4)`, generates the PDF,
-  uploads to the private Supabase bucket, logs `chalan.generated` via
-  `log_event`, notifies (see below).
+  prefix="CH", collection="purchase_orders", width=4)`, logs
+  `chalan.generated` via `log_event`, notifies (see below). Does not
+  generate or persist a PDF at creation time — see the `pdf` route below.
 - `POST /purchases/{po_id}/chalans/{chalan_id}/godown-received`
 - `POST /purchases/{po_id}/chalans/{chalan_id}/dispatch` — body: optional
   `dispatch_note`. If this is the last outstanding chalan, notifies "Your
   tile order has been dispatched."
-- `GET /purchases/{po_id}/chalans/{chalan_id}/pdf` — streams the generated
-  PDF (or regenerates from stored data if not yet persisted — mirrors the
-  existing quotation-PDF pattern).
+- `GET /purchases/{po_id}/chalans/{chalan_id}/pdf` — streams a PDF built
+  fresh from the chalan/PO/customer data on every request; nothing is
+  persisted to storage (mirrors the existing quotation-PDF pattern — see the
+  `pdf_storage_key` note above).
 - `GET /purchases/orders/customer-view` — order-card-shaped rows grouped by
   customer, floor-scoped, joined against `customers` for phone number
   (not denormalized on `PurchaseOrder` today).

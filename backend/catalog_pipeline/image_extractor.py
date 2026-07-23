@@ -263,6 +263,20 @@ def _convert_wdp_to_png(wdp_bytes: bytes) -> Optional[bytes]:
         arr = _jxr_decode(wdp_bytes)
         if arr is None:
             return None
+        # Sanity-check the decoded array before trusting it. A handful of
+        # supplier WDP files decode without raising (no exception hits the
+        # except below) but with a channel layout this pipeline doesn't
+        # actually know how to render — a CMYK-flavoured JPEG-XR frame in
+        # particular can come back as an array PNG-encodes into a garish
+        # solid-color cast (live-reproduced: a Grohe product rendering as an
+        # opaque red block — 200 OK on the request, no error anywhere in the
+        # pipeline, because nothing here ever checked the decode was sane).
+        # Reject shapes outside plain grayscale/RGB/RGBA instead of shipping
+        # whatever came out — same "never fabricate content, report failure
+        # honestly" contract this module already applies everywhere else.
+        if arr.ndim not in (2, 3) or (arr.ndim == 3 and arr.shape[2] not in (1, 3, 4)):
+            logger.warning("WDP decode produced an unsupported array shape %s — treating as failed", getattr(arr, "shape", None))
+            return None
         return bytes(_png_encode(arr))
     except Exception as e:  # pragma: no cover
         logger.debug("WDP → PNG conversion failed: %s", e)

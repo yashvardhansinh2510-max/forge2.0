@@ -143,6 +143,21 @@ async def ensure_all() -> None:
     await _safe_create_index(db.quotations, "number", unique=True, name="quotations_number_unique")
     await _safe_create_index(db.purchase_orders, "number", unique=True, name="purchase_orders_number_unique")
 
+    # Production readiness audit (2026-07-23), Low: the embedded
+    # purchase_orders.chalans[] array (Ground Floor Tiles) shipped with no
+    # index entry, consistent with this collection's pre-existing gap on
+    # items.id — not a regression, but worth closing now that something
+    # actually scans across it: services/sequence.py's collision-recovery
+    # path (`_seed_from_existing`, fixed alongside this to scan the nested
+    # array instead of the top-level `number` field) runs a `^CH-`
+    # prefix-anchored regex over `chalans.number` across the whole
+    # collection whenever the CH- counter is missing or reset. A regular
+    # index lets Mongo use an index-prefix scan for that anchored regex
+    # instead of a full collection scan. (No equivalent index for
+    # chalans.id: unlike items.id, nothing looks up a PO by chalan id
+    # without already knowing po_id from the URL path.)
+    await _safe_create_index(db.purchase_orders, "chalans.number", name="purchase_orders_chalans_number")
+
     # BACKEND_AUDIT_2026-07-17.md High #14: customers.email had a
     # check-then-insert race with nothing backing it at the DB layer.
     # Verified duplicate-free against live data before adding.

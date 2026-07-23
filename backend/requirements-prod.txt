@@ -3,10 +3,10 @@
 # platform-private packages (emergentintegrations) that do not exist on
 # public PyPI; use THIS file for reproducible builds (see Dockerfile).
 # Versions are pinned to match requirements.txt.
-fastapi==0.110.1
-uvicorn[standard]==0.25.0
-motor==3.3.1
-pymongo==4.6.3
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+motor==3.7.1
+pymongo==4.17.0
 pydantic==2.13.4
 python-dotenv==1.2.2
 PyJWT==2.13.0

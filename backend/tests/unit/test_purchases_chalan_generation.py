@@ -30,6 +30,14 @@ def _po(**overrides) -> dict:
     return base
 
 
+class _FakeUpdateResult:
+    """Mirrors the one field (`matched_count`) generate_chalan's optimistic-
+    concurrency check reads off pymongo's real UpdateResult."""
+
+    def __init__(self, matched_count: int):
+        self.matched_count = matched_count
+
+
 class _FakePOs:
     def __init__(self, po: dict | None):
         self._po = po
@@ -47,6 +55,7 @@ class _FakePOs:
     async def update_one(self, _query, update):
         self.update_calls += 1
         self.pushed_chalan = update["$push"]["chalans"]
+        return _FakeUpdateResult(matched_count=1)
 
 
 class _FakeDb:

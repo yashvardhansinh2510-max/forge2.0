@@ -31,10 +31,21 @@ def _po_with_chalan(stage: str = "released") -> dict:
     }
 
 
+class _FakeUpdateResult:
+    """Mirrors the one field (`matched_count`) the godown-received/dispatch
+    compare-and-swap checks read off pymongo's real UpdateResult."""
+
+    def __init__(self, matched_count: int):
+        self.matched_count = matched_count
+
+
 class _FakePOsMulti:
     """Applies `chalans.$.<field>` $set updates to the matching chalan by id
-    — enough of Mongo's positional-operator semantics to test these two
-    single-chalan-update endpoints without a live database."""
+    — enough of Mongo's positional-operator + $elemMatch semantics to test
+    these two single-chalan-update endpoints without a live database. A
+    query with an $elemMatch condition that doesn't match any chalan (the
+    CAS guard failing because the stage moved since the read) reports
+    matched_count=0 and applies no update, same as the real driver."""
 
     def __init__(self, po: dict):
         self._po = po
@@ -45,12 +56,20 @@ class _FakePOsMulti:
 
     async def update_one(self, query, update):
         self.update_calls += 1
-        chalan_id = query.get("chalans.id")
-        for chalan in self._po["chalans"]:
-            if chalan["id"] == chalan_id:
-                for key, value in update.get("$set", {}).items():
-                    if key.startswith("chalans.$."):
-                        chalan[key[len("chalans.$."):]] = value
+        elem_match = query.get("chalans", {}).get("$elemMatch", {})
+        chalan_id = elem_match.get("id")
+        expected_stage = elem_match.get("stage")
+        matched = next(
+            (c for c in self._po["chalans"]
+             if c["id"] == chalan_id and (expected_stage is None or c.get("stage") == expected_stage)),
+            None,
+        )
+        if matched is None:
+            return _FakeUpdateResult(matched_count=0)
+        for key, value in update.get("$set", {}).items():
+            if key.startswith("chalans.$."):
+                matched[key[len("chalans.$."):]] = value
+        return _FakeUpdateResult(matched_count=1)
 
 
 class _FakeCustomers:
