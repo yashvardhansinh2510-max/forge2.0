@@ -39,7 +39,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // Connect / Google Play Console both require hosted privacy-policy and
     // terms-of-service URLs a reviewer (or anyone) can open with no
     // account. See app/privacy.tsx and app/terms.tsx.
-    if (segments[0] === "privacy" || (segments[0] as any) === "terms") return;
+    if (segments[0] === "privacy" || segments[0] === "terms") return;
     const inAuth = segments[0] === "(auth)";
     const inAdmin = segments[0] === "(admin)";
     const inCustomer = segments[0] === "(customer)";
