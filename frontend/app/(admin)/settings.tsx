@@ -97,6 +97,7 @@ export default function Settings() {
     { icon: "database", label: "Catalog tools", hint: "Import, export, backup", href: "/(admin)/settings-catalog", testId: "settings-nav-catalog" },
     { icon: "activity", label: "System", hint: "Health, version, storage", href: "/(admin)/settings-system", testId: "settings-nav-system" },
     { icon: "file-text", label: "Privacy & data", hint: "What we collect, deletion requests", href: "/(admin)/settings-privacy", testId: "settings-nav-privacy" },
+    { icon: "file-text", label: "Terms of service", hint: "Usage terms & account terms", href: "/(admin)/settings-terms", testId: "settings-nav-terms" },
   ];
 
   return (
