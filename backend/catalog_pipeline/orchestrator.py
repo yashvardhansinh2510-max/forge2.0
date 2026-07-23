@@ -179,7 +179,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
                     skipped += 1
                     continue
                 slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "misc"
-                c = Category(name=label, slug=slug)
+                c = Category(name=label, slug=slug, floor_id=floor_id)
                 await db.categories.insert_one(c.dict())
                 cat = c.dict()
                 cat_by_name[label.lower()] = cat
