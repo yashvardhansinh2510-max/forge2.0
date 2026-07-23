@@ -284,7 +284,7 @@ def _convert_wdp_to_png(wdp_bytes: bytes) -> Optional[bytes]:
 
 
 # ---------- Public decode dispatcher ----------
-def _decode_supplier_image(raw: bytes, ext: str) -> Optional[ExtractedImage]:
+def _decode_supplier_image(raw: bytes, ext: str, *, optimize: bool = True) -> Optional[ExtractedImage]:
     """Decode + classify a raw image blob taken from a supplier archive.
 
     Returns None for any format we cannot support (so the caller can skip
@@ -329,8 +329,10 @@ def _decode_supplier_image(raw: bytes, ext: str) -> Optional[ExtractedImage]:
 
     # Optimise: cap huge photos to 1600px WebP for storage without perceptible
     # quality loss. Never changes the reported width/height above — those still
-    # describe the source.
-    raw, mime = _optimize(raw, mime)
+    # describe the source. Callers that need byte-for-byte original quality
+    # (e.g. the Qutone tiles adapter) pass optimize=False.
+    if optimize:
+        raw, mime = _optimize(raw, mime)
 
     sha1 = _hash(raw)
     return ExtractedImage(
@@ -467,7 +469,7 @@ def extract_images_from_xlsx(xlsx_bytes: bytes) -> Iterator[tuple[str, int, str,
         yield sheet, row, img.sha1, img.data_url
 
 
-def extract_images_from_xlsx_ex(xlsx_bytes: bytes) -> Iterator[tuple[str, int, int, ExtractedImage]]:
+def extract_images_from_xlsx_ex(xlsx_bytes: bytes, *, optimize: bool = True) -> Iterator[tuple[str, int, int, ExtractedImage]]:
     """Yield (sheet_name, anchor_row_1based, anchor_col_0based, ExtractedImage)
     for every embedded image the supplier ships, with each image classified
     by pixel quality.
@@ -587,7 +589,7 @@ def extract_images_from_xlsx_ex(xlsx_bytes: bytes) -> Iterator[tuple[str, int, i
                         continue
                     if not raw:
                         continue
-                    img = _decode_supplier_image(raw, ext)
+                    img = _decode_supplier_image(raw, ext, optimize=optimize)
                     if img is None:
                         continue
                     candidates.append(img)
