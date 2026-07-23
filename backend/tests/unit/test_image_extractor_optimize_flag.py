@@ -12,7 +12,7 @@ import io
 
 from PIL import Image
 
-from catalog_pipeline.image_extractor import _decode_supplier_image
+from catalog_pipeline.image_extractor import _decode_supplier_image, _resolve_relative
 
 
 def _make_large_jpeg_bytes(size=(2000, 2000)) -> bytes:
@@ -54,3 +54,18 @@ def test_optimize_defaults_to_true_for_backward_compatibility_with_existing_bran
     result_explicit_true = _decode_supplier_image(raw, "jpeg", optimize=True)
     assert result_default.bytes_len == result_explicit_true.bytes_len
     assert result_default.bytes_len < len(raw)
+
+
+def test_resolve_relative_handles_relative_targets_like_real_supplier_files():
+    """Every observed real supplier file (incl. QUTONE 2026.xlsx) uses
+    relationship Targets like "../drawings/drawing1.xml" — must keep working."""
+    assert _resolve_relative("xl/worksheets/", "../drawings/drawing1.xml") == "xl/drawings/drawing1.xml"
+
+
+def test_resolve_relative_handles_absolute_targets():
+    """OOXML also permits a Target starting with "/", meaning "absolute from
+    the package root" — openpyxl-written workbooks emit this form. The old
+    implementation ignored the leading "/" and concatenated it onto `base`
+    anyway, producing a bogus path that silently dropped every image on the
+    sheet (caught by a bare `except KeyError`, no warning surfaced)."""
+    assert _resolve_relative("xl/worksheets/", "/xl/drawings/drawing1.xml") == "xl/drawings/drawing1.xml"

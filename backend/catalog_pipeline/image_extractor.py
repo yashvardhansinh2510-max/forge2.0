@@ -617,7 +617,11 @@ def extract_images_from_xlsx_ex(xlsx_bytes: bytes, *, optimize: bool = True) -> 
 
 
 def _resolve_relative(base: str, target: str) -> str:
-    parts = (base + target).split("/")
+    # OOXML relationship targets starting with "/" are absolute from the
+    # package (zip) root, not relative to `base` — treating them as relative
+    # (the old behavior) silently produced a bogus path, which the caller's
+    # bare `except KeyError` then swallowed with zero images and no warning.
+    parts = target.split("/") if target.startswith("/") else (base + target).split("/")
     stack: list[str] = []
     for p in parts:
         if p == "..":
