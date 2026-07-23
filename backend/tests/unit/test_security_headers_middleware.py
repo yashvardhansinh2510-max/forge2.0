@@ -40,3 +40,13 @@ def test_hsts_present_when_request_scheme_is_https():
     https_client = TestClient(_app, base_url="https://testserver")
     response = https_client.get("/ping")
     assert response.headers["strict-transport-security"] == "max-age=63072000; includeSubDomains"
+
+
+def test_hsts_present_when_x_forwarded_proto_is_https():
+    response = client.get("/ping", headers={"X-Forwarded-Proto": "https"})
+    assert response.headers["strict-transport-security"] == "max-age=63072000; includeSubDomains"
+
+
+def test_hsts_absent_with_non_https_forwarded_proto():
+    response = client.get("/ping", headers={"X-Forwarded-Proto": "http"})
+    assert "strict-transport-security" not in response.headers

@@ -22,8 +22,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         for header, value in _STATIC_HEADERS.items():
             response.headers.setdefault(header, value)
-        # HSTS only makes sense once a request actually arrived over HTTPS —
-        # forcing it in local/http dev would be actively wrong, not just inert.
-        if request.url.scheme == "https":
+        # HSTS only makes sense once a request actually arrived over HTTPS.
+        # Check both request.url.scheme (direct HTTPS) and X-Forwarded-Proto
+        # (for when the app sits behind a TLS-terminating reverse proxy, the
+        # expected production topology). In local/http dev neither would be
+        # true, which is correct — we don't set HSTS there. Trusting
+        # X-Forwarded-Proto is safe: forging it can only affect whether this
+        # one header is set, nothing else (no auth bypass, access control, etc).
+        scheme_is_https = (
+            request.url.scheme == "https"
+            or request.headers.get("x-forwarded-proto", "").lower() == "https"
+        )
+        if scheme_is_https:
             response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
         return response
