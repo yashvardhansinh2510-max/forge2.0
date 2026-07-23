@@ -8,6 +8,8 @@ from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
+from middleware import SecurityHeadersMiddleware
+
 from bootstrap import _check_demo_accounts, run_bootstrap
 from services.monitoring import init_monitoring
 
@@ -109,6 +111,11 @@ api.include_router(roles_router)
 api.include_router(permissions_router)
 
 app.include_router(api)
+
+# Security headers (defense-in-depth, no behavior change for existing
+# clients) — registered before CORSMiddleware so CORS stays the outermost
+# middleware, unchanged from its current behavior.
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Security audit (Phase 1, 2026-08): Forge authenticates exclusively via a
 # Bearer JWT stored client-side (see frontend/src/api/client.ts) — it never
