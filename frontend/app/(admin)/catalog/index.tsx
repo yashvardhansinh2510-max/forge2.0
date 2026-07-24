@@ -22,6 +22,7 @@ import { catalogReferences, fetchCatalogPage } from "@/src/services/catalogServi
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { supplierLogoFor } from "@/src/design/BrandLogo";
+import { isNearScrollEnd } from "@/src/utils/scrollEnd";
 import { Image as ExpoImage } from "expo-image";
 
 type Brand = { id: string; name: string; slug?: string };
@@ -417,6 +418,8 @@ export default function Catalog() {
         windowSize={Platform.OS === "web" ? 21 : 11}
         onEndReached={loadMore}
         onEndReachedThreshold={0.45}
+        onScroll={(e) => { if (isNearScrollEnd(e.nativeEvent)) loadMore(); }}
+        scrollEventThrottle={50}
         ListEmptyComponent={
           showSkeleton ? (
             <View style={[styles.skeletonGrid, { paddingHorizontal: gridPadding - gap / 2, flexDirection: "row", flexWrap: "wrap" }]}>
