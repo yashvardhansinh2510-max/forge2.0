@@ -5,6 +5,7 @@ from .vitra import VitraAdapter
 from .hansgrohe import HansgroheAdapter
 from .oyster import OysterAdapter
 from .qutone import QutoneAdapter
+from .dimore import DimoreAdapter
 
 REGISTRY = {
     "grohe": GroheAdapter,
@@ -16,6 +17,7 @@ REGISTRY = {
     "axor": HansgroheAdapter,
     "oyster": OysterAdapter,
     "qutone": QutoneAdapter,
+    "dimore": DimoreAdapter,
 }
 
 
