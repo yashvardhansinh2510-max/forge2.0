@@ -9,6 +9,7 @@ import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { PickerCard } from "./PickerCard";
 import type { Product } from "../helpers/types";
+import { isNearScrollEnd } from "@/src/utils/scrollEnd";
 
 export function CatalogPane({
   onOpenDetails,
@@ -84,6 +85,8 @@ export function CatalogPane({
         windowSize={7}
         onEndReached={() => { if (b.pickerTab === "search") b.loadMoreProducts(); }}
         onEndReachedThreshold={0.6}
+        onScroll={(e) => { if (b.pickerTab === "search" && isNearScrollEnd(e.nativeEvent, 0.6)) b.loadMoreProducts(); }}
+        scrollEventThrottle={50}
         ListFooterComponent={
           b.pickerTab === "search" && b.productLoadingMore ? (
             <View style={{ paddingVertical: 16, alignItems: "center" }}>

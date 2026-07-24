@@ -22,6 +22,7 @@ import { QuickAddButton } from "../shared/QuickAddButton";
 import { productImageList } from "../helpers/media";
 import { quotationGridColumns } from "../helpers/responsive";
 import type { Product, ProductVariant } from "../helpers/types";
+import { isNearScrollEnd } from "@/src/utils/scrollEnd";
 
 // Matches BuilderShell's THREE_PANE threshold: below that width, BuilderShell
 // always renders this component full-screen inside ProductPickerSheet with no
@@ -244,6 +245,8 @@ export function ProductExplorer() {
         windowSize={21}
         onEndReached={() => b.loadMoreProducts()}
         onEndReachedThreshold={0.5}
+        onScroll={(e) => { if (isNearScrollEnd(e.nativeEvent, 0.5)) b.loadMoreProducts(); }}
+        scrollEventThrottle={50}
         ListFooterComponent={
           b.productLoadingMore ? (
             <View style={{ paddingVertical: 20, alignItems: "center" }}>
