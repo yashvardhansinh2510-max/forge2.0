@@ -7,7 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from auth import floor_for_write, floor_query, get_current_customer, get_current_user, require_min_role
+from auth import (
+    accessible_floor_ids, floor_for_write, floor_query, get_current_customer, get_current_user,
+    require_min_role,
+)
 from db import db
 from models import (
     CustomerPublic, PurchaseOrder, PurchaseOrderItem, PurchaseStatusEvent, PurchaseStageEvent,
@@ -36,6 +39,24 @@ router = APIRouter(prefix="/quotations", tags=["quotations"])
 async def _next_number() -> str:
     year = datetime.now(timezone.utc).year
     return await next_number("quotation", f"FQ-{year}-", collection="quotations")
+
+
+def _floor_id_for_new_quotation(user: UserPublic, item_floor_ids: set[str]) -> str:
+    """The ground truth for a new quotation's floor is the floor its own
+    product line items actually belong to, not the caller's ambient
+    active-floor request state — that state can lag behind for an
+    all-floors (owner/manager) user who reaches a floor-specific screen
+    (e.g. the Ground Floor Tiles builders) by direct URL/refresh/bookmark
+    instead of the sidebar link that explicitly switches it first. Falls
+    back to the previous `floor_for_write(user)` behavior when the items
+    don't agree on exactly one floor (no items yet, or a genuinely mixed
+    set), and never stamps a floor the caller isn't allowed to write to."""
+    if len(item_floor_ids) == 1:
+        candidate = next(iter(item_floor_ids))
+        allowed = accessible_floor_ids(user)
+        if allowed is None or candidate in allowed:
+            return candidate
+    return floor_for_write(user)
 
 
 async def _track_product_usage(user_id: str, product_ids: list[str]):
@@ -104,13 +125,17 @@ async def create_quotation(
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    # Fill category_id on items so category discounts can resolve later.
+    # Fill category_id on items so category discounts can resolve later, and
+    # collect each item's own product floor_id (see `_floor_id_for_new_quotation`).
     items = body.items or []
+    item_floor_ids: set[str] = set()
     for it in items:
-        if not it.category_id:
-            p = await db.products.find_one({"id": it.product_id}, {"_id": 0, "category_id": 1})
-            if p:
+        p = await db.products.find_one({"id": it.product_id}, {"_id": 0, "category_id": 1, "floor_id": 1})
+        if p:
+            if not it.category_id:
                 it.category_id = p.get("category_id")
+            if p.get("floor_id"):
+                item_floor_ids.add(p["floor_id"])
 
     totals = _recalc(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {})
     quot = Quotation(
@@ -135,7 +160,7 @@ async def create_quotation(
         doc_number=body.doc_number,
         created_by=user.id,
         created_by_name=user.full_name,
-        floor_id=floor_for_write(user),
+        floor_id=_floor_id_for_new_quotation(user, item_floor_ids),
         **totals,
     )
     await db.quotations.insert_one(quot.dict())
