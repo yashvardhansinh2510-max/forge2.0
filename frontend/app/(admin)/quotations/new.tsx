@@ -12,8 +12,10 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 import { BuilderProvider, BuilderShell } from "@/src/components/quotation";
+import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 
 export default function QuotationBuilderScreen() {
+  useRequireFloorAccess("first-floor");
   const router = useRouter();
   // Optional ?productId=... — set by Catalog's "Add to quotation" CTA so
   // starting a new quotation from a product's detail page actually seeds

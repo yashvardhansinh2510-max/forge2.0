@@ -12,6 +12,7 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { ChalanFormSheet } from "@/src/components/tiles/ChalanFormSheet";
 import { StageProgress, stageLabel, type OrderStage } from "@/src/components/tiles/TileOrderCard";
+import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 import { downloadApiFile } from "@/src/utils/downloadFile";
 
@@ -38,6 +39,7 @@ const CHALAN_STAGE_LABEL: Record<ChalanStage, string> = {
 };
 
 export default function TileOrderDetailScreen() {
+  useRequireFloorAccess("ground-floor");
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [order, setOrder] = useState<OrderDetail | null>(null);
