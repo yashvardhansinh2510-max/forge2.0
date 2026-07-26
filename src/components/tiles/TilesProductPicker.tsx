@@ -33,7 +33,7 @@ export function TilesProductPicker({
     try {
       const params = new URLSearchParams({ limit: "30" });
       if (q.trim()) params.set("q", q.trim());
-      const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`);
+      const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`, { floorId: "ground-floor" });
       setResults(res.items || []);
       setHighlight(0);
     } catch {
