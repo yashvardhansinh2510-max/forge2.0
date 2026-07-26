@@ -2,7 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from auth import (
-    floor_for_write, floor_query, get_current_customer, get_current_user, hash_password, invalidate_principal_cache, require_min_role,
+    floor_for_write, floor_query, get_current_customer, get_current_user, get_floor_scoped_or_404,
+    hash_password, invalidate_principal_cache, require_min_role,
 )
 from db import db
 from models import (
@@ -70,9 +71,9 @@ async def create_customer(
 
 @router.get("/customers/{customer_id}", response_model=CustomerPublic)
 async def get_customer(customer_id: str, user: UserPublic = Depends(get_current_user)):
-    doc = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0, "password_hash": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Customer not found")
+    doc = await get_floor_scoped_or_404(
+        db.customers, customer_id, user, not_found="Customer not found", projection={"_id": 0, "password_hash": 0},
+    )
     return CustomerPublic(**doc)
 
 
@@ -83,9 +84,7 @@ async def update_customer(
     """Customers > Edit Customer. Also where Portal Enabled is toggled — the
     only place that flag can be flipped besides Send Invite (which turns it
     on implicitly, see below)."""
-    existing = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Customer not found")
+    existing = await get_floor_scoped_or_404(db.customers, customer_id, user, not_found="Customer not found", projection={"_id": 0})
 
     patch = body.dict(exclude_unset=True)
     if "email" in patch and patch["email"]:
