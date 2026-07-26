@@ -267,11 +267,11 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     (async () => {
       try {
         const [cs, cats, brs, rec, freq, recentQ] = await Promise.all([
-          api.get<Customer[]>("/customers"),
-          api.get<Category[]>("/categories"),
-          api.get<Brand[]>("/brands"),
-          api.get<Product[]>("/products/recent"),
-          api.get<Product[]>("/products/frequent"),
+          api.get<Customer[]>("/customers", { floorId: "first-floor" }),
+          api.get<Category[]>("/categories", { floorId: "first-floor" }),
+          api.get<Brand[]>("/brands", { floorId: "first-floor" }),
+          api.get<Product[]>("/products/recent", { floorId: "first-floor" }),
+          api.get<Product[]>("/products/frequent", { floorId: "first-floor" }),
           api.get<RecentQuotation[]>("/quotations/recent?limit=10"),
         ]);
         setCustomers(cs);
@@ -304,6 +304,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       try {
         const cats = await api.get<Category[]>(
           selectedBrandId ? `/categories?brand_id=${selectedBrandId}` : "/categories",
+          { floorId: "first-floor" },
         );
         setCategoriesForRail(cats);
       } catch {}
@@ -345,7 +346,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         if (q) params.set("q", q);
         if (selectedBrandId) params.set("brand_id", selectedBrandId);
         if (selectedCategoryId) params.set("category_id", selectedCategoryId);
-        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`);
+        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`, { floorId: "first-floor" });
         if (cancelled) return;
         const items = res.items || [];
         setProducts(items);
@@ -377,7 +378,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         if (q) params.set("q", q);
         if (selectedBrandId) params.set("brand_id", selectedBrandId);
         if (selectedCategoryId) params.set("category_id", selectedCategoryId);
-        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`);
+        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`, { floorId: "first-floor" });
         const items = res.items || [];
         setProducts((cur) => {
           const seen = new Set(cur.map((p) => p.id));
@@ -418,7 +419,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       setSaveState("saving");
       let persistedId = quotationId;
       if (!quotationId) {
-        const created = await api.post<{ id: string; number: string }>("/quotations", payload);
+        const created = await api.post<{ id: string; number: string }>("/quotations", payload, { floorId: "first-floor" });
         setQuotationId(created.id);
         setQuotationNumber(created.number);
         persistedId = created.id;
@@ -587,7 +588,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     try {
       const created = await api.post<Customer>("/customers", {
         name: data.name, phone: data.phone || null, project: data.project || null, address: data.address || null,
-      });
+      }, { floorId: "first-floor" });
       setCustomers((cur) => [created, ...cur]);
       setCustomer(created.id);
       toast.success(`${created.name} added`);
