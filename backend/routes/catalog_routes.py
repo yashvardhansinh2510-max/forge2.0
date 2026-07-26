@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from auth import floor_for_write, floor_query, floor_scope_ids, get_current_user, require_min_role
+from auth import floor_for_write, floor_query, floor_scope_ids, get_current_user, get_floor_scoped_or_404, require_min_role
 from db import db, strip_ids
 from models import Brand, BrandCreate, Category, CategoryCreate, Product, ProductCreate, ProductPatch, UserPublic
 from services import catalog_service, media_service
@@ -365,9 +365,8 @@ async def frequent_products(
 
 @router.get("/products/{product_id}")
 async def get_product(product_id: str, user: UserPublic = Depends(get_current_user)):
-    if not await db.products.find_one(floor_query(user, {"id": product_id}), {"_id": 0, "id": 1}):
-        raise HTTPException(status_code=404, detail="Product not found")
-    doc = await catalog_service.product_by_id(product_id, floor_ids=floor_scope_ids(user))
+    await get_floor_scoped_or_404(db.products, product_id, user, not_found="Product not found", projection={"_id": 0, "id": 1})
+    doc = await catalog_service.product_by_id(product_id, floor_ids=None)
     if not doc:
         raise HTTPException(status_code=404, detail="Product not found")
     return doc
@@ -390,9 +389,8 @@ async def product_alternates(
     the salesperson sees products they actually reach for. The current product
     itself is always excluded.
     """
-    if not await db.products.find_one(floor_query(user, {"id": product_id}), {"_id": 0, "id": 1}):
-        raise HTTPException(status_code=404, detail="Product not found")
-    result = await catalog_service.alternate_products(product_id, user.id, limit, floor_ids=floor_scope_ids(user))
+    source = await get_floor_scoped_or_404(db.products, product_id, user, not_found="Product not found", projection={"_id": 0, "id": 1, "floor_id": 1})
+    result = await catalog_service.alternate_products(product_id, user.id, limit, floor_ids=[source.get("floor_id", "first-floor")])
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
@@ -408,9 +406,8 @@ async def complete_the_set(
     category. E.g. viewing a Talis E basin mixer suggests the Talis E shower
     valve, spout, robe hook — the classic bathroom cross-sell.
     """
-    if not await db.products.find_one(floor_query(user, {"id": product_id}), {"_id": 0, "id": 1}):
-        raise HTTPException(status_code=404, detail="Product not found")
-    result = await catalog_service.complete_set_products(product_id, limit, floor_ids=floor_scope_ids(user))
+    source = await get_floor_scoped_or_404(db.products, product_id, user, not_found="Product not found", projection={"_id": 0, "id": 1, "floor_id": 1})
+    result = await catalog_service.complete_set_products(product_id, limit, floor_ids=[source.get("floor_id", "first-floor")])
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
