@@ -28,7 +28,30 @@ class _FakeProducts:
         self._doc = doc
 
     async def find_one(self, query, projection=None, session=None):
-        return self._doc if query.get("id") == self._doc["id"] else None
+        if query.get("id") != self._doc["id"]:
+            return None
+
+        # If no projection or only exclusions like {"_id": 0}, return full doc
+        if not projection:
+            return self._doc
+
+        # Check if this is an inclusion projection (has at least one key set to 1)
+        # that isn't just "_id"
+        has_inclusion = any(k != "_id" and v == 1 for k, v in projection.items())
+
+        if not has_inclusion:
+            # Pure exclusion projection (e.g., {"_id": 0}), return full doc
+            return self._doc
+
+        # Inclusion projection: return only the specified fields
+        # Always include "id" if query matched on it
+        result = {}
+        if "id" in projection and projection["id"] == 1:
+            result["id"] = self._doc.get("id")
+        if "floor_id" in projection and projection["floor_id"] == 1:
+            result["floor_id"] = self._doc.get("floor_id")
+
+        return result
 
 
 class _FakeDb:
@@ -64,9 +87,12 @@ def test_get_product_denies_access_when_user_lacks_floor_access(monkeypatch):
     """Regression: Verify that get_product denies access when the user doesn't
     have access to the product's floor. This catches the bug where a missing
     floor_id in the projection falls back to hardcoded "first-floor" and
-    incorrectly allows access."""
+    incorrectly allows access. Must mock the service to isolate authorization."""
     doc = {"id": "p1", "floor_id": "ground-floor"}
     monkeypatch.setattr(catalog_routes, "db", _FakeDb(doc))
+    # Mock service to prevent 404 from service call; auth should fail first
+    fake = AsyncMock(return_value={"id": "p1"})
+    monkeypatch.setattr(catalog_routes.catalog_service, "product_by_id", fake)
 
     # User only has first-floor access, product is on ground-floor
     with pytest.raises(HTTPException) as exc_info:
