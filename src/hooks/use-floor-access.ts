@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { useRouter } from "expo-router";
+
 import { api } from "@/src/api/client";
+import { toast } from "@/src/components/Toast";
 import { storage } from "@/src/utils/storage";
 
 export type Floor = { id: string; name: string; slug: string };
@@ -60,4 +63,17 @@ export function useFloorAccess() {
   }, [access]);
 
   return { access, floors: access?.floors || [], selectedFloorId, selectFloor };
+}
+
+export function useRequireFloorAccess(floorId: string) {
+  const { access } = useFloorAccess();
+  const router = useRouter();
+  useEffect(() => {
+    if (!access) return; // still loading — nothing to enforce yet
+    const allowed = access.all_floors || access.floor_ids.includes(floorId);
+    if (!allowed) {
+      toast.error("You don't have access to that floor");
+      router.replace("/(admin)/dashboard" as any);
+    }
+  }, [access, floorId, router]);
 }

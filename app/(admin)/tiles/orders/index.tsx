@@ -12,6 +12,7 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { TileOrderCard, type OrderCard } from "@/src/components/tiles/TileOrderCard";
 import { useBp } from "@/src/design/responsive";
+import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type TabKey = "customer" | "company";
@@ -23,6 +24,7 @@ type SupplierGroup = {
 };
 
 export default function TileOrdersScreen() {
+  useRequireFloorAccess("ground-floor");
   const router = useRouter();
   const { isPhone, isTablet } = useBp();
   const cols = isPhone ? 1 : isTablet ? 2 : 3;
