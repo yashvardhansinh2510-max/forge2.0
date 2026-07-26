@@ -365,7 +365,7 @@ async def frequent_products(
 
 @router.get("/products/{product_id}")
 async def get_product(product_id: str, user: UserPublic = Depends(get_current_user)):
-    await get_floor_scoped_or_404(db.products, product_id, user, not_found="Product not found", projection={"_id": 0, "id": 1})
+    await get_floor_scoped_or_404(db.products, product_id, user, not_found="Product not found", projection={"_id": 0, "id": 1, "floor_id": 1})
     doc = await catalog_service.product_by_id(product_id, floor_ids=None)
     if not doc:
         raise HTTPException(status_code=404, detail="Product not found")
