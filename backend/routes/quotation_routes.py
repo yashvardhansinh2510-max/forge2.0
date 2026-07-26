@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from auth import (
     accessible_floor_ids, floor_for_write, floor_query, get_current_customer, get_current_user,
-    require_min_role,
+    get_floor_scoped_or_404, require_min_role,
 )
 from db import db
 from models import (
@@ -121,9 +121,9 @@ async def create_quotation(
     body: QuotationCreate,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
-    customer = await db.customers.find_one(floor_query(user, {"id": body.customer_id}), {"_id": 0})
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
+    customer = await get_floor_scoped_or_404(
+        db.customers, body.customer_id, user, not_found="Customer not found", projection={"_id": 0},
+    )
 
     # Fill category_id on items so category discounts can resolve later, and
     # collect each item's own product floor_id (see `_floor_id_for_new_quotation`).
@@ -180,9 +180,7 @@ async def create_quotation(
 
 @router.get("/{quotation_id}", response_model=Quotation)
 async def get_quotation(quotation_id: str, user: UserPublic = Depends(get_current_user)):
-    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Quotation not found")
+    doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
     return Quotation(**doc)
 
 
@@ -192,9 +190,7 @@ async def update_quotation(
     body: QuotationUpdate,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
-    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Quotation not found")
+    doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
 
     update: dict = {}
     customer_changed_from: str | None = None
@@ -202,9 +198,9 @@ async def update_quotation(
         # Re-sending the SAME customer_id is a legal snapshot refresh — the
         # tiles builders PATCH the customer record (name/phone corrections)
         # and then re-send the id so customer_name here follows suit.
-        new_customer = await db.customers.find_one(floor_query(user, {"id": body.customer_id}), {"_id": 0})
-        if not new_customer:
-            raise HTTPException(status_code=404, detail="Customer not found")
+        new_customer = await get_floor_scoped_or_404(
+            db.customers, body.customer_id, user, not_found="Customer not found", projection={"_id": 0},
+        )
         if body.customer_id != doc.get("customer_id"):
             customer_changed_from = doc.get("customer_name")
         update["customer_id"] = new_customer["id"]
@@ -557,9 +553,7 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     The PDF is the primary output. Its outbox record is committed first; timeline
     and follow-up handlers only run after that commit succeeds.
     """
-    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Quotation not found")
+    doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
     doc_type = doc.get("doc_type") or "standard"
     if doc_type == "tiles_selection":
@@ -724,9 +718,7 @@ async def _brand_grouped_preview(doc: dict) -> dict:
 
 @router.get("/{quotation_id}/place-order/preview")
 async def place_order_preview(quotation_id: str, user: UserPublic = Depends(require_min_role("sales"))):
-    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Quotation not found")
+    doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
     if not doc.get("items"):
         raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
     return await _brand_grouped_preview(doc)
@@ -742,9 +734,10 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
         try:
             async with await client.start_session() as session:
                 async with session.start_transaction():
-                    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0}, session=session)
-                    if not doc:
-                        raise HTTPException(status_code=404, detail="Quotation not found")
+                    doc = await get_floor_scoped_or_404(
+                        db.quotations, quotation_id, user, not_found="Quotation not found",
+                        projection={"_id": 0}, session=session,
+                    )
                     if not doc.get("items"):
                         raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
                     await db.quotations.update_one(
