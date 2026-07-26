@@ -186,3 +186,85 @@ def test_place_order_confirm_updates_cross_floor_quotation(monkeypatch):
     assert len(update_calls) == 1, f"Expected 1 update_one call, got {len(update_calls)}"
     # The assertion inside update_one checks the filter is bare {"id": ...}
     # If we got here without raising, the fix is working
+
+
+def test_update_quotation_works_cross_floor(monkeypatch):
+    """Regression: update_quotation must use bare {"id": ...} filter for
+    update_one and find_one when refetching the document, not floor_query().
+    Otherwise, ambient floor mismatch causes a silent no-op update, then
+    find_one returns None, then Quotation(**None) raises TypeError 500."""
+    doc = {
+        "id": "q1", "floor_id": "ground-floor", "number": "FQ-2026-0001",
+        "customer_id": "c1", "customer_name": "Test Customer",
+        "created_by": "u1", "created_by_name": "Sales Rep",
+        "created_at": "2026-07-26T00:00:00+00:00", "updated_at": "2026-07-26T00:00:00+00:00",
+        "status": "draft",
+        "items": [],
+    }
+
+    # Track what filters update_one and find_one are called with
+    update_calls = []
+    find_calls = []
+
+    class _FakeQuotationsForUpdate:
+        async def find_one(self, query, projection=None, session=None):
+            find_calls.append({"filter": query, "projection": projection})
+            # Verify the filter is just {"id": ...}, not floor-scoped
+            if query != {"id": "q1"}:
+                # This simulates what would happen if floor_query were used —
+                # it would have floor_id in the filter and wouldn't match
+                return None
+            return doc
+
+        async def update_one(self, filter_dict, update_dict, session=None):
+            update_calls.append({"filter": filter_dict, "update": update_dict})
+            # Verify the filter is just {"id": ...}, not floor-scoped
+            assert filter_dict == {"id": "q1"}, f"Expected {{'id': 'q1'}}, got {filter_dict}"
+            return {"matched_count": 1, "modified_count": 1}
+
+    class _FakeDbForUpdate:
+        def __init__(self):
+            self.quotations = _FakeQuotationsForUpdate()
+            self.activity_events = type('obj', (object,), {'insert_one': self._fake_insert})()
+
+        async def _fake_insert(self, doc):
+            return {"inserted_id": "test"}
+
+    # Mock the database
+    db_instance = _FakeDbForUpdate()
+    monkeypatch.setattr(quotation_routes, "db", db_instance)
+
+    # Mock the downstream event handlers to avoid needing full infrastructure
+    async def _fake_log_event(*args, **kwargs):
+        return None
+
+    async def _fake_reconcile(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(quotation_routes, "log_event", _fake_log_event)
+    monkeypatch.setattr(quotation_routes, "reconcile_followups", _fake_reconcile)
+
+    # Call update_quotation with a quotation on a different floor (ground-floor)
+    # but with a user whose ambient active floor is first-floor
+    from routes.quotation_routes import QuotationUpdate
+    payload = QuotationUpdate(items=[], silent=True)
+
+    result = asyncio.run(
+        quotation_routes.update_quotation(
+            "q1",
+            payload,
+            user=_user(active_floor_id="first-floor"),  # Ambient mismatch
+        )
+    )
+
+    # Verify the update succeeded and returned a valid Quotation
+    assert result.id == "q1"
+    assert result.floor_id == "ground-floor"
+
+    # Verify update_one was called with bare {"id": ...} filter
+    assert len(update_calls) == 1, f"Expected 1 update_one call, got {len(update_calls)}"
+
+    # Verify find_one was called with bare {"id": ...} filter
+    # (to refetch the document after the update)
+    assert any(call["filter"] == {"id": "q1"} for call in find_calls), \
+        f"Expected find_one to be called with bare filter, got {find_calls}"

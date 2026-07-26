@@ -295,7 +295,7 @@ async def update_quotation(
         update["revisions"] = revisions + [rev.dict()]
 
     update["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.quotations.update_one(floor_query(user, {"id": quotation_id}), {"$set": update})
+    await db.quotations.update_one({"id": quotation_id}, {"$set": update})
 
     # Activity logging (non-silent only — silent = autosave)
     if not body.silent:
@@ -357,7 +357,7 @@ async def update_quotation(
                 summary=summary, payload=payload,
             )
 
-    fresh = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
+    fresh = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
     if "status" in update:
         # Event-triggered (not cron) reconciliation — a status change is
         # exactly the moment quotation-stage follow-ups should refresh/close.
