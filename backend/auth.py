@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 from time import monotonic
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 import bcrypt
@@ -336,3 +336,22 @@ def require_floor_access(floor_id: str, user: UserPublic) -> UserPublic:
     if allowed is not None and floor_id not in allowed:
         raise HTTPException(status_code=403, detail="You do not have access to this floor")
     return user
+
+
+async def get_floor_scoped_or_404(
+    collection: Any, doc_id: str, user: UserPublic, *,
+    id_field: str = "id", not_found: str = "Not found",
+    projection: dict | None = None, session: Any = None,
+) -> dict:
+    """Fetch a record by its own ID — never pre-filtered by the caller's
+    ambient active-floor selection — then authorize against the record's
+    OWN floor_id. Use this for every endpoint addressed by a specific
+    record ID instead of `floor_query(user, {id_field: doc_id})`: filtering
+    the initial query by ambient state 404s a legitimate request whenever
+    that ambient state doesn't happen to match the record, even though the
+    record exists and the caller genuinely has access to it."""
+    doc = await collection.find_one({id_field: doc_id}, projection, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail=not_found)
+    require_floor_access(doc.get("floor_id", "first-floor"), user)
+    return doc
