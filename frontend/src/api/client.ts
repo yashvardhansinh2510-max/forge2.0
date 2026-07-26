@@ -49,11 +49,11 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: any): Promise<T> {
+async function request<T>(method: string, path: string, body?: any, opts?: { floorId?: string }): Promise<T> {
   const token = await getToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const floorId = await storage.getItem<string>(SELECTED_FLOOR_KEY, "");
+  const floorId = opts?.floorId ?? (await storage.getItem<string>(SELECTED_FLOOR_KEY, ""));
   if (floorId) headers["X-Floor-Id"] = floorId;
 
   const res = await fetch(`${BASE}/api${path}`, {
@@ -72,11 +72,11 @@ async function request<T>(method: string, path: string, body?: any): Promise<T> 
 }
 
 export const api = {
-  get: <T>(p: string) => request<T>("GET", p),
-  post: <T>(p: string, b?: any) => request<T>("POST", p, b),
-  put: <T>(p: string, b?: any) => request<T>("PUT", p, b),
-  patch: <T>(p: string, b?: any) => request<T>("PATCH", p, b),
-  delete: <T>(p: string) => request<T>("DELETE", p),
+  get: <T>(p: string, opts?: { floorId?: string }) => request<T>("GET", p, undefined, opts),
+  post: <T>(p: string, b?: any, opts?: { floorId?: string }) => request<T>("POST", p, b, opts),
+  put: <T>(p: string, b?: any, opts?: { floorId?: string }) => request<T>("PUT", p, b, opts),
+  patch: <T>(p: string, b?: any, opts?: { floorId?: string }) => request<T>("PATCH", p, b, opts),
+  delete: <T>(p: string, opts?: { floorId?: string }) => request<T>("DELETE", p, undefined, opts),
   // Build a URL for a browser-download endpoint (PDF/xlsx). Browser
   // navigations can't send an Authorization header, so this mints a
   // short-lived single-use download token via a normal authenticated call
