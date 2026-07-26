@@ -103,7 +103,7 @@ async def update_customer(
     if not patch:
         raise HTTPException(status_code=400, detail="Nothing to update")
     patch["updated_at"] = now_iso()
-    await db.customers.update_one(floor_query(user, {"id": customer_id}), {"$set": patch})
+    await db.customers.update_one({"id": customer_id}, {"$set": patch})
 
     if "portal_enabled" in patch and patch["portal_enabled"] != existing.get("portal_enabled", False):
         await log_event(
@@ -117,7 +117,7 @@ async def update_customer(
             customer_id=customer_id, actor=user, summary="Customer Details Updated",
         )
 
-    doc = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0, "password_hash": 0})
+    doc = await db.customers.find_one({"id": customer_id}, {"_id": 0, "password_hash": 0})
     return CustomerPublic(**doc)
 
 
