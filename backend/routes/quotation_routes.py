@@ -741,7 +741,7 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
                     if not doc.get("items"):
                         raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
                     await db.quotations.update_one(
-                        floor_query(user, {"id": quotation_id}),
+                        {"id": quotation_id},
                         {"$set": {"status": "ordered", "updated_at": now_iso()}},
                         session=session,
                     )
