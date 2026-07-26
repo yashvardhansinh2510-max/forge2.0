@@ -19,30 +19,23 @@ def _user(active_floor_id: str = "first-floor") -> UserPublic:
 
 class _FakeCustomers:
     def __init__(self, doc: dict):
-        self._doc = doc
+        self._doc = dict(doc)  # Make a mutable copy
         self.updated_with: dict | None = None
-        self.find_one_calls = []
-        self.update_one_calls = []
 
     async def find_one(self, query, projection=None, session=None):
-        self.find_one_calls.append({"filter": query, "projection": projection})
-        # Handle both flat queries {"id": ...} and $and queries from floor_query
-        doc_id = None
-        if "id" in query:
-            doc_id = query["id"]
-        elif "$and" in query:
-            # Extract id from $and clause (floor_query wraps in $and)
-            for clause in query["$and"]:
-                if "id" in clause:
-                    doc_id = clause["id"]
-                    break
-        return self._doc if doc_id == self._doc["id"] else None
+        # Verify the filter is just {"id": ...}, not floor-scoped.
+        # Strict assertion ensures no code ever uses floor_query() on already-authorized documents.
+        assert query == {"id": self._doc["id"]}, \
+            f"find_one must use bare {{'id': '{self._doc['id']}'}} filter, got {query}"
+        return self._doc
 
     async def update_one(self, query, update, session=None):
-        self.update_one_calls.append({"filter": query, "update": update})
-        self.updated_with = update
         # Verify the filter is just {"id": ...}, not floor-scoped
         assert query == {"id": self._doc["id"]}, f"Expected {{'id': '{self._doc['id']}'}}, got {query}"
+        self.updated_with = update
+        # Apply the update to simulate real Mongo behavior
+        if "$set" in update:
+            self._doc.update(update["$set"])
         return {"matched_count": 1, "modified_count": 1}
 
 
@@ -60,32 +53,25 @@ def test_get_customer_ignores_ambient_floor_mismatch(monkeypatch):
     assert result.id == "c1"
 
 
-def test_update_customer_ignores_ambient_floor_mismatch(monkeypatch):
-    from models import CustomerUpdatePayload
-    doc = {"id": "c1", "floor_id": "ground-floor", "name": "JK", "portal_enabled": False}
-    monkeypatch.setattr(customer_routes, "db", _FakeDb(doc))
-    monkeypatch.setattr(customer_routes, "log_event", lambda **_kw: asyncio.sleep(0))
-
-    result = asyncio.run(customer_routes.update_customer(
-        "c1", CustomerUpdatePayload(name="JK Updated"), user=_user(active_floor_id="first-floor"),
-    ))
-
-    assert result.id == "c1"
-    assert customer_routes.db.customers.updated_with["$set"]["name"] == "JK Updated"
-
-
 def test_update_customer_works_cross_floor(monkeypatch):
-    """Regression: update_customer must use bare {"id": ...} filter for
-    update_one and find_one when refetching the document, not floor_query().
-    Otherwise, ambient floor mismatch causes a silent no-op update, then
-    find_one returns None, then CustomerPublic(**None) raises TypeError 500."""
+    """Regression: update_customer must use bare {"id": ...} filter for both
+    update_one and find_one (trailing re-fetch), not floor_query().
+
+    When ambient floor mismatch occurs (e.g. editing ground-floor customer while
+    active_floor is first-floor), using floor_query causes:
+    1. update_one to silently match zero documents (Mongo doesn't raise on 0-match)
+    2. find_one to return None (due to floor filter not matching)
+    3. CustomerPublic(**None) to raise TypeError 500
+
+    The fake's strict assertions on both update_one and find_one ensure this
+    regression is caught immediately if anyone reverts to floor_query."""
     from models import CustomerUpdatePayload
     doc = {"id": "c1", "floor_id": "ground-floor", "name": "JK", "portal_enabled": False}
     monkeypatch.setattr(customer_routes, "db", _FakeDb(doc))
     monkeypatch.setattr(customer_routes, "log_event", lambda **_kw: asyncio.sleep(0))
 
     # Call update_customer with a customer on a different floor (ground-floor)
-    # but with a user whose ambient active floor is first-floor
+    # but with a user whose ambient active floor is first-floor (mismatch scenario)
     result = asyncio.run(customer_routes.update_customer(
         "c1", CustomerUpdatePayload(name="JK Updated"), user=_user(active_floor_id="first-floor"),
     ))
@@ -93,16 +79,8 @@ def test_update_customer_works_cross_floor(monkeypatch):
     # Verify the update succeeded and returned a valid Customer
     assert result.id == "c1"
     assert result.floor_id == "ground-floor"
+    assert result.name == "JK Updated"  # Verify the patch was actually applied
 
     # Verify update_one was called with bare {"id": ...} filter
-    # (the assertion inside update_one checks this)
-    assert len(customer_routes.db.customers.update_one_calls) == 1
-
-    # Verify find_one was called with bare {"id": ...} filter
-    # (to refetch the document after the update)
-    find_calls_with_bare_filter = [
-        call for call in customer_routes.db.customers.find_one_calls
-        if call["filter"] == {"id": "c1"}
-    ]
-    assert len(find_calls_with_bare_filter) > 0, \
-        f"Expected find_one to be called with bare filter, got {customer_routes.db.customers.find_one_calls}"
+    # (the assertion inside update_one checks this; if floor_query were used, it would fail)
+    assert customer_routes.db.customers.updated_with["$set"]["name"] == "JK Updated"
