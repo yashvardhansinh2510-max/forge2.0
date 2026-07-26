@@ -153,7 +153,7 @@ function useTilesDoc(docType: TilesDocType) {
   const persistRef = useRef<() => Promise<string | null>>(async () => null);
 
   useEffect(() => {
-    api.get<Customer[]>("/customers").then(setCustomers).catch(() => {});
+    api.get<Customer[]>("/customers", { floorId: "ground-floor" }).then(setCustomers).catch(() => {});
   }, []);
 
   // Restore a saved document.
@@ -317,7 +317,7 @@ function useTilesDoc(docType: TilesDocType) {
       // 1. Resolve the customer — reuse an explicit pick, else create one.
       let cid = customerId;
       if (!cid) {
-        const created = await api.post<Customer>("/customers", { name, phone: header.phone.trim() || null });
+        const created = await api.post<Customer>("/customers", { name, phone: header.phone.trim() || null }, { floorId: "ground-floor" });
         cid = created.id;
         setCustomerId(created.id);
         setCustomerSnapshot({ name, phone: header.phone.trim() });
@@ -342,7 +342,7 @@ function useTilesDoc(docType: TilesDocType) {
       };
       let id = docId;
       if (!id) {
-        const created = await api.post<{ id: string; number: string }>("/quotations", { ...payload, doc_type: docType });
+        const created = await api.post<{ id: string; number: string }>("/quotations", { ...payload, doc_type: docType }, { floorId: "ground-floor" });
         id = created.id;
         setDocId(created.id);
         setDocNumberServer(created.number);
