@@ -115,3 +115,45 @@ async def sales_overview(
         "trend": trend,
         "referrers": referrers,
     }
+
+
+@router.get("/referrers/{referrer_id}")
+async def referrer_detail(
+    referrer_id: str,
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    granularity: Granularity = Query("month"),
+    user: UserPublic = Depends(require_roles("owner", "admin")),
+):
+    referrer = await db.referrers.find_one({"id": referrer_id}, {"_id": 0})
+    if not referrer:
+        raise HTTPException(status_code=404, detail="Referrer not found")
+
+    floor_ids = _resolve_floor_ids(user, None)
+    quotations = await _won_quotations(floor_ids, date_from, date_to)
+    quotations = [q for q in quotations if q.get("referrer_id") == referrer_id]
+
+    trend_map: dict[str, float] = defaultdict(float)
+    for q in quotations:
+        ts = q.get("updated_at") or q.get("created_at")
+        if ts:
+            trend_map[_bucket_label(ts, granularity)] += q.get("grand_total", 0)
+    trend = [{"bucket": k, "revenue": round(v, 2)} for k, v in sorted(trend_map.items())]
+
+    quotes = sorted(
+        (
+            {
+                "id": q["id"], "number": q["number"], "customer_name": q["customer_name"],
+                "grand_total": q.get("grand_total", 0), "updated_at": q.get("updated_at"),
+            }
+            for q in quotations
+        ),
+        key=lambda q: q["updated_at"] or "", reverse=True,
+    )
+
+    return {
+        "referrer": referrer,
+        "total_revenue": round(sum(q.get("grand_total", 0) for q in quotations), 2),
+        "trend": trend,
+        "quotations": quotes,
+    }

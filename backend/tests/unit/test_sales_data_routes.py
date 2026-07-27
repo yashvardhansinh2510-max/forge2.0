@@ -121,3 +121,68 @@ def test_overview_referrer_type_filters_and_ranks(monkeypatch):
 
     assert result["total_revenue"] == 120000
     assert result["referrers"] == [{"referrer_id": "r1", "name": "Rakesh Sharma", "revenue": 120000}]
+
+
+class _CollectionWithFindOne(_Collection):
+    def __init__(self, docs, referrer_doc):
+        super().__init__(docs)
+        self._referrer_doc = referrer_doc
+
+    async def find_one(self, query, *_a, **_kw):
+        if self._referrer_doc and self._referrer_doc.get("id") == query.get("id"):
+            return self._referrer_doc
+        return None
+
+
+class _FakeDbWithReferrer:
+    def __init__(self, quotation_docs, referrer_doc):
+        self.quotations = _Collection(quotation_docs)
+        self.referrers = _CollectionWithFindOne([], referrer_doc)
+
+
+def test_referrer_detail_returns_trend_and_quotations(monkeypatch):
+    fake_db = _FakeDbWithReferrer(
+        quotation_docs=[
+            {
+                "id": "q1", "number": "FQ-1", "customer_name": "Amit", "status": "won",
+                "floor_id": "first-floor", "grand_total": 80000, "updated_at": "2026-07-01T00:00:00+00:00",
+                "referrer_id": "r1",
+            },
+            {
+                "id": "q2", "number": "FQ-2", "customer_name": "Priya", "status": "won",
+                "floor_id": "first-floor", "grand_total": 40000, "updated_at": "2026-08-01T00:00:00+00:00",
+                "referrer_id": "r1",
+            },
+            {
+                "id": "q3", "number": "FQ-3", "customer_name": "Other", "status": "won",
+                "floor_id": "first-floor", "grand_total": 99999, "updated_at": "2026-07-01T00:00:00+00:00",
+                "referrer_id": "r-someone-else",
+            },
+        ],
+        referrer_doc={"id": "r1", "name": "Rakesh Sharma Architects", "type": "architect"},
+    )
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    result = asyncio.run(sd.referrer_detail(
+        "r1", date_from=None, date_to=None, granularity="month", user=_owner(),
+    ))
+
+    assert result["referrer"]["name"] == "Rakesh Sharma Architects"
+    assert result["total_revenue"] == 120000
+    assert result["trend"] == [
+        {"bucket": "2026-07", "revenue": 80000},
+        {"bucket": "2026-08", "revenue": 40000},
+    ]
+    assert [q["number"] for q in result["quotations"]] == ["FQ-2", "FQ-1"]  # newest first
+
+
+def test_referrer_detail_404s_for_unknown_referrer(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    fake_db = _FakeDbWithReferrer(quotation_docs=[], referrer_doc=None)
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(sd.referrer_detail("missing", date_from=None, date_to=None, granularity="month", user=_owner()))
+    assert exc.value.status_code == 404
