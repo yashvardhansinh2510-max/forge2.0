@@ -29,16 +29,36 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # Mutually-exclusive day windows so payment_overdue / payment_partial never
 # both fire for the same order.
 PAYMENT_OVERDUE_DAYS = 5
-QUOTATION_INACTIVE_DAYS = 3
-QUOTATION_NEW_WINDOW_DAYS = 2
 CUSTOMER_INACTIVE_DAYS = 21
+
+# Floor-timed follow-up window — how long after a quotation/selection is
+# created before the first automated nudge appears. Ground Floor (Tiles)
+# gets a shorter window than First Floor (Sanitary) per the 2026-07-27
+# design decision. Unknown/missing floor falls back to the same default
+# used elsewhere for floor_id (`backend/auth.py`'s "first-floor" default).
+FLOOR_FOLLOWUP_DAYS = {"ground-floor": 4, "first-floor": 7}
+FOLLOWUP_DEFAULT_DAYS = 7
+
+
+def quotation_followup_delay_days(floor_id: str) -> int:
+    return FLOOR_FOLLOWUP_DAYS.get(floor_id, FOLLOWUP_DEFAULT_DAYS)
+
+
+def quotation_followup_due_at(created_at: datetime, floor_id: str) -> Optional[datetime]:
+    """None if the floor-timed follow-up window hasn't elapsed yet for a
+    quotation/selection created at `created_at`; otherwise the fixed due_at
+    instant (created_at + delay). Always the same value for the same
+    inputs, so repeated reconcile passes never drift the due date — only a
+    staff-initiated reschedule (PATCH .../due_at) changes it after that."""
+    due = created_at + timedelta(days=quotation_followup_delay_days(floor_id))
+    return due if datetime.now(timezone.utc) >= due else None
+
+
 DELIVERED_RECENCY_DAYS = 5
 
 RULE_DEFINITIONS = [
-    {"rule_type": "quotation_new", "label": "New quotation", "category": "quotation",
-     "description": "Fires within ~2 days of a quotation being created — strike while interest is highest."},
-    {"rule_type": "quotation_inactive", "label": "Quotation inactive", "category": "quotation",
-     "description": f"No status change for {QUOTATION_INACTIVE_DAYS}+ days on a sent quotation."},
+    {"rule_type": "quotation_followup", "label": "Quotation/selection follow-up", "category": "quotation",
+     "description": "Floor-timed nudge — Ground Floor (Tiles) at 4 days, First Floor (Sanitary) at 7 days after creation."},
     {"rule_type": "quotation_expiring", "label": "Quotation expiring", "category": "quotation",
      "description": "Valid-until date falls within the next 3 days."},
     {"rule_type": "quotation_expired", "label": "Quotation expired", "category": "quotation",
@@ -265,29 +285,23 @@ async def reconcile_followups() -> dict:
         days_since_contact = age_days(last_contact)
         tags = [tier.upper()] + ([q["reference_source"]] if q.get("reference_source") else [])
 
-        if status in ("draft", "sent", "pending_approval"):
-            age_created = age_days(created_at)
-            age_updated = age_days(updated_at)
-            if age_created <= QUOTATION_NEW_WINDOW_DAYS:
+        if status in ("draft", "sent", "pending_approval") and created_at:
+            q_floor_id = _followup_floor_id(q, None)
+            due = quotation_followup_due_at(created_at, q_floor_id)
+            if due:
+                is_selection = q.get("doc_type") == "tiles_selection"
+                age_created = age_days(created_at)
                 upsert(
-                    f"quotation_new:{q['id']}", "quotation_new", "quotation", cust,
-                    quotation=q, value=value,
-                    due_at=((created_at or now) + timedelta(hours=6)).isoformat(),
-                    urgency_bullet="Fresh quotation — high intent window", urgency_pts=18,
-                    reason=f"New quotation just created — ₹{money_short(value)}. Reach out while interest is high.",
+                    f"quotation_followup:{q['id']}", "quotation_followup", "quotation", cust,
+                    quotation=q, value=value, due_at=due.isoformat(),
+                    urgency_bullet=f"No follow-up since it was created {age_created} days ago", urgency_pts=20,
+                    reason=(
+                        f"{'Selection' if is_selection else 'Quotation'} created {age_created} day(s) ago — "
+                        f"₹{money_short(value)}. Time to follow up."
+                    ),
                     next_action="Call customer",
-                    next_action_reason="Fresh quotation — strike while interest is highest.",
+                    next_action_reason=f"{quotation_followup_delay_days(q_floor_id)}-day follow-up window has passed.",
                     channel="call", tags=tags, days_since_contact=days_since_contact,
-                )
-            elif age_updated >= QUOTATION_INACTIVE_DAYS:
-                upsert(
-                    f"quotation_inactive:{q['id']}", "quotation_inactive", "quotation", cust,
-                    quotation=q, value=value, due_at=now_iso(),
-                    urgency_bullet=f"No response for {age_updated} days", urgency_pts=18,
-                    reason=f"No response for {age_updated} days on a ₹{money_short(value)} quotation.",
-                    next_action="Send WhatsApp",
-                    next_action_reason="Customer has gone quiet — a nudge message often revives cold quotes.",
-                    channel="whatsapp", tags=tags, days_since_contact=days_since_contact,
                 )
 
         if status in ("sent", "pending_approval", "approved") and q.get("valid_until"):

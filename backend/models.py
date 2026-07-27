@@ -842,9 +842,9 @@ class PaymentCreate(BaseModel):
 
 # ---------- Follow-ups (Sales Command Center) ----------
 FollowupRuleType = Literal[
-    "quotation_new", "quotation_inactive", "quotation_expiring", "quotation_expired",
-    "payment_overdue", "payment_partial", "purchase_dispatched", "purchase_delivered",
-    "customer_inactive", "shortage_reorder", "manual",
+    "quotation_new", "quotation_inactive", "quotation_followup", "quotation_expiring",
+    "quotation_expired", "payment_overdue", "payment_partial", "purchase_dispatched",
+    "purchase_delivered", "customer_inactive", "shortage_reorder", "manual",
 ]
 FollowupCategory = Literal[
     "quotation", "payment", "purchase", "dispatch", "delivery",

@@ -440,7 +440,7 @@ export default function FollowupsScreen() {
       ));
     }
     if (kpiFilter === "waiting") {
-      list = list.filter((f) => f.status === "open" && (f.rule_type === "quotation_inactive" || f.rule_type === "payment_partial"));
+      list = list.filter((f) => f.status === "open" && (f.rule_type === "quotation_followup" || f.rule_type === "payment_partial"));
     } else if (kpiFilter === "completed") {
       list = list.filter((f) => f.bucket === "completed" && !!f.completed_at && isSameDay(f.completed_at, new Date()));
     } else if (kpiFilter !== "all") {

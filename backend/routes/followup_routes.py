@@ -112,7 +112,7 @@ async def stats(user: UserPublic = Depends(get_current_user)):
 
     today_critical = sum(1 for d in docs if d["bucket"] == "today" and d["effective_priority_level"] == "critical")
     waiting_for_customer = sum(
-        1 for d in docs if d.get("status") == "open" and d.get("rule_type") in ("quotation_inactive", "payment_partial")
+        1 for d in docs if d.get("status") == "open" and d.get("rule_type") in ("quotation_followup", "payment_partial")
     )
 
     # Split "overdue" into payment-specific vs generic — fixes the "which

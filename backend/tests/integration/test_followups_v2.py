@@ -109,15 +109,16 @@ class TestEventTriggeredReconciliation:
         r2 = session.patch(f"{API}/quotations/{qid}", json={"status": "sent"}, headers=_h(owner_token), timeout=20)
         assert r2.status_code == 200, r2.text
 
-        def fetch():
-            return session.get(f"{API}/followups", params={"q": qnum}, headers=_h(owner_token), timeout=15).json()
-
-        rows = _poll_until(fetch, lambda rows: len(rows) > 0, timeout=15)
-        assert rows, f"Expected an automated follow-up for quotation {qnum} to appear WITHOUT manual reconcile call"
-        assert any(row.get("quotation_number") == qnum for row in rows)
-        matched = next(row for row in rows if row.get("quotation_number") == qnum)
-        assert matched["rule_type"] in ("quotation_new", "quotation_inactive")
-        assert matched["is_automated"] is True
+        # As of the 2026-07-27 floor-timed follow-up redesign, a same-day
+        # quotation must NOT produce an automated quotation_followup card —
+        # the first nudge is deferred to 4 days (ground floor) / 7 days
+        # (first floor) after creation. Give the event-triggered reconcile
+        # pass a moment to run, then confirm it correctly produced nothing
+        # for this quotation yet.
+        time.sleep(2)
+        rows = session.get(f"{API}/followups", params={"q": qnum}, headers=_h(owner_token), timeout=15).json()
+        matched = [row for row in rows if row.get("quotation_number") == qnum and row.get("rule_type") == "quotation_followup"]
+        assert matched == [], "A same-day quotation must not surface a quotation_followup card yet"
 
     def test_order_confirm_and_payment_and_dispatch_trigger_reconcile(self, session, owner_token, catalog):
         # 1) Create quotation
