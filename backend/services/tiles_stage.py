@@ -72,16 +72,16 @@ def next_tiles_action(doc_type: str, status: str) -> dict | None:
     "next_status": str | None}."""
     if doc_type == "tiles_selection":
         if status == "draft":
-            return {"label": "Submit for approval", "kind": "patch_status", "next_status": "pending_approval"}
+            return {"label": "Submit for approval", "kind": "patch_status", "next_status": NEXT_TILES_STATUS.get(status)}
         if status == "pending_approval":
-            return {"label": "Approve", "kind": "patch_status", "next_status": "approved"}
+            return {"label": "Approve", "kind": "patch_status", "next_status": NEXT_TILES_STATUS.get(status)}
         if status == "approved":
             return {"label": "Move to Quotation", "kind": "move_to_quotation", "next_status": None}
         return None
     if doc_type == "tiles_quotation":
         if status == "draft":
-            return {"label": "Submit for confirmation", "kind": "patch_status", "next_status": "pending_approval"}
+            return {"label": "Submit for confirmation", "kind": "patch_status", "next_status": NEXT_TILES_STATUS.get(status)}
         if status == "pending_approval":
-            return {"label": "Confirm", "kind": "patch_status", "next_status": "approved"}
+            return {"label": "Confirm", "kind": "patch_status", "next_status": NEXT_TILES_STATUS.get(status)}
         return None
     return None
