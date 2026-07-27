@@ -763,7 +763,7 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
             </View>
             <View style={[selStyles.td, flex(3), { padding: 2 }]}>
               {row.image ? (
-                <Image source={{ uri: row.image }} resizeMode="contain" style={{ width: "100%", height: 88 }} />
+                <Image source={{ uri: row.image }} resizeMode="contain" style={{ width: "100%", aspectRatio: 16 / 10 }} />
               ) : null}
             </View>
             <View style={[selStyles.td, flex(4)]}>
@@ -965,7 +965,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
               />
             </View>
             <View style={[quoStyles.td, flex(2), { padding: 2 }]}>
-              {row.image ? <Image source={{ uri: row.image }} resizeMode="contain" style={{ width: "100%", height: 68 }} /> : null}
+              {row.image ? <Image source={{ uri: row.image }} resizeMode="contain" style={{ width: "100%", aspectRatio: 16 / 10 }} /> : null}
             </View>
             <View style={[quoStyles.td, flex(3)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
