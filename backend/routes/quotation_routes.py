@@ -32,6 +32,7 @@ from services.pricing import effective_discount_pct as _effective_discount_pct
 from services.pricing import per_line_net_amounts
 from services.pricing import recalc_quotation_totals as _recalc
 from services.sequence import next_number
+from services.tiles_stage import can_move_to_quotation, can_place_order
 
 router = APIRouter(prefix="/quotations", tags=["quotations"])
 
@@ -460,6 +461,34 @@ async def duplicate_quotation(
     return await create_quotation(body, user)
 
 
+@router.post("/{quotation_id}/move-to-quotation", response_model=Quotation)
+async def move_to_quotation(
+    quotation_id: str,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Promote an approved Tiles Selection into the Quotation stage — see
+    docs/superpowers/specs/2026-07-27-quotation-tiles-workflow-design.md.
+    Metadata-only: doc_type flips, status resets to draft for a fresh
+    pricing pass. `items` (products/area/size/rate_sqft already entered) is
+    left completely untouched so everything already filled in at Selection
+    carries over automatically — there is nothing to copy, it's the same
+    array on the same document."""
+    doc = await get_floor_scoped_or_404(
+        db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0},
+    )
+    if not can_move_to_quotation(doc.get("doc_type", ""), doc.get("status", "")):
+        raise HTTPException(
+            status_code=400,
+            detail="Only an approved Tiles Selection can be moved to the Quotation stage",
+        )
+    await db.quotations.update_one(
+        {"id": quotation_id},
+        {"$set": {"doc_type": "tiles_quotation", "status": "draft", "updated_at": now_iso()}},
+    )
+    fresh = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
+    return fresh
+
+
 # --- Breakdown (for line + totals transparency) ---
 @router.get("/{quotation_id}/breakdown")
 async def quotation_breakdown(quotation_id: str, user: UserPublic = Depends(get_current_user)):
@@ -747,6 +776,8 @@ async def _brand_grouped_preview(doc: dict) -> dict:
 @router.get("/{quotation_id}/place-order/preview")
 async def place_order_preview(quotation_id: str, user: UserPublic = Depends(require_min_role("sales"))):
     doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
+    if not can_place_order(doc.get("doc_type", "standard"), doc.get("status", "draft")):
+        raise HTTPException(status_code=400, detail="Confirm the quotation before placing the order")
     if not doc.get("items"):
         raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
     return await _brand_grouped_preview(doc)
@@ -766,6 +797,8 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
                         db.quotations, quotation_id, user, not_found="Quotation not found",
                         projection={"_id": 0}, session=session,
                     )
+                    if not can_place_order(doc.get("doc_type", "standard"), doc.get("status", "draft")):
+                        raise HTTPException(status_code=400, detail="Confirm the quotation before placing the order")
                     if not doc.get("items"):
                         raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
                     await db.quotations.update_one(
