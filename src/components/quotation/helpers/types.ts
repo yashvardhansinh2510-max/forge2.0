@@ -44,11 +44,19 @@ export type Category = { id: string; name: string; product_count?: number };
 
 export type Customer = { id: string; name: string; company?: string | null; email?: string | null; phone?: string | null };
 
+export type Referrer = {
+  id: string; name: string; type: "architect" | "interior_designer";
+  phone?: string | null; company?: string | null;
+};
+
 // V4 header fields — captured on the topbar so the salesperson never leaves the workspace.
 export type QuotationHeader = {
   projectName: string;
   phone: string;
   referenceSource: string;
+  referrerType: "architect" | "interior_designer" | null;
+  referrerId: string | null;
+  referrerName: string;
 };
 
 export type RecentQuotation = {
@@ -122,7 +130,7 @@ export const DEFAULT_ROOMS = [
 
 export const INITIAL_BUILDER_STATE: BuilderState = {
   customerId: null,
-  header: { projectName: "", phone: "", referenceSource: "" },
+  header: { projectName: "", phone: "", referenceSource: "", referrerType: null, referrerId: null, referrerName: "" },
   lines: [],
   rooms: [DEFAULT_ROOMS[0]],
   collapsedRooms: {},

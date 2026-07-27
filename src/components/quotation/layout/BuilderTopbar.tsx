@@ -110,6 +110,19 @@ export function BuilderTopbar({
             placeholder="Walk-in · Architect · Instagram"
             testID="hdr-ref"
           />
+          <Pressable
+            testID="hdr-referrer"
+            onPress={() => b.setReferrerSwitcherOpen(true)}
+            style={({ pressed }) => [styles.field, styles.fieldPressable, pressed && styles.fieldPressed]}
+          >
+            <Text style={styles.fieldLabel}>Referred By</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+              <Text style={styles.fieldValue} numberOfLines={1}>
+                {b.s.header.referrerName || "None"}
+              </Text>
+              <Feather name="chevron-down" size={11} color={colors.onSurfaceMuted} />
+            </View>
+          </Pressable>
         </ScrollView>
       ) : null}
 
