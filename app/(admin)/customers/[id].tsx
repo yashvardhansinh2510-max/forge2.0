@@ -17,6 +17,7 @@ import {
 } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
+import { tilesStageLabel } from "@/src/components/tiles/tilesStage";
 import { toast } from "@/src/components/Toast";
 import { colors, icon as iconSize, money, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
 import {
@@ -28,7 +29,7 @@ type Customer = {
   phone?: string | null; city?: string | null; tier: "retail" | "trade" | "vip";
   address?: string | null;
 };
-type Quotation = { id: string; number: string; status: string; grand_total: number; created_at: string; items: any[] };
+type Quotation = { id: string; number: string; status: string; doc_type?: string; grand_total: number; created_at: string; items: any[] };
 type PO = { id: string; number: string; brand_name?: string | null; status: string; grand_total: number; created_at: string };
 
 type WorkspaceProduct = {
@@ -209,6 +210,11 @@ export default function CustomerDetail() {
     [quotations],
   );
 
+  const tilesHistory = useMemo(
+    () => quotations.filter((q) => q.doc_type === "tiles_selection" || q.doc_type === "tiles_quotation"),
+    [quotations],
+  );
+
   if (loadError) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -336,6 +342,31 @@ export default function CustomerDetail() {
               <Text style={[type.overline, { marginBottom: spacing.md }]}>Latest activity</Text>
               <ActivityTimeline events={timeline.slice(0, 8)} dense emptyLabel="No activity yet" />
             </Card>
+            {tilesHistory.length > 0 ? (
+              <Card>
+                <Text style={[type.overline, { marginBottom: spacing.md }]}>Tile history</Text>
+                {tilesHistory.map((doc, i) => (
+                  <Pressable
+                    key={doc.id}
+                    onPress={() => router.push(`/(admin)/tiles/${doc.doc_type === "tiles_selection" ? "selection" : "quotation"}?id=${doc.id}` as any)}
+                    style={({ pressed, hovered }: any) => [
+                      styles.listRow,
+                      {
+                        borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
+                        borderTopColor: colors.divider,
+                        backgroundColor: pressed ? colors.surfaceTertiary : hovered ? colors.surfaceSubtle : "transparent",
+                      },
+                    ]}
+                  >
+                    <Text style={[type.mono, { width: 120 }]} numberOfLines={1}>{doc.number}</Text>
+                    <Text style={{ flex: 1, minWidth: 0 }} numberOfLines={1}>{tilesStageLabel(doc.doc_type!, doc.status)}</Text>
+                    <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]} numberOfLines={1}>
+                      {money(doc.grand_total)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </Card>
+            ) : null}
           </>
         ) : tab === "quotations" ? (
           quotations.length === 0 ? (
