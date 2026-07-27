@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 
-from auth import accessible_floor_ids
 from models import UserPublic
 from routes import sales_data_routes as sd
 

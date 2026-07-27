@@ -15,7 +15,7 @@ from db import db
 from models import (
     CustomerPublic, PurchaseOrder, PurchaseOrderItem, PurchaseStatusEvent, PurchaseStageEvent,
     Quotation, QuotationCreate, QuotationLineItem, QuotationRevision,
-    QuotationUpdate, ReferrerType, RoomDiscountCfg, UserPublic, now_iso,
+    QuotationUpdate, RoomDiscountCfg, UserPublic, now_iso,
 )
 from pdf_generator import build_quotation_pdf
 from pdf_tiles import build_tiles_quotation_pdf, build_tiles_selection_pdf, tiles_pdf_filename

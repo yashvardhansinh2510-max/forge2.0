@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import accessible_floor_ids, require_roles
 from db import db
-from models import UserPublic
+from models import ReferrerType, UserPublic
 from services.pricing import per_line_net_amounts
 
 router = APIRouter(prefix="/sales-data", tags=["sales-data"])
@@ -67,7 +67,7 @@ async def _won_quotations(
 @router.get("/overview")
 async def sales_overview(
     floor_id: Optional[str] = Query(None),
-    referrer_type: Optional[Literal["architect", "interior_designer"]] = Query(None),
+    referrer_type: Optional[ReferrerType] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     granularity: Granularity = Query("month"),
