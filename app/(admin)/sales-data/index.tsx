@@ -181,7 +181,7 @@ export default function SalesData() {
                 <TableRow
                   key={r.referrer_id}
                   isLast={i === overview.referrers!.length - 1}
-                  onPress={() => router.push(`/(admin)/sales-data/referrer/${r.referrer_id}` as any)}
+                  onPress={() => router.push(`/(admin)/sales-data/referrer/${r.referrer_id}?preset=${preset}` as any)}
                   testID={`referrer-rank-row-${r.referrer_id}`}
                 >
                   <TableCell flex={2}>{r.name}</TableCell>
@@ -205,7 +205,7 @@ export default function SalesData() {
                 <TableRow
                   key={b.brand_id}
                   isLast={i === brands.length - 1}
-                  onPress={() => router.push(`/(admin)/sales-data/brand/${b.brand_id}` as any)}
+                  onPress={() => router.push(`/(admin)/sales-data/brand/${b.brand_id}?preset=${preset}` as any)}
                   testID={`brand-rank-row-${b.brand_id}`}
                 >
                   <TableCell flex={2}>{b.brand_name}</TableCell>
