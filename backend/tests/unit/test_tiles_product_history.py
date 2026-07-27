@@ -44,11 +44,21 @@ class _FakeDb:
 
 
 def test_product_history_returns_most_recent_match(monkeypatch):
+    # Two competing documents for the same customer+product, already ordered
+    # newest-first (the fake cursor's .sort() is a no-op — it just returns
+    # whatever list it was constructed with, mirroring real Mongo's
+    # `.sort("created_at", -1)` behavior). The endpoint must return the FIRST
+    # match it finds, so this proves it picks `newer` over `older` rather
+    # than e.g. the last match, or being indifferent to order entirely.
     newer = {
         "number": "FQ-2026-0050", "created_at": "2026-06-01T00:00:00+00:00", "doc_date": "01-Jun-26",
         "items": [{"product_id": "prod-1", "size": "1200X1800", "rate_sqft": 135, "unit_price": 220, "pcs_per_box": "BOX"}],
     }
-    fake_db = _FakeDb([newer])
+    older = {
+        "number": "FQ-2026-0010", "created_at": "2026-01-01T00:00:00+00:00", "doc_date": "01-Jan-26",
+        "items": [{"product_id": "prod-1", "size": "600X600", "rate_sqft": 60, "unit_price": 90, "pcs_per_box": "SET"}],
+    }
+    fake_db = _FakeDb([newer, older])
     monkeypatch.setattr(quotation_routes, "db", fake_db)
 
     result = asyncio.run(quotation_routes.tiles_product_history(customer_id="cust-1", product_id="prod-1", user=_user()))
