@@ -1,14 +1,17 @@
-import { Redirect } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { api } from "@/src/api/client";
 import {
-  EmptyState, ErrorState, LoadingState, PillTabs, SegmentedControl, Tabs,
+  EmptyState, ErrorState, KpiCard, LoadingState, PillTabs, SegmentedControl, Table, TableCell,
+  TableHeader, TableRow, Tabs,
 } from "@/src/components/ui";
+import { fmtMoney } from "@/src/design/tokens";
 import { spacing } from "@/src/theme/tokens";
 import { useAuth } from "@/src/state/auth";
+import { TrendChart } from "@/src/components/salesData/TrendChart";
 import {
   DATE_PRESET_LABEL, DatePreset, Granularity, OverviewResponse, ReferredByFilter, presetToRange,
 } from "@/src/components/salesData/salesDataApi";
@@ -18,6 +21,7 @@ type PageTab = "overview" | "brand";
 
 export default function SalesData() {
   const { staff } = useAuth();
+  const router = useRouter();
 
   // All hooks are declared unconditionally, in the same order every render —
   // the role check below is a plain `if` AFTER every hook call, never a
@@ -110,8 +114,67 @@ export default function SalesData() {
       {!error && overview && overview.total_revenue === 0 ? (
         <EmptyState title="No sales in this range" subtitle="Try a wider date range or different filters." />
       ) : null}
-      {/* Overview KPI cards, trend chart, and referrer list are added in Task 9-10.
-          By Brand tab content is added in Task 11. */}
+      {!error && overview && overview.total_revenue > 0 && tab === "overview" ? (
+        <View style={{ gap: spacing.lg }}>
+          <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
+            {referredBy === "all" ? (
+              <>
+                <KpiCard label="Total Revenue" value={`₹${fmtMoney(overview.total_revenue)}`} style={{ flex: 1, minWidth: 160 }} />
+                {overview.revenue_by_floor.map((f) => {
+                  const floor = floors.find((fl) => fl.id === f.floor_id);
+                  return (
+                    <KpiCard
+                      key={f.floor_id}
+                      label={floor?.name || f.floor_id}
+                      value={`₹${fmtMoney(f.revenue)}`}
+                      style={{ flex: 1, minWidth: 160 }}
+                    />
+                  );
+                })}
+              </>
+            ) : (
+              // Referrer type selected — KPIs re-scope IN PLACE (same row,
+              // same position) rather than the page restructuring, per the
+              // approved design: Architect/Interior Designer Revenue, how
+              // many people contributed, and the average deal size.
+              <>
+                <KpiCard
+                  label={referredBy === "architect" ? "Architect Revenue" : "Interior Designer Revenue"}
+                  value={`₹${fmtMoney(overview.total_revenue)}`}
+                  style={{ flex: 1, minWidth: 160 }}
+                />
+                <KpiCard
+                  label="# Active"
+                  value={String(overview.referrers?.length || 0)}
+                  style={{ flex: 1, minWidth: 160 }}
+                />
+                <KpiCard
+                  label="Avg Deal Size"
+                  value={`₹${fmtMoney(overview.quotation_count ? overview.total_revenue / overview.quotation_count : 0)}`}
+                  style={{ flex: 1, minWidth: 160 }}
+                />
+              </>
+            )}
+          </View>
+          <TrendChart points={overview.trend} />
+          {overview.referrers ? (
+            <Table>
+              <TableHeader columns={[{ label: "Name", flex: 2 }, { label: "Revenue", align: "right" }]} />
+              {overview.referrers.map((r, i) => (
+                <TableRow
+                  key={r.referrer_id}
+                  isLast={i === overview.referrers!.length - 1}
+                  onPress={() => router.push(`/(admin)/sales-data/referrer/${r.referrer_id}` as any)}
+                  testID={`referrer-rank-row-${r.referrer_id}`}
+                >
+                  <TableCell flex={2}>{r.name}</TableCell>
+                  <TableCell align="right">₹{fmtMoney(r.revenue)}</TableCell>
+                </TableRow>
+              ))}
+            </Table>
+          ) : null}
+        </View>
+      ) : null}
     </AdminPage>
   );
 }
