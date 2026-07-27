@@ -23,7 +23,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from auth import floor_for_write, floor_query, get_current_user
+from auth import floor_for_write, floor_query, get_current_user, require_min_role
 from db import db
 from models import (
     Followup, FollowupCallOutcomePayload, FollowupCompletePayload,
@@ -356,6 +356,41 @@ async def list_followups(
 
     docs.sort(key=lambda d: _followup_sort_key(d, user.id))
     return docs[:limit]
+
+
+_ASSIGNMENT_STATUS_RANK = {"open": 0, "snoozed": 1, "done": 2, "dismissed": 2}
+
+
+def _assignment_row(f: dict) -> dict:
+    return {
+        "id": f["id"], "assigned_to": f.get("assigned_to"), "assigned_to_name": f.get("assigned_to_name"),
+        "customer_name": f.get("customer_name"), "reason": f.get("reason"), "category": f.get("category"),
+        "status": f.get("status"), "bucket": compute_bucket(f),
+        "days_pending": age_days(parse_iso(f.get("created_at"))),
+        "due_at": f.get("due_at"), "created_at": f.get("created_at"),
+    }
+
+
+def _assignment_sort_key(row: dict) -> tuple:
+    return (_ASSIGNMENT_STATUS_RANK.get(row["status"], 3), -row["days_pending"])
+
+
+@router.get("/assignments")
+async def list_assignments(
+    include_completed: bool = False,
+    user: UserPublic = Depends(require_min_role("manager")),
+):
+    """Who has what assigned, how long it's been pending, and whether it's
+    done — manager/admin/owner only. See
+    docs/superpowers/specs/2026-07-27-followups-revamp-design.md."""
+    status_filter = ["open", "snoozed"] + (["done", "dismissed"] if include_completed else [])
+    docs = await db.followups.find(
+        floor_query(user, {"assigned_to": {"$ne": None}, "status": {"$in": status_filter}}),
+        {"_id": 0},
+    ).to_list(5000)
+    rows = [_assignment_row(f) for f in docs]
+    rows.sort(key=_assignment_sort_key)
+    return rows
 
 
 # ─────────────────────────────────────────────────────────────────────────────
