@@ -435,6 +435,31 @@ class RoomDiscountCfg(BaseModel):
     value: float = 0
 
 
+# ---------- Referrers (Sales Data > Referred By) ----------
+# Architects and interior designers who send business our way. Deliberately
+# minimal — just enough to attribute revenue to a specific person. Existing
+# free-text Quotation.reference_source ("Walk-in", "Instagram", etc.) is
+# untouched; these fields are only used when a quotation's referrer_type is
+# architect/interior_designer. See
+# docs/superpowers/specs/2026-07-27-sales-data-dashboard-design.md.
+ReferrerType = Literal["architect", "interior_designer"]
+
+
+class Referrer(TimestampedModel):
+    name: str
+    type: ReferrerType
+    phone: Optional[str] = None
+    company: Optional[str] = None
+    created_by: str
+
+
+class ReferrerCreate(BaseModel):
+    name: str
+    type: ReferrerType
+    phone: Optional[str] = None
+    company: Optional[str] = None
+
+
 class Quotation(TimestampedModel):
     floor_id: str = "first-floor"
     number: str                          # human-readable e.g. FQ-2026-0001
