@@ -1188,7 +1188,13 @@ Add right after the existing `createCustomer` function:
   const clearReferrer = useCallback(() => {
     history.apply((cur) => ({ ...cur, header: { ...cur.header, referrerType: null, referrerId: null, referrerName: "" } }));
     if (quotationId) {
-      api.patch(`/quotations/${quotationId}`, { referrer_type: null, referrer_id: null })
+      // referrer_id: "" (not null) — the backend's update_quotation gates on
+      // `if body.referrer_id is not None`, and JSON null deserializes to
+      // Python None, which would make that check False and silently no-op
+      // the clear. An empty string passes the `is not None` gate and then
+      // hits the existing falsy-string branch that already clears all three
+      // referrer fields (see Task 2, update_quotation).
+      api.patch(`/quotations/${quotationId}`, { referrer_type: null, referrer_id: "" })
         .then(() => { setSaveState("saved"); setSavedAt(new Date()); })
         .catch((e: any) => toast.error(e?.detail || "Could not clear referrer"));
     }
@@ -1418,7 +1424,7 @@ Expected: no new errors in the files touched this task
 
 - [ ] **Step 10: Manual verification**
 
-Start the app (`cd frontend && npx expo start --web`), open the quotation builder, click the new "Referred By" pill, switch between Architect/Interior Designer tabs, add a new referrer via "+ Add new", confirm it's selected and shown in the pill, reload the builder for that same quotation and confirm the referrer is restored.
+Start the app (`cd frontend && npx expo start --web`), open the quotation builder, click the new "Referred By" pill, switch between Architect/Interior Designer tabs, add a new referrer via "+ Add new", confirm it's selected and shown in the pill, reload the builder for that same quotation and confirm the referrer is restored. Then click the pill again and select "None" — confirm the pill goes back to showing "None" and, after a reload, stays cleared (this specifically exercises the empty-string-vs-null clear fix in Step 3).
 
 - [ ] **Step 11: Commit**
 
