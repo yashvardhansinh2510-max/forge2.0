@@ -15,11 +15,12 @@ import type { Product } from "@/src/components/quotation/helpers/types";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
 export function TilesProductPicker({
-  open, onClose, onPick,
+  open, onClose, onPick, customerId,
 }: {
   open: boolean;
   onClose: () => void;
-  onPick: (product: Product) => void;
+  onPick: (product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null }) => void;
+  customerId?: string | null;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Product[]>([]);
@@ -56,11 +57,28 @@ export function TilesProductPicker({
     return () => { if (debounce.current) clearTimeout(debounce.current); };
   }, [query, open, search]);
 
-  const pick = useCallback((product: Product | undefined) => {
+  const pick = useCallback(async (product: Product | undefined) => {
     if (!product) return;
+    if (customerId) {
+      try {
+        const history = await api.get<{ found: boolean; size?: string; rate_sqft?: number; rate_box?: number; pcs_per_box?: string }>(
+          `/quotations/tiles/product-history?customer_id=${customerId}&product_id=${product.id}`,
+        );
+        if (history.found) {
+          onPick(product, {
+            size: history.size ?? null, rate_sqft: history.rate_sqft ?? null,
+            rate_box: history.rate_box ?? null, pcs_per_box: history.pcs_per_box ?? null,
+          });
+          onClose();
+          return;
+        }
+      } catch {
+        // History lookup is a convenience — fall through to the normal pick on any failure.
+      }
+    }
     onPick(product);
     onClose();
-  }, [onPick, onClose]);
+  }, [customerId, onPick, onClose]);
 
   const move = useCallback((delta: number) => {
     setHighlight((cur) => {

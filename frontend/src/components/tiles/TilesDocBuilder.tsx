@@ -244,7 +244,7 @@ function useTilesDoc(docType: TilesDocType) {
     markDirty();
   }, [markDirty]);
 
-  const applyProduct = useCallback((key: string, product: Product) => {
+  const applyProduct = useCallback((key: string, product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null }) => {
     const image = productImageList(product)[0] || null;
     const specs = product.specs || {};
     const specNum = (...keys: string[]): string => {
@@ -271,17 +271,18 @@ function useTilesDoc(docType: TilesDocType) {
         name: product.name,
         image,
         mrp: product.mrp ?? null,
-        size: product.size || product.dimensions || row.size,
-        rateSqft: product.price ? String(product.price) : row.rateSqft,
-        rateBox: specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox,
-        pcsBox: specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox,
+        size: history?.size || product.size || product.dimensions || row.size,
+        rateSqft: history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft),
+        rateBox: history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox),
+        pcsBox: history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox,
         totalEdited: false,
       };
       next.total = computedTotal(next);
       return next;
     }));
+    if (history) toast.show(`Used ${customerId ? "this customer's" : ""} last rate for ${product.name}`.replace("  ", " "));
     markDirty();
-  }, [markDirty]);
+  }, [markDirty, customerId]);
 
   // ---- Persistence -------------------------------------------------------
   const buildItems = useCallback(() => {
@@ -811,7 +812,8 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
       <TilesProductPicker
         open={pickerRow !== null}
         onClose={() => setPickerRow(null)}
-        onPick={(product) => { if (pickerRow) doc.applyProduct(pickerRow, product); }}
+        onPick={(product, history) => { if (pickerRow) doc.applyProduct(pickerRow, product, history); }}
+        customerId={doc.customerId}
       />
     </View>
   );
@@ -1044,7 +1046,8 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
       <TilesProductPicker
         open={pickerRow !== null}
         onClose={() => setPickerRow(null)}
-        onPick={(product) => { if (pickerRow) doc.applyProduct(pickerRow, product); }}
+        onPick={(product, history) => { if (pickerRow) doc.applyProduct(pickerRow, product, history); }}
+        customerId={doc.customerId}
       />
     </View>
   );
