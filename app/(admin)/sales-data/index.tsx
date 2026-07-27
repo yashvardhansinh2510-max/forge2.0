@@ -63,8 +63,7 @@ export default function SalesData() {
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    if (tab !== "brand") return;
+  const loadBrands = useCallback(() => {
     setBrandsError(null);
     setBrands(null);
     const { date_from, date_to } = presetToRange(preset);
@@ -74,7 +73,12 @@ export default function SalesData() {
     api.get<{ brands: BrandRow[] }>(`/sales-data/brands?${params.toString()}`)
       .then((res) => setBrands(res.brands))
       .catch((e: any) => setBrandsError(e?.detail || "Could not load brand revenue"));
-  }, [tab, preset]);
+  }, [preset]);
+
+  useEffect(() => {
+    if (tab !== "brand") return;
+    loadBrands();
+  }, [tab, loadBrands]);
 
   if (staff && staff.role !== "owner" && staff.role !== "admin") {
     return <Redirect href="/(admin)/dashboard" />;
@@ -195,7 +199,7 @@ export default function SalesData() {
 
       {tab === "brand" ? (
         <View style={{ gap: spacing.lg }}>
-          {brandsError ? <ErrorState subtitle={brandsError} /> : null}
+          {brandsError ? <ErrorState subtitle={brandsError} onRetry={loadBrands} /> : null}
           {!brandsError && !brands ? <LoadingState label="Loading brand revenue…" /> : null}
           {brands && brands.length === 0 ? <EmptyState title="No brand revenue in this range" /> : null}
           {brands && brands.length > 0 ? (
