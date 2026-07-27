@@ -480,6 +480,9 @@ class Quotation(TimestampedModel):
     project_name: Optional[str] = None
     phone_snapshot: Optional[str] = None      # frozen at quote time (customer.phone can change)
     reference_source: Optional[str] = None    # "Walk-in", "Reference", "Instagram", "Architect", etc.
+    referrer_type: Optional[ReferrerType] = None   # set only when reference_source-style
+    referrer_id: Optional[str] = None               # tracking is via a structured Referrer
+    referrer_name: Optional[str] = None              # denormalized at write time — see Referrer
     status: QuotationStatus = "draft"
     items: list[QuotationLineItem] = []
     rooms: list[str] = []                # ordered list of room labels
@@ -517,6 +520,8 @@ class QuotationCreate(BaseModel):
     project_name: Optional[str] = None
     phone_snapshot: Optional[str] = None
     reference_source: Optional[str] = None
+    referrer_type: Optional[ReferrerType] = None
+    referrer_id: Optional[str] = None
     project_discount_pct: float = 0
     category_discounts: dict[str, float] = {}
     room_discounts: dict[str, RoomDiscountCfg] = {}
@@ -539,6 +544,8 @@ class QuotationUpdate(BaseModel):
     project_name: Optional[str] = None
     phone_snapshot: Optional[str] = None
     reference_source: Optional[str] = None
+    referrer_type: Optional[ReferrerType] = None
+    referrer_id: Optional[str] = None
     ui_state: Optional[dict] = None
     project_discount_pct: Optional[float] = None
     category_discounts: Optional[dict[str, float]] = None
