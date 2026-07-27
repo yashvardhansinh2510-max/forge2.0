@@ -385,6 +385,13 @@ export default function FollowupsScreen() {
     catch (e: any) { toast.error(e?.detail || "Could not snooze"); loadList(); }
   }, [patchLocal, refreshStatsQuiet, loadList]);
 
+  const pushDue = useCallback(async (f: Followup, days: number) => {
+    const dueIso = new Date(Date.now() + days * 86400000).toISOString();
+    patchLocal(f.id, { due_at: dueIso });
+    try { await api.patch(`/followups/${f.id}`, { due_at: dueIso }); toast.success(`Pushed ${days} day${days === 1 ? "" : "s"}`); refreshStatsQuiet(); }
+    catch (e: any) { toast.error(e?.detail || "Could not reschedule"); loadList(); }
+  }, [patchLocal, refreshStatsQuiet, loadList]);
+
   const assignFollowup = useCallback(async (f: Followup, userId: string) => {
     const u = assignees.find((a) => a.id === userId);
     patchLocal(f.id, { assigned_to: userId, assigned_to_name: u?.full_name });
@@ -811,6 +818,7 @@ export default function FollowupsScreen() {
                   onComplete={completeFollowup}
                   onSnooze={snoozeFollowup}
                   onCustomSnooze={setCustomSnoozeFor}
+                  onPushDays={pushDue}
                   onAssign={assignFollowup}
                   onNote={setNoteFor}
                   onDismiss={dismissFollowup}
@@ -1107,14 +1115,15 @@ function InsightRow({ icon, label, value }: { icon: FeatherName; label: string; 
 // ─────────────────────────────────────────────────────────────────────────────
 function InboxSection({
   bucket, items, collapsed, onToggle, selectedId, assignees, rankMap, selectedIds, onToggleSelect,
-  onSelect, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onAssign, onNote, onDismiss,
+  onSelect, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss,
 }: {
   bucket: Bucket; items: Followup[]; collapsed: boolean; onToggle: () => void; selectedId: string | null;
   assignees: Assignee[]; rankMap: Map<string, number>; selectedIds: Set<string>; onToggleSelect: (id: string) => void;
   onSelect: (f: Followup) => void;
   onCall: (f: Followup) => void; onWhatsApp: (f: Followup) => void; onEmail: (f: Followup) => void;
   onComplete: (f: Followup) => void; onSnooze: (f: Followup, preset: "15m" | "1h" | "tomorrow" | "next_week") => void;
-  onCustomSnooze: (f: Followup) => void; onAssign: (f: Followup, userId: string) => void;
+  onCustomSnooze: (f: Followup) => void; onPushDays: (f: Followup, days: number) => void;
+  onAssign: (f: Followup, userId: string) => void;
   onNote: (f: Followup) => void; onDismiss: (f: Followup) => void;
 }) {
   const meta = BUCKET_META[bucket];
@@ -1145,6 +1154,7 @@ function InboxSection({
               onComplete={() => onComplete(f)}
               onSnooze={(p) => onSnooze(f, p)}
               onCustomSnooze={() => onCustomSnooze(f)}
+              onPushDays={(days) => onPushDays(f, days)}
               onAssign={(uid) => onAssign(f, uid)}
               onNote={() => onNote(f)}
               onDismiss={() => onDismiss(f)}
@@ -1251,12 +1261,13 @@ function IconMenuButton({ icon, tone = "surface", accessibilityLabel, items, tes
 // ─────────────────────────────────────────────────────────────────────────────
 function FollowupCard({
   f, active, assignees, rank, checked, onToggleSelect,
-  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onAssign, onNote, onDismiss,
+  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss,
 }: {
   f: Followup; active: boolean; assignees: Assignee[]; rank?: number; checked: boolean; onToggleSelect: () => void;
   onPress: () => void; onCall: () => void; onWhatsApp: () => void; onEmail: () => void;
   onComplete: () => void; onSnooze: (p: "15m" | "1h" | "tomorrow" | "next_week") => void;
-  onCustomSnooze: () => void; onAssign: (userId: string) => void; onNote: () => void; onDismiss: () => void;
+  onCustomSnooze: () => void; onPushDays: (days: number) => void;
+  onAssign: (userId: string) => void; onNote: () => void; onDismiss: () => void;
 }) {
   const level = f.manual_priority_override || f.priority_level;
   const tone = PRIORITY_TONE[level];
@@ -1360,6 +1371,15 @@ function FollowupCard({
                 { label: "Snooze till tomorrow", icon: "sunrise", onPress: () => onSnooze("tomorrow") },
                 { label: "Snooze next week", icon: "calendar", onPress: () => onSnooze("next_week") },
                 { label: "Custom snooze…", icon: "edit-2", onPress: onCustomSnooze },
+              ]}
+            />
+            <IconMenuButton
+              icon="fast-forward" accessibilityLabel="Push follow-up date" testID={`push-${f.id}`}
+              items={[
+                { label: "Push +1 day", icon: "chevron-right", onPress: () => onPushDays(1) },
+                { label: "Push +2 days", icon: "chevron-right", onPress: () => onPushDays(2) },
+                { label: "Push +3 days", icon: "chevron-right", onPress: () => onPushDays(3) },
+                { label: "Push +7 days", icon: "chevron-right", onPress: () => onPushDays(7) },
               ]}
             />
             <IconMenuButton
