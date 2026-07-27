@@ -451,7 +451,12 @@ export default function FollowupsScreen() {
     if (tierFilter !== "all") list = list.filter((f) => f.customer_tier === tierFilter);
     if (ownerFilter === "mine") list = list.filter((f) => f.assigned_to === staff?.id);
     else if (ownerFilter !== "all") list = list.filter((f) => f.assigned_to === ownerFilter);
-    return [...list].sort((a, b) => (b.priority_score - a.priority_score) || (a.due_at || "").localeCompare(b.due_at || ""));
+    return [...list].sort((a, b) => {
+      const mineA = a.assigned_to === staff?.id ? 0 : 1;
+      const mineB = b.assigned_to === staff?.id ? 0 : 1;
+      if (mineA !== mineB) return mineA - mineB;
+      return (b.priority_score - a.priority_score) || (a.due_at || "").localeCompare(b.due_at || "");
+    });
   }, [rawItems, q, kpiFilter, priorityFilter, categoryFilter, tierFilter, ownerFilter, staff]);
 
   const sections = useMemo(() => {

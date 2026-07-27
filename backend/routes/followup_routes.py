@@ -33,9 +33,9 @@ from models import (
 )
 from services.activity_log import log_event, timeline_for
 from services.followup_engine import (
-    RULE_DEFINITIONS, age_days, build_whatsapp_message, compute_bucket,
-    ist_day_bounds_utc, money_short, parse_iso, reason_factors_for,
-    reconcile_followups, score_followup,
+    RULE_DEFINITIONS, _followup_sort_key, age_days, build_whatsapp_message,
+    compute_bucket, ist_day_bounds_utc, money_short, parse_iso,
+    reason_factors_for, reconcile_followups, score_followup,
 )
 
 router = APIRouter(prefix="/followups", tags=["followups"])
@@ -354,7 +354,7 @@ async def list_followups(
     if priority:
         docs = [d for d in docs if d["effective_priority_level"] == priority]
 
-    docs.sort(key=lambda d: (-(d.get("priority_score") or 0), d.get("due_at") or ""))
+    docs.sort(key=lambda d: _followup_sort_key(d, user.id))
     return docs[:limit]
 
 
