@@ -199,18 +199,30 @@ _QUOTATIONS_TWO_BRANDS = [
     {
         "status": "won", "floor_id": "first-floor", "grand_total": 0, "updated_at": "2026-07-01T00:00:00+00:00",
         "items": [
-            {"product_id": "p1", "name": "Basin A", "sku": "SKU-A", "qty": 2, "unit_price": 5000, "discount_pct": 10},
+            {"id": "li-1", "product_id": "p1", "name": "Basin A", "sku": "SKU-A", "qty": 2, "unit_price": 5000, "discount_pct": 10},
         ],
     },
     {
         "status": "won", "floor_id": "first-floor", "grand_total": 0, "updated_at": "2026-07-02T00:00:00+00:00",
         "items": [
-            {"product_id": "p2", "name": "Tap B", "sku": "SKU-B", "qty": 1, "unit_price": 3000, "discount_pct": 0},
+            {"id": "li-2", "product_id": "p2", "name": "Tap B", "sku": "SKU-B", "qty": 1, "unit_price": 3000, "discount_pct": 0},
         ],
     },
 ]
 _PRODUCTS = [{"id": "p1", "brand_id": "b-kohler"}, {"id": "p2", "brand_id": "b-jaguar"}]
 _BRANDS = [{"id": "b-kohler", "name": "Kohler"}, {"id": "b-jaguar", "name": "Jaguar"}]
+
+# Line item has NO product-level discount_pct override (None — "no
+# override"), but the quotation carries a project_discount_pct. Proves
+# brands_ranked/brand_detail honor the room/category/project discount chain
+# via services.pricing.per_line_net_amounts, not just product overrides.
+_QUOTATION_PROJECT_DISCOUNT = {
+    "status": "won", "floor_id": "first-floor", "grand_total": 8000, "updated_at": "2026-07-03T00:00:00+00:00",
+    "project_discount_pct": 20,
+    "items": [
+        {"id": "li-3", "product_id": "p1", "name": "Basin A", "sku": "SKU-A", "qty": 1, "unit_price": 10000, "discount_pct": None},
+    ],
+}
 
 
 def test_brands_ranked_joins_items_to_products_to_brands(monkeypatch):
@@ -235,3 +247,19 @@ def test_brand_detail_returns_trend_and_top_products(monkeypatch):
     assert result["brand"]["name"] == "Kohler"
     assert result["total_revenue"] == 9000.0
     assert result["top_products"] == [{"product_id": "p1", "name": "Basin A", "sku": "SKU-A", "revenue": 9000.0}]
+
+
+def test_brands_ranked_honors_project_discount_not_just_product_override(monkeypatch):
+    """Regression test: brand revenue must apply the Product > Room >
+    Category > Project discount precedence chain (services.pricing.
+    per_line_net_amounts), not just a product-level discount_pct override.
+    Basin A here has no product override (discount_pct: None) but the
+    quotation has project_discount_pct = 20, so the effective net must be
+    1 * 10000 * 0.8 = 8000, not the full 10000."""
+    fake_db = _FakeDbForBrands([_QUOTATION_PROJECT_DISCOUNT], _PRODUCTS, _BRANDS)
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    result = asyncio.run(sd.brands_ranked(date_from=None, date_to=None, user=_owner()))
+
+    by_brand = {b["brand_id"]: b["revenue"] for b in result["brands"]}
+    assert by_brand["b-kohler"] == 8000.0

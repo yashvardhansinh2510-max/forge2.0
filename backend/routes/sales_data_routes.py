@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from auth import accessible_floor_ids, require_roles
 from db import db
 from models import UserPublic
+from services.pricing import per_line_net_amounts
 
 router = APIRouter(prefix="/sales-data", tags=["sales-data"])
 
@@ -159,14 +160,6 @@ async def referrer_detail(
     }
 
 
-def _line_net(item: dict) -> float:
-    """Mirrors QuotationLineItem.net — recomputed here because these
-    aggregations work over raw Mongo dicts, not model instances."""
-    gross = item.get("qty", 0) * item.get("unit_price", 0)
-    disc_pct = item.get("discount_pct") or 0
-    return gross - (gross * disc_pct / 100)
-
-
 async def _product_brand_map(product_ids: set[str]) -> dict[str, str]:
     if not product_ids:
         return {}
@@ -196,10 +189,11 @@ async def brands_ranked(
 
     by_brand: dict[str, float] = defaultdict(float)
     for q in quotations:
+        line_nets = per_line_net_amounts(q)
         for it in q.get("items", []):
             bid = product_brand.get(it["product_id"])
             if bid:
-                by_brand[bid] += _line_net(it)
+                by_brand[bid] += line_nets.get(it["id"], 0.0)
 
     ranked = sorted(
         (
@@ -235,10 +229,11 @@ async def brand_detail(
     total = 0.0
     for q in quotations:
         ts = q.get("updated_at") or q.get("created_at")
+        line_nets = per_line_net_amounts(q)
         for it in q.get("items", []):
             if it["product_id"] not in ids_for_brand:
                 continue
-            net = _line_net(it)
+            net = line_nets.get(it["id"], 0.0)
             total += net
             if ts:
                 trend_map[_bucket_label(ts, granularity)] += net
