@@ -209,30 +209,46 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         created_po_ids.append(po["id"])
 
     payment_key = f"{key}:payment"
-    payment = Payment(
-        quotation_id=quotation_id, quotation_number=quotation.get("number"), customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name"),
-        amount=round(float(quotation.get("grand_total") or 0), 2), mode="bank", status="pending", note="Outstanding balance created by OrderPlaced automation.",
-        recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
-        floor_id=floor_inherit(quotation),
-    ).dict()
-    payment["automation_key"] = payment_key
-    await db.payments.update_one({"automation_key": payment_key}, {"$setOnInsert": payment}, upsert=True, session=session)
+    payment_amount = round(float(quotation.get("grand_total") or 0), 2)
+    # A ₹0 order (a Selection-derived quotation nobody priced, a free-sample
+    # order, etc.) has nothing outstanding to collect — Payment.amount is
+    # `Field(gt=0)`, so building one here would raise a pydantic
+    # ValidationError and abort the whole transaction (rolling back the
+    # Purchase Orders inserted above too), permanently dead-lettering the
+    # event after 8 retries. Skip creating a Payment entirely in that case
+    # instead of trying to represent "no payment" as a zero-amount one.
+    if payment_amount > 0:
+        payment = Payment(
+            quotation_id=quotation_id, quotation_number=quotation.get("number"), customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name"),
+            amount=payment_amount, mode="bank", status="pending", note="Outstanding balance created by OrderPlaced automation.",
+            recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
+            floor_id=floor_inherit(quotation),
+        ).dict()
+        # Automation payments dedupe via automation_key, not idempotency_key —
+        # the field must be OMITTED (not left as an explicit None) or it
+        # collides with payments.payment_idempotency_key's unique *sparse*
+        # index on every order placed after the first one ever recorded
+        # (sparse only skips documents missing the key entirely, not
+        # documents where it's present-but-null).
+        payment.pop("idempotency_key", None)
+        payment["automation_key"] = payment_key
+        await db.payments.update_one({"automation_key": payment_key}, {"$setOnInsert": payment}, upsert=True, session=session)
     await _upsert_activity(
         key=f"{key}:timeline", event_type="quotation.order_placed", entity_type="quotation", entity_id=quotation_id,
         actor_id=event["actor_id"], actor_name=event["actor_name"], customer_id=quotation.get("customer_id"), quotation_id=quotation_id, purchase_id=None,
         summary=f"Order placed — {len(created_po_ids)} purchase order(s) created",
-        payload={"event": EVENT_ORDER_PLACED, "purchase_order_ids": created_po_ids, "outstanding": payment["amount"]}, session=session,
+        payload={"event": EVENT_ORDER_PLACED, "purchase_order_ids": created_po_ids, "outstanding": payment_amount}, session=session,
     )
     await _upsert_followup(key=f"{key}:followup", quotation=quotation, reason=f"Order {quotation.get('number')} placed — confirm payment and delivery plan.", category="payment", session=session)
     return {
         "quotation_id": quotation_id,
         "purchase_order_ids": created_po_ids,
-        "payment_amount": payment["amount"],
+        "payment_amount": payment_amount,
         "count": len(created_po_ids),
         "post_commit_notification": {
             "user_id": quotation.get("created_by"),
             "title": f"Order confirmed · {quotation.get('number')}",
-            "body": f"{len(created_po_ids)} purchase order(s) created for {quotation.get('customer_name')} — outstanding ₹{payment['amount']:,.0f}",
+            "body": f"{len(created_po_ids)} purchase order(s) created for {quotation.get('customer_name')} — outstanding ₹{payment_amount:,.0f}",
             "kind": "success",
             "link": f"/quotations/{quotation_id}",
         },

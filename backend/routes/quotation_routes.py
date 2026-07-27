@@ -758,7 +758,18 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
             event = await db.event_outbox.find_one({"idempotency_key": key}, {"_id": 0})
             if not event:
                 raise HTTPException(status_code=500, detail=f"Could not journal order placement: {exc}") from exc
-    result = await dispatch_event(event["id"])
+    try:
+        result = await dispatch_event(event["id"])
+    except Exception as exc:
+        # The order itself is already journaled (event_outbox row committed
+        # above) — a handler failure here is a retryable automation error,
+        # not a failed order. Without this, an unhandled exception (e.g. the
+        # DuplicateKeyError this exact endpoint hit in production) propagates
+        # past FastAPI's normal error handling and can surface to the browser
+        # as a raw connection failure instead of a JSON body the frontend's
+        # `toast.error(e?.detail || ...)` can read — i.e. no visible message
+        # at all, not even the "Could not place order" fallback.
+        raise HTTPException(status_code=500, detail=f"Order was placed but automation failed: {exc}") from exc
     asyncio.create_task(reconcile_followups())
     return {"quotation_id": quotation_id, "idempotent": event.get("status") == "completed", **result}
 

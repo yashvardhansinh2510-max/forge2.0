@@ -313,7 +313,17 @@ async def create_payment(
                 f"Payment of ₹{body.amount:,.2f} exceeds the outstanding balance of "
                 f"₹{max(outstanding_before, 0):,.2f} on {quot.get('number')}"
             ))
-        await db.payments.insert_one(payment.dict(), session=session)
+        payment_doc = payment.dict()
+        if not idempotency_key:
+            # Omit the field entirely rather than leaving an explicit None —
+            # payments.payment_idempotency_key is a unique *sparse* index,
+            # which only skips documents missing the key, not documents
+            # where it's present-but-null. Leaving it in would make the
+            # SECOND EVER payment recorded without an Idempotency-Key crash
+            # with a DuplicateKeyError (same root cause as the OrderPlaced
+            # automation bug fixed in services/domain_outbox.py).
+            payment_doc.pop("idempotency_key", None)
+        await db.payments.insert_one(payment_doc, session=session)
         return None
 
     # Atlas transactions serialize the balance check with the insert. This

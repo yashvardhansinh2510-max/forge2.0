@@ -256,19 +256,32 @@ async def handle_purchase_transferred(event: dict, session: Any) -> dict:
                     session=session,
                 )
 
-    payment = Payment(
-        quotation_id=transfer["destination_quotation_id"], quotation_number=transfer["destination_quotation_number"], customer_id=transfer["destination_customer_id"], customer_name=transfer["destination_customer_name"],
-        amount=round(float(dest_quote.get("grand_total") or 0), 2), mode="bank", status="pending", note=f"Pending balance from transfer {transfer['id']}", recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
-        floor_id=floor_inherit(transfer),
-    ).dict()
-    payment["automation_key"] = f"{key}:payment"
-    await db.payments.update_one({"automation_key": payment["automation_key"]}, {"$setOnInsert": payment}, upsert=True, session=session)
+    transfer_payment_amount = round(float(dest_quote.get("grand_total") or 0), 2)
+    # See domain_outbox._handle_order_placed's identical fix: Payment.amount
+    # is Field(gt=0), so a ₹0 destination quotation would raise a
+    # ValidationError here and dead-letter the whole transfer event (rolling
+    # back the shortage/allocation writes above too). Skip the Payment
+    # entirely rather than trying to represent "nothing outstanding" as a
+    # zero-amount one.
+    if transfer_payment_amount > 0:
+        payment = Payment(
+            quotation_id=transfer["destination_quotation_id"], quotation_number=transfer["destination_quotation_number"], customer_id=transfer["destination_customer_id"], customer_name=transfer["destination_customer_name"],
+            amount=transfer_payment_amount, mode="bank", status="pending", note=f"Pending balance from transfer {transfer['id']}", recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
+            floor_id=floor_inherit(transfer),
+        ).dict()
+        # automation payments dedupe via automation_key, so idempotency_key
+        # must be omitted rather than left as an explicit None (which
+        # collides with payments.payment_idempotency_key's unique *sparse*
+        # index after the first transfer-created payment ever inserted).
+        payment.pop("idempotency_key", None)
+        payment["automation_key"] = f"{key}:payment"
+        await db.payments.update_one({"automation_key": payment["automation_key"]}, {"$setOnInsert": payment}, upsert=True, session=session)
 
     destination_customer = await db.customers.find_one({"id": transfer["destination_customer_id"]}, {"_id": 0}, session=session) or {}
     followup = Followup(
         source_key=f"{key}:followup", rule_type="manual", category="purchase", customer_id=transfer["destination_customer_id"], customer_name=transfer["destination_customer_name"], customer_phone=destination_customer.get("phone"), customer_tier=destination_customer.get("tier", "retail"),
         quotation_id=transfer["destination_quotation_id"], quotation_number=transfer["destination_quotation_number"], purchase_id=transfer["destination_po_id"], purchase_number=transfer["destination_po_number"],
-        value=payment["amount"], reason=f"Transferred {transfer['qty']:g} × {transfer['name']} received from {transfer['source_customer_name']}.", next_action="Confirm transfer and payment plan", next_action_reason="Transfer-specific operational follow-up.", suggested_channel="call", due_at=now_iso(), is_automated=False,
+        value=transfer_payment_amount, reason=f"Transferred {transfer['qty']:g} × {transfer['name']} received from {transfer['source_customer_name']}.", next_action="Confirm transfer and payment plan", next_action_reason="Transfer-specific operational follow-up.", suggested_channel="call", due_at=now_iso(), is_automated=False,
         floor_id=floor_inherit(transfer),
     ).dict()
     followup["automation_key"] = f"{key}:followup"
@@ -278,7 +291,7 @@ async def handle_purchase_transferred(event: dict, session: Any) -> dict:
     await _upsert_activity(key=f"{key}:source-activity", event_type="purchase.transferred_out", entity_type="purchase", entity_id=transfer["source_po_id"], actor_id=event["actor_id"], actor_name=event["actor_name"], customer_id=transfer["source_customer_id"], quotation_id=source_quote_id, purchase_id=transfer["source_po_id"], summary=f"Transferred {transfer['qty']:g} × {transfer['name']} to {transfer['destination_customer_name']}", payload=shared, session=session)
     await _upsert_activity(key=f"{key}:destination-activity", event_type="purchase.transferred_in", entity_type="purchase", entity_id=transfer["destination_po_id"], actor_id=event["actor_id"], actor_name=event["actor_name"], customer_id=transfer["destination_customer_id"], quotation_id=transfer["destination_quotation_id"], purchase_id=transfer["destination_po_id"], summary=f"Received {transfer['qty']:g} × {transfer['name']} from {transfer['source_customer_name']}", payload=shared, session=session)
     await db.purchase_transfers.update_one({"id": transfer["id"]}, {"$set": {"automation_status": "completed", "updated_at": now_iso()}}, session=session)
-    return {"transfer_id": transfer["id"], "source": {"po_id": transfer["source_po_id"], "item_id": transfer["source_item_id"], "remaining_qty": transfer["source_remaining_qty"]}, "destination": {"po_id": transfer["destination_po_id"], "po_number": transfer["destination_po_number"], "item_id": transfer["destination_item_id"], "customer_id": transfer["destination_customer_id"], "customer_name": transfer["destination_customer_name"], "quotation_id": transfer["destination_quotation_id"], "quotation_number": transfer["destination_quotation_number"]}, "payment_amount": payment["amount"], "shortage": {"id": shortage["id"], "status": shortage["status"]} if shortage else None}
+    return {"transfer_id": transfer["id"], "source": {"po_id": transfer["source_po_id"], "item_id": transfer["source_item_id"], "remaining_qty": transfer["source_remaining_qty"]}, "destination": {"po_id": transfer["destination_po_id"], "po_number": transfer["destination_po_number"], "item_id": transfer["destination_item_id"], "customer_id": transfer["destination_customer_id"], "customer_name": transfer["destination_customer_name"], "quotation_id": transfer["destination_quotation_id"], "quotation_number": transfer["destination_quotation_number"]}, "payment_amount": transfer_payment_amount, "shortage": {"id": shortage["id"], "status": shortage["status"]} if shortage else None}
 
 
 async def transfer_history(item_id: str) -> list[dict]:
