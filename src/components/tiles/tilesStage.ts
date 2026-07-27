@@ -15,10 +15,13 @@ export function tilesStage(docType: string, status: string): TilesStage {
     if (status === "pending_approval") return "selection_pending_approval";
     return "selection_draft";
   }
-  if (status === "ordered") return "ordered";
-  if (status === "approved") return "quotation_confirmed";
-  if (status === "pending_approval") return "quotation_pending_approval";
-  return "quotation_draft";
+  if (docType === "tiles_quotation") {
+    if (status === "ordered") return "ordered";
+    if (status === "approved") return "quotation_confirmed";
+    if (status === "pending_approval") return "quotation_pending_approval";
+    return "quotation_draft";
+  }
+  throw new Error(`tilesStage() called with non-tiles docType ${JSON.stringify(docType)}`);
 }
 
 export const TILES_STAGE_LABELS: Record<TilesStage, string> = {
