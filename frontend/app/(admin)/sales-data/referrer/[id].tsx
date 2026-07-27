@@ -12,7 +12,7 @@ import { spacing } from "@/src/theme/tokens";
 import { TrendChart } from "@/src/components/salesData/TrendChart";
 import { Granularity } from "@/src/components/salesData/salesDataApi";
 
-type ReferrerDetail = {
+type ReferrerDetailResponse = {
   referrer: { id: string; name: string; type: string; phone?: string | null; company?: string | null };
   total_revenue: number;
   trend: { bucket: string; revenue: number }[];
@@ -22,13 +22,13 @@ type ReferrerDetail = {
 export default function ReferrerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [granularity, setGranularity] = useState<Granularity>("month");
-  const [data, setData] = useState<ReferrerDetail | null>(null);
+  const [data, setData] = useState<ReferrerDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setError(null);
     setData(null);
-    api.get<ReferrerDetail>(`/sales-data/referrers/${id}?granularity=${granularity}`)
+    api.get<ReferrerDetailResponse>(`/sales-data/referrers/${id}?granularity=${granularity}`)
       .then(setData)
       .catch((e: any) => setError(e?.detail || "Could not load referrer"));
   }, [id, granularity]);
