@@ -29,6 +29,21 @@ async def create_referrer(
     body: ReferrerCreate,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
+    """Case-insensitive existing-name check (same type) before inserting.
+    Two sales reps could otherwise create "Rakesh Sharma" and "rakesh
+    sharma" as separate people, permanently splitting that person's revenue
+    on the Sales Data dashboard with no way to merge (v1 has no
+    update/delete). Rather than rejecting the duplicate, return the
+    pre-existing record — the picker's "+ Add new" flow expects a
+    successful create-or-select response, so this lets the frontend proceed
+    exactly as if it had created one. Same name but a different type (e.g.
+    an architect and an interior designer sharing a name) still creates a
+    separate record."""
+    existing = await db.referrers.find({"type": body.type}, {"_id": 0}).to_list(2000)
+    for doc in existing:
+        if doc.get("name", "").strip().lower() == body.name.strip().lower():
+            return Referrer(**doc)
+
     referrer = Referrer(**body.dict(), created_by=user.id)
     await db.referrers.insert_one(referrer.dict())
     return referrer

@@ -75,3 +75,46 @@ def test_create_referrer_stamps_created_by(monkeypatch):
     assert result.created_by == "user-1"
     assert result.name == "Studio Verve"
     assert fake_db.referrers.inserted["name"] == "Studio Verve"
+
+
+def test_create_referrer_with_new_name_creates_a_new_record(monkeypatch):
+    fake_db = _FakeDb([
+        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "created_at": "t", "updated_at": "t", "created_by": "u"},
+    ])
+    monkeypatch.setattr(referrer_routes, "db", fake_db)
+
+    body = ReferrerCreate(name="Nikita Shah", type="architect")
+    result = asyncio.run(referrer_routes.create_referrer(body, user=_user()))
+
+    assert result.id != "r1"
+    assert result.name == "Nikita Shah"
+    assert fake_db.referrers.inserted is not None
+    assert fake_db.referrers.inserted["name"] == "Nikita Shah"
+
+
+def test_create_referrer_same_name_and_type_returns_existing_record_not_a_duplicate(monkeypatch):
+    fake_db = _FakeDb([
+        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "created_at": "t", "updated_at": "t", "created_by": "u"},
+    ])
+    monkeypatch.setattr(referrer_routes, "db", fake_db)
+
+    # Different case, same underlying name, same type.
+    body = ReferrerCreate(name="rakesh sharma", type="architect")
+    result = asyncio.run(referrer_routes.create_referrer(body, user=_user()))
+
+    assert result.id == "r1"
+    assert fake_db.referrers.inserted is None  # nothing new was inserted
+
+
+def test_create_referrer_same_name_different_type_creates_a_separate_record(monkeypatch):
+    fake_db = _FakeDb([
+        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "created_at": "t", "updated_at": "t", "created_by": "u"},
+    ])
+    monkeypatch.setattr(referrer_routes, "db", fake_db)
+
+    body = ReferrerCreate(name="Rakesh Sharma", type="interior_designer")
+    result = asyncio.run(referrer_routes.create_referrer(body, user=_user()))
+
+    assert result.id != "r1"
+    assert result.type == "interior_designer"
+    assert fake_db.referrers.inserted is not None
