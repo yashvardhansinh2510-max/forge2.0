@@ -56,7 +56,6 @@ function QueueRow({
       onPress={onOpen}
       onHoverIn={() => setHover(true)}
       onHoverOut={() => setHover(false)}
-      accessibilityRole="button"
       accessibilityLabel={`${fu.customer_name}, ${fu.next_action || fu.reason}`}
       style={[
         {
