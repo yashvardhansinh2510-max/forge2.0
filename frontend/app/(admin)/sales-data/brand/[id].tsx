@@ -10,7 +10,9 @@ import {
 import { fmtMoney } from "@/src/design/tokens";
 import { spacing } from "@/src/theme/tokens";
 import { TrendChart } from "@/src/components/salesData/TrendChart";
-import { Granularity } from "@/src/components/salesData/salesDataApi";
+import {
+  DATE_PRESET_LABEL, DatePreset, Granularity, presetToRange,
+} from "@/src/components/salesData/salesDataApi";
 
 type BrandDetailResponse = {
   brand: { id: string; name: string };
@@ -20,23 +22,33 @@ type BrandDetailResponse = {
 };
 
 export default function BrandDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, preset: presetParam } = useLocalSearchParams<{ id: string; preset?: string }>();
+  const preset: DatePreset = presetParam && presetParam in DATE_PRESET_LABEL ? (presetParam as DatePreset) : "this_month";
   const [granularity, setGranularity] = useState<Granularity>("month");
   const [data, setData] = useState<BrandDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const { date_from, date_to } = presetToRange(preset);
+
   const load = useCallback(() => {
     setError(null);
     setData(null);
-    api.get<BrandDetailResponse>(`/sales-data/brands/${id}?granularity=${granularity}`)
+    const params = new URLSearchParams();
+    params.set("granularity", granularity);
+    if (date_from) params.set("date_from", date_from);
+    if (date_to) params.set("date_to", date_to);
+    api.get<BrandDetailResponse>(`/sales-data/brands/${id}?${params.toString()}`)
       .then(setData)
       .catch((e: any) => setError(e?.detail || "Could not load brand"));
-  }, [id, granularity]);
+  }, [id, granularity, date_from, date_to]);
 
   useEffect(() => { load(); }, [load]);
 
   return (
-    <AdminPage title={data?.brand.name || "Brand"} subtitle={data ? `₹${fmtMoney(data.total_revenue)} total revenue` : undefined}>
+    <AdminPage
+      title={data?.brand.name || "Brand"}
+      subtitle={data ? `₹${fmtMoney(data.total_revenue)} total revenue · ${DATE_PRESET_LABEL[preset]}` : undefined}
+    >
       <PillTabs
         testID="brand-detail-granularity"
         value={granularity}
