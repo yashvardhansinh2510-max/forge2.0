@@ -196,7 +196,12 @@ function Sidebar() {
           <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} />
         ))}
         {hasAccess("quotations") && tilesNav.items.map((n) => (
-          <SideItem key={n.href} item={n} active={segments.includes("tiles") && isActive(n.match)} onPress={() => { void tilesNav.open(n); }} />
+          <SideItem
+            key={n.href}
+            item={n}
+            active={n.match === "orders" ? segments.includes("orders") : segments.includes("tiles") && !segments.includes("orders")}
+            onPress={() => { void tilesNav.open(n); }}
+          />
         ))}
         <View style={{ height: space.x5 }} />
         {SECONDARY.filter((n) => hasAccess(n.match)).map((n) => (
@@ -272,23 +277,26 @@ function Rail() {
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 2 }} showsVerticalScrollIndicator={false}>
         {PRIMARY.filter((n) => hasAccess(n.match)).map((n) => <RailBtn key={n.href} item={n} />)}
-        {hasAccess("quotations") && tilesNav.items.map((n) => (
-          <Pressable
-            key={n.href}
-            testID={`nav-${n.match}`}
-            accessibilityRole="link"
-            accessibilityLabel={n.label}
-            accessibilityState={{ selected: segments.includes("tiles") && isActive(n.match) }}
-            onPress={() => { void tilesNav.open(n); }}
-            style={({ pressed, hovered }: any) => [
-              styles.railItem,
-              { backgroundColor: segments.includes("tiles") && isActive(n.match) ? color.sunken : pressed || hovered ? color.hoverWash : "transparent" },
-            ]}
-          >
-            <View style={[styles.brassBarRail, { backgroundColor: segments.includes("tiles") && isActive(n.match) ? color.brass : "transparent" }]} />
-            <Feather name={n.icon} size={18} color={segments.includes("tiles") && isActive(n.match) ? color.ink : color.inkSoft} />
-          </Pressable>
-        ))}
+        {hasAccess("quotations") && tilesNav.items.map((n) => {
+          const on = n.match === "orders" ? segments.includes("orders") : segments.includes("tiles") && !segments.includes("orders");
+          return (
+            <Pressable
+              key={n.href}
+              testID={`nav-${n.match}`}
+              accessibilityRole="link"
+              accessibilityLabel={n.label}
+              accessibilityState={{ selected: on }}
+              onPress={() => { void tilesNav.open(n); }}
+              style={({ pressed, hovered }: any) => [
+                styles.railItem,
+                { backgroundColor: on ? color.sunken : pressed || hovered ? color.hoverWash : "transparent" },
+              ]}
+            >
+              <View style={[styles.brassBarRail, { backgroundColor: on ? color.brass : "transparent" }]} />
+              <Feather name={n.icon} size={18} color={on ? color.ink : color.inkSoft} />
+            </Pressable>
+          );
+        })}
         <View style={{ height: space.x4 }} />
         {SECONDARY.filter((n) => hasAccess(n.match)).map((n) => (
           <RailBtn key={n.href} item={n} />
