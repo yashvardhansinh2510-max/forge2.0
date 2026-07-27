@@ -149,8 +149,7 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
 // switches the active floor to Ground floor (same reload semantics as the
 // FloorSwitcher) before navigating.
 const TILES_ITEMS: NavItem[] = [
-  { href: "/(admin)/tiles/selection", label: "Tiles Selection", icon: "grid", match: "selection" },
-  { href: "/(admin)/tiles/quotation", label: "Tiles Quotation", icon: "layout", match: "quotation" },
+  { href: "/(admin)/tiles", label: "Quotation Tiles", icon: "layers", match: "tiles" },
   { href: "/(admin)/tiles/orders", label: "Tile Orders", icon: "truck", match: "orders" },
 ];
 
