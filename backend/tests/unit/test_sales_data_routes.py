@@ -186,3 +186,52 @@ def test_referrer_detail_404s_for_unknown_referrer(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(sd.referrer_detail("missing", date_from=None, date_to=None, granularity="month", user=_owner()))
     assert exc.value.status_code == 404
+
+
+class _FakeDbForBrands:
+    def __init__(self, quotation_docs, product_docs, brand_docs):
+        self.quotations = _Collection(quotation_docs)
+        self.products = _Collection(product_docs)
+        self.brands = _CollectionWithFindOne(brand_docs, brand_docs[0] if brand_docs else None)
+
+
+_QUOTATIONS_TWO_BRANDS = [
+    {
+        "status": "won", "floor_id": "first-floor", "grand_total": 0, "updated_at": "2026-07-01T00:00:00+00:00",
+        "items": [
+            {"product_id": "p1", "name": "Basin A", "sku": "SKU-A", "qty": 2, "unit_price": 5000, "discount_pct": 10},
+        ],
+    },
+    {
+        "status": "won", "floor_id": "first-floor", "grand_total": 0, "updated_at": "2026-07-02T00:00:00+00:00",
+        "items": [
+            {"product_id": "p2", "name": "Tap B", "sku": "SKU-B", "qty": 1, "unit_price": 3000, "discount_pct": 0},
+        ],
+    },
+]
+_PRODUCTS = [{"id": "p1", "brand_id": "b-kohler"}, {"id": "p2", "brand_id": "b-jaguar"}]
+_BRANDS = [{"id": "b-kohler", "name": "Kohler"}, {"id": "b-jaguar", "name": "Jaguar"}]
+
+
+def test_brands_ranked_joins_items_to_products_to_brands(monkeypatch):
+    fake_db = _FakeDbForBrands(_QUOTATIONS_TWO_BRANDS, _PRODUCTS, _BRANDS)
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    result = asyncio.run(sd.brands_ranked(date_from=None, date_to=None, user=_owner()))
+
+    # Basin A: 2 * 5000 * 0.9 = 9000. Tap B: 1 * 3000 = 3000.
+    assert result["brands"][0] == {"brand_id": "b-kohler", "brand_name": "Kohler", "revenue": 9000.0}
+    assert result["brands"][1] == {"brand_id": "b-jaguar", "brand_name": "Jaguar", "revenue": 3000.0}
+
+
+def test_brand_detail_returns_trend_and_top_products(monkeypatch):
+    fake_db = _FakeDbForBrands(
+        _QUOTATIONS_TWO_BRANDS, _PRODUCTS, [{"id": "b-kohler", "name": "Kohler"}],
+    )
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    result = asyncio.run(sd.brand_detail("b-kohler", date_from=None, date_to=None, granularity="month", user=_owner()))
+
+    assert result["brand"]["name"] == "Kohler"
+    assert result["total_revenue"] == 9000.0
+    assert result["top_products"] == [{"product_id": "p1", "name": "Basin A", "sku": "SKU-A", "revenue": 9000.0}]

@@ -157,3 +157,100 @@ async def referrer_detail(
         "trend": trend,
         "quotations": quotes,
     }
+
+
+def _line_net(item: dict) -> float:
+    """Mirrors QuotationLineItem.net — recomputed here because these
+    aggregations work over raw Mongo dicts, not model instances."""
+    gross = item.get("qty", 0) * item.get("unit_price", 0)
+    disc_pct = item.get("discount_pct") or 0
+    return gross - (gross * disc_pct / 100)
+
+
+async def _product_brand_map(product_ids: set[str]) -> dict[str, str]:
+    if not product_ids:
+        return {}
+    products = await db.products.find(
+        {"id": {"$in": list(product_ids)}}, {"_id": 0, "id": 1, "brand_id": 1},
+    ).to_list(len(product_ids))
+    return {p["id"]: p.get("brand_id") for p in products if p.get("brand_id")}
+
+
+@router.get("/brands")
+async def brands_ranked(
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    user: UserPublic = Depends(require_roles("owner", "admin")),
+):
+    floor_ids = _resolve_floor_ids(user, None)
+    quotations = await _won_quotations(floor_ids, date_from, date_to)
+
+    product_ids = {it["product_id"] for q in quotations for it in q.get("items", [])}
+    product_brand = await _product_brand_map(product_ids)
+
+    brand_ids = set(product_brand.values())
+    brands = await db.brands.find(
+        {"id": {"$in": list(brand_ids)}}, {"_id": 0, "id": 1, "name": 1},
+    ).to_list(len(brand_ids) or 1)
+    brand_name = {b["id"]: b["name"] for b in brands}
+
+    by_brand: dict[str, float] = defaultdict(float)
+    for q in quotations:
+        for it in q.get("items", []):
+            bid = product_brand.get(it["product_id"])
+            if bid:
+                by_brand[bid] += _line_net(it)
+
+    ranked = sorted(
+        (
+            {"brand_id": bid, "brand_name": brand_name.get(bid, "Unknown"), "revenue": round(rev, 2)}
+            for bid, rev in by_brand.items()
+        ),
+        key=lambda e: e["revenue"], reverse=True,
+    )
+    return {"brands": ranked}
+
+
+@router.get("/brands/{brand_id}")
+async def brand_detail(
+    brand_id: str,
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    granularity: Granularity = Query("month"),
+    user: UserPublic = Depends(require_roles("owner", "admin")),
+):
+    brand = await db.brands.find_one({"id": brand_id}, {"_id": 0})
+    if not brand:
+        raise HTTPException(status_code=404, detail="Brand not found")
+
+    floor_ids = _resolve_floor_ids(user, None)
+    quotations = await _won_quotations(floor_ids, date_from, date_to)
+
+    product_ids = {it["product_id"] for q in quotations for it in q.get("items", [])}
+    product_brand = await _product_brand_map(product_ids)
+    ids_for_brand = {pid for pid, bid in product_brand.items() if bid == brand_id}
+
+    trend_map: dict[str, float] = defaultdict(float)
+    product_revenue: dict[str, dict] = {}
+    total = 0.0
+    for q in quotations:
+        ts = q.get("updated_at") or q.get("created_at")
+        for it in q.get("items", []):
+            if it["product_id"] not in ids_for_brand:
+                continue
+            net = _line_net(it)
+            total += net
+            if ts:
+                trend_map[_bucket_label(ts, granularity)] += net
+            entry = product_revenue.setdefault(
+                it["product_id"], {"product_id": it["product_id"], "name": it["name"], "sku": it["sku"], "revenue": 0.0},
+            )
+            entry["revenue"] += net
+
+    trend = [{"bucket": k, "revenue": round(v, 2)} for k, v in sorted(trend_map.items())]
+    top_products = sorted(
+        ({**e, "revenue": round(e["revenue"], 2)} for e in product_revenue.values()),
+        key=lambda e: e["revenue"], reverse=True,
+    )[:10]
+
+    return {"brand": brand, "total_revenue": round(total, 2), "trend": trend, "top_products": top_products}
