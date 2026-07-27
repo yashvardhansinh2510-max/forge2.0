@@ -96,8 +96,7 @@ async def list_quotations(
     query: dict = {}
     if doc_type:
         query["doc_type"] = doc_type
-    final_query = {**floor_query(user), **query}
-    docs = await db.quotations.find(final_query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    docs = await db.quotations.find(floor_query(user, query), {"_id": 0}).sort("created_at", -1).to_list(500)
     return docs
 
 
