@@ -18,6 +18,7 @@ import {
 
 type Floor = { id: string; name: string; slug: string };
 type PageTab = "overview" | "brand";
+type BrandRow = { brand_id: string; brand_name: string; revenue: number };
 
 export default function SalesData() {
   const { staff } = useAuth();
@@ -40,6 +41,9 @@ export default function SalesData() {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [brands, setBrands] = useState<BrandRow[] | null>(null);
+  const [brandsError, setBrandsError] = useState<string | null>(null);
+
   useEffect(() => { api.get<Floor[]>("/settings/floors").then(setFloors).catch(() => setFloors([])); }, []);
 
   const load = useCallback(() => {
@@ -58,6 +62,19 @@ export default function SalesData() {
   }, [floorId, referredBy, preset, granularity]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (tab !== "brand") return;
+    setBrandsError(null);
+    setBrands(null);
+    const { date_from, date_to } = presetToRange(preset);
+    const params = new URLSearchParams();
+    if (date_from) params.set("date_from", date_from);
+    if (date_to) params.set("date_to", date_to);
+    api.get<{ brands: BrandRow[] }>(`/sales-data/brands?${params.toString()}`)
+      .then((res) => setBrands(res.brands))
+      .catch((e: any) => setBrandsError(e?.detail || "Could not load brand revenue"));
+  }, [tab, preset]);
 
   if (staff && staff.role !== "owner" && staff.role !== "admin") {
     return <Redirect href="/(admin)/dashboard" />;
@@ -169,6 +186,30 @@ export default function SalesData() {
                 >
                   <TableCell flex={2}>{r.name}</TableCell>
                   <TableCell align="right">₹{fmtMoney(r.revenue)}</TableCell>
+                </TableRow>
+              ))}
+            </Table>
+          ) : null}
+        </View>
+      ) : null}
+
+      {tab === "brand" ? (
+        <View style={{ gap: spacing.lg }}>
+          {brandsError ? <ErrorState subtitle={brandsError} /> : null}
+          {!brandsError && !brands ? <LoadingState label="Loading brand revenue…" /> : null}
+          {brands && brands.length === 0 ? <EmptyState title="No brand revenue in this range" /> : null}
+          {brands && brands.length > 0 ? (
+            <Table>
+              <TableHeader columns={[{ label: "Brand", flex: 2 }, { label: "Revenue", align: "right" }]} />
+              {brands.map((b, i) => (
+                <TableRow
+                  key={b.brand_id}
+                  isLast={i === brands.length - 1}
+                  onPress={() => router.push(`/(admin)/sales-data/brand/${b.brand_id}` as any)}
+                  testID={`brand-rank-row-${b.brand_id}`}
+                >
+                  <TableCell flex={2}>{b.brand_name}</TableCell>
+                  <TableCell align="right">₹{fmtMoney(b.revenue)}</TableCell>
                 </TableRow>
               ))}
             </Table>
