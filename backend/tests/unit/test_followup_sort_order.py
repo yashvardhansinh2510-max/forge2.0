@@ -9,7 +9,7 @@ from services.followup_engine import _followup_sort_key
 
 
 def _fu(**kw):
-    base = {"bucket": "today", "assigned_to": None, "priority_score": 50, "due_at": "2026-08-01T00:00:00Z"}
+    base = {"bucket": "today", "status": "open", "assigned_to": None, "priority_score": 50, "due_at": "2026-08-01T00:00:00Z"}
     base.update(kw)
     return base
 
@@ -40,3 +40,10 @@ def test_falls_back_to_priority_score_then_due_at():
     lower_score_sooner_due = _fu(priority_score=60, due_at="2026-08-01T00:00:00Z")
     ordered = sorted([lower_score_sooner_due, higher_score], key=lambda d: _followup_sort_key(d, None))
     assert ordered == [higher_score, lower_score_sooner_due]
+
+
+def test_unresolved_outranks_a_completed_row_assigned_to_me():
+    done_but_mine = _fu(status="done", assigned_to="user-1", priority_score=90)
+    open_someone_elses = _fu(status="open", assigned_to="user-2", priority_score=10)
+    ordered = sorted([done_but_mine, open_someone_elses], key=lambda d: _followup_sort_key(d, "user-1"))
+    assert ordered == [open_someone_elses, done_but_mine]

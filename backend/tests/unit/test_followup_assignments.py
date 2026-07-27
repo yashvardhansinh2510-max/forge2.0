@@ -38,8 +38,8 @@ class _FakeFollowups:
     """Emulates just enough of Motor's find().to_list() to prove the
     endpoint's status filter works — real filtering happens in Mongo, this
     fake does the equivalent in Python so the test doesn't need a live DB.
-    `list_assignments` calls floor_query(user, base); for a manager/owner/
-    admin user (all-floor access) floor_query returns `base` unchanged (see
+    `list_assignments` calls floor_query(user, base); for an owner/manager
+    user (all-floor access) floor_query returns `base` unchanged (see
     backend/auth.py:299-306), so `query["status"]["$in"]` is always the
     right lookup for the test users used here."""
 

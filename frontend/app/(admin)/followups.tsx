@@ -29,6 +29,7 @@ import {
 import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
 import { colors, elevation, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
+import { MANAGER_ROLES } from "./followup-assignments";
 
 type FeatherName = keyof typeof Feather.glyphMap;
 
@@ -388,8 +389,11 @@ export default function FollowupsScreen() {
   }, [patchLocal, refreshStatsQuiet, loadList]);
 
   const pushDue = useCallback(async (f: Followup, days: number) => {
-    const dueIso = new Date(Date.now() + days * 86400000).toISOString();
-    patchLocal(f.id, { due_at: dueIso });
+    const dueDate = new Date(Date.now() + days * 86400000);
+    const dueIso = dueDate.toISOString();
+    const deltaDays = Math.floor((Date.UTC(dueDate.getFullYear(), dueDate.getMonth(), dueDate.getDate()) - Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())) / 86400000);
+    const newBucket: Bucket = deltaDays < 0 ? "overdue" : deltaDays === 0 ? "today" : deltaDays === 1 ? "tomorrow" : deltaDays <= 7 ? "this_week" : "later";
+    patchLocal(f.id, { due_at: dueIso, bucket: newBucket });
     try { await api.patch(`/followups/${f.id}`, { due_at: dueIso }); toast.success(`Pushed ${days} day${days === 1 ? "" : "s"}`); refreshStatsQuiet(); }
     catch (e: any) { toast.error(e?.detail || "Could not reschedule"); loadList(); }
   }, [patchLocal, refreshStatsQuiet, loadList]);
@@ -449,7 +453,7 @@ export default function FollowupsScreen() {
       ));
     }
     if (kpiFilter === "waiting") {
-      list = list.filter((f) => f.status === "open" && (f.rule_type === "quotation_followup" || f.rule_type === "payment_partial"));
+      list = list.filter((f) => f.status === "open" && f.rule_type === "payment_partial");
     } else if (kpiFilter === "completed") {
       list = list.filter((f) => f.bucket === "completed" && !!f.completed_at && isSameDay(f.completed_at, new Date()));
     } else if (kpiFilter !== "all") {
@@ -651,7 +655,7 @@ export default function FollowupsScreen() {
           ) : (
             <>
               <IconButton icon="rotate-cw" onPress={onRefresh} tone="surface" accessibilityLabel="Refresh" size={38} />
-              {staff && ["owner", "admin", "manager"].includes(staff.role) ? (
+              {staff && MANAGER_ROLES.includes(staff.role) ? (
                 <Button label="Team View" icon="users" variant="secondary" size="md" onPress={() => router.push("/(admin)/followup-assignments" as any)} testID="team-view-btn" />
               ) : null}
               <Button label="Automation Rules" icon="zap" variant="secondary" size="md" onPress={() => setRulesSheet(true)} />

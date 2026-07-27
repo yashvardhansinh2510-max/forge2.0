@@ -145,12 +145,15 @@ def compute_bucket(f: dict) -> str:
 
 def _followup_sort_key(d: dict, current_user_id: Optional[str]) -> tuple:
     """Overdue always first (business-wide urgency, regardless of who it's
-    assigned to), then cards assigned to the requesting user (so a
-    manager's assignment is impossible to miss), then priority score, then
-    soonest due. Used by GET /followups — see
+    assigned to), then unresolved rows (open/snoozed) ahead of done/dismissed
+    ones (overdue implies unresolved, so these two terms never conflict),
+    then cards assigned to the requesting user (so a manager's assignment is
+    impossible to miss), then priority score, then soonest due. Used by GET
+    /followups — see
     docs/superpowers/specs/2026-07-27-followups-revamp-design.md."""
     return (
         0 if d.get("bucket") == "overdue" else 1,
+        0 if d.get("status") in ("open", "snoozed") else 1,
         0 if current_user_id and d.get("assigned_to") == current_user_id else 1,
         -(d.get("priority_score") or 0),
         d.get("due_at") or "",
