@@ -135,10 +135,14 @@ specific saved document.
 
 ## Tile images: horizontal everywhere
 
-Standardize the image frame to a landscape aspect ratio in the 3 places tile
-photos actually render today (verified against the real code, not assumed):
-Catalog cards, the on-screen builder's photo cell (`TileRow.image`), and the
-generated PDF's photo cell (`pdf_tiles.py`). **Not** the product picker —
+Standardize the image frame to a landscape aspect ratio in the 2 places that
+actually need it (verified against the real code, not assumed): Catalog
+cards and the on-screen builder's photo cell (`TileRow.image`). **The PDF
+needs no change** — `pdf_tiles.py`'s photo cell already uses a landscape
+bounding box (41×24mm on the Quotation table, 24×16mm on the Selection
+table, both via the shared `_img()` helper in `pdf_generator.py`) that
+proportionally fits the source photo inside it without stretching; that's
+the correct behavior already. **Not** the product picker —
 `TilesProductPicker.tsx` is deliberately text-only, no thumbnails, by
 existing design (its own header comment: kept fast/scannable since the
 printed document already carries the photo) — nothing to change there.
