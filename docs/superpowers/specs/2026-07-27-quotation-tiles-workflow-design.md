@@ -135,12 +135,28 @@ specific saved document.
 
 ## Tile images: horizontal everywhere
 
-Standardize the image frame to a landscape aspect ratio in the 4 places tile
-photos render today: Catalog cards, the product-picker results list, the
-on-screen builder's photo cell (`TileRow.image`), and the generated PDF's
-photo cell (`pdf_tiles.py`). Purely a container/aspect-ratio fix — no image
-re-processing, no dependency on the new tile designs the user will provide
-later (explicitly out of scope until then).
+Standardize the image frame to a landscape aspect ratio in the 3 places tile
+photos actually render today (verified against the real code, not assumed):
+Catalog cards, the on-screen builder's photo cell (`TileRow.image`), and the
+generated PDF's photo cell (`pdf_tiles.py`). **Not** the product picker —
+`TilesProductPicker.tsx` is deliberately text-only, no thumbnails, by
+existing design (its own header comment: kept fast/scannable since the
+printed document already carries the photo) — nothing to change there.
+
+Catalog's image container (`imageWrap`, `aspectRatio: 1`) is one shared
+style used by every product card regardless of floor — sanitaryware and
+tiles alike. Changing it outright would also reshape sanitaryware cards,
+which nobody asked for. `Product.floor_id` is already present on every
+catalog API response (projection only excludes `_id`) even though the
+frontend `Product` type doesn't declare it yet — the fix is per-card:
+add `floor_id` to the type, and apply the landscape frame only when a
+card's own product has `floor_id === "ground-floor"`. This also makes the
+fix correct in owners'/managers' "All floors" merged view, not just when
+Ground Floor is the sole active floor.
+
+Purely a container/aspect-ratio fix — no image re-processing, no dependency
+on the new tile designs the user will provide later (explicitly out of
+scope until then).
 
 ## Explicitly not changing
 
