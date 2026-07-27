@@ -126,9 +126,9 @@ export default function SalesData() {
         options={[{ value: "overview", label: "Overview" }, { value: "brand", label: "By Brand" }]}
       />
 
-      {error ? <ErrorState subtitle={error} onRetry={load} /> : null}
-      {!error && !overview ? <LoadingState label="Loading sales data…" /> : null}
-      {!error && overview && overview.total_revenue === 0 ? (
+      {tab === "overview" && error ? <ErrorState subtitle={error} onRetry={load} /> : null}
+      {tab === "overview" && !error && !overview ? <LoadingState label="Loading sales data…" /> : null}
+      {tab === "overview" && !error && overview && overview.total_revenue === 0 ? (
         <EmptyState title="No sales in this range" subtitle="Try a wider date range or different filters." />
       ) : null}
       {!error && overview && overview.total_revenue > 0 && tab === "overview" ? (
