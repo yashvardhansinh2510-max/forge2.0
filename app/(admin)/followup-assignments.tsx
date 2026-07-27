@@ -22,7 +22,7 @@ const STATUS_TONE: Record<string, "brand" | "warning" | "success" | "neutral"> =
   open: "brand", snoozed: "warning", done: "success", dismissed: "neutral",
 };
 
-const MANAGER_ROLES = ["owner", "admin", "manager"];
+export const MANAGER_ROLES = ["owner", "admin", "manager"];
 
 export default function FollowupAssignments() {
   const { staff } = useAuth();
