@@ -37,6 +37,7 @@ import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { downloadApiFile, printApiFile } from "@/src/utils/downloadFile";
 
 import { TilesProductPicker } from "./TilesProductPicker";
+import { canPlaceOrder, nextTilesAction, tilesStage } from "./tilesStage";
 
 export type TilesDocType = "tiles_selection" | "tiles_quotation";
 
@@ -138,6 +139,7 @@ function useTilesDoc(docType: TilesDocType) {
   const { id: routeId } = useLocalSearchParams<{ id?: string }>();
   const [docId, setDocId] = useState<string | null>((routeId as string) || null);
   const [docNumberServer, setDocNumberServer] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>("draft");
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerSnapshot, setCustomerSnapshot] = useState<{ name: string; phone: string }>({ name: "", phone: "" });
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -166,6 +168,7 @@ function useTilesDoc(docType: TilesDocType) {
         if (!alive) return;
         setDocId(doc.id);
         setDocNumberServer(doc.number || null);
+        setStatus(doc.status || "draft");
         setCustomerId(doc.customer_id || null);
         setCustomerSnapshot({ name: doc.customer_name || "", phone: doc.phone_snapshot || "" });
         setHeader({
@@ -409,8 +412,42 @@ function useTilesDoc(docType: TilesDocType) {
       toast.show("Add at least one product first");
       return;
     }
+    if (!canPlaceOrder(docType, status)) {
+      toast.show("Confirm the quotation before placing the order");
+      return;
+    }
     router.push(`/(admin)/quotations/${id}/place-order` as any);
-  }, [persist, buildItems, router]);
+  }, [persist, buildItems, router, docType, status]);
+
+  const workflowAction = nextTilesAction(docType, status);
+
+  const runWorkflowAction = useCallback(async () => {
+    const action = nextTilesAction(docType, status);
+    if (!action) return;
+    setBusy("workflow");
+    try {
+      if (action.kind === "move_to_quotation") {
+        const id = await persist({ silent: true });
+        if (!id) return;
+        const updated = await api.post<{ id: string; doc_type: string; status: string }>(`/quotations/${id}/move-to-quotation`);
+        toast.success("Moved to Quotation");
+        // Move-to-Quotation changes doc_type; the route file (selection.tsx
+        // vs quotation.tsx) is what picks Selection vs Quotation paper, so
+        // navigate to the sibling route for the same id.
+        router.replace(`/(admin)/tiles/quotation?id=${updated.id}` as any);
+        return;
+      }
+      const id = await persist({ silent: true });
+      if (!id) return;
+      const updated = await api.patch<{ status: string }>(`/quotations/${id}`, { status: action.nextStatus });
+      setStatus(updated.status);
+      toast.success(action.label === "Approve" || action.label === "Confirm" ? `${action.label}d` : "Submitted");
+    } catch (e: any) {
+      toast.error(e?.detail || "Couldn't update the workflow stage");
+    } finally {
+      setBusy(null);
+    }
+  }, [docType, status, persist, router]);
 
   const pickCustomer = useCallback((customer: Customer) => {
     setCustomerId(customer.id);
@@ -424,6 +461,7 @@ function useTilesDoc(docType: TilesDocType) {
     updateRow, addRow, removeRow, applyProduct,
     customers, customerId, pickCustomer, setCustomerId,
     saveState, busy, save, generatePdf, print, placeOrder,
+    status, stage: tilesStage(docType, status), workflowAction, runWorkflowAction,
   };
 }
 
@@ -1070,6 +1108,15 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
           </View>
         </View>
         <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+          {doc.workflowAction ? (
+            <ActionBtn
+              label={doc.workflowAction.label}
+              icon={doc.workflowAction.kind === "move_to_quotation" ? "arrow-right-circle" : "check-circle"}
+              onPress={doc.runWorkflowAction}
+              loading={doc.busy === "workflow"}
+              testID="tiles-workflow-action"
+            />
+          ) : null}
           <ActionBtn
             label={saveLabel}
             icon="save"
