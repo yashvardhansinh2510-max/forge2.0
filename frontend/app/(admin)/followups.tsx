@@ -7,6 +7,7 @@
 // only orchestrates reads + user actions, never invents data.
 // ═══════════════════════════════════════════════════════════════════════════
 import { Feather } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -224,6 +225,7 @@ function greeting(): string {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function FollowupsScreen() {
   const { staff } = useAuth();
+  const router = useRouter();
   const { isPhone, isDesktop } = useBp();
   const pagePad = isPhone ? spacing.md : spacing.xl;
 
@@ -649,6 +651,9 @@ export default function FollowupsScreen() {
           ) : (
             <>
               <IconButton icon="rotate-cw" onPress={onRefresh} tone="surface" accessibilityLabel="Refresh" size={38} />
+              {staff && ["owner", "admin", "manager"].includes(staff.role) ? (
+                <Button label="Team View" icon="users" variant="secondary" size="md" onPress={() => router.push("/(admin)/followup-assignments" as any)} testID="team-view-btn" />
+              ) : null}
               <Button label="Automation Rules" icon="zap" variant="secondary" size="md" onPress={() => setRulesSheet(true)} />
               <Dropdown
                 label="Export" icon="download" variant="secondary"
