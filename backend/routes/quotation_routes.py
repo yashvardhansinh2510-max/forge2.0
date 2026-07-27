@@ -89,8 +89,15 @@ def _referrer_fields(referrer_type: str | None, referrer_doc: dict | None) -> di
 
 
 @router.get("")
-async def list_quotations(user: UserPublic = Depends(get_current_user)):
-    docs = await db.quotations.find(floor_query(user), {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_quotations(
+    doc_type: str | None = None,
+    user: UserPublic = Depends(get_current_user),
+):
+    query: dict = {}
+    if doc_type:
+        query["doc_type"] = doc_type
+    final_query = {**floor_query(user), **query}
+    docs = await db.quotations.find(final_query, {"_id": 0}).sort("created_at", -1).to_list(500)
     return docs
 
 
