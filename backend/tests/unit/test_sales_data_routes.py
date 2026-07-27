@@ -34,7 +34,14 @@ class _Collection:
 
     def find(self, query, *_a, **_kw):
         self.last_query = query
-        return _Cursor(self._docs)
+        docs = self._docs
+        # Minimal real filtering — just enough to prove _won_quotations'
+        # {"status": "won"} clause actually excludes non-won docs. Not a
+        # general Mongo query engine: floor_id/updated_at are recorded into
+        # last_query for assertion but not filtered on here.
+        if query and "status" in query:
+            docs = [d for d in docs if d.get("status") == query["status"]]
+        return _Cursor(docs)
 
 
 class _FakeDb:
@@ -73,6 +80,58 @@ def test_resolve_floor_ids_admin_cannot_request_a_floor_outside_their_access():
     with pytest.raises(HTTPException) as exc:
         sd._resolve_floor_ids(_admin_ground_only(), "first-floor")
     assert exc.value.status_code == 403
+
+
+def test_won_quotations_query_always_filters_status_won(monkeypatch):
+    fake_db = _FakeDb([])
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    asyncio.run(sd.sales_overview(
+        floor_id=None, referrer_type=None, date_from=None, date_to=None,
+        granularity="month", user=_owner(),
+    ))
+
+    assert fake_db.quotations.last_query["status"] == "won"
+
+
+def test_won_quotations_query_includes_floor_scoping(monkeypatch):
+    fake_db = _FakeDb([])
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    asyncio.run(sd.sales_overview(
+        floor_id=None, referrer_type=None, date_from=None, date_to=None,
+        granularity="month", user=_admin_ground_only(),
+    ))
+
+    assert fake_db.quotations.last_query["floor_id"] == {"$in": ["ground-floor"]}
+
+
+def test_won_quotations_query_includes_date_range(monkeypatch):
+    fake_db = _FakeDb([])
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    asyncio.run(sd.sales_overview(
+        floor_id=None, referrer_type=None, date_from="2026-01-01", date_to="2026-12-31",
+        granularity="month", user=_owner(),
+    ))
+
+    assert fake_db.quotations.last_query["updated_at"] == {"$gte": "2026-01-01", "$lte": "2026-12-31"}
+
+
+def test_won_quotations_excludes_non_won_docs(monkeypatch):
+    fake_db = _FakeDb([
+        {"status": "won", "floor_id": "first-floor", "grand_total": 100, "updated_at": "2026-07-01T00:00:00+00:00"},
+        {"status": "draft", "floor_id": "first-floor", "grand_total": 999999, "updated_at": "2026-07-01T00:00:00+00:00"},
+    ])
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    result = asyncio.run(sd.sales_overview(
+        floor_id=None, referrer_type=None, date_from=None, date_to=None,
+        granularity="month", user=_owner(),
+    ))
+
+    assert result["total_revenue"] == 100
+    assert result["quotation_count"] == 1
 
 
 def test_overview_totals_revenue_and_splits_by_floor(monkeypatch):
@@ -263,3 +322,35 @@ def test_brands_ranked_honors_project_discount_not_just_product_override(monkeyp
 
     by_brand = {b["brand_id"]: b["revenue"] for b in result["brands"]}
     assert by_brand["b-kohler"] == 8000.0
+
+
+def test_brand_detail_404s_for_unknown_brand(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    fake_db = _FakeDbForBrands([], [], [])
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(sd.brand_detail("missing", date_from=None, date_to=None, granularity="month", user=_owner()))
+    assert exc.value.status_code == 404
+
+
+def test_brands_ranked_excludes_items_with_unknown_product(monkeypatch):
+    quotations = [
+        {
+            "status": "won", "floor_id": "first-floor", "grand_total": 0, "updated_at": "2026-07-01T00:00:00+00:00",
+            "items": [
+                # p-orphan is entirely absent from the products fixture (e.g. a
+                # deleted product, or one with no brand_id) — must be silently
+                # excluded, not crash and not get mislabeled into some brand.
+                {"id": "li-orphan", "product_id": "p-orphan", "name": "Mystery Item", "sku": "SKU-X", "qty": 1, "unit_price": 1000, "discount_pct": None},
+            ],
+        },
+    ]
+    fake_db = _FakeDbForBrands(quotations, [], [])
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    result = asyncio.run(sd.brands_ranked(date_from=None, date_to=None, user=_owner()))
+
+    assert result["brands"] == []
