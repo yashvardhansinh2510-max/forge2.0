@@ -495,6 +495,37 @@ async def move_to_quotation(
     return fresh
 
 
+@router.get("/tiles/product-history")
+async def tiles_product_history(
+    customer_id: str, product_id: str,
+    user: UserPublic = Depends(get_current_user),
+):
+    """Most recent tiles line item this customer had for this exact
+    product, across any Selection/Quotation (any stage) — powers the
+    product picker's "used last time" hint."""
+    docs = await db.quotations.find(
+        floor_query(user, {
+            "customer_id": customer_id,
+            "doc_type": {"$in": ["tiles_selection", "tiles_quotation"]},
+            "items.product_id": product_id,
+        }),
+        {"_id": 0, "number": 1, "doc_date": 1, "created_at": 1, "items": 1},
+    ).sort("created_at", -1).to_list(20)
+    for doc in docs:
+        for item in doc.get("items", []):
+            if item.get("product_id") == product_id:
+                return {
+                    "found": True,
+                    "quotation_number": doc.get("number"),
+                    "doc_date": doc.get("doc_date") or doc.get("created_at"),
+                    "size": item.get("size"),
+                    "rate_sqft": item.get("rate_sqft"),
+                    "rate_box": item.get("unit_price"),
+                    "pcs_per_box": item.get("pcs_per_box"),
+                }
+    return {"found": False}
+
+
 # --- Breakdown (for line + totals transparency) ---
 @router.get("/{quotation_id}/breakdown")
 async def quotation_breakdown(quotation_id: str, user: UserPublic = Depends(get_current_user)):
