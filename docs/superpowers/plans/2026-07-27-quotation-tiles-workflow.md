@@ -857,6 +857,11 @@ class _FakeSnapshot:
             "price": 100, "mrp": 120, "images": [], "floor_id": "ground-floor",
         },
     ]
+    # list_family_groups also reads these two unconditionally (the media
+    # lookup pass after pagination) — required or the real function raises
+    # AttributeError on this fake.
+    media_rows_by_product = {}
+    media_rows_by_family = {}
 
 
 def test_family_groups_include_floor_id(monkeypatch):
@@ -870,7 +875,8 @@ def test_family_groups_include_floor_id(monkeypatch):
         limit=60, skip=0, floor_ids=None,
     ))
 
-    assert result["families"][0]["floor_id"] == "ground-floor"
+    # list_family_groups returns {"total": ..., "items": [...]} — not "families".
+    assert result["items"][0]["floor_id"] == "ground-floor"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
