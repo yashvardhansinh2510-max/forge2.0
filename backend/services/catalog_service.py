@@ -620,6 +620,7 @@ async def list_family_groups(
             "category_id": product.get("category_id"),
             "subcategory": product.get("subcategory"),
             "series": product.get("series"),
+            "floor_id": product.get("floor_id"),
             "min_price": float(product.get("price") or 0),
             "max_price": float(product.get("price") or 0),
             "product_count": 0,
