@@ -28,7 +28,7 @@ import { productImageList } from "../helpers/media";
 import {
   Brand, BuilderRow, BuilderState, Category, Customer, DEFAULT_ROOMS, DescSheetState, DiscountSheetState,
   INITIAL_BUILDER_STATE, Line, PickerTab, Product, ProductVariant, QuotationHeader,
-  RecentQuotation, RoomDiscount, RoomSheetState, SaveState, SwapSheetState,
+  RecentQuotation, Referrer, RoomDiscount, RoomSheetState, SaveState, SwapSheetState,
 } from "../helpers/types";
 
 const LOCAL_SNAPSHOT_KEY = "forge.builder.snapshot.v4";
@@ -53,6 +53,7 @@ export type BuilderApi = {
 
   // Reference data
   customers: Customer[];
+  referrers: Referrer[];
   categories: Category[];
   categoryById: Record<string, string>;
 
@@ -129,6 +130,10 @@ export type BuilderApi = {
   setCustomer: (id: string) => void;
   createCustomer: (data: { name: string; phone?: string; project?: string; address?: string }) => Promise<string | null>;
   customerSwitcherOpen: boolean; setCustomerSwitcherOpen: (v: boolean) => void;
+  setReferrer: (type: "architect" | "interior_designer", id: string, name: string) => void;
+  clearReferrer: () => void;
+  createReferrer: (data: { name: string; type: "architect" | "interior_designer" }) => Promise<string | null>;
+  referrerSwitcherOpen: boolean; setReferrerSwitcherOpen: (v: boolean) => void;
   addFromProduct: (p: Product, variant?: ProductVariant) => void;
   updateLine: (id: string, patch: Partial<Line>, coalesceKey?: string) => void;
   removeLine: (id: string) => void;
@@ -262,17 +267,22 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   // Customer switcher sheet
   const [customerSwitcherOpen, setCustomerSwitcherOpen] = useState(false);
 
+  // Referrer reference data + switcher sheet
+  const [referrers, setReferrers] = useState<Referrer[]>([]);
+  const [referrerSwitcherOpen, setReferrerSwitcherOpen] = useState(false);
+
   // ---------- Load reference data ----------
   useEffect(() => {
     (async () => {
       try {
-        const [cs, cats, brs, rec, freq, recentQ] = await Promise.all([
+        const [cs, cats, brs, rec, freq, recentQ, refs] = await Promise.all([
           api.get<Customer[]>("/customers", { floorId: "first-floor" }),
           api.get<Category[]>("/categories", { floorId: "first-floor" }),
           api.get<Brand[]>("/brands", { floorId: "first-floor" }),
           api.get<Product[]>("/products/recent", { floorId: "first-floor" }),
           api.get<Product[]>("/products/frequent", { floorId: "first-floor" }),
           api.get<RecentQuotation[]>("/quotations/recent?limit=10"),
+          api.get<Referrer[]>("/referrers"),
         ]);
         setCustomers(cs);
         setCategories(cats);
@@ -281,6 +291,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         setRecent(rec);
         setFrequent(freq);
         setRecentQuotations(recentQ);
+        setReferrers(refs);
         if (cs[0] && !history.state.customerId) {
           history.replace({ ...history.state, customerId: cs[0].id });
         }
@@ -406,6 +417,8 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       project_name: s.header.projectName || null,
       phone_snapshot: s.header.phone || null,
       reference_source: s.header.referenceSource || null,
+      referrer_type: s.header.referrerType,
+      referrer_id: s.header.referrerId,
       ui_state: {
         activeRoom: s.activeRoom,
         collapsedRooms: s.collapsedRooms,
@@ -483,6 +496,9 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
           projectName: doc.project_name || "",
           phone: doc.phone_snapshot || "",
           referenceSource: doc.reference_source || "",
+          referrerType: doc.referrer_type || null,
+          referrerId: doc.referrer_id || null,
+          referrerName: doc.referrer_name || "",
         },
         lines: (doc.items || []).map((it: any) => ({
           id: it.id, product_id: it.product_id, sku: it.sku, name: it.name,
@@ -598,6 +614,43 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       return null;
     }
   }, [setCustomer]);
+
+  const setReferrer = useCallback((type: "architect" | "interior_designer", id: string, name: string) => {
+    history.apply((cur) => ({ ...cur, header: { ...cur.header, referrerType: type, referrerId: id, referrerName: name } }));
+    if (quotationId) {
+      api.patch(`/quotations/${quotationId}`, { referrer_type: type, referrer_id: id })
+        .then(() => { setSaveState("saved"); setSavedAt(new Date()); })
+        .catch((e: any) => toast.error(e?.detail || "Could not set referrer"));
+    }
+  }, [history, quotationId]);
+
+  const clearReferrer = useCallback(() => {
+    history.apply((cur) => ({ ...cur, header: { ...cur.header, referrerType: null, referrerId: null, referrerName: "" } }));
+    if (quotationId) {
+      // referrer_id: "" (not null) — the backend's update_quotation gates on
+      // `if body.referrer_id is not None`, and JSON null deserializes to
+      // Python None, which would make that check False and silently no-op
+      // the clear. An empty string passes the `is not None` gate and then
+      // hits the existing falsy-string branch that already clears all three
+      // referrer fields (see Task 2, update_quotation).
+      api.patch(`/quotations/${quotationId}`, { referrer_type: null, referrer_id: "" })
+        .then(() => { setSaveState("saved"); setSavedAt(new Date()); })
+        .catch((e: any) => toast.error(e?.detail || "Could not clear referrer"));
+    }
+  }, [history, quotationId]);
+
+  const createReferrer = useCallback(async (data: { name: string; type: "architect" | "interior_designer" }) => {
+    try {
+      const created = await api.post<Referrer>("/referrers", data);
+      setReferrers((cur) => [...cur, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setReferrer(created.type, created.id, created.name);
+      toast.success(`${created.name} added`);
+      return created.id;
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not create referrer");
+      return null;
+    }
+  }, [setReferrer]);
 
   const addFromProduct = useCallback((p: Product, variant?: ProductVariant) => {
     Haptics.selectionAsync();
@@ -904,7 +957,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   // actually depends on changes.
   const value: BuilderApi = useMemo(() => ({
     history, s,
-    customers, categories, categoryById,
+    customers, referrers, categories, categoryById,
     q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading,
     productHasMore, productLoadingMore, loadMoreProducts, recent, frequent, searchRef,
     brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
@@ -917,6 +970,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
     workflowBusy, generateOfficialQuotation, placeOrder,
     setCustomer, createCustomer, customerSwitcherOpen, setCustomerSwitcherOpen,
+    setReferrer, clearReferrer, createReferrer, referrerSwitcherOpen, setReferrerSwitcherOpen,
     addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,
     addRoom, renameRoom, duplicateRoom, deleteRoom, toggleCollapse, setActiveRoom, onRoomDragEnd, onLinesDragEnd,
     setProjectDiscount, setCategoryDiscount, setRoomDiscount, setNotes,
@@ -931,7 +985,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     assistantFocus, setAssistantFocus, assistantOpenMobile, setAssistantOpenMobile,
   }), [
     history, s,
-    customers, categories, categoryById,
+    customers, referrers, categories, categoryById,
     q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading,
     productHasMore, productLoadingMore, loadMoreProducts, recent, frequent, searchRef,
     brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
@@ -944,6 +998,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
     workflowBusy, generateOfficialQuotation, placeOrder,
     setCustomer, createCustomer, customerSwitcherOpen, setCustomerSwitcherOpen,
+    setReferrer, clearReferrer, createReferrer, referrerSwitcherOpen, setReferrerSwitcherOpen,
     addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,
     addRoom, renameRoom, duplicateRoom, deleteRoom, toggleCollapse, setActiveRoom, onRoomDragEnd, onLinesDragEnd,
     setProjectDiscount, setCategoryDiscount, setRoomDiscount, setNotes,

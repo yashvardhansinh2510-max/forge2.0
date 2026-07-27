@@ -24,6 +24,7 @@ import { DescriptionSheet } from "../sheets/DescriptionSheet";
 import { DiscountSheet } from "../sheets/DiscountSheet";
 import { ProductModal } from "../sheets/ProductModal";
 import { ProductPickerSheet } from "../sheets/ProductPickerSheet";
+import { ReferrerSwitcherSheet } from "../sheets/ReferrerSwitcherSheet";
 import { RoomSheet } from "../sheets/RoomSheet";
 import { SwapSheet } from "../sheets/SwapSheet";
 import { BuilderTopbar } from "./BuilderTopbar";
@@ -105,6 +106,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       <ProductModal />
       <CustomProductSheet />
       <CustomerSwitcherSheet />
+      <ReferrerSwitcherSheet />
       <DiscountSheet />
       <RoomSheet />
       <DescriptionSheet />
