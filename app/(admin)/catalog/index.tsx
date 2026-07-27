@@ -32,6 +32,7 @@ type Family = {
   subcategory?: string | null; series?: string | null;
   min_price: number; max_price: number; product_count: number;
   sample_image?: string | null; sample_image_quality?: string | null;
+  floor_id?: string | null;
   variants: {
     id: string; sku: string; variant_label?: string | null; colour?: string | null;
     finish?: string | null; finish_code?: string | null; price: number; mrp: number;
@@ -45,6 +46,7 @@ type Product = {
   image_quality?: string | null;
   hero_image_url?: string | null;
   colour?: string | null;
+  floor_id?: string | null;
 };
 
 type ViewMode = "families" | "products";
@@ -548,7 +550,7 @@ function FamilyCard({ family: f, brandName, onPress }: { family: Family; brandNa
       onPress={onPress}
       style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}
     >
-      <View style={styles.imageWrap}>
+      <View style={[styles.imageWrap, f.floor_id === "ground-floor" && styles.imageWrapTile]}>
         <ProductImage
           source={f.sample_image ? [f.sample_image] : []}
           style={StyleSheet.absoluteFill as any}
@@ -616,7 +618,7 @@ function ProductCard({ product: p, brandName, onPress }: { product: Product; bra
       onPress={onPress}
       style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}
     >
-      <View style={styles.imageWrap}>
+      <View style={[styles.imageWrap, p.floor_id === "ground-floor" && styles.imageWrapTile]}>
         <ProductImage
           source={p.hero_image_url ? [p.hero_image_url, ...(p.images || [])] : p.images}
           style={StyleSheet.absoluteFill as any}
@@ -749,6 +751,9 @@ const styles = StyleSheet.create({
   },
   imageWrap: {
     width: "100%", aspectRatio: 1, backgroundColor: colors.surfaceTertiary, position: "relative",
+  },
+  imageWrapTile: {
+    aspectRatio: 16 / 10,
   },
   brandOverlay: {
     position: "absolute", top: 10, left: 10,
