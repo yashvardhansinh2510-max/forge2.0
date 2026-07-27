@@ -12,8 +12,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
 import { useBp } from "@/src/design/responsive";
 import {
-  Avatar, Badge, Button, Card, EmptyState, PageHeader,
-  SegmentedControl, StatTile, StatusBadge,
+  Avatar, Badge, Button, Card, Chip, EmptyState, FormField, PageHeader,
+  SegmentedControl, Sheet, StatTile, StatusBadge, TextField,
 } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -72,6 +72,52 @@ const EMPTY_WORKSPACE: Workspace = {
   expected_delivery: { next_at: null, purchase_orders: [] },
 };
 
+const WALK_IN_DAY_OPTIONS = [2, 4, 7, 14];
+
+function WalkInFollowupSheet({ visible, onClose, customer, onCreate }: {
+  visible: boolean; onClose: () => void; customer: Customer; onCreate: (payload: any) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("Walk-in visit — no quotation yet.");
+  const [days, setDays] = useState(4);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (visible) { setReason("Walk-in visit — no quotation yet."); setDays(4); }
+  }, [visible]);
+
+  const submit = async () => {
+    if (!reason.trim()) { toast.error("Add a reason"); return; }
+    setSaving(true);
+    try {
+      const dueIso = new Date(Date.now() + days * 86400000).toISOString();
+      await onCreate({ customer_id: customer.id, category: "sales", channel: "call", reason: reason.trim(), due_at: dueIso });
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Sheet visible={visible} onClose={onClose} title="Add to Follow-ups" subtitle={customer.company || customer.name} width={420}
+      footer={<>
+        <Button label="Cancel" variant="secondary" onPress={onClose} size="md" />
+        <View style={{ flex: 1 }} />
+        <Button label="Add Reminder" variant="primary" icon="plus" loading={saving} onPress={submit} size="md" testID="walkin-followup-save" />
+      </>}
+    >
+      <View style={{ padding: spacing.xl, gap: spacing.lg }}>
+        <FormField label="Reason" required helper="What should the salesperson do and why?">
+          <TextField value={reason} onChangeText={setReason} placeholder="e.g. Browsed tile samples, wants a quote next week" testID="walkin-followup-reason" />
+        </FormField>
+        <FormField label="Remind me in" helper="Defaults to 4 days — change it if the customer asked for something different">
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            {WALK_IN_DAY_OPTIONS.map((d) => (
+              <Chip key={d} label={`${d} days`} active={days === d} onPress={() => setDays(d)} />
+            ))}
+          </View>
+        </FormField>
+      </View>
+    </Sheet>
+  );
+}
+
 export default function CustomerDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -88,6 +134,7 @@ export default function CustomerDetail() {
   const [moveItem, setMoveItem] = useState<WorkspaceProduct | null>(null);
   const [transferItem, setTransferItem] = useState<WorkspaceProduct | null>(null);
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
+  const [walkInSheet, setWalkInSheet] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -111,6 +158,16 @@ export default function CustomerDetail() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  const createWalkInFollowup = useCallback(async (payload: any) => {
+    try {
+      await api.post("/followups", payload);
+      toast.success("Follow-up added");
+      setWalkInSheet(false);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not add follow-up");
+    }
+  }, []);
 
   const toMovable = useCallback((p: WorkspaceProduct): MovableItem => ({
     item_id: p.item_id, sku: p.sku, name: p.name, image: p.image, qty: p.qty,
@@ -180,6 +237,14 @@ export default function CustomerDetail() {
         back={() => router.back()}
         actions={
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <Button
+              icon="phone-call"
+              label="Add to Follow-ups"
+              variant="secondary"
+              size="md"
+              onPress={() => setWalkInSheet(true)}
+              testID="add-to-followups-btn"
+            />
             <Button
               icon="edit-2"
               label="Edit"
@@ -545,6 +610,12 @@ export default function CustomerDetail() {
         visible={!!historyItemId}
         itemId={historyItemId}
         onClose={() => setHistoryItemId(null)}
+      />
+      <WalkInFollowupSheet
+        visible={walkInSheet}
+        onClose={() => setWalkInSheet(false)}
+        customer={customer}
+        onCreate={createWalkInFollowup}
       />
     </SafeAreaView>
   );
