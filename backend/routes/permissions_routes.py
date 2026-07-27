@@ -39,12 +39,13 @@ MODULES: list[dict[str, str]] = [
     {"key": "notifications", "label": "Notifications"},
     {"key": "team", "label": "Team"},
     {"key": "settings", "label": "Settings"},
+    {"key": "sales-data", "label": "Sales Data"},
 ]
 MODULE_KEYS = {m["key"] for m in MODULES}
 
 # Mirrors the nav `roles` restriction that existed before this feature —
 # every module defaults to "worker" (i.e. visible to everyone) except Team.
-DEFAULT_MIN_ROLE: dict[str, str] = {"team": "manager"}
+DEFAULT_MIN_ROLE: dict[str, str] = {"team": "manager", "sales-data": "admin"}
 
 
 def _default_matrix() -> dict[str, dict[str, bool]]:
