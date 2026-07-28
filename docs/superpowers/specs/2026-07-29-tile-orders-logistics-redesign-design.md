@@ -52,9 +52,24 @@ class CustomerOrderBrand(BaseModel):
     purchase_order_id: str
     status: str  # kept in sync with that PO's overall_status
 
+class CustomerOrderDashboardSummary(BaseModel):
+    # Cached read-model for the Customer tab, refreshed transactionally on
+    # every child write — avoids recomputing completion/status live on every
+    # dashboard load. `waiting_days` is deliberately NOT part of this cache
+    # (see Ageing below) since it depends on "today," not on order state.
+    completion_percentage: float
+    overall_status: str
+    supplier_statuses: list[dict]   # [{supplier_name, status}], mirrors brands[]
+
 class CustomerOrder(BaseModel):
     id: str
-    number: str                    # "ORD-2026-0001", via services/sequence.py
+    number: str                    # "TORD-2026-0001", via services/sequence.py
+                                    # ("T" prefix keeps Tile Orders distinct from
+                                    # any future non-tile CustomerOrder module)
+    version: int = 0                # optimistic-locking counter, incremented on
+                                     # every aggregation update — guards against
+                                     # concurrent writes from sibling POs updating
+                                     # the same CustomerOrder simultaneously
     quotation_id: str
     quotation_number: str
     customer_id: str
@@ -80,9 +95,13 @@ class CustomerOrder(BaseModel):
     total_value: float
     overall_status: str             # furthest-progress across child POs
     completion_percentage: float    # boxes_dispatched / boxes_ordered * 100
+    dashboard_summary: CustomerOrderDashboardSummary
     last_activity: str               # short label, e.g. "Dispatch created"
     last_activity_at: str
     # waiting_days computed live at read time (today - created_at), never stored
+    is_deleted: bool = False
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
 ```
 
 ### `purchase_orders` (existing, extended)
@@ -157,6 +176,9 @@ class ReadyBatch(BaseModel):
     created_by: str
     created_by_name: str
     auto_created: bool         # true for behind-the-scenes batches from direct dispatch
+    is_deleted: bool = False
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
 ```
 
 ### `dispatches` (new collection)
@@ -168,6 +190,14 @@ class DispatchLineConsumed(BaseModel):
     ready_batch_id: str
     po_item_id: str
     qty: float
+
+class DispatchAttachment(BaseModel):
+    # No UI this pass — field exists so LR copies / transport receipts /
+    # vehicle photos / POD can attach later without a migration.
+    type: str
+    url: str
+    uploaded_by: str
+    uploaded_at: str
 
 class Dispatch(BaseModel):
     id: str
@@ -192,6 +222,13 @@ class Dispatch(BaseModel):
     godown_received_by: Optional[str] = None
     delivered_at: Optional[str] = None    # future — modeled now, no action/UI this pass
     delivered_by: Optional[str] = None
+    attachments: list[DispatchAttachment] = []
+    inventory_transaction_id: Optional[str] = None   # unused today — future
+                                                      # inventory-module hook,
+                                                      # no migration needed later
+    is_deleted: bool = False
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
 ```
 
 ### `chalans` (promoted out of the embedded array into its own collection)
@@ -240,6 +277,9 @@ class Chalan(BaseModel):
     generated_at: str
     generated_by_name: str
     system_version: str          # e.g. "BuildCon ERP v2"
+    is_deleted: bool = False
+    deleted_at: Optional[str] = None
+    deleted_by: Optional[str] = None
 ```
 
 ## Status derivation, ageing, completion
@@ -319,9 +359,13 @@ gets `customer_order_id` and fires `supplier.assigned`.
 - `GET /tile-orders/suppliers/{supplier_id}/orders?page=&page_size=&sort=&status=&search=`
   — that supplier's POs only, sorted oldest-waiting-first by default;
   includes a KPI summary (orders / pending / ready / partially dispatched /
-  completed / oldest-pending-days) for the dashboard's KPI bar
-- `GET /tile-orders/suppliers/{id}/analytics` — orders, waiting, avg ready
-  time, avg dispatch time, oldest pending, completion %
+  completed / oldest-pending-days / boxes pending / boxes ready / boxes
+  dispatched — tile businesses think in boxes as much as order counts) for
+  the dashboard's KPI bar
+- `GET /tile-orders/suppliers/{id}/analytics` — orders, waiting, oldest
+  pending, completion %, and supplier-scorecard timing metrics: average
+  ready time (order → first Ready), average dispatch time (Ready → Dispatch),
+  average total fulfilment time (order → fully Dispatched)
 - `GET /tile-orders/purchase-orders/{po_id}` — item box breakdown + `current_location`
 - `POST /tile-orders/purchase-orders/{po_id}/ready` — body `{items:
   [{po_item_id, qty}, ...]}`, bulk, one transaction: creates one `ReadyBatch`
@@ -331,9 +375,10 @@ gets `customer_order_id` and fires `supplier.assigned`.
 - `POST /tile-orders/purchase-orders/{po_id}/dispatch/preview` — body:
   list of `{po_item_id, ready_batch_id | null, qty}` (`null` batch = direct
   from pending) + `destination_type/name/address/city`. Non-mutating;
-  returns the would-be dispatch #, chalan #, product/box breakdown, and any
+  returns the would-be creation chain (`Dispatch DSP-2026-0004 → Chalan
+  CH-2026-0032 → Dispatch List entry`), product/box breakdown, and any
   warnings (e.g. over-consuming a batch), plus remaining-pending after the
-  action
+  action — so staff see exactly what gets created before confirming
 - `POST /tile-orders/purchase-orders/{po_id}/dispatch` — same body, commits:
   auto-creates a `ReadyBatch` (`auto_created=true`) for any line dispatched
   directly from pending, consumes the referenced batches, creates the
@@ -364,7 +409,10 @@ gets `customer_order_id` and fires `supplier.assigned`.
   delivered today, boxes ordered/pending, revenue
 
 All list endpoints support `page`/`page_size`/`sort`/`status`/`search` as
-first-class parameters from the start.
+first-class parameters from the start. `search` is one universal field per
+endpoint, matched against whichever of these are relevant to that list:
+customer name, mobile, supplier name, brand name, tile name, SKU, Chalan
+number, Dispatch number, Customer Order number.
 
 ## Chalan PDF
 
@@ -398,8 +446,9 @@ Reuses the existing `tiles/orders` route structure and
 - **Company landing**: one card per supplier (name, active-order count,
   `supplier_silent_days`) — no customer orders shown here.
 - **Supplier dashboard**: KPI bar (orders / pending / ready / partially
-  dispatched / completed / oldest-pending-days) above a table of that
-  supplier's orders only, sorted oldest-waiting-first.
+  dispatched / completed / oldest-pending-days / boxes pending / boxes
+  ready / boxes dispatched) above a table of that supplier's orders only,
+  sorted oldest-waiting-first.
 - **Supplier order detail**: per-product box breakdown, bulk "Mark Ready"
   (multi-select), "Dispatch" opens the preview endpoint first, then commits
   on confirm.
@@ -444,6 +493,13 @@ follow-up cleanup pass.
 - `ready_batches` / `dispatches`: `{purchase_order_id, po_item_id}`, `{supplier_id}`, `{customer_id}`, `{dispatch_date}`
 - `chalans`: unique `{dispatch_id}`, unique `{number}`
 
+All list/read queries filter `is_deleted: false` by default (soft delete
+only — logistics records are never physically removed). `CustomerOrder`
+writes go through a `version`-guarded update (read version, write with
+`{version: current}` filter, retry on mismatch), the same optimistic-CAS
+shape already used elsewhere in `purchases_tracker.py`, guarding against two
+sibling POs updating the same `CustomerOrder` rollup concurrently.
+
 **Test plan** (existing `backend/tests/unit` pattern — call route-wired
 dependencies directly, no live server needed):
 - box-counter invariant under bulk-ready + partial/direct dispatch
@@ -459,6 +515,9 @@ dependencies directly, no live server needed):
 - RBAC enforcement on all write actions
 - PDF field-presence check (generation metadata block, delivery snapshot,
   dispatched-items-only)
+- `CustomerOrder.version` CAS retry under two concurrent sibling-PO rollup
+  updates
+- soft-deleted records excluded from all list/read endpoints by default
 
 Validated end-to-end against these six scenarios before considering the
 feature complete: single-supplier order, multi-supplier order, partial
