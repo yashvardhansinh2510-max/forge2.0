@@ -131,8 +131,14 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
 
 
 def tile_chalan_pdf_filename(chalan: dict, customer_name: str) -> str:
-    stamp = datetime.now(timezone.utc)
-    return f"{chalan['number']} {customer_name} {stamp.strftime('%d-%m-%Y')}.pdf"
+    """Derive date from the chalan's immutable generated_at field, following
+    the pattern of chalan_pdf_filename which uses created_at (with fallback)."""
+    generated = (chalan.get("generated_at") or "").replace("Z", "+00:00")
+    try:
+        stamp = datetime.fromisoformat(generated).strftime("%d-%m-%Y")
+    except ValueError:
+        stamp = datetime.now(timezone.utc).strftime("%d-%m-%Y")
+    return f"{chalan['number']} {customer_name} {stamp}.pdf"
 
 
 def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:

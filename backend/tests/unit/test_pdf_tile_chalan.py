@@ -23,8 +23,7 @@ def _chalan() -> dict:
 
 def test_filename_matches_convention():
     filename = tile_chalan_pdf_filename(_chalan(), "Nileshbhai Pokiya")
-    assert filename.startswith("CH-000123 Nileshbhai Pokiya ")
-    assert filename.endswith(".pdf")
+    assert filename == "CH-000123 Nileshbhai Pokiya 29-07-2026.pdf"
 
 
 def test_build_tile_chalan_pdf_produces_bytes():
