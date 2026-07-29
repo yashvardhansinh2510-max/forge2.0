@@ -519,3 +519,79 @@ async def supplier_analytics(supplier_id: str, user: UserPublic = Depends(requir
             for po in pos
         ]),
     }
+
+
+@router.get("/customer-orders")
+async def list_customer_orders(
+    page: int = 1, page_size: int = 20, sort: str = "waiting_desc",
+    status: Optional[str] = None, search: Optional[str] = None,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    filters: dict = {"is_deleted": False}
+    if status:
+        filters["overall_status"] = status
+    if search:
+        filters["$or"] = [
+            {"customer_name": {"$regex": search, "$options": "i"}},
+            {"customer_phone": {"$regex": search, "$options": "i"}},
+            {"number": {"$regex": search, "$options": "i"}},
+        ]
+    docs = await db.customer_orders.find(floor_query(user, filters), {"_id": 0}).to_list(5000)
+    rows = []
+    for co in docs:
+        days = waiting_days(co["created_at"])
+        rows.append({
+            "id": co["id"], "number": co.get("number"), "customer_name": co.get("customer_name"),
+            "customer_phone": co.get("customer_phone"), "order_date": co.get("created_at"),
+            "waiting_days": days, "ageing_band": ageing_band(days), "brands": co.get("brands", []),
+            "total_products": co.get("total_products"), "total_boxes": co.get("total_boxes"),
+            "total_value": co.get("total_value"), "overall_status": co.get("overall_status"),
+            "completion_percentage": co.get("completion_percentage"),
+        })
+    rows.sort(key=lambda r: r["waiting_days"], reverse=(sort != "waiting_asc"))
+    start = (page - 1) * page_size
+    return {"orders": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+
+
+@router.get("/customer-orders/{co_id}")
+async def customer_order_detail(co_id: str, user: UserPublic = Depends(require_min_role("sales"))):
+    co = await db.customer_orders.find_one(floor_query(user, {"id": co_id}), {"_id": 0})
+    if not co:
+        raise HTTPException(status_code=404, detail="Customer order not found")
+    pos = await db.purchase_orders.find({"customer_order_id": co_id}, {"_id": 0}).to_list(50)
+    suppliers = [{
+        "purchase_order_id": po["id"], "supplier_name": po.get("supplier_name") or "Unassigned",
+        "overall_status": po.get("overall_status"),
+        "items": [{
+            "po_item_id": item["id"], "tile_name": item.get("name"), "series": item.get("series"),
+            "finish": item.get("finish"), "size": item.get("size"),
+            "boxes_ordered": item.get("qty"), "boxes_ready": item.get("boxes_ready"),
+            "boxes_dispatched": item.get("boxes_dispatched"), "boxes_pending": item.get("boxes_pending"),
+            "current_location": item.get("current_location"), "overall_status": item.get("overall_status"),
+        } for item in po.get("items", [])],
+    } for po in pos]
+    days = waiting_days(co["created_at"])
+    return {
+        "summary": {
+            "id": co["id"], "number": co.get("number"), "customer_name": co.get("customer_name"),
+            "order_date": co.get("created_at"), "brand_count": len(co.get("brands", [])),
+            "total_products": co.get("total_products"), "total_boxes": co.get("total_boxes"),
+            "completion_percentage": co.get("completion_percentage"), "waiting_days": days,
+            "ageing_band": ageing_band(days), "overall_status": co.get("overall_status"),
+        },
+        "suppliers": suppliers,
+    }
+
+
+@router.get("/customer-orders/{co_id}/timeline")
+async def customer_order_timeline(co_id: str, user: UserPublic = Depends(require_min_role("sales"))):
+    co = await db.customer_orders.find_one(floor_query(user, {"id": co_id}), {"_id": 0, "id": 1})
+    if not co:
+        raise HTTPException(status_code=404, detail="Customer order not found")
+    pos = await db.purchase_orders.find({"customer_order_id": co_id}, {"_id": 0, "id": 1}).to_list(50)
+    po_ids = [po["id"] for po in pos]
+    events = await db.activity_events.find(
+        {"$or": [{"entity_type": "tile_customer_order", "entity_id": co_id}, {"purchase_id": {"$in": po_ids}}]}, {"_id": 0},
+    ).to_list(500)
+    events.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    return {"events": events}
