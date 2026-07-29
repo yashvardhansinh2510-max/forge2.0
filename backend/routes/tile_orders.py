@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from auth import floor_query, require_min_role
@@ -595,3 +595,109 @@ async def customer_order_timeline(co_id: str, user: UserPublic = Depends(require
     ).to_list(500)
     events.sort(key=lambda e: e.get("created_at", ""), reverse=True)
     return {"events": events}
+
+
+def _dispatch_status(dispatch: dict) -> str:
+    if dispatch.get("delivered_at"):
+        return "Delivered"
+    if dispatch.get("godown_received_at"):
+        return "At Godown"
+    return "Dispatched"
+
+
+@router.get("/dispatches")
+async def list_dispatches(
+    supplier: Optional[str] = None, customer: Optional[str] = None, brand: Optional[str] = None,
+    status: Optional[str] = None, from_: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
+    destination: Optional[str] = None, search: Optional[str] = None,
+    page: int = 1, page_size: int = 50, sort: str = "date_desc",
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    filters: dict = {"is_deleted": False}
+    if supplier:
+        filters["supplier_id"] = supplier
+    if customer:
+        filters["customer_id"] = customer
+    if destination:
+        filters["destination_type"] = destination
+    if from_ or to:
+        date_filter: dict = {}
+        if from_:
+            date_filter["$gte"] = from_
+        if to:
+            date_filter["$lte"] = to
+        filters["dispatch_date"] = date_filter
+    if search:
+        filters["$or"] = [
+            {"customer_name": {"$regex": search, "$options": "i"}},
+            {"supplier_name": {"$regex": search, "$options": "i"}},
+            {"dispatch_number": {"$regex": search, "$options": "i"}},
+        ]
+    dispatches = await db.dispatches.find(floor_query(user, filters), {"_id": 0}).to_list(5000)
+    chalan_ids = [d["chalan_id"] for d in dispatches]
+    chalans = await db.chalans.find(floor_query(user, {"id": {"$in": chalan_ids}}), {"_id": 0}).to_list(len(chalan_ids) + 5)
+    chalan_by_id = {c["id"]: c for c in chalans}
+
+    rows = []
+    for dispatch in dispatches:
+        dispatch_status = _dispatch_status(dispatch)
+        if status and status != dispatch_status:
+            continue
+        # supplier/customer/destination are already pushed into the Mongo
+        # filter above (so a real MongoDB does this filtering server-side);
+        # re-checked here too, in the same spirit as the status/brand checks
+        # right below, so the endpoint's own filtering logic doesn't silently
+        # depend on the query engine actually honoring those filter keys.
+        if supplier and dispatch.get("supplier_id") != supplier:
+            continue
+        if customer and dispatch.get("customer_id") != customer:
+            continue
+        if destination and dispatch.get("destination_type") != destination:
+            continue
+        chalan = chalan_by_id.get(dispatch["chalan_id"], {})
+        for line in chalan.get("items", []):
+            if brand and dispatch.get("brand_id") != brand:
+                continue
+            rows.append({
+                "dispatch_number": dispatch.get("dispatch_number"), "chalan_number": chalan.get("number"),
+                "customer_name": dispatch.get("customer_name"), "supplier_name": dispatch.get("supplier_name"),
+                "tile_name": line.get("tile_name"), "tile_size": line.get("size"), "boxes": line.get("boxes"),
+                "dispatch_date": dispatch.get("dispatch_date"), "destination": dispatch.get("destination_name"),
+                "status": dispatch_status,
+            })
+    rows.sort(key=lambda r: r["dispatch_date"] or "", reverse=(sort != "date_asc"))
+    start = (page - 1) * page_size
+    return {"rows": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+
+
+@router.get("/items/{item_id}/history")
+async def item_history(item_id: str, user: UserPublic = Depends(require_min_role("sales"))):
+    ready_batches = await db.ready_batches.find(floor_query(user, {"po_item_id": item_id}), {"_id": 0}).to_list(200)
+    dispatches = await db.dispatches.find(floor_query(user, {"ready_batches_consumed.po_item_id": item_id}), {"_id": 0}).to_list(200)
+    events = [{"kind": "ready_batch", "at": rb.get("created_at"), "detail": rb} for rb in ready_batches]
+    events += [{"kind": "dispatch", "at": d.get("created_at"), "detail": d} for d in dispatches]
+    events.sort(key=lambda e: e["at"] or "", reverse=True)
+    return {"item_id": item_id, "events": events}
+
+
+@router.get("/dashboard")
+async def tile_orders_dashboard(user: UserPublic = Depends(require_min_role("sales"))):
+    pos = await db.purchase_orders.find(floor_query(user, {"customer_order_id": {"$ne": None}}), {"_id": 0}).to_list(5000)
+    today = now_iso()[:10]
+    dispatched_today = await db.dispatches.find(floor_query(user, {"dispatch_date": today, "is_deleted": False}), {"_id": 0}).to_list(2000)
+    delivered_today = [d for d in dispatched_today if (d.get("delivered_at") or "")[:10] == today]
+    customer_orders = await db.customer_orders.find(floor_query(user, {"is_deleted": False}), {"_id": 0}).to_list(5000)
+
+    pending = sum(1 for po in pos if po.get("overall_status") == "Pending")
+    ready = sum(1 for po in pos if po.get("overall_status") == "Ready")
+    waiting_over_15 = sum(1 for co in customer_orders if waiting_days(co["created_at"]) > 15)
+    boxes_ordered = sum(float(i.get("qty") or 0) for po in pos for i in po.get("items", []))
+    boxes_pending = sum(float(po.get("pending_boxes") or 0) for po in pos)
+    revenue = sum(float(co.get("total_value") or 0) for co in customer_orders)
+
+    return {
+        "customer_orders": len(customer_orders), "supplier_orders": len(pos),
+        "dispatched_today": len(dispatched_today), "delivered_today": len(delivered_today),
+        "pending": pending, "ready": ready, "waiting_over_15_days": waiting_over_15,
+        "boxes_ordered": boxes_ordered, "boxes_pending": boxes_pending, "revenue": round(revenue, 2),
+    }
