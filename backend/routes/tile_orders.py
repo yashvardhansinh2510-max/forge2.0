@@ -356,7 +356,7 @@ class GodownReceivedBody(BaseModel):
 async def mark_dispatch_godown_received(
     dispatch_id: str, body: GodownReceivedBody, user: UserPublic = Depends(require_min_role("warehouse")),
 ):
-    dispatch = await db.dispatches.find_one({"id": dispatch_id}, {"_id": 0})
+    dispatch = await db.dispatches.find_one(floor_query(user, {"id": dispatch_id}), {"_id": 0})
     if not dispatch:
         raise HTTPException(status_code=404, detail="Dispatch not found")
     if dispatch.get("godown_received_at"):
@@ -373,7 +373,7 @@ async def mark_dispatch_godown_received(
     if cas_result.matched_count == 0:
         raise HTTPException(status_code=409, detail={"error": "concurrent_modification", "message": "This dispatch was just updated — refresh and try again"})
 
-    po = await db.purchase_orders.find_one({"id": dispatch["purchase_order_id"]}, {"_id": 0})
+    po = await db.purchase_orders.find_one(floor_query(user, {"id": dispatch["purchase_order_id"]}), {"_id": 0})
     if po:
         touched_item_ids = {c["po_item_id"] for c in dispatch.get("ready_batches_consumed", [])}
         items = po.get("items", [])
