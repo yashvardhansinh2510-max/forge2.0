@@ -29,9 +29,7 @@ from models_tile_orders import (
     TileCustomerOrderDashboardSummary, TileDispatch, TileDispatchLineConsumed, TileReadyBatch,
 )
 from services.sequence import next_number
-from services.tile_order_status import rollup_status
-
-_OLD_STAGE_TO_LOCATION = {"released": "Dispatched", "at_godown": "Godown", "dispatched": "Delivered"}
+from services.tile_order_status import derive_current_location, derive_item_status, rollup_status
 
 
 async def backfill(*, dry_run: bool) -> dict:
@@ -58,20 +56,37 @@ async def backfill(*, dry_run: bool) -> dict:
 
         first_po = group_pos[0]
         year_str = first_po.get("created_at", "")[:4] or str(datetime.now(timezone.utc).year)
-        # Number allocation is itself a write (db.counters $inc) — skip it in
-        # dry-run so a report-only run never consumes a real TORD number.
-        number = (
-            "DRY-RUN-PREVIEW" if dry_run
-            else await next_number("customer_order", f"TORD-{year_str}-", collection="customer_orders")
-        )
-        customer_order = TileCustomerOrder(
-            number=number, quotation_id=quotation_id, quotation_number=first_po.get("quotation_number", ""),
-            customer_id=first_po.get("customer_id", ""), customer_name=first_po.get("customer_name", ""),
-            customer_phone="", delivery_name=first_po.get("customer_name", ""), delivery_phone="",
-            delivery_address="", delivery_city="", delivery_pincode="", delivery_state="",
-            floor_id=first_po.get("floor_id", "first-floor"), created_by="system-backfill",
-            created_by_name="Backfill script", dashboard_summary=TileCustomerOrderDashboardSummary(),
-        )
+
+        # Retry-safety (Finding 4): a prior run may have crashed after
+        # inserting the TileCustomerOrder for this quotation but before
+        # finishing every PO in the group. Look it up by quotation_id first
+        # so a retry resumes the existing document instead of minting a
+        # brand-new one — otherwise a partial failure could leave two
+        # orphaned CustomerOrders for the same quotation.
+        existing_co = await db.customer_orders.find_one({"quotation_id": quotation_id}, {"_id": 0})
+        if existing_co:
+            customer_order = TileCustomerOrder(**existing_co)
+        else:
+            # Number allocation is itself a write (db.counters $inc) — skip
+            # it in dry-run so a report-only run never consumes a real TORD
+            # number.
+            number = (
+                "DRY-RUN-PREVIEW" if dry_run
+                else await next_number("customer_order", f"TORD-{year_str}-", collection="customer_orders")
+            )
+            customer_order = TileCustomerOrder(
+                number=number, quotation_id=quotation_id, quotation_number=first_po.get("quotation_number", ""),
+                customer_id=first_po.get("customer_id", ""), customer_name=first_po.get("customer_name", ""),
+                customer_phone="", delivery_name=first_po.get("customer_name", ""), delivery_phone="",
+                delivery_address="", delivery_city="", delivery_pincode="", delivery_state="",
+                floor_id=first_po.get("floor_id", "first-floor"), created_by="system-backfill",
+                created_by_name="Backfill script", dashboard_summary=TileCustomerOrderDashboardSummary(),
+            )
+            # Insert immediately (placeholder totals/brands) so the id is
+            # durable before the per-PO loop runs — a crash partway through
+            # the loop still leaves a valid document a retry can find above.
+            if not dry_run:
+                await db.customer_orders.insert_one(customer_order.dict())
 
         total_products, total_boxes = 0, 0.0
         brands: list[TileCustomerOrderBrand] = []
@@ -80,17 +95,37 @@ async def backfill(*, dry_run: bool) -> dict:
             items = po.get("items", [])
             total_products += len(items)
             total_boxes += sum(float(i.get("qty") or 0) for i in items)
+            item_statuses: list[str] = []
 
             for item in items:
+                # Furthest-progress precedence (Finding 1), not last-chalan-wins:
+                # a chalan array can hold e.g. an "at_godown" entry followed by
+                # a "released" one for the same item, and the OLD stage that
+                # matters for current_location is "does ANY matching chalan sit
+                # at Buildcon's own godown" — not whichever happens to be last
+                # in the array. "all_delivered" is likewise true only when
+                # EVERY matching chalan reached the old system's terminal
+                # "dispatched" (=reached-customer) stage; zero matching chalans
+                # must NOT vacuously count as delivered.
+                matching_chalans = [
+                    old_chalan for old_chalan in po.get("chalans", [])
+                    if any(line.get("po_item_id") == item["id"] for line in old_chalan.get("items", []))
+                ]
+                any_at_godown = any(c.get("stage") == "at_godown" for c in matching_chalans)
+                all_delivered = bool(matching_chalans) and all(c.get("stage") == "dispatched" for c in matching_chalans)
+
                 boxes_dispatched = 0.0
-                location = "Pending"
-                for old_chalan in po.get("chalans", []):
+                for old_chalan in matching_chalans:
                     for line in old_chalan.get("items", []):
                         if line.get("po_item_id") != item["id"]:
                             continue
                         qty = float(line.get("qty") or 0)
                         boxes_dispatched += qty
-                        location = _OLD_STAGE_TO_LOCATION.get(old_chalan.get("stage"), "Dispatched")
+                        # Finding 3: only "at_godown" represents material
+                        # actually sitting at Buildcon's own warehouse as a
+                        # destination — "released"/"dispatched" are direct-to-
+                        # customer or already-at-customer, respectively.
+                        destination_type = "Godown" if old_chalan.get("stage") == "at_godown" else "Customer"
 
                         if not dry_run:
                             batch_number = await next_number("ready_batch", f"RB-{year_str}-", collection="ready_batches")
@@ -122,7 +157,7 @@ async def backfill(*, dry_run: bool) -> dict:
                                 supplier_name=po.get("supplier_name") or "Unassigned", customer_id=po.get("customer_id"),
                                 customer_name=po.get("customer_name") or "",
                                 ready_batches_consumed=[TileDispatchLineConsumed(ready_batch_id=batch.id, po_item_id=item["id"], qty=qty)],
-                                destination_type="Customer", destination_name=po.get("customer_name") or "",
+                                destination_type=destination_type, destination_name=po.get("customer_name") or "",
                                 destination_address="", destination_city="",
                                 dispatch_date=old_chalan.get("created_at", "")[:10], dispatch_time=old_chalan.get("created_at", "")[11:16],
                                 created_by="system-backfill", created_by_name="Backfill script", chalan_id=chalan.id,
@@ -134,13 +169,27 @@ async def backfill(*, dry_run: bool) -> dict:
                             await db.dispatches.insert_one(dispatch.dict())
                         chalans_migrated += 1
 
-                item["boxes_ready"] = 0
-                item["boxes_dispatched"] = boxes_dispatched
-                item["boxes_pending"] = float(item.get("qty") or 0) - boxes_dispatched
-                item["current_location"] = location
-                item["overall_status"] = "Dispatched" if boxes_dispatched >= float(item.get("qty") or 0) and boxes_dispatched > 0 else ("Partially Dispatched" if boxes_dispatched > 0 else "Pending")
+                qty_ordered = float(item.get("qty") or 0)
+                current_location = derive_current_location(
+                    qty_ordered, 0, boxes_dispatched, any_at_godown=any_at_godown, all_delivered=all_delivered,
+                )
+                overall_status = derive_item_status(
+                    qty_ordered, 0, boxes_dispatched, all_delivered=all_delivered,
+                )
+                item_statuses.append(overall_status)
+                # Dry-run must leave the input PO dict completely untouched —
+                # not just unpersisted. `items` above is the live list from
+                # the fetched PO document, so mutating `item` in place here
+                # even when dry_run is true would be a real (if unpersisted)
+                # side effect on the in-memory document the caller passed in.
+                if not dry_run:
+                    item["boxes_ready"] = 0  # no separate Ready stage existed in the old system
+                    item["boxes_dispatched"] = boxes_dispatched
+                    item["boxes_pending"] = qty_ordered - boxes_dispatched
+                    item["current_location"] = current_location
+                    item["overall_status"] = overall_status
 
-            po_status = rollup_status([i["overall_status"] for i in items])
+            po_status = rollup_status(item_statuses)
             brands.append(TileCustomerOrderBrand(
                 brand_id=po.get("brand_id"), brand_name=po.get("brand_name") or "Unassigned",
                 supplier_id=po.get("supplier_id"), supplier_name=po.get("supplier_name") or "Unassigned",
@@ -161,8 +210,16 @@ async def backfill(*, dry_run: bool) -> dict:
             completion_percentage=0, overall_status=customer_order.overall_status,
             supplier_statuses=[{"supplier_name": b.supplier_name, "status": b.status} for b in brands],
         )
+        # Finding 4: the document was already inserted (or already existed
+        # from a prior partial run) before the per-PO loop above — finish it
+        # off with a final update carrying the real rollup, rather than the
+        # single insert_one this used to be at the very end.
         if not dry_run:
-            await db.customer_orders.insert_one(customer_order.dict())
+            await db.customer_orders.update_one({"id": customer_order.id}, {"$set": {
+                "brands": [b.dict() for b in brands], "total_products": total_products, "total_boxes": total_boxes,
+                "overall_status": customer_order.overall_status,
+                "dashboard_summary": customer_order.dashboard_summary.dict(),
+            }})
         customer_orders_created += 1
 
     return {"customer_orders_created": customer_orders_created, "chalans_migrated": chalans_migrated}

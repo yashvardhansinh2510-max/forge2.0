@@ -5,9 +5,32 @@ PurchaseOrder/Payment without ever reading `quotation.get("floor_id")`."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import services.domain_outbox as domain_outbox
 import services.notifications as notifications
+import services.sequence as sequence
+
+
+class _CountersRecorder:
+    """Fakes services.sequence.next_number's db.counters calls. next_number
+    imports its own module-level `db` (services/sequence.py: `from db import
+    db`), so patching domain_outbox's `db` reference alone does not cover
+    it — it must be pointed at this same fake db separately (see
+    test_domain_outbox_tile_customer_order.py for the established pattern).
+    """
+
+    def __init__(self):
+        self.docs: dict = {}
+
+    async def find_one(self, query, *_a, **_kw):
+        return self.docs.get(query.get("_id"))
+
+    async def find_one_and_update(self, query, update, **_kw):
+        key = query["_id"]
+        doc = self.docs.setdefault(key, {"_id": key, "seq": 0})
+        doc["seq"] += update["$inc"]["seq"]
+        return dict(doc)
 
 
 class _Recorder:
@@ -60,6 +83,7 @@ def test_order_placed_purchase_order_and_payment_inherit_quotation_floor(monkeyp
         customers = _Recorder()
         followups = _Recorder()
         notifications = _Recorder()
+        counters = _CountersRecorder()
 
     fake_db = _FakeDb()
     monkeypatch.setattr(domain_outbox, "db", fake_db)
@@ -69,6 +93,17 @@ def test_order_placed_purchase_order_and_payment_inherit_quotation_floor(monkeyp
     # future refactor that does can't slip through onto the real Atlas
     # cluster undetected.
     monkeypatch.setattr(notifications, "db", fake_db)
+    # _handle_order_placed allocates a PO number via services.sequence.next_number,
+    # which imports its own module-level `db` independently of domain_outbox's —
+    # must be patched separately or this hits the real database (see
+    # backend/tests/unit/conftest.py's _guard_services_sequence_db, which now
+    # catches exactly this class of oversight suite-wide).
+    monkeypatch.setattr(sequence, "db", fake_db)
+    # Pre-seed the counter doc so next_number never falls into
+    # _seed_from_existing, which scans real collections via `db[collection]`
+    # subscripting that this fake db does not implement.
+    year = datetime.now(timezone.utc).year
+    fake_db.counters.docs[f"purchase_order:FPO-{year}-"] = {"_id": f"purchase_order:FPO-{year}-", "seq": 0}
 
     event = {
         "id": "evt-1", "idempotency_key": "order-placed:q-1",
