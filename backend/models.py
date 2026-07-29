@@ -400,6 +400,8 @@ class QuotationLineItem(BaseModel):
     size: Optional[str] = None             # e.g. "1200X1800"
     rate_sqft: Optional[float] = Field(default=None, ge=0)
     pcs_per_box: Optional[str] = None      # free text — reference docs print "BOX"
+    box_sqft: Optional[float] = Field(default=None, ge=0)  # sqft covered by one box — rate_sqft x box_sqft auto-derives unit_price (rate/box)
+    offer_rate: Optional[float] = Field(default=None, ge=0)  # quotation-only: manually-typed special rate/box, shown alongside unit_price — informational, does not feed totals
 
     @property
     def net(self) -> float:
@@ -660,6 +662,19 @@ class PurchaseOrderItem(BaseModel):
     split_from_item_id: Optional[str] = None          # set on the new (moved) piece
     split_into_item_id: Optional[str] = None           # set on the remainder, if any
 
+    # ---- Tile Orders logistics fields (Ground Floor → Tiles) ----
+    # Denormalized from the Product/QuotationLineItem at order-placement
+    # time by domain_outbox.py::_handle_order_placed — see Task 5.
+    series: Optional[str] = None
+    size: Optional[str] = None
+    pieces_per_box: Optional[str] = None   # free text, printed as-is — mirrors ChalanLineItem.unit convention
+    # Box-counter invariant: qty == boxes_ready + boxes_dispatched + boxes_pending
+    boxes_ready: float = 0
+    boxes_dispatched: float = 0
+    boxes_pending: float = 0
+    current_location: str = "Pending"   # TileLocation — Pending|Ready|Dispatched|Godown|Delivered
+    overall_status: str = "Pending"     # TileOverallStatus — furthest-progress ladder
+
 
 class PurchaseStatusEvent(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
@@ -756,6 +771,17 @@ class PurchaseOrder(TimestampedModel):
     assigned_to_name: Optional[str] = None
     chalans: list[Chalan] = []
 
+    # ---- Tile Orders logistics fields (Ground Floor → Tiles) ----
+    customer_order_id: Optional[str] = None
+    ready_boxes: float = 0
+    pending_boxes: float = 0
+    dispatched_boxes: float = 0
+    latest_ready_date: Optional[str] = None
+    latest_dispatch_date: Optional[str] = None
+    overall_status: str = "Pending"
+    completion_percentage: float = 0
+    last_supplier_activity_at: Optional[str] = None
+
 
 class PurchaseOrderUpdate(BaseModel):
     supplier_id: Optional[str] = None
@@ -816,7 +842,7 @@ class PurchaseAttachmentCreate(BaseModel):
 
 
 # ---------- Activity Log (audit trail) ----------
-ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup", "user", "product"]
+ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup", "user", "product", "tile_customer_order"]
 
 
 class ActivityEvent(TimestampedModel):
