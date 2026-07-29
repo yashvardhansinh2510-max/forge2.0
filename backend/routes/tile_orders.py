@@ -558,7 +558,7 @@ async def customer_order_detail(co_id: str, user: UserPublic = Depends(require_m
     co = await db.customer_orders.find_one(floor_query(user, {"id": co_id}), {"_id": 0})
     if not co:
         raise HTTPException(status_code=404, detail="Customer order not found")
-    pos = await db.purchase_orders.find({"customer_order_id": co_id}, {"_id": 0}).to_list(50)
+    pos = await db.purchase_orders.find(floor_query(user, {"customer_order_id": co_id}), {"_id": 0}).to_list(50)
     suppliers = [{
         "purchase_order_id": po["id"], "supplier_name": po.get("supplier_name") or "Unassigned",
         "overall_status": po.get("overall_status"),
@@ -588,7 +588,7 @@ async def customer_order_timeline(co_id: str, user: UserPublic = Depends(require
     co = await db.customer_orders.find_one(floor_query(user, {"id": co_id}), {"_id": 0, "id": 1})
     if not co:
         raise HTTPException(status_code=404, detail="Customer order not found")
-    pos = await db.purchase_orders.find({"customer_order_id": co_id}, {"_id": 0, "id": 1}).to_list(50)
+    pos = await db.purchase_orders.find(floor_query(user, {"customer_order_id": co_id}), {"_id": 0, "id": 1}).to_list(50)
     po_ids = [po["id"] for po in pos]
     events = await db.activity_events.find(
         {"$or": [{"entity_type": "tile_customer_order", "entity_id": co_id}, {"purchase_id": {"$in": po_ids}}]}, {"_id": 0},
