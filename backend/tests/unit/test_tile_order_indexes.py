@@ -36,6 +36,29 @@ def test_ensure_tile_order_indexes_creates_expected_indexes(monkeypatch):
     assert len(fake_db.ready_batches.calls) == 4
     assert len(fake_db.dispatches.calls) == 4
     assert len(fake_db.chalans.calls) == 2
+
+    # Verify customer_orders.number unique index
+    customer_order_calls = {kwargs.get("name"): (keys, kwargs) for keys, kwargs in fake_db.customer_orders.calls}
+    assert "customer_order_number_unique" in customer_order_calls
+    keys, kwargs = customer_order_calls["customer_order_number_unique"]
+    assert keys == "number"
+    assert kwargs.get("unique") is True
+
+    # Verify ready_batches.batch_number unique index
+    ready_batch_calls = {kwargs.get("name"): (keys, kwargs) for keys, kwargs in fake_db.ready_batches.calls}
+    assert "ready_batch_number_unique" in ready_batch_calls
+    keys, kwargs = ready_batch_calls["ready_batch_number_unique"]
+    assert keys == "batch_number"
+    assert kwargs.get("unique") is True
+
+    # Verify dispatches.dispatch_number unique index
+    dispatch_calls = {kwargs.get("name"): (keys, kwargs) for keys, kwargs in fake_db.dispatches.calls}
+    assert "dispatch_number_unique" in dispatch_calls
+    keys, kwargs = dispatch_calls["dispatch_number_unique"]
+    assert keys == "dispatch_number"
+    assert kwargs.get("unique") is True
+
+    # Verify chalans indexes
     unique_names = {kwargs.get("name") for _, kwargs in fake_db.chalans.calls}
     assert "chalan_dispatch_unique" in unique_names
     assert "chalan_number_unique" in unique_names
