@@ -11,6 +11,7 @@ async def ensure_tile_order_indexes() -> None:
     await db.customer_orders.create_index("created_at", name="customer_order_created_at")
     await db.customer_orders.create_index("quotation_id", name="customer_order_quotation_id")
     await db.customer_orders.create_index("number", unique=True, name="customer_order_number_unique")
+    await db.customer_orders.create_index("automation_key", unique=True, sparse=True, name="customer_order_automation_key")
 
     await db.purchase_orders.create_index("customer_order_id", name="po_customer_order_id")
     await db.purchase_orders.create_index([("supplier_id", 1), ("overall_status", 1)], name="po_supplier_status")

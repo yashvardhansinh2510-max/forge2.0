@@ -167,3 +167,10 @@ def test_retry_is_idempotent_and_does_not_duplicate_customer_order(monkeypatch):
     asyncio.run(outbox._handle_order_placed(event, session=None))
 
     assert len(fake_db.customer_orders.docs) == 1
+    # Regression guard: the retry path rehydrates the existing
+    # TileCustomerOrder rather than rebuilding it, and the brand loop
+    # `continue`s early for every already-existing PO — so the totals must
+    # still reflect the first (real) run, not be zeroed out by the second.
+    assert fake_db.customer_orders.docs[0]["total_products"] == 2
+    assert len(fake_db.customer_orders.docs[0]["brands"]) == 2
+    assert len(fake_db.purchase_orders.docs) == 2

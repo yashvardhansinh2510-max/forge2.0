@@ -169,6 +169,11 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         raise RuntimeError(f"Quotation {quotation_id} no longer exists")
     key = event["idempotency_key"]
     groups = await _brand_groups(quotation, session)
+    # Resolve every line's EFFECTIVE (post product/room/category/project
+    # discount) total ONCE, from the full quotation — not per brand-group —
+    # so a discount configured at room/category/project level (rather than
+    # stamped on the line itself) is preserved into the PO's unit_cost
+    # instead of silently falling back to the full undiscounted price.
     net_by_line = per_line_net_amounts(quotation)
 
     # Tile Orders logistics (Task 5): _handle_order_placed runs for BOTH
@@ -182,12 +187,21 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
     tile_total_products = 0
     tile_total_boxes = 0.0
     tile_total_value = 0.0
+    # Tracks whether `customer_order` was rehydrated from an already-committed
+    # document (a retry of this event) versus freshly constructed here. On a
+    # retry the brand loop below `continue`s early for every brand (each PO
+    # already exists via its own automation_key check), so the tile_total_*
+    # accumulators never get repopulated — the final assignment block must
+    # not use them to clobber the already-correct totals on the rehydrated
+    # object.
+    customer_order_is_new = False
 
     if is_tiles:
         existing_co = await db.customer_orders.find_one({"automation_key": customer_order_key}, {"_id": 0}, session=session)
         if existing_co:
             customer_order = TileCustomerOrder(**{k: v for k, v in existing_co.items() if k != "automation_key"})
         else:
+            customer_order_is_new = True
             customer = await db.customers.find_one({"id": quotation["customer_id"]}, {"_id": 0}, session=session) or {}
             customer_order = TileCustomerOrder(
                 number=await next_number(
@@ -231,6 +245,8 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             qty = float(raw.get("qty") or 0)
             net_total = net_by_line.get(raw.get("id"))
             if net_total is None:
+                # Line wasn't found in the breakdown (shouldn't happen) — fall
+                # back to the raw per-line discount rather than full price.
                 unit_cost = round(float(raw.get("unit_price") or 0) * (1 - float(raw.get("discount_pct") or 0) / 100), 2)
             else:
                 unit_cost = round(net_total / qty, 2) if qty else 0.0
@@ -282,15 +298,27 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             )
 
     if is_tiles and customer_order is not None:
-        customer_order.total_products = tile_total_products
-        customer_order.total_boxes = tile_total_boxes
-        customer_order.total_value = round(tile_total_value, 2)
-        customer_order.overall_status = rollup_status([b.status for b in customer_order.brands])
-        customer_order.completion_percentage = 0.0
-        customer_order.dashboard_summary = TileCustomerOrderDashboardSummary(
-            completion_percentage=0.0, overall_status=customer_order.overall_status,
-            supplier_statuses=[{"supplier_name": b.supplier_name, "status": b.status} for b in customer_order.brands],
-        )
+        if customer_order_is_new:
+            # Only recompute totals/status/dashboard when this is a freshly
+            # built TileCustomerOrder. On a retry (customer_order_is_new is
+            # False) `customer_order` was rehydrated from the already-
+            # committed document and the tile_total_* accumulators above are
+            # still at their zero initial values (the brand loop `continue`d
+            # for every already-existing PO) — assigning them here would
+            # clobber an already-correct stored document with zeros. It is
+            # harmless TODAY only because `$setOnInsert` below is a no-op
+            # against an existing document; guard it explicitly so a future
+            # change to that write (e.g. to `$set`) can't silently zero out
+            # real totals on a retry.
+            customer_order.total_products = tile_total_products
+            customer_order.total_boxes = tile_total_boxes
+            customer_order.total_value = round(tile_total_value, 2)
+            customer_order.overall_status = rollup_status([b.status for b in customer_order.brands])
+            customer_order.completion_percentage = 0.0
+            customer_order.dashboard_summary = TileCustomerOrderDashboardSummary(
+                completion_percentage=0.0, overall_status=customer_order.overall_status,
+                supplier_statuses=[{"supplier_name": b.supplier_name, "status": b.status} for b in customer_order.brands],
+            )
         customer_order.last_activity = "Order created"
         customer_order.last_activity_at = now_iso()
         co_doc = customer_order.dict()
@@ -309,6 +337,13 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
 
     payment_key = f"{key}:payment"
     payment_amount = round(float(quotation.get("grand_total") or 0), 2)
+    # A ₹0 order (a Selection-derived quotation nobody priced, a free-sample
+    # order, etc.) has nothing outstanding to collect — Payment.amount is
+    # `Field(gt=0)`, so building one here would raise a pydantic
+    # ValidationError and abort the whole transaction (rolling back the
+    # Purchase Orders inserted above too), permanently dead-lettering the
+    # event after 8 retries. Skip creating a Payment entirely in that case
+    # instead of trying to represent "no payment" as a zero-amount one.
     if payment_amount > 0:
         payment = Payment(
             quotation_id=quotation_id, quotation_number=quotation.get("number"), customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name"),
@@ -316,6 +351,12 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
             floor_id=floor_inherit(quotation),
         ).dict()
+        # Automation payments dedupe via automation_key, not idempotency_key —
+        # the field must be OMITTED (not left as an explicit None) or it
+        # collides with payments.payment_idempotency_key's unique *sparse*
+        # index on every order placed after the first one ever recorded
+        # (sparse only skips documents missing the key entirely, not
+        # documents where it's present-but-null).
         payment.pop("idempotency_key", None)
         payment["automation_key"] = payment_key
         await db.payments.update_one({"automation_key": payment_key}, {"$setOnInsert": payment}, upsert=True, session=session)

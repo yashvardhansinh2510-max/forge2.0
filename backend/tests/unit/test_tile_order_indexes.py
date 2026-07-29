@@ -31,7 +31,7 @@ def test_ensure_tile_order_indexes_creates_expected_indexes(monkeypatch):
 
     asyncio.run(tile_order_indexes.ensure_tile_order_indexes())
 
-    assert len(fake_db.customer_orders.calls) == 4
+    assert len(fake_db.customer_orders.calls) == 5
     assert len(fake_db.purchase_orders.calls) == 3
     assert len(fake_db.ready_batches.calls) == 4
     assert len(fake_db.dispatches.calls) == 4
@@ -42,6 +42,13 @@ def test_ensure_tile_order_indexes_creates_expected_indexes(monkeypatch):
     assert "customer_order_number_unique" in customer_order_calls
     keys, kwargs = customer_order_calls["customer_order_number_unique"]
     assert keys == "number"
+    assert kwargs.get("unique") is True
+
+    # Verify customer_orders.automation_key unique sparse index (dedupes
+    # TileCustomerOrder creation in domain_outbox.py's find-then-upsert)
+    assert "customer_order_automation_key" in customer_order_calls
+    keys, kwargs = customer_order_calls["customer_order_automation_key"]
+    assert keys == "automation_key"
     assert kwargs.get("unique") is True
 
     # Verify ready_batches.batch_number unique index
