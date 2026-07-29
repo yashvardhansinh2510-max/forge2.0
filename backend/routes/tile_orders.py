@@ -19,7 +19,8 @@ from models_tile_orders import TileChalan, TileChalanItem, TileDispatch, TileDis
 from services.activity_log import log_event
 from services.sequence import next_number
 from services.tile_order_status import (
-    completion_percentage, derive_current_location, derive_item_status, rollup_status,
+    ageing_band, completion_percentage, derive_current_location, derive_item_status,
+    rollup_status, supplier_silent_days, waiting_days,
 )
 
 router = APIRouter(prefix="/tile-orders", tags=["tile-orders"])
@@ -391,3 +392,130 @@ async def mark_dispatch_godown_received(
         payload={"dispatch_id": dispatch_id},
     )
     return {"dispatch_id": dispatch_id, "godown_received_at": now}
+
+
+_STATUS_TO_KPI_KEY = {
+    "Pending": "pending", "Ready": "ready", "Partially Dispatched": "partially_dispatched",
+    "Dispatched": "completed", "Delivered": "completed",
+}
+
+
+@router.get("/suppliers")
+async def list_suppliers(user: UserPublic = Depends(require_min_role("sales"))):
+    pos = await db.purchase_orders.find(floor_query(user, {"customer_order_id": {"$ne": None}}), {"_id": 0}).to_list(5000)
+    grouped: dict[str, dict] = {}
+    for po in pos:
+        key = po.get("supplier_id") or "unassigned"
+        bucket = grouped.setdefault(key, {
+            "supplier_id": po.get("supplier_id"), "supplier_name": po.get("supplier_name") or "Unassigned",
+            "active_orders": 0, "max_supplier_silent_days": 0,
+        })
+        if po.get("overall_status") != "Delivered":
+            bucket["active_orders"] += 1
+        silent = supplier_silent_days(po.get("last_supplier_activity_at"), po["created_at"])
+        bucket["max_supplier_silent_days"] = max(bucket["max_supplier_silent_days"], silent)
+    suppliers = sorted(grouped.values(), key=lambda g: -g["max_supplier_silent_days"])
+    return {"suppliers": suppliers}
+
+
+@router.get("/purchase-orders/{po_id}")
+async def purchase_order_detail(po_id: str, user: UserPublic = Depends(require_min_role("sales"))):
+    po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    return {
+        "id": po["id"], "number": po.get("number"), "customer_name": po.get("customer_name"),
+        "supplier_name": po.get("supplier_name"), "overall_status": po.get("overall_status"),
+        "items": [{
+            "id": item["id"], "name": item.get("name"), "series": item.get("series"), "finish": item.get("finish"),
+            "size": item.get("size"), "sku": item.get("sku"), "qty": item.get("qty"),
+            "boxes_ready": item.get("boxes_ready"), "boxes_dispatched": item.get("boxes_dispatched"),
+            "boxes_pending": item.get("boxes_pending"), "current_location": item.get("current_location"),
+            "overall_status": item.get("overall_status"),
+        } for item in po.get("items", [])],
+    }
+
+
+@router.get("/suppliers/{supplier_id}/orders")
+async def supplier_orders(
+    supplier_id: str, page: int = 1, page_size: int = 20, sort: str = "waiting_desc",
+    status: Optional[str] = None, search: Optional[str] = None,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    filters: dict = {"supplier_id": supplier_id}
+    if status:
+        filters["overall_status"] = status
+    if search:
+        filters["$or"] = [
+            {"customer_name": {"$regex": search, "$options": "i"}},
+            {"number": {"$regex": search, "$options": "i"}},
+        ]
+    all_pos = await db.purchase_orders.find(floor_query(user, filters), {"_id": 0}).to_list(5000)
+
+    kpi = {"orders": len(all_pos), "pending": 0, "ready": 0, "partially_dispatched": 0, "completed": 0,
+           "boxes_pending": 0.0, "boxes_ready": 0.0, "boxes_dispatched": 0.0, "oldest_pending_days": 0}
+    for po in all_pos:
+        kpi[_STATUS_TO_KPI_KEY.get(po.get("overall_status"), "pending")] += 1
+        kpi["boxes_pending"] += float(po.get("pending_boxes") or 0)
+        kpi["boxes_ready"] += float(po.get("ready_boxes") or 0)
+        kpi["boxes_dispatched"] += float(po.get("dispatched_boxes") or 0)
+        if po.get("overall_status") == "Pending":
+            kpi["oldest_pending_days"] = max(kpi["oldest_pending_days"], waiting_days(po["created_at"]))
+
+    rows = []
+    for po in all_pos:
+        days = waiting_days(po["created_at"])
+        rows.append({
+            "po_id": po["id"], "po_number": po.get("number"), "customer_id": po.get("customer_id"),
+            "customer_name": po.get("customer_name"), "order_date": po.get("created_at"),
+            "waiting_days": days, "ageing_band": ageing_band(days),
+            "total_products": len(po.get("items", [])), "total_boxes": sum(float(i.get("qty") or 0) for i in po.get("items", [])),
+            "overall_status": po.get("overall_status"), "completion_percentage": po.get("completion_percentage"),
+        })
+    rows.sort(key=lambda r: r["waiting_days"], reverse=(sort != "waiting_asc"))
+    start = (page - 1) * page_size
+    return {"kpi": kpi, "orders": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+
+
+@router.get("/suppliers/{supplier_id}/analytics")
+async def supplier_analytics(supplier_id: str, user: UserPublic = Depends(require_min_role("sales"))):
+    pos = await db.purchase_orders.find(floor_query(user, {"supplier_id": supplier_id}), {"_id": 0}).to_list(5000)
+    if not pos:
+        return {"orders": 0, "waiting_avg_days": 0, "ready_time_avg_days": 0, "dispatch_time_avg_days": 0, "fulfilment_time_avg_days": 0, "oldest_pending_days": 0, "completion_percentage_avg": 0}
+
+    ready_times, dispatch_times, fulfilment_times = [], [], []
+    oldest_pending = 0
+    for po in pos:
+        created = po["created_at"]
+        if po.get("overall_status") == "Pending":
+            oldest_pending = max(oldest_pending, waiting_days(created))
+        if po.get("latest_ready_date"):
+            ready_times.append(waiting_days(created) - waiting_days(po["latest_ready_date"]))
+        if po.get("latest_ready_date") and po.get("latest_dispatch_date"):
+            dispatch_times.append(waiting_days(po["latest_ready_date"]) - waiting_days(po["latest_dispatch_date"]))
+        if po.get("overall_status") in ("Dispatched", "Delivered"):
+            fulfilment_times.append(waiting_days(created) - waiting_days(po.get("latest_dispatch_date") or created))
+
+    def _avg(values: list[float]) -> float:
+        return round(sum(values) / len(values), 1) if values else 0.0
+
+    return {
+        "orders": len(pos),
+        "waiting_avg_days": _avg([waiting_days(po["created_at"]) for po in pos]),
+        "ready_time_avg_days": _avg(ready_times),
+        "dispatch_time_avg_days": _avg(dispatch_times),
+        "fulfilment_time_avg_days": _avg(fulfilment_times),
+        "oldest_pending_days": oldest_pending,
+        # Computed live from each PO's ordered/dispatched box counts (the
+        # same completion_percentage() used by the write endpoints above)
+        # rather than trusted off po["completion_percentage"] — that stored
+        # field is a write-time snapshot and this view should reflect the
+        # PO's current box counters even if something upstream left it stale.
+        "completion_percentage_avg": _avg([
+            completion_percentage(
+                sum(float(i.get("qty") or 0) for i in po.get("items", [])),
+                float(po.get("dispatched_boxes") or 0),
+            )
+            for po in pos
+        ]),
+    }
