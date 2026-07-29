@@ -180,3 +180,31 @@ def test_timeline_excludes_events_for_pos_not_linked_to_this_customer_order(monk
     event_ids = {e["id"] for e in result["events"]}
     assert event_ids == {"e-1", "e-2"}
     assert "e-3" not in event_ids
+
+
+def test_timeline_excludes_events_from_pos_on_different_floor(monkeypatch):
+    """Finding 3 regression coverage: a purchase order sharing the target
+    CustomerOrder's customer_order_id but belonging to a DIFFERENT floor_id
+    than the requesting user's active floor must have its activity events
+    EXCLUDED from the timeline result. Guards the floor_query(...) fix
+    applied to the child purchase_orders.find() call in customer_order_timeline.
+    This mirrors test_customer_order_detail_excludes_pos_from_other_customer_orders
+    but for the timeline endpoint's cross-PO event merge."""
+    co = {"id": "co-1", "floor_id": "ground-floor"}
+    pos = [
+        {"id": "po-1", "customer_order_id": "co-1", "floor_id": "ground-floor"},
+        {"id": "po-2", "customer_order_id": "co-1", "floor_id": "second-floor"},  # same CO, different floor — must be excluded
+    ]
+    events = [
+        {"id": "e-1", "event_type": "customer_order.created", "entity_type": "tile_customer_order", "entity_id": "co-1", "created_at": "2026-07-27T10:00:00+00:00"},
+        {"id": "e-2", "event_type": "dispatch.created", "entity_type": "purchase", "purchase_id": "po-1", "created_at": "2026-07-28T10:00:00+00:00"},
+        {"id": "e-3", "event_type": "dispatch.created", "entity_type": "purchase", "purchase_id": "po-2", "created_at": "2026-07-29T10:00:00+00:00"},  # must NOT appear
+    ]
+    fake_db = _FakeDb([co], pos, events)
+    monkeypatch.setattr(router_module, "db", fake_db)
+
+    result = asyncio.run(router_module.customer_order_timeline("co-1", user=_user()))
+
+    event_ids = {e["id"] for e in result["events"]}
+    assert event_ids == {"e-1", "e-2"}
+    assert "e-3" not in event_ids
