@@ -346,3 +346,48 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
         summary=f"Status changed to {new_status}", payload={"to": new_status},
     )
     return {"po_id": po_id, "dispatch": dispatch.dict(), "chalan": chalan.dict(), "overall_status": new_status}
+
+
+class GodownReceivedBody(BaseModel):
+    note: Optional[str] = None
+
+
+@router.post("/dispatches/{dispatch_id}/godown-received")
+async def mark_dispatch_godown_received(
+    dispatch_id: str, body: GodownReceivedBody, user: UserPublic = Depends(require_min_role("warehouse")),
+):
+    dispatch = await db.dispatches.find_one({"id": dispatch_id}, {"_id": 0})
+    if not dispatch:
+        raise HTTPException(status_code=404, detail="Dispatch not found")
+    if dispatch.get("godown_received_at"):
+        raise HTTPException(status_code=400, detail="Already marked received at Godown")
+
+    now = now_iso()
+    cas_result = await db.dispatches.update_one(
+        {"id": dispatch_id, "godown_received_at": None},
+        {"$set": {
+            "godown_received_at": now, "godown_received_by": user.id,
+            "godown_received_by_name": user.full_name, "updated_at": now,
+        }},
+    )
+    if cas_result.matched_count == 0:
+        raise HTTPException(status_code=409, detail={"error": "concurrent_modification", "message": "This dispatch was just updated — refresh and try again"})
+
+    po = await db.purchase_orders.find_one({"id": dispatch["purchase_order_id"]}, {"_id": 0})
+    if po:
+        touched_item_ids = {c["po_item_id"] for c in dispatch.get("ready_batches_consumed", [])}
+        items = po.get("items", [])
+        for item in items:
+            if item["id"] in touched_item_ids:
+                item["current_location"] = derive_current_location(
+                    item["qty"], float(item.get("boxes_ready") or 0), float(item.get("boxes_dispatched") or 0), any_at_godown=True,
+                )
+        await db.purchase_orders.update_one({"id": po["id"]}, {"$set": {"items": items, "updated_at": now}})
+
+    await log_event(
+        event_type="dispatch.godown_received", entity_type="purchase", entity_id=dispatch["purchase_order_id"], actor=user,
+        customer_id=dispatch.get("customer_id"), purchase_id=dispatch["purchase_order_id"],
+        summary=f"Dispatch {dispatch['dispatch_number']} received at Buildcon Godown" + (f" · {body.note}" if body.note else ""),
+        payload={"dispatch_id": dispatch_id},
+    )
+    return {"dispatch_id": dispatch_id, "godown_received_at": now}
