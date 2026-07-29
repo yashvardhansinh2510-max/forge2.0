@@ -9,15 +9,17 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 from uuid import uuid4
 
 from auth import floor_inherit
 from db import client, db
 from models import ActivityEvent, Followup, Payment, PurchaseOrder, PurchaseOrderItem, PurchaseStageEvent, PurchaseStatusEvent, UserPublic
+from models_tile_orders import TileCustomerOrder, TileCustomerOrderBrand, TileCustomerOrderDashboardSummary
 from services.notifications import notify
 from services.pricing import per_line_net_amounts
 from services.sequence import next_number
+from services.tile_order_status import rollup_status
 from pymongo import ReturnDocument
 
 EVENT_QUOTATION_GENERATED = "QuotationGenerated"
@@ -115,7 +117,9 @@ async def _next_po_number(session: Any) -> str:
 
 async def _brand_groups(quotation: dict, session: Any) -> list[dict]:
     product_ids = list({item["product_id"] for item in quotation.get("items", [])})
-    products = await db.products.find({"id": {"$in": product_ids}}, {"_id": 0, "id": 1, "brand_id": 1}, session=session).to_list(len(product_ids) + 5)
+    products = await db.products.find(
+        {"id": {"$in": product_ids}}, {"_id": 0, "id": 1, "brand_id": 1, "series": 1}, session=session,
+    ).to_list(len(product_ids) + 5)
     product_by_id = {product["id"]: product for product in products}
     brand_ids = list({p.get("brand_id") for p in products if p.get("brand_id")})
     brands = await db.brands.find({"id": {"$in": brand_ids}}, {"_id": 0}, session=session).to_list(len(brand_ids) + 5)
@@ -135,7 +139,10 @@ async def _brand_groups(quotation: dict, session: Any) -> list[dict]:
             "supplier": supplier_by_brand.get(brand_id),
             "items": [],
         })
-        group["items"].append(item)
+        # Tile Orders logistics (Task 5): series lives on Product, not on
+        # the quotation line item — attach it here so _handle_order_placed
+        # can copy it onto PurchaseOrderItem without a second product fetch.
+        group["items"].append({**item, "series": product.get("series")})
     return list(groups.values())
 
 
@@ -162,12 +169,54 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         raise RuntimeError(f"Quotation {quotation_id} no longer exists")
     key = event["idempotency_key"]
     groups = await _brand_groups(quotation, session)
-    # Resolve every line's EFFECTIVE (post product/room/category/project
-    # discount) total ONCE, from the full quotation — not per brand-group —
-    # so a discount configured at room/category/project level (rather than
-    # stamped on the line itself) is preserved into the PO's unit_cost
-    # instead of silently falling back to the full undiscounted price.
     net_by_line = per_line_net_amounts(quotation)
+
+    # Tile Orders logistics (Task 5): _handle_order_placed runs for BOTH
+    # tiles and standard (sanitaryware) quotations — tiles_stage.py's
+    # can_place_order() returns True unconditionally for doc_type ==
+    # "standard". A TileCustomerOrder must only ever be created for a
+    # tiles quotation.
+    is_tiles = quotation.get("doc_type") in ("tiles_selection", "tiles_quotation")
+    customer_order: Optional[TileCustomerOrder] = None
+    customer_order_key = f"{key}:customer_order"
+    tile_total_products = 0
+    tile_total_boxes = 0.0
+    tile_total_value = 0.0
+
+    if is_tiles:
+        existing_co = await db.customer_orders.find_one({"automation_key": customer_order_key}, {"_id": 0}, session=session)
+        if existing_co:
+            customer_order = TileCustomerOrder(**{k: v for k, v in existing_co.items() if k != "automation_key"})
+        else:
+            customer = await db.customers.find_one({"id": quotation["customer_id"]}, {"_id": 0}, session=session) or {}
+            customer_order = TileCustomerOrder(
+                number=await next_number(
+                    "customer_order", f"TORD-{datetime.now(timezone.utc).year}-",
+                    collection="customer_orders", session=session,
+                ),
+                quotation_id=quotation_id, quotation_number=quotation.get("number"),
+                customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name", ""),
+                customer_phone=quotation.get("phone_snapshot") or customer.get("phone") or "",
+                # Immutable delivery snapshot — prefer the quotation's own
+                # address/phone lines (tiles-quotation-specific, may differ
+                # from the customer's default) over the live customer record.
+                delivery_name=quotation.get("customer_name") or customer.get("name") or "",
+                delivery_phone=quotation.get("phone_snapshot") or customer.get("phone") or "",
+                delivery_address=quotation.get("address_snapshot") or customer.get("address") or "",
+                delivery_city=customer.get("city") or "",
+                # KNOWN GAP: the Customer model has no pincode/state fields
+                # today (models.py:85-99) — left blank until that model
+                # gains them; out of scope for this pass per the frozen
+                # design doc (Customer model changes are not part of it).
+                delivery_pincode="",
+                delivery_state="",
+                floor_id=floor_inherit(quotation),
+                created_by=event["actor_id"], created_by_name=event["actor_name"],
+                dashboard_summary=TileCustomerOrderDashboardSummary(
+                    completion_percentage=0, overall_status="Pending", supplier_statuses=[],
+                ),
+            )
+
     created_po_ids: list[str] = []
     for group in groups:
         brand_key = group["brand_id"] or "unassigned"
@@ -182,17 +231,22 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             qty = float(raw.get("qty") or 0)
             net_total = net_by_line.get(raw.get("id"))
             if net_total is None:
-                # Line wasn't found in the breakdown (shouldn't happen) — fall
-                # back to the raw per-line discount rather than full price.
                 unit_cost = round(float(raw.get("unit_price") or 0) * (1 - float(raw.get("discount_pct") or 0) / 100), 2)
             else:
                 unit_cost = round(net_total / qty, 2) if qty else 0.0
             po_items.append(PurchaseOrderItem(
-                product_id=raw["product_id"], sku=raw["sku"], name=raw["name"], image=raw.get("image"), finish=raw.get("finish"), category_id=raw.get("category_id"), room=raw.get("room"),
+                product_id=raw["product_id"], sku=raw["sku"], name=raw["name"], image=raw.get("image"),
+                finish=raw.get("finish"), category_id=raw.get("category_id"), room=raw.get("room"),
                 qty=qty, unit_cost=unit_cost, quotation_line_id=raw.get("id"), stage="order_in_company",
-                customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name", ""), brand_id=group["brand_id"], brand_name=group["brand_name"],
+                customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name", ""),
+                brand_id=group["brand_id"], brand_name=group["brand_name"],
                 last_moved_at=now, last_moved_by=event["actor_id"], last_moved_by_name=event["actor_name"],
                 stage_history=[PurchaseStageEvent(from_stage=None, to_stage="order_in_company", by_user_id=event["actor_id"], by_user_name=event["actor_name"], note=f"Created from {quotation.get('number')}", action="create")],
+                # Tile Orders logistics (Task 5) — harmless no-op defaults
+                # on non-tile orders, real data on tiles orders.
+                series=raw.get("series"), size=raw.get("size"), pieces_per_box=raw.get("pcs_per_box"),
+                boxes_ready=0, boxes_dispatched=0, boxes_pending=qty,
+                current_location="Pending", overall_status="Pending",
             ))
         supplier = group.get("supplier") or {}
         po = PurchaseOrder(
@@ -203,20 +257,58 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             grand_total=round(sum(item.qty * item.unit_cost for item in po_items), 2), created_by=event["actor_id"], created_by_name=event["actor_name"],
             floor_id=floor_inherit(quotation),
             status_history=[PurchaseStatusEvent(from_status=None, to_status="draft", by_user_id=event["actor_id"], by_user_name=event["actor_name"], note=f"Created from {quotation.get('number')}")],
+            customer_order_id=(customer_order.id if customer_order else None),
         ).dict()
         po["automation_key"] = po_key
         await db.purchase_orders.insert_one(po, session=session)
         created_po_ids.append(po["id"])
 
+        if is_tiles and customer_order is not None:
+            tile_total_products += len(po_items)
+            tile_total_boxes += sum(item.qty for item in po_items)
+            tile_total_value += po["grand_total"]
+            customer_order.brands.append(TileCustomerOrderBrand(
+                brand_id=group["brand_id"], brand_name=group["brand_name"],
+                supplier_id=supplier.get("id"), supplier_name=supplier.get("name") or "Unassigned",
+                purchase_order_id=po["id"], status="Pending",
+            ))
+            await _upsert_activity(
+                key=f"{key}:supplier-assigned:{brand_key}", event_type="supplier.assigned",
+                entity_type="purchase", entity_id=po["id"],
+                actor_id=event["actor_id"], actor_name=event["actor_name"],
+                customer_id=quotation.get("customer_id"), quotation_id=quotation_id, purchase_id=po["id"],
+                summary=f"Supplier {supplier.get('name') or 'Unassigned'} assigned for {group['brand_name']}",
+                payload={"supplier_id": supplier.get("id"), "brand_id": group["brand_id"]}, session=session,
+            )
+
+    if is_tiles and customer_order is not None:
+        customer_order.total_products = tile_total_products
+        customer_order.total_boxes = tile_total_boxes
+        customer_order.total_value = round(tile_total_value, 2)
+        customer_order.overall_status = rollup_status([b.status for b in customer_order.brands])
+        customer_order.completion_percentage = 0.0
+        customer_order.dashboard_summary = TileCustomerOrderDashboardSummary(
+            completion_percentage=0.0, overall_status=customer_order.overall_status,
+            supplier_statuses=[{"supplier_name": b.supplier_name, "status": b.status} for b in customer_order.brands],
+        )
+        customer_order.last_activity = "Order created"
+        customer_order.last_activity_at = now_iso()
+        co_doc = customer_order.dict()
+        co_doc["automation_key"] = customer_order_key
+        await db.customer_orders.update_one(
+            {"automation_key": customer_order_key}, {"$setOnInsert": co_doc}, upsert=True, session=session,
+        )
+        await _upsert_activity(
+            key=f"{key}:customer_order_created", event_type="customer_order.created",
+            entity_type="tile_customer_order", entity_id=customer_order.id,
+            actor_id=event["actor_id"], actor_name=event["actor_name"],
+            customer_id=quotation.get("customer_id"), quotation_id=quotation_id, purchase_id=None,
+            summary=f"Customer order {customer_order.number} created — {len(customer_order.brands)} supplier(s)",
+            payload={"customer_order_id": customer_order.id, "brand_count": len(customer_order.brands)}, session=session,
+        )
+
     payment_key = f"{key}:payment"
     payment_amount = round(float(quotation.get("grand_total") or 0), 2)
-    # A ₹0 order (a Selection-derived quotation nobody priced, a free-sample
-    # order, etc.) has nothing outstanding to collect — Payment.amount is
-    # `Field(gt=0)`, so building one here would raise a pydantic
-    # ValidationError and abort the whole transaction (rolling back the
-    # Purchase Orders inserted above too), permanently dead-lettering the
-    # event after 8 retries. Skip creating a Payment entirely in that case
-    # instead of trying to represent "no payment" as a zero-amount one.
     if payment_amount > 0:
         payment = Payment(
             quotation_id=quotation_id, quotation_number=quotation.get("number"), customer_id=quotation["customer_id"], customer_name=quotation.get("customer_name"),
@@ -224,12 +316,6 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             recorded_by=event["actor_id"], recorded_by_name=event["actor_name"],
             floor_id=floor_inherit(quotation),
         ).dict()
-        # Automation payments dedupe via automation_key, not idempotency_key —
-        # the field must be OMITTED (not left as an explicit None) or it
-        # collides with payments.payment_idempotency_key's unique *sparse*
-        # index on every order placed after the first one ever recorded
-        # (sparse only skips documents missing the key entirely, not
-        # documents where it's present-but-null).
         payment.pop("idempotency_key", None)
         payment["automation_key"] = payment_key
         await db.payments.update_one({"automation_key": payment_key}, {"$setOnInsert": payment}, upsert=True, session=session)
@@ -245,6 +331,7 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
         "purchase_order_ids": created_po_ids,
         "payment_amount": payment_amount,
         "count": len(created_po_ids),
+        "customer_order_id": customer_order.id if customer_order else None,
         "post_commit_notification": {
             "user_id": quotation.get("created_by"),
             "title": f"Order confirmed · {quotation.get('number')}",
