@@ -33,6 +33,7 @@ from routes.roles_routes import router as roles_router  # noqa: E402
 from routes.permissions_routes import router as permissions_router  # noqa: E402
 from routes.referrer_routes import router as referrer_router  # noqa: E402
 from routes.sales_data_routes import router as sales_data_router  # noqa: E402
+from routes.tile_orders import router as tile_orders_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
 from services import catalog_service  # noqa: E402
 from services.domain_outbox import dispatch_pending, ensure_outbox_indexes, outbox_worker  # noqa: E402
@@ -114,6 +115,7 @@ api.include_router(roles_router)
 api.include_router(permissions_router)
 api.include_router(referrer_router)
 api.include_router(sales_data_router)
+api.include_router(tile_orders_router)
 
 app.include_router(api)
 
