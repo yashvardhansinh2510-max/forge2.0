@@ -38,6 +38,7 @@ from services import catalog_service  # noqa: E402
 from services.domain_outbox import dispatch_pending, ensure_outbox_indexes, outbox_worker  # noqa: E402
 from services.transfer_workflow import ensure_transfer_indexes  # noqa: E402
 from services.download_tokens import ensure_download_token_indexes  # noqa: E402
+from services.tile_order_indexes import ensure_tile_order_indexes  # noqa: E402
 from migrations.runner import run_migrations  # noqa: E402
 from services.followup_engine import reconcile_followups  # noqa: E402
 from services.floor_scope import ensure_floor_scope  # noqa: E402
@@ -160,6 +161,7 @@ async def _startup():
     await seed_if_empty()
     await resync_catalog_if_needed()
     await ensure_outbox_indexes()
+    await ensure_tile_order_indexes()
     await ensure_transfer_indexes()
     await ensure_download_token_indexes()
     await dispatch_pending()
