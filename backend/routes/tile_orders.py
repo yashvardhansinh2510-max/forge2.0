@@ -10,12 +10,14 @@ from typing import Literal, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from auth import floor_query, require_min_role
 from db import client, db
 from models import UserPublic, now_iso
 from models_tile_orders import TileChalan, TileChalanItem, TileDispatch, TileDispatchLineConsumed, TileReadyBatch
+from pdf_chalan import build_tile_chalan_pdf, tile_chalan_pdf_filename
 from services.activity_log import log_event
 from services.sequence import next_number
 from services.tile_order_status import (
@@ -347,6 +349,25 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
         summary=f"Status changed to {new_status}", payload={"to": new_status},
     )
     return {"po_id": po_id, "dispatch": dispatch.dict(), "chalan": chalan.dict(), "overall_status": new_status}
+
+
+@router.get("/chalans/{chalan_id}/pdf")
+async def chalan_pdf(chalan_id: str, user: UserPublic = Depends(require_min_role("sales"))):
+    chalan = await db.chalans.find_one(floor_query(user, {"id": chalan_id}), {"_id": 0})
+    if not chalan:
+        raise HTTPException(status_code=404, detail="Chalan not found")
+    company = await db.settings.find_one({"key": "company"}, {"_id": 0}) or {}
+    pdf_settings = await db.settings.find_one({"key": "pdf"}, {"_id": 0}) or {}
+    branding = {
+        "footer_company_name": pdf_settings.get("footer_company_name") or company.get("name") or "Buildcon House",
+        "footer_phone": pdf_settings.get("footer_phone") or company.get("phone") or "",
+    }
+    pdf_bytes = build_tile_chalan_pdf(chalan, branding)
+    filename = tile_chalan_pdf_filename(chalan, chalan.get("customer_name", "Customer"))
+    return StreamingResponse(
+        iter([pdf_bytes]), media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 class GodownReceivedBody(BaseModel):

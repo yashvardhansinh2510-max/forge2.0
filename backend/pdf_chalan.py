@@ -6,7 +6,7 @@ quotation PDFs are generated on demand with nothing persisted to storage
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 
 from reportlab.lib import colors
@@ -128,3 +128,82 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
 
     doc.build(story)
     return buf.getvalue()
+
+
+def tile_chalan_pdf_filename(chalan: dict, customer_name: str) -> str:
+    stamp = datetime.now(timezone.utc)
+    return f"{chalan['number']} {customer_name} {stamp.strftime('%d-%m-%Y')}.pdf"
+
+
+def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
+    """Renders the immutable TileChalan document — only ever called with a
+    fully-formed, never-edited chalan dict (see models_tile_orders.TileChalan)."""
+    branding = branding or {}
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=14 * mm, bottomMargin=14 * mm, leftMargin=16 * mm, rightMargin=16 * mm)
+    styles = getSampleStyleSheet()
+    body = ParagraphStyle("tcBody", parent=styles["Normal"], fontSize=9, leading=13)
+    heading = ParagraphStyle("tcHeading", parent=styles["Normal"], fontSize=11, leading=14, fontName="Helvetica-Bold")
+    small = ParagraphStyle("tcSmall", parent=styles["Normal"], fontSize=7.5, leading=10, textColor=colors.grey)
+
+    flow: list = [_logo_flowable(45), Spacer(1, 6 * mm)]
+    flow.append(Paragraph(f"<b>Chalan No:</b> {_escape(chalan['number'])} &nbsp;&nbsp; <b>Date:</b> {chalan['generated_at'][:10]} &nbsp;&nbsp; <b>Time:</b> {chalan['generated_at'][11:16]}", body))
+    flow.append(HRFlowable(width="100%", thickness=0.5, color=colors.grey, spaceBefore=4, spaceAfter=6))
+
+    flow.append(Paragraph("<b>Customer</b>", heading))
+    flow.append(Paragraph(
+        f"{_escape(chalan.get('customer_name', ''))} &nbsp;·&nbsp; {_escape(chalan.get('customer_phone') or '')}<br/>"
+        f"{_escape(chalan.get('delivery_address', ''))}, {_escape(chalan.get('delivery_city', ''))}<br/>"
+        f"Reference: {_escape(chalan.get('reference_number') or '—')}", body,
+    ))
+    flow.append(Spacer(1, 4 * mm))
+
+    flow.append(Paragraph("<b>Supplier</b>", heading))
+    flow.append(Paragraph(
+        f"{_escape(chalan.get('supplier_name', ''))} &nbsp;·&nbsp; {_escape(chalan.get('supplier_contact') or '—')}<br/>"
+        f"{_escape(chalan.get('supplier_address') or '—')}", body,
+    ))
+    flow.append(Spacer(1, 5 * mm))
+
+    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "SKU", "Boxes", "Pcs/Box", "Qty"]
+    table_data = [header_row]
+    for i, item in enumerate(chalan.get("items", []), start=1):
+        table_data.append([
+            str(i), _escape(item.get("tile_name", "")), _escape(item.get("series") or "—"),
+            _escape(item.get("finish") or "—"), _escape(item.get("size") or "—"), _escape(item.get("sku") or "—"),
+            f"{item.get('boxes', 0):g}", _escape(item.get("pieces_per_box") or "—"), f"{item.get('quantity', 0):g}",
+        ])
+    product_table = Table(table_data, colWidths=[8 * mm, 40 * mm, 22 * mm, 18 * mm, 20 * mm, 20 * mm, 14 * mm, 16 * mm, 14 * mm])
+    product_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    flow.append(product_table)
+    flow.append(Spacer(1, 8 * mm))
+
+    signature_table = Table([
+        ["Receiver", "Sender"],
+        [_escape(chalan.get("receiver_name") or ""), _escape(chalan.get("sender_name") or "")],
+        ["Signature: ____________________", "Signature: ____________________"],
+    ], colWidths=[85 * mm, 85 * mm])
+    signature_table.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9), ("TOPPADDING", (0, 0), (-1, -1), 6)]))
+    flow.append(signature_table)
+    flow.append(Spacer(1, 5 * mm))
+
+    vehicle = chalan.get("vehicle_number") or "—"
+    driver = chalan.get("driver_name") or "—"
+    flow.append(Paragraph(f"<b>Transport:</b> Vehicle {_escape(vehicle)} &nbsp;·&nbsp; Driver {_escape(driver)}", small))
+    flow.append(Spacer(1, 3 * mm))
+    flow.append(Paragraph(
+        f"Generated on {chalan['generated_at'][:16].replace('T', ' ')} by {_escape(chalan.get('generated_by_name', ''))} "
+        f"&nbsp;·&nbsp; {_escape(chalan.get('system_version', 'BuildCon ERP'))}", small,
+    ))
+    flow.append(Paragraph(
+        branding.get("footer_company_name", "Buildcon House") + " · " + branding.get("footer_phone", DEFAULT_MOBILE), small,
+    ))
+
+    doc.build(flow)
+    return buffer.getvalue()
