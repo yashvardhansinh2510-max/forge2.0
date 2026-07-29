@@ -241,7 +241,10 @@ def test_backfill_retry_after_partial_failure_does_not_duplicate_customer_order(
 
     result = asyncio.run(backfill_module.backfill(dry_run=False))
 
-    assert result["customer_orders_created"] == 1
+    # A resumed CustomerOrder is not a newly-created one — see the
+    # customer_orders_created miscounting fix below.
+    assert result["customer_orders_created"] == 0
+    assert result["customer_orders_resumed"] == 1
     assert len(db.customer_orders.docs) == 1  # no duplicate CustomerOrder created
     assert db.customer_orders.docs[0]["id"] == existing_co.id
     po_after = db.purchase_orders.docs[0]
@@ -250,6 +253,94 @@ def test_backfill_retry_after_partial_failure_does_not_duplicate_customer_order(
     # final update, not left at the placeholder values.
     assert db.customer_orders.docs[0]["total_products"] == 1
     assert db.customer_orders.docs[0]["total_boxes"] == 20
+
+
+def test_backfill_retry_recomputes_totals_from_all_quotation_pos_not_just_this_runs_subset(monkeypatch):
+    """Review finding: on a retry, the top-level query excludes POs that a
+    PRIOR run already fully migrated (they already have customer_order_id
+    set), so `group_pos` for this run only contains the POs that weren't
+    processed yet. The final brands/totals update must NOT be computed from
+    that partial `group_pos` alone — it must reflect EVERY PO for the
+    quotation, including ones a prior run already finished, or the retry
+    would silently drop the prior run's brand from the CustomerOrder and
+    undercount total_products/total_boxes.
+
+    Scenario, constructed directly as the mid-crash state (no need to
+    actually crash mid-loop): a 2-brand quotation where a prior run already
+    fully migrated PO-1 (Brand A, 10 boxes) — its purchase_orders doc already
+    carries customer_order_id + overall_status + per-item dispatch fields,
+    exactly as the script leaves them after a completed pass — but crashed
+    before ever reaching PO-2 (Brand B, 20 boxes), so the CustomerOrder
+    document itself is still sitting at its just-inserted placeholder state
+    (brands=[], total_products=0, total_boxes=0) — the final
+    brands/totals update only happens once, after the ENTIRE per-quotation
+    PO loop finishes, so it never ran across either PO before the crash.
+    """
+    existing_co = backfill_module.TileCustomerOrder(
+        number="TORD-2026-0001", quotation_id="q-1", quotation_number="FQ-2026-0001",
+        customer_id="cust-1", customer_name="Nileshbhai Pokiya", customer_phone="",
+        delivery_name="Nileshbhai Pokiya", delivery_phone="", delivery_address="",
+        delivery_city="", delivery_pincode="", delivery_state="", floor_id="ground-floor",
+        created_by="system-backfill", created_by_name="Backfill script",
+        dashboard_summary=backfill_module.TileCustomerOrderDashboardSummary(),
+        # Placeholder state exactly as left by the initial insert_one, before
+        # any PO in the group had been processed — brands/totals default to
+        # empty/zero (see TileCustomerOrder model defaults).
+    )
+
+    po_brand_a_already_migrated = {
+        "id": "po-1", "number": "FPO-2026-0001", "quotation_id": "q-1", "quotation_number": "FQ-2026-0001",
+        "customer_id": "cust-1", "customer_name": "Nileshbhai Pokiya", "supplier_id": "s-a", "supplier_name": "Supplier A",
+        "brand_id": "b-a", "brand_name": "Brand A", "floor_id": "ground-floor", "created_at": "2026-07-20T10:00:00+00:00",
+        # Already fully migrated by the "prior run": customer_order_id set,
+        # items carry the persisted dispatch/status fields the script writes
+        # once not-dry-run processing completes for a PO.
+        "customer_order_id": existing_co.id, "overall_status": "Delivered",
+        "dispatched_boxes": 10, "pending_boxes": 0, "ready_boxes": 0,
+        "items": [{
+            "id": "item-1", "name": "Glossy Ivory 600x600", "qty": 10, "finish": None, "series": None, "size": None, "sku": "SKU-1",
+            "boxes_ready": 0, "boxes_dispatched": 10, "boxes_pending": 0,
+            "current_location": "Delivered", "overall_status": "Delivered",
+        }],
+        "chalans": [{"id": "old-ch-1", "number": "CH-0001", "stage": "dispatched", "items": [{"po_item_id": "item-1", "name": "Glossy Ivory 600x600", "qty": 10, "unit": "Box"}], "created_at": "2026-07-21T10:00:00+00:00", "created_by": "u-1", "created_by_name": "Warehouse Rep"}],
+    }
+    po_brand_b_not_yet_migrated = {
+        "id": "po-2", "number": "FPO-2026-0002", "quotation_id": "q-1", "quotation_number": "FQ-2026-0001",
+        "customer_id": "cust-1", "customer_name": "Nileshbhai Pokiya", "supplier_id": "s-b", "supplier_name": "Supplier B",
+        "brand_id": "b-b", "brand_name": "Brand B", "floor_id": "ground-floor", "created_at": "2026-07-22T10:00:00+00:00",
+        "items": [{"id": "item-1", "name": "Matte Grey 300x300", "qty": 20, "finish": None, "series": None, "size": None, "sku": "SKU-2"}],
+        "chalans": [{"id": "old-ch-2", "number": "CH-0002", "stage": "released", "items": [{"po_item_id": "item-1", "name": "Matte Grey 300x300", "qty": 20, "unit": "Box"}], "created_at": "2026-07-23T10:00:00+00:00", "created_by": "u-1", "created_by_name": "Warehouse Rep"}],
+    }
+
+    db = _make_db([po_brand_a_already_migrated, po_brand_b_not_yet_migrated])
+    db.customer_orders.docs.append(existing_co.dict())
+    monkeypatch.setattr(backfill_module, "db", db)
+    monkeypatch.setattr(backfill_module, "next_number", _fake_next_number)
+
+    result = asyncio.run(backfill_module.backfill(dry_run=False))
+
+    assert result["customer_orders_created"] == 0
+    assert result["customer_orders_resumed"] == 1
+    assert len(db.customer_orders.docs) == 1  # still no duplicate CustomerOrder
+
+    final_co = db.customer_orders.docs[0]
+    assert final_co["id"] == existing_co.id
+    # Brand A must NOT have been dropped just because this run's group_pos
+    # only ever contained PO-2 (Brand A was excluded from the top-level
+    # query since it already had customer_order_id set).
+    brand_names = sorted(b["brand_name"] for b in final_co["brands"])
+    assert brand_names == ["Brand A", "Brand B"]
+    assert final_co["total_products"] == 2  # 1 item each, from BOTH POs
+    assert final_co["total_boxes"] == 30  # 10 (Brand A, prior run) + 20 (Brand B, this run)
+    # Brand A's rollup status is read from its own already-persisted
+    # overall_status ("Delivered"), not recomputed from group_pos (it was
+    # never in group_pos this run at all).
+    brand_a = next(b for b in final_co["brands"] if b["brand_name"] == "Brand A")
+    assert brand_a["status"] == "Delivered"
+    # Brand B (this run's actual work) still gets migrated correctly too.
+    po2_after = db.purchase_orders.docs[1]
+    assert po2_after["customer_order_id"] == existing_co.id
+    assert po2_after["items"][0]["current_location"] == "Dispatched"  # old stage "released"
 
 
 def test_backfill_dry_run_makes_no_mutations(monkeypatch):

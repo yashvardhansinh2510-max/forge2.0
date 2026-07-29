@@ -34,6 +34,7 @@ from services.tile_order_status import derive_current_location, derive_item_stat
 
 async def backfill(*, dry_run: bool) -> dict:
     customer_orders_created = 0
+    customer_orders_resumed = 0
     chalans_migrated = 0
 
     pos = await db.purchase_orders.find(
@@ -66,6 +67,7 @@ async def backfill(*, dry_run: bool) -> dict:
         existing_co = await db.customer_orders.find_one({"quotation_id": quotation_id}, {"_id": 0})
         if existing_co:
             customer_order = TileCustomerOrder(**existing_co)
+            customer_orders_resumed += 1
         else:
             # Number allocation is itself a write (db.counters $inc) — skip
             # it in dry-run so a report-only run never consumes a real TORD
@@ -87,6 +89,7 @@ async def backfill(*, dry_run: bool) -> dict:
             # the loop still leaves a valid document a retry can find above.
             if not dry_run:
                 await db.customer_orders.insert_one(customer_order.dict())
+            customer_orders_created += 1
 
         total_products, total_boxes = 0, 0.0
         brands: list[TileCustomerOrderBrand] = []
@@ -202,6 +205,33 @@ async def backfill(*, dry_run: bool) -> dict:
                     "pending_boxes": sum(i["boxes_pending"] for i in items), "ready_boxes": 0,
                 }})
 
+        # Retry-safety continued (review finding): `group_pos` only holds the
+        # POs THIS run processed. On a retry after a partial crash, POs that
+        # a PRIOR run already finished are excluded from the top-level query
+        # (they already have customer_order_id set) and never enter
+        # `group_pos` — so building the final brands/totals from `group_pos`
+        # alone would silently drop those already-migrated POs from the
+        # CustomerOrder's brands list and undercount its totals. Re-query the
+        # COMPLETE, current set of POs for this quotation (both
+        # already-migrated and just-processed-in-this-run — every PO in the
+        # group now has customer_order_id set one way or another) and
+        # recompute brands/totals from THAT full set instead.
+        if not dry_run:
+            all_quotation_pos = [
+                p for p in await db.purchase_orders.find({"quotation_id": quotation_id}, {"_id": 0}).to_list(50000)
+                if p.get("quotation_id") == quotation_id
+            ]
+            total_products = sum(len(p.get("items", [])) for p in all_quotation_pos)
+            total_boxes = sum(float(i.get("qty") or 0) for p in all_quotation_pos for i in p.get("items", []))
+            brands = [
+                TileCustomerOrderBrand(
+                    brand_id=p.get("brand_id"), brand_name=p.get("brand_name") or "Unassigned",
+                    supplier_id=p.get("supplier_id"), supplier_name=p.get("supplier_name") or "Unassigned",
+                    purchase_order_id=p["id"], status=p.get("overall_status") or "Pending",
+                )
+                for p in all_quotation_pos
+            ]
+
         customer_order.brands = brands
         customer_order.total_products = total_products
         customer_order.total_boxes = total_boxes
@@ -220,9 +250,12 @@ async def backfill(*, dry_run: bool) -> dict:
                 "overall_status": customer_order.overall_status,
                 "dashboard_summary": customer_order.dashboard_summary.dict(),
             }})
-        customer_orders_created += 1
 
-    return {"customer_orders_created": customer_orders_created, "chalans_migrated": chalans_migrated}
+    return {
+        "customer_orders_created": customer_orders_created,
+        "customer_orders_resumed": customer_orders_resumed,
+        "chalans_migrated": chalans_migrated,
+    }
 
 
 async def main() -> None:
@@ -231,7 +264,11 @@ async def main() -> None:
     args = parser.parse_args()
     result = await backfill(dry_run=args.dry_run)
     mode = "DRY RUN — " if args.dry_run else ""
-    print(f"{mode}Created {result['customer_orders_created']} TileCustomerOrder(s), migrated {result['chalans_migrated']} old Chalan(s).")
+    print(
+        f"{mode}Created {result['customer_orders_created']} TileCustomerOrder(s) "
+        f"(resumed {result['customer_orders_resumed']} from a prior run), "
+        f"migrated {result['chalans_migrated']} old Chalan(s)."
+    )
 
 
 if __name__ == "__main__":
