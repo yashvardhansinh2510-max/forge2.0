@@ -638,6 +638,16 @@ async def list_dispatches(
     chalans = await db.chalans.find(floor_query(user, {"id": {"$in": chalan_ids}}), {"_id": 0}).to_list(len(chalan_ids) + 5)
     chalan_by_id = {c["id"]: c for c in chalans}
 
+    # TileDispatch itself carries no brand_id — brand lives on the
+    # PurchaseOrder it was raised against (PurchaseOrder.brand_id), reachable
+    # one hop away via dispatch["purchase_order_id"]. Resolve it here so the
+    # `brand` filter below has something real to compare against.
+    po_ids = [d["purchase_order_id"] for d in dispatches]
+    purchase_orders = await db.purchase_orders.find(
+        floor_query(user, {"id": {"$in": po_ids}}), {"_id": 0, "id": 1, "brand_id": 1},
+    ).to_list(len(po_ids) + 5)
+    brand_by_po_id = {po["id"]: po.get("brand_id") for po in purchase_orders}
+
     rows = []
     for dispatch in dispatches:
         dispatch_status = _dispatch_status(dispatch)
@@ -654,10 +664,10 @@ async def list_dispatches(
             continue
         if destination and dispatch.get("destination_type") != destination:
             continue
+        if brand and brand_by_po_id.get(dispatch["purchase_order_id"]) != brand:
+            continue
         chalan = chalan_by_id.get(dispatch["chalan_id"], {})
         for line in chalan.get("items", []):
-            if brand and dispatch.get("brand_id") != brand:
-                continue
             rows.append({
                 "dispatch_number": dispatch.get("dispatch_number"), "chalan_number": chalan.get("number"),
                 "customer_name": dispatch.get("customer_name"), "supplier_name": dispatch.get("supplier_name"),

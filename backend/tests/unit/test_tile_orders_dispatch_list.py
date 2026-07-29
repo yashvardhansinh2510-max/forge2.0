@@ -35,7 +35,8 @@ class _FakeDb:
 
 def _dispatch(**overrides):
     base = {
-        "id": "d-1", "dispatch_number": "DSP-2026-0001", "chalan_id": "ch-1", "customer_name": "Nileshbhai Pokiya",
+        "id": "d-1", "dispatch_number": "DSP-2026-0001", "chalan_id": "ch-1", "purchase_order_id": "po-1",
+        "customer_name": "Nileshbhai Pokiya",
         "supplier_name": "Qutone Rajkot", "supplier_id": "s-1", "customer_id": "cust-1", "dispatch_date": "2026-07-29",
         "destination_type": "Customer", "destination_name": "Nileshbhai Pokiya", "godown_received_at": None,
         "delivered_at": None, "is_deleted": False,
@@ -79,6 +80,30 @@ def test_dispatch_list_filters_by_supplier(monkeypatch):
 
     assert result["total"] == 1
     assert result["rows"][0]["supplier_name"] == "Qutone Rajkot"
+
+
+def test_dispatch_list_filters_by_brand(monkeypatch):
+    # TileDispatch has no brand_id field — brand lives on the PurchaseOrder
+    # (PurchaseOrder.brand_id), reached via dispatch["purchase_order_id"].
+    # Two dispatches on two different purchase orders with different
+    # brand_id values; filtering by one brand must return only its dispatch.
+    fake_db = _FakeDb(
+        dispatches=[
+            _dispatch(id="d-1", purchase_order_id="po-1", chalan_id="ch-1"),
+            _dispatch(id="d-2", dispatch_number="DSP-2026-0002", purchase_order_id="po-2", chalan_id="ch-2"),
+        ],
+        chalans=[_chalan(id="ch-1", dispatch_id="d-1"), _chalan(id="ch-2", dispatch_id="d-2")],
+        purchase_orders=[
+            {"id": "po-1", "brand_id": "brand-a"},
+            {"id": "po-2", "brand_id": "brand-b"},
+        ],
+    )
+    monkeypatch.setattr(router_module, "db", fake_db)
+
+    result = asyncio.run(router_module.list_dispatches(brand="brand-a", user=_user()))
+
+    assert result["total"] == 1
+    assert result["rows"][0]["dispatch_number"] == "DSP-2026-0001"
 
 
 def test_item_history_merges_ready_and_dispatch_events(monkeypatch):
