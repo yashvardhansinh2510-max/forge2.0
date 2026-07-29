@@ -163,10 +163,19 @@ async def _resolve_dispatch_lines(po: dict, body: DispatchBody, session=None) ->
     resolved_lines carries per-line {po_item_id, qty, source
     ('existing'|'pending'), item, batch_or_none}. Raises 400 on any error
     that would make the dispatch invalid (unknown item, over-consuming a
-    batch, more than what's Pending)."""
+    batch, more than what's Pending).
+
+    Tracks cumulative qty already claimed per po_item_id (pending source)
+    and per ready_batch_id (existing-batch source) as lines are walked, so
+    that two lines in the SAME request drawing from the same pending pool
+    or the same batch can't each independently pass validation against the
+    same stale pre-mutation snapshot (which would double-spend/drive
+    counters negative once actually applied)."""
     items_by_id = {item["id"]: item for item in po.get("items", [])}
     resolved: list[dict] = []
     warnings: list[str] = []
+    claimed_pending: dict[str, float] = {}
+    claimed_batch: dict[str, float] = {}
     for entry in body.items:
         item = items_by_id.get(entry.po_item_id)
         if not item:
@@ -175,13 +184,18 @@ async def _resolve_dispatch_lines(po: dict, body: DispatchBody, session=None) ->
             batch = await db.ready_batches.find_one({"id": entry.ready_batch_id}, {"_id": 0}, session=session)
             if not batch or batch.get("po_item_id") != entry.po_item_id:
                 raise HTTPException(status_code=400, detail=f"Ready batch {entry.ready_batch_id} not found for this item")
-            if entry.qty > float(batch.get("remaining_qty") or 0) + 1e-6:
-                raise HTTPException(status_code=400, detail=f"Only {batch['remaining_qty']:g} boxes remain in batch {batch['batch_number']}")
+            already_claimed = claimed_batch.get(entry.ready_batch_id, 0.0)
+            remaining = float(batch.get("remaining_qty") or 0) - already_claimed
+            if entry.qty > remaining + 1e-6:
+                raise HTTPException(status_code=400, detail=f"Only {remaining:g} boxes remain in batch {batch['batch_number']}")
+            claimed_batch[entry.ready_batch_id] = already_claimed + entry.qty
             resolved.append({"po_item_id": entry.po_item_id, "qty": entry.qty, "source": "existing", "item": item, "batch": batch})
         else:
-            pending = float(item.get("boxes_pending") or 0)
+            already_claimed = claimed_pending.get(entry.po_item_id, 0.0)
+            pending = float(item.get("boxes_pending") or 0) - already_claimed
             if entry.qty > pending + 1e-6:
                 raise HTTPException(status_code=400, detail=f"Only {pending:g} boxes of '{item.get('name')}' are pending")
+            claimed_pending[entry.po_item_id] = already_claimed + entry.qty
             warnings.append(f"'{item.get('name')}' will be dispatched directly from Pending — a Ready Batch is created automatically for the audit trail.")
             resolved.append({"po_item_id": entry.po_item_id, "qty": entry.qty, "source": "pending", "item": item, "batch": None})
     return resolved, warnings
@@ -222,8 +236,12 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
                 qty = r["qty"]
                 if r["source"] == "existing":
                     batch = r["batch"]
-                    new_remaining = float(batch["remaining_qty"]) - qty
-                    await db.ready_batches.update_one({"id": batch["id"]}, {"$set": {"remaining_qty": new_remaining}}, session=session)
+                    # $inc (not $set off the stale in-memory snapshot) so that
+                    # multiple lines against the same batch within one request
+                    # — or genuinely concurrent dispatches — always decrement
+                    # from the batch's true current state rather than each
+                    # overwriting the other's decrement.
+                    await db.ready_batches.update_one({"id": batch["id"]}, {"$inc": {"remaining_qty": -qty}}, session=session)
                     item["boxes_ready"] = float(item.get("boxes_ready") or 0) - qty
                     ready_batch_id = batch["id"]
                 else:
@@ -242,8 +260,8 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
                     item["boxes_pending"] = float(item.get("boxes_pending") or 0) - qty
 
                 item["boxes_dispatched"] = float(item.get("boxes_dispatched") or 0) + qty
-                item["overall_status"] = derive_item_status(item["qty"], item["boxes_ready"], item["boxes_dispatched"])
-                item["current_location"] = derive_current_location(item["qty"], item["boxes_ready"], item["boxes_dispatched"])
+                item["overall_status"] = derive_item_status(item["qty"], float(item.get("boxes_ready") or 0), item["boxes_dispatched"])
+                item["current_location"] = derive_current_location(item["qty"], float(item.get("boxes_ready") or 0), item["boxes_dispatched"])
                 consumed.append(TileDispatchLineConsumed(ready_batch_id=ready_batch_id, po_item_id=r["po_item_id"], qty=qty))
                 chalan_items.append(TileChalanItem(
                     po_item_id=r["po_item_id"], tile_name=item.get("name", ""), series=item.get("series"),
@@ -256,7 +274,18 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
 
             now = now_iso()
             dispatch_number = await next_number("dispatch", f"DSP-{year}-", collection="dispatches", session=session)
-            chalan_number = await next_number("chalan", "CH-", collection="chalans", width=4, session=session)
+            # Deliberately shares the "chalan:CH-" counter key with the old
+            # chalans-nested-in-purchase_orders path (routes/purchases_tracker.py)
+            # so both paths draw from one continuously-incrementing sequence.
+            # collection/array_field must match that old path exactly — if a
+            # missing counter doc ever triggers re-seeding from THIS call site,
+            # it needs to scan where legacy CH- numbers actually live
+            # (purchase_orders.chalans[].number), not the (currently empty)
+            # top-level chalans collection, or it would silently restart at
+            # CH-0001 and collide with already-issued numbers.
+            chalan_number = await next_number(
+                "chalan", "CH-", collection="purchase_orders", array_field="chalans", width=4, session=session,
+            )
 
             chalan = TileChalan(
                 number=chalan_number, dispatch_id="", purchase_order_id=po_id, customer_order_id=po.get("customer_order_id") or "",
