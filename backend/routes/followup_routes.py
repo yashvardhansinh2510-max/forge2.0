@@ -9,13 +9,13 @@ No new business logic is duplicated — this module is orchestration + reads.
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -26,14 +26,15 @@ from openpyxl.utils import get_column_letter
 from auth import floor_for_write, floor_query, get_current_user, require_min_role
 from db import db
 from models import (
-    Followup, FollowupCallOutcomePayload, FollowupCompletePayload,
+    AutomationRuleUpdate, Followup, FollowupCallOutcomePayload, FollowupCompletePayload,
     FollowupContactPayload, FollowupCreate, FollowupSavedView,
     FollowupSavedViewCreate, FollowupSnoozePayload, FollowupUpdate,
     UserPublic, now_iso,
 )
+from services import automation_rules
 from services.activity_log import log_event, timeline_for
 from services.followup_engine import (
-    RULE_DEFINITIONS, _followup_sort_key, age_days, build_whatsapp_message,
+    RULE_DEFINITIONS, _followup_sort_key, age_days,
     compute_bucket, ist_day_bounds_utc, money_short, parse_iso,
     reason_factors_for, reconcile_followups, score_followup,
 )
@@ -88,6 +89,21 @@ async def rules_config(user: UserPublic = Depends(get_current_user)):
     return [{**r, "active_count": counts.get(r["rule_type"], 0)} for r in RULE_DEFINITIONS]
 
 
+@router.get("/config/automation-rules")
+async def get_automation_rules(user: UserPublic = Depends(get_current_user)):
+    """Configurable reminder cadences (day thresholds) per workspace category
+    — see services/automation_rules.py. Editable by manager+ only."""
+    return await automation_rules.list_rules()
+
+
+@router.put("/config/automation-rules/{category}")
+async def put_automation_rule(category: str, body: AutomationRuleUpdate, user: UserPublic = Depends(require_min_role("manager"))):
+    patch = body.dict(exclude_unset=True)
+    updated = await automation_rules.update_rule(category, patch, user_id=user.id, user_name=user.full_name)
+    asyncio.create_task(reconcile_followups())
+    return updated
+
+
 @router.get("/config/assignees")
 async def assignees(_: UserPublic = Depends(get_current_user)):
     return await db.users.find(
@@ -133,6 +149,12 @@ async def stats(user: UserPublic = Depends(get_current_user)):
     )
 
     rules = await _rule_counts(user)
+    workspace_counts = {
+        "selection": rules.get("selection_waiting", 0),
+        "quotation_tiles": rules.get("quotation_tiles_waiting", 0),
+        "payment": rules.get("payment_overdue", 0) + rules.get("payment_partial", 0),
+        "walk_in": 0,  # Phase 4 — Walk-ins module not yet built
+    }
     return {
         "today_tasks": counts["today"], "today_critical": today_critical,
         "overdue": counts["overdue"], "overdue_critical": overdue_critical,
@@ -148,6 +170,7 @@ async def stats(user: UserPublic = Depends(get_current_user)):
         "snoozed": counts["snoozed"],
         "later": counts["later"],
         "rules": [{**r, "active_count": rules.get(r["rule_type"], 0)} for r in RULE_DEFINITIONS],
+        "workspace_counts": workspace_counts,
     }
 
 
@@ -615,6 +638,8 @@ async def complete_followup(followup_id: str, body: FollowupCompletePayload, use
 @router.post("/{followup_id}/contact")
 async def contact_followup(followup_id: str, body: FollowupContactPayload, user: UserPublic = Depends(get_current_user)):
     from routes.payment_routes import _clean_phone
+    from services.email_service import build_email
+    from services.messaging_service import build_message
 
     f = await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
     if not f:
@@ -629,13 +654,27 @@ async def contact_followup(followup_id: str, body: FollowupContactPayload, user:
     )
     phone = _clean_phone(f.get("customer_phone"))
     result: dict = {"channel": body.channel, "phone": phone}
+    # Category-aware message templates (services/messaging_service.py,
+    # services/email_service.py) — provider-based, deep-link only in Phase 1.
+    ctx = {
+        "customer_name": (f.get("customer_name") or "there").split()[0],
+        "quotation_number": f.get("quotation_number") or "",
+        "outstanding_amount": money_short(f.get("value", 0)),
+        "salesperson_name": f.get("assigned_to_name") or "",
+        "reason": f.get("reason") or "Just checking in!",
+    }
     if body.channel == "whatsapp":
-        msg = build_whatsapp_message(f)
-        result["message"] = msg
-        result["wa_url"] = f"https://wa.me/{phone}?text={quote_plus(msg)}" if phone else f"https://wa.me/?text={quote_plus(msg)}"
+        msg = build_message(f.get("category", "general"), phone, ctx)
+        result["message"] = msg["message"]
+        result["wa_url"] = msg["url"]
     elif body.channel == "email":
         cust = await db.customers.find_one({"id": f["customer_id"]}, {"_id": 0, "email": 1})
         result["email"] = cust.get("email") if cust else None
+        template_key = "payment_reminder" if f.get("category") == "payment" else "quotation"
+        email = build_email(template_key, result["email"], {**ctx, "invoice_number": f.get("quotation_number") or "", "order_number": f.get("quotation_number") or ""})
+        result["subject"] = email["subject"]
+        result["body"] = email["body"]
+        result["mailto_url"] = email["mailto_url"]
     return result
 
 

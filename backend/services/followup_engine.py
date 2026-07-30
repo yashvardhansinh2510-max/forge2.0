@@ -58,7 +58,11 @@ DELIVERED_RECENCY_DAYS = 5
 
 RULE_DEFINITIONS = [
     {"rule_type": "quotation_followup", "label": "Quotation/selection follow-up", "category": "quotation",
-     "description": "Floor-timed nudge — Ground Floor (Tiles) at 4 days, First Floor (Sanitary) at 7 days after creation."},
+     "description": "Floor-timed nudge — Ground Floor (Tiles) at 4 days, First Floor (Sanitary) at 7 days after creation. Excludes Tile Selections/Quotations, which use their own configurable cadence below."},
+    {"rule_type": "selection_waiting", "label": "Tile Selection waiting", "category": "selection",
+     "description": "Escalating reminder while a Tile Selection awaits conversion to a Quotation. Day thresholds configurable in Settings → Automation Rules (default 2/4/7/10 days)."},
+    {"rule_type": "quotation_tiles_waiting", "label": "Tile Quotation waiting", "category": "quotation",
+     "description": "Escalating reminder while a Tile Quotation awaits approval/order. Day thresholds configurable in Settings → Automation Rules (default 2/5/10/15 days)."},
     {"rule_type": "quotation_expiring", "label": "Quotation expiring", "category": "quotation",
      "description": "Valid-until date falls within the next 3 days."},
     {"rule_type": "quotation_expired", "label": "Quotation expired", "category": "quotation",
@@ -244,6 +248,75 @@ async def last_contact_map(customer_ids: list[str]) -> dict[str, datetime]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Tile Selections / Tile Quotations — dedicated, configurable-cadence producer
+# (Follow-ups 2.0 redesign). "Selection" and "Quotation" here are NOT separate
+# entities — both live in the `quotations` collection distinguished by
+# doc_type (see models.Quotation.doc_type), so this producer just reads the
+# same `quotations` list the rest of reconcile_followups() already loaded.
+# Auto-close is FREE: once a Selection's doc_type flips to "tiles_quotation"
+# (routes/quotation_routes.py move_to_quotation) or a Quotation's status
+# advances past "waiting", it simply stops appearing in this producer's
+# output — the generic persist loop in reconcile_followups() already marks
+# any previously-automated key that's no longer desired as auto_resolved.
+# ─────────────────────────────────────────────────────────────────────────────
+_STAGE_LABELS = {1: "Gentle reminder", 2: "waiting — call customer", 3: "High priority", 4: "Manager attention"}
+
+
+async def _tiles_pipeline_producer(quotations: list[dict], customers: dict[str, dict], contact_map: dict) -> dict[str, dict]:
+    from services.automation_rules import get_offsets
+
+    selection_offsets = await get_offsets("selection")
+    quotation_offsets = await get_offsets("quotation_tiles")
+    out: dict[str, dict] = {}
+
+    def build(q: dict, cust: dict, offsets: list[int], rule_type: str, category: str, label_word: str) -> None:
+        created_at = parse_iso(q.get("created_at"))
+        first_offset = offsets[0] if offsets else 2
+        if not created_at:
+            return
+        days_waiting = age_days(created_at)
+        if days_waiting < first_offset:
+            return
+        stage = min(4, sum(1 for o in offsets if days_waiting >= o))
+        stage_label = _STAGE_LABELS.get(stage, "Follow-up due")
+        value = float(q.get("grand_total") or 0)
+        tier = cust.get("tier", "retail")
+        last_contact = contact_map.get(cust["id"]) or created_at
+        days_since_contact = age_days(last_contact)
+        urgency_pts = min(35, days_waiting * 3)
+        score, level = score_followup(value, days_since_contact, urgency_pts, tier)
+        if stage >= 4:
+            level = "critical"
+        out[f"{rule_type}:{q['id']}"] = {
+            "rule_type": rule_type, "category": category,
+            "customer_id": cust["id"], "customer_name": cust.get("company") or cust.get("name"),
+            "customer_phone": cust.get("phone"), "customer_tier": tier,
+            "quotation_id": q["id"], "quotation_number": q.get("number"),
+            "purchase_id": None, "purchase_number": None, "project_name": q.get("project_name"),
+            "value": round(value, 2),
+            "reason": f"{label_word} {q.get('number')} waiting {days_waiting} day(s) — {stage_label}.",
+            "reason_factors": reason_factors_for(value, days_since_contact, f"{label_word} waiting {days_waiting} day(s)", tier),
+            "next_action": "Call customer", "next_action_reason": stage_label,
+            "suggested_channel": "call" if stage < 3 else "whatsapp",
+            "priority_score": score, "priority_level": level,
+            "tags": [tier.upper(), "TILES"], "due_at": now_iso(),
+            "floor_id": _followup_floor_id(q, None),
+        }
+
+    for q in quotations:
+        cust = customers.get(q.get("customer_id"))
+        if not cust or not q.get("items"):
+            continue
+        doc_type = q.get("doc_type")
+        status = q.get("status")
+        if doc_type == "tiles_selection" and status not in ("rejected", "lost"):
+            build(q, cust, selection_offsets, "selection_waiting", "selection", "Selection")
+        elif doc_type == "tiles_quotation" and status not in ("approved", "won", "ordered", "rejected", "lost"):
+            build(q, cust, quotation_offsets, "quotation_tiles_waiting", "quotation", "Quotation")
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Reconciliation — the single write path for automated cards.
 # ─────────────────────────────────────────────────────────────────────────────
 async def reconcile_followups() -> dict:
@@ -302,7 +375,7 @@ async def reconcile_followups() -> dict:
         days_since_contact = age_days(last_contact)
         tags = [tier.upper()] + ([q["reference_source"]] if q.get("reference_source") else [])
 
-        if status in ("draft", "sent", "pending_approval") and created_at:
+        if status in ("draft", "sent", "pending_approval") and created_at and q.get("doc_type") not in ("tiles_selection", "tiles_quotation"):
             q_floor_id = _followup_floor_id(q, None)
             due = quotation_followup_due_at(created_at, q_floor_id)
             if due:
@@ -377,6 +450,9 @@ async def reconcile_followups() -> dict:
                         next_action_reason="Gentle nudge for the remaining balance.",
                         channel="whatsapp", tags=tags, days_since_contact=days_since_contact,
                     )
+
+    # ---- Tile Selections / Tile Quotations (Follow-ups 2.0 workspaces) --------
+    desired.update(await _tiles_pipeline_producer(quotations, customers, contact_map))
 
     # ---- Purchase-based rules ---------------------------------------------------
     pos = await db.purchase_orders.find({"status": {"$ne": "cancelled"}}, {"_id": 0}).to_list(10000)

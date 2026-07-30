@@ -14111,11 +14111,102 @@ metadata:
   test_sequence: 1
   run_ui: false
 
+user_problem_statement: "BuildCon House Follow-ups 2.0 redesign: replace the generic Follow-ups module with event-driven, dedicated workspaces (Walk-ins, Tile Selections, Tile Quotations, Payments) matching the Walk-in -> Tile Selection -> Tile Quotation -> Tile Order -> Material Release -> Dispatch -> Delivery -> Payment pipeline. Phase 1 (this session): generic configurable automation engine + provider-based WhatsApp/Email messaging (deep-link only) + Tile Selections & Tile Quotations workspaces built together (Phases 2+3 of the user's own sequencing). Walk-ins (Phase 4, new module) and Payments/Payment-Terms (Phase 5) are explicitly deferred to a future session per user's own phasing."
+
+backend:
+  - task: "Configurable automation-rule engine (services/automation_rules.py) + Tile Selection/Quotation producer wired into services/followup_engine.py reconcile_followups()"
+    implemented: true
+    working: "NA"
+    file: "backend/services/automation_rules.py, backend/services/followup_engine.py, backend/models.py, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Architecture audit found "Tile Selection" and "Tile Quotation" already share ONE
+            model (Quotation, distinguished by doc_type) — no new entity needed for Phases 2/3.
+            Added `automation_rules` Mongo collection (AutomationRule model) seeded with defaults
+            {selection: [2,4,7,10], quotation_tiles: [2,5,10,15]} days, editable via
+            GET/PUT /followups/config/automation-rules (manager+ for PUT) — reminder cadences are
+            now DB-configured, never hardcoded, per explicit user requirement. Added
+            `_tiles_pipeline_producer()` to followup_engine.py: reads doc_type=="tiles_selection"
+            (category "selection", rule_type "selection_waiting") and doc_type=="tiles_quotation"
+            (category "quotation", rule_type "quotation_tiles_waiting") from the SAME `quotations`
+            list reconcile_followups() already loads, escalating priority via the EXISTING generic
+            score_followup() (days-waiting -> urgency_pts, so value/tier still influence score
+            exactly as everywhere else in the app — no parallel scoring system). Auto-close is
+            free: the generic reconcile persist loop already marks any previously-automated key
+            no longer in `desired` as auto_resolved, so once a Selection's doc_type flips to
+            tiles_quotation (routes/quotation_routes.py move_to_quotation, which now also fires
+            reconcile_followups()) the old selection_waiting card closes with zero extra code.
+            Explicitly excluded doc_type in (tiles_selection, tiles_quotation) from the OLD generic
+            `quotation_followup` rule so Sanitary/First-Floor standard quotations are byte-for-byte
+            unchanged (regression safety). Verified live: automation_rules seeded correctly (2
+            docs), 9 real selection_waiting/quotation_tiles_waiting Followup rows created from
+            real existing Tile Selection/Quotation documents with correct escalation-stage text
+            ("waiting — call customer" at day 5, between the 4-day and 7-day thresholds), zero
+            stale open selection_waiting rows pointing at quotations no longer doc_type
+            tiles_selection (auto-close verified via direct Mongo query, 0/5 stale).
+
+  - task: "Provider-based WhatsApp (services/messaging_service.py) and Email (services/email_service.py) deep-link services, wired into POST /followups/{id}/contact"
+    implemented: true
+    working: "NA"
+    file: "backend/services/messaging_service.py, backend/services/email_service.py, backend/routes/followup_routes.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Phase 1 per user's explicit choice: wa.me / mailto deep links only, NO WhatsApp
+            Business API / transactional email integration (no credentials needed). Both built as
+            an abstract Provider interface (MessagingProvider/EmailProvider) + a template registry
+            keyed by category, so a real API integration later is a one-file swap with zero caller
+            changes. Templates match the user's exact example copy (walk_in/selection/quotation/
+            payment for WhatsApp; quotation/payment_reminder/invoice for email). Replaced the old
+            ad-hoc build_whatsapp_message() call in contact_followup with build_message(category,
+            phone, context). Verified live: clicking WhatsApp on a real "selection_waiting" card
+            produced the EXACT spec'd message ("Hello {name}, your tile selection has been
+            completed. We'd be happy to prepare your quotation...") and opened wa.me with it
+            pre-filled; toast confirmed "WhatsApp opened", last_contacted_at updated.
+
+frontend:
+  - task: "Follow-ups workspace tabs (Selections / Quotations) inside the existing premium inbox — reuses all existing components, no new screens"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/followups.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Deliberately did NOT build 4 separate screens — user required reusing the existing
+            premium design language, and the 1879-line Follow-ups screen is already a mature
+            "Superhuman Inbox" with Mission Hero/KPI strip/Context Panel/bulk actions/saved views.
+            Added a 3-way SegmentedControl workspace tab ("All" / "Selections · N" / "Quotations ·
+            N", counts sourced from new stats.workspace_counts) at the very top that client-side
+            filters the SAME list by rule_type (selection_waiting / quotation_tiles_waiting) — so
+            every existing action (Call/WhatsApp/Snooze/Assign/Complete/bulk actions/Context Panel)
+            works unmodified inside each workspace. Added a category-aware "Open Selection"/"Open
+            Quotation" button on cards belonging to either new rule_type, deep-linking to the exact
+            existing Tiles builder screen (/tiles/selection?id=/ /tiles/quotation?id=) rather than
+            duplicating any business logic on the card. Verified live end-to-end: workspace tabs
+            render with correct live counts, filtering shows only the right cards with correct
+            reason text/tags (RETAIL/TILES), "Open Quotation" navigated to the exact quotation
+            builder document, WhatsApp button produced the correct category-specific template.
+            Walk-ins and Payments workspace tabs intentionally NOT added yet (Phase 4/5, per user's
+            own sequencing — Walk-ins needs a brand-new backend entity that does not exist today).
+
 test_plan:
   current_focus:
-    - "Dispatch List — enhanced GET /tile-orders/dispatches endpoint (brand_name, source, chalan_id, customer_order_id, performed_by_name, product/dispatch/chalan filters)"
-    - "Fix misleading 'Could not dispatch' error after successful dispatch + add visible busy/processing feedback on all movement sheets (root cause of reported 'static UI')"
-    - "New 'Dispatch List' tab — operational dispatch-only table with filters + View Chalan/Download PDF/View Customer actions"
+    - "Configurable automation-rule engine (services/automation_rules.py) + Tile Selection/Quotation producer wired into services/followup_engine.py reconcile_followups()"
+    - "Provider-based WhatsApp (services/messaging_service.py) and Email (services/email_service.py) deep-link services, wired into POST /followups/{id}/contact"
+    - "Follow-ups workspace tabs (Selections / Quotations) inside the existing premium inbox — reuses all existing components, no new screens"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -14123,23 +14214,31 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: |
-        User reported the Tile Orders workflow felt like a "static interface" with no working
-        actions. I reproduced this live against the real preview (browser automation, not curl)
-        BEFORE writing any fix, and found the workflow was never actually static — every action
-        (Release, Move to Godown, Dispatch from Released, Dispatch from Godown) reaches the
-        backend and commits correctly to MongoDB (verified via direct DB reads). The real,
-        reproducible bugs were UX-level: (1) dispatch actions are multi-step Mongo Atlas
-        transactions that take several seconds with almost no visible "busy" feedback in the old
-        UI, and (2) a real bug where a failed PDF auto-open AFTER a successful dispatch was
-        wrongly reported to the user as "Could not dispatch". Fixed both, and separately
-        implemented the requested new Dispatch List tab (backend endpoint rewrite + frontend tab
-        with filters and View Chalan/Download PDF/View Customer actions). Please re-verify:
-        (a) the full Release -> Godown -> Dispatch-from-Released -> Dispatch-from-Godown sequence
-        end-to-end with correct counters at every step (regression — logic itself unchanged), (b)
-        that the Confirm button now visibly shows "Processing…" while a request is in flight and
-        that a successful dispatch NEVER shows an error toast even if the PDF popup is blocked,
-        and (c) the new Dispatch List tab: only dispatch rows appear (no Release/Godown rows),
-        search/status filters narrow results, and View Chalan / Download PDF / View Customer all
-        work. Login: owner@forge.app — see /app/memory/test_credentials.md for password (NOT
-        rotated this session; still flagged CRITICAL at backend startup as a known default
-        password — separate P1 item, out of scope for this bug-report response).
+        Follow-ups 2.0 redesign — Phase 1 (generic engine) + Phases 2&3 (Tile Selections + Tile
+        Quotations workspaces, built together since both stages are the same underlying Quotation
+        model). Walk-ins (needs a brand-new module) and Payments (needs a new Payment Terms model)
+        are Phase 4/5, explicitly deferred — do NOT build those yet unless the user asks.
+        Please verify, in this priority order:
+        1. REGRESSION (most important): Sanitary/First-Floor standard quotations' existing
+           follow-up behavior (quotation_followup, quotation_expiring/expired, payment_overdue,
+           payment_partial, purchase_dispatched/delivered, customer_inactive, shortage_reorder) is
+           completely unchanged — these rules now explicitly skip doc_type
+           tiles_selection/tiles_quotation but must behave identically for everything else.
+           Existing Follow-ups actions (call/WhatsApp/email/snooze/complete/assign/dismiss/bulk
+           actions/saved views/export/Team View/Automation Rules sheet) must all still work.
+        2. NEW: open Follow-ups -> "Selections" and "Quotations" workspace tabs — confirm counts
+           match stats.workspace_counts, cards show correct reason/escalation text, and "Open
+           Selection"/"Open Quotation" navigates to the exact right Tiles builder document.
+        3. NEW: click WhatsApp on a Selection/Quotation card — confirm the message matches the
+           spec'd templates (services/messaging_service.py TEMPLATES) and opens wa.me.
+        4. NEW: GET /api/followups/config/automation-rules returns the 2 seeded rules (selection
+           [2,4,7,10], quotation_tiles [2,5,10,15]); PUT (as manager+) updates offsets and
+           triggers a reconcile.
+        5. NEW: create/approve a fresh Tile Selection, confirm a selection_waiting follow-up
+           appears once it's 2+ days old is NOT realistic to test live (dates are real) — instead
+           verify via backend: call POST /quotations/{id}/move-to-quotation on an approved
+           existing Tile Selection that currently has an open selection_waiting follow-up, then
+           call POST /followups/reconcile and confirm that follow-up is now status=done,
+           auto_resolved=true.
+        Login: owner@forge.app — see /app/memory/test_credentials.md for password.
+

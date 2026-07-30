@@ -491,6 +491,7 @@ async def move_to_quotation(
         {"id": quotation_id},
         {"$set": {"doc_type": "tiles_quotation", "status": "draft", "updated_at": now_iso()}},
     )
+    asyncio.create_task(reconcile_followups())
     fresh = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
     return fresh
 

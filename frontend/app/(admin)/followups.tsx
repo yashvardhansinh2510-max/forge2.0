@@ -94,6 +94,7 @@ type Stats = {
   completed_today: number; completed_trend: number;
   snoozed: number; later: number;
   rules: RuleInfo[];
+  workspace_counts: { selection: number; quotation_tiles: number; payment: number; walk_in: number };
 };
 
 type Mission = {
@@ -158,13 +159,14 @@ const PRIORITY_TONE: Record<PriorityLevel, { bg: string; fg: string; border: str
 const CATEGORY_ICON: Record<string, FeatherName> = {
   quotation: "file-text", payment: "credit-card", purchase: "shopping-bag",
   dispatch: "truck", delivery: "package", complaint: "alert-triangle",
-  general: "flag", sales: "trending-up", support: "life-buoy",
+  general: "flag", sales: "trending-up", support: "life-buoy", selection: "grid", walk_in: "user-plus",
 };
 const CHANNEL_ICON: Record<Channel, FeatherName> = {
   call: "phone", whatsapp: "message-circle", email: "mail", visit: "map-pin",
 };
 const CATEGORY_OPTIONS = [
   { value: "all", label: "All types" },
+  { value: "selection", label: "Tile Selection" },
   { value: "quotation", label: "Quotation" },
   { value: "payment", label: "Payment" },
   { value: "dispatch", label: "Dispatch" },
@@ -263,6 +265,11 @@ export default function FollowupsScreen() {
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [savedViewsSheet, setSavedViewsSheet] = useState(false);
   const [shortcutHelp, setShortcutHelp] = useState(false);
+  // Follow-ups 2.0 — dedicated workspaces (Tile Selections / Tile Quotations)
+  // living inside the same premium inbox rather than separate screens, per
+  // design decision to reuse existing components and avoid a new visual
+  // style. Walk-ins / Payments workspaces land in a later phase.
+  const [workspace, setWorkspace] = useState<"all" | "selection" | "quotation_tiles">("all");
 
   // ── Data loading ──────────────────────────────────────────────────────────
   const loadList = useCallback(async () => {
@@ -461,6 +468,8 @@ export default function FollowupsScreen() {
     }
     if (priorityFilter !== "all") list = list.filter((f) => (f.manual_priority_override || f.priority_level) === priorityFilter);
     if (categoryFilter !== "all") list = list.filter((f) => f.category === categoryFilter);
+    if (workspace === "selection") list = list.filter((f) => f.rule_type === "selection_waiting");
+    else if (workspace === "quotation_tiles") list = list.filter((f) => f.rule_type === "quotation_tiles_waiting");
     if (tierFilter !== "all") list = list.filter((f) => f.customer_tier === tierFilter);
     if (ownerFilter === "mine") list = list.filter((f) => f.assigned_to === staff?.id);
     else if (ownerFilter !== "all") list = list.filter((f) => f.assigned_to === ownerFilter);
@@ -470,7 +479,7 @@ export default function FollowupsScreen() {
       if (mineA !== mineB) return mineA - mineB;
       return (b.priority_score - a.priority_score) || (a.due_at || "").localeCompare(b.due_at || "");
     });
-  }, [rawItems, q, kpiFilter, priorityFilter, categoryFilter, tierFilter, ownerFilter, staff]);
+  }, [rawItems, q, kpiFilter, priorityFilter, categoryFilter, workspace, tierFilter, ownerFilter, staff]);
 
   const sections = useMemo(() => {
     const map: Record<string, Followup[]> = {};
@@ -676,6 +685,19 @@ export default function FollowupsScreen() {
         contentContainerStyle={{ padding: pagePad, gap: isPhone ? spacing.md : spacing.lg, paddingBottom: isPhone ? 132 : spacing.xxxl }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
+        {/* Follow-ups 2.0 — dedicated workspaces */}
+        <SegmentedControl
+          value={workspace}
+          onChange={setWorkspace}
+          fullWidth
+          testID="followups-workspace-tabs"
+          options={[
+            { value: "all", label: "All", icon: "layers" },
+            { value: "selection", label: `Selections${stats ? ` · ${stats.workspace_counts.selection}` : ""}`, icon: "grid" },
+            { value: "quotation_tiles", label: `Quotations${stats ? ` · ${stats.workspace_counts.quotation_tiles}` : ""}`, icon: "file-text" },
+          ]}
+        />
+
         {/* Today's Mission */}
         <MissionHero mission={mission} loading={loading} onJumpTop={() => topPriorityOpen && selectCard(topPriorityOpen)} compact={isPhone} />
 
@@ -831,6 +853,7 @@ export default function FollowupsScreen() {
                   onAssign={assignFollowup}
                   onNote={setNoteFor}
                   onDismiss={dismissFollowup}
+                  onOpenDoc={(f) => router.push(`/(admin)/tiles/${f.rule_type === "selection_waiting" ? "selection" : "quotation"}?id=${f.quotation_id}` as any)}
                 />
               ))
             )}
@@ -1124,7 +1147,7 @@ function InsightRow({ icon, label, value }: { icon: FeatherName; label: string; 
 // ─────────────────────────────────────────────────────────────────────────────
 function InboxSection({
   bucket, items, collapsed, onToggle, selectedId, assignees, rankMap, selectedIds, onToggleSelect,
-  onSelect, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss,
+  onSelect, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, onOpenDoc,
 }: {
   bucket: Bucket; items: Followup[]; collapsed: boolean; onToggle: () => void; selectedId: string | null;
   assignees: Assignee[]; rankMap: Map<string, number>; selectedIds: Set<string>; onToggleSelect: (id: string) => void;
@@ -1133,7 +1156,7 @@ function InboxSection({
   onComplete: (f: Followup) => void; onSnooze: (f: Followup, preset: "15m" | "1h" | "tomorrow" | "next_week") => void;
   onCustomSnooze: (f: Followup) => void; onPushDays: (f: Followup, days: number) => void;
   onAssign: (f: Followup, userId: string) => void;
-  onNote: (f: Followup) => void; onDismiss: (f: Followup) => void;
+  onNote: (f: Followup) => void; onDismiss: (f: Followup) => void; onOpenDoc: (f: Followup) => void;
 }) {
   const meta = BUCKET_META[bucket];
   return (
@@ -1167,6 +1190,7 @@ function InboxSection({
               onAssign={(uid) => onAssign(f, uid)}
               onNote={() => onNote(f)}
               onDismiss={() => onDismiss(f)}
+              onOpenDoc={(f.rule_type === "selection_waiting" || f.rule_type === "quotation_tiles_waiting") && f.quotation_id ? () => onOpenDoc(f) : undefined}
             />
           ))}
         </View>
@@ -1270,13 +1294,13 @@ function IconMenuButton({ icon, tone = "surface", accessibilityLabel, items, tes
 // ─────────────────────────────────────────────────────────────────────────────
 function FollowupCard({
   f, active, assignees, rank, checked, onToggleSelect,
-  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss,
+  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, onOpenDoc,
 }: {
   f: Followup; active: boolean; assignees: Assignee[]; rank?: number; checked: boolean; onToggleSelect: () => void;
   onPress: () => void; onCall: () => void; onWhatsApp: () => void; onEmail: () => void;
   onComplete: () => void; onSnooze: (p: "15m" | "1h" | "tomorrow" | "next_week") => void;
   onCustomSnooze: () => void; onPushDays: (days: number) => void;
-  onAssign: (userId: string) => void; onNote: () => void; onDismiss: () => void;
+  onAssign: (userId: string) => void; onNote: () => void; onDismiss: () => void; onOpenDoc?: () => void;
 }) {
   const level = f.manual_priority_override || f.priority_level;
   const tone = PRIORITY_TONE[level];
@@ -1372,6 +1396,13 @@ function FollowupCard({
           <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
             <IconButton icon="phone" onPress={onCall} size={34} tone="brandLight" accessibilityLabel="Call" testID={`call-${f.id}`} />
             <IconButton icon="message-circle" onPress={onWhatsApp} size={34} tone="surface" accessibilityLabel="WhatsApp" testID={`wa-${f.id}`} />
+            {onOpenDoc ? (
+              <Button
+                label={f.rule_type === "selection_waiting" ? "Open Selection" : "Open Quotation"}
+                icon="external-link" variant="secondary" size="sm" onPress={onOpenDoc}
+                testID={`open-doc-${f.id}`}
+              />
+            ) : null}
             <IconMenuButton
               icon="clock" accessibilityLabel="Snooze" testID={`snooze-${f.id}`}
               items={[

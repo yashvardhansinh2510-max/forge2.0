@@ -912,10 +912,11 @@ FollowupRuleType = Literal[
     "quotation_new", "quotation_inactive", "quotation_followup", "quotation_expiring",
     "quotation_expired", "payment_overdue", "payment_partial", "purchase_dispatched",
     "purchase_delivered", "customer_inactive", "shortage_reorder", "manual",
+    "selection_waiting", "quotation_tiles_waiting", "walk_in_new",
 ]
 FollowupCategory = Literal[
     "quotation", "payment", "purchase", "dispatch", "delivery",
-    "complaint", "general", "sales", "support",
+    "complaint", "general", "sales", "support", "selection", "walk_in",
 ]
 FollowupChannel = Literal["call", "whatsapp", "email", "visit"]
 FollowupPriorityLevel = Literal["critical", "high", "medium", "low"]
@@ -1018,6 +1019,25 @@ class FollowupSavedView(TimestampedModel):
 class FollowupSavedViewCreate(BaseModel):
     name: str
     filters: dict = {}
+
+
+# ---------- Automation Rules (Follow-ups V3 — Tile Orders workspaces) ----------
+# Configurable reminder cadences, DB-backed instead of hardcoded — see
+# services/automation_rules.py. `category` is a plain string (not a Literal)
+# on purpose: future departments (Sanitary, Paints, Hardware…) plug in their
+# own category keys without a model change.
+class AutomationRule(TimestampedModel):
+    category: str                      # "selection" | "quotation_tiles" | ... (extensible)
+    label: str
+    reminder_offsets_days: list[int] = []   # escalation day-thresholds, e.g. [2, 4, 7, 10]
+    is_active: bool = True
+    updated_by: Optional[str] = None
+    updated_by_name: Optional[str] = None
+
+
+class AutomationRuleUpdate(BaseModel):
+    reminder_offsets_days: Optional[list[int]] = None
+    is_active: Optional[bool] = None
 
 
 class Notification(TimestampedModel):

@@ -173,6 +173,11 @@ async def _startup():
     snapshot = await catalog_service.refresh_catalog_snapshot()
     logger.info("Catalog read model ready: %d products.", len(snapshot.products))
     try:
+        from services.automation_rules import ensure_seeded
+        await ensure_seeded()
+    except Exception as e:  # noqa: BLE001 — best-effort, defaults still work without a DB row
+        logger.warning("Automation rules seed skipped: %s", e)
+    try:
         await reconcile_followups()
     except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load
         logger.warning("Initial follow-up reconciliation skipped: %s", e)
