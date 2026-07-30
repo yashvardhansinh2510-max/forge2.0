@@ -3,6 +3,14 @@
 // backend/routes/tile_orders.py). Mirrors the thin api.get/post pattern
 // already used throughout the app (@/src/api/client) — no separate fetch
 // layer, just typed wrappers around it.
+//
+// Tile Orders workflow redesign (2026-08): the UI is organised around
+// Brands, Customers and Material Movement — NOT Purchase Orders/Company.
+// The Brand page's only action is Release Material. The Customer page
+// decides Move to Godown vs. Dispatch (from Released or from Godown) and
+// is the only place a Chalan/PDF is ever generated. Boxes are the one
+// operational unit everywhere — the underlying `qty`/`boxes_*` field names
+// are unchanged for backend compatibility, this file just labels them.
 import { api } from "@/src/api/client";
 
 export type TileOverallStatus = "Pending" | "Ready" | "Partially Dispatched" | "Dispatched" | "Delivered";
@@ -20,11 +28,14 @@ export type CustomerOrderCard = {
 
 export type CustomerOrderItem = {
   po_item_id: string; tile_name: string; series: string | null; finish: string | null; size: string | null;
-  boxes_ordered: number; boxes_ready: number; boxes_dispatched: number; boxes_pending: number;
+  boxes_ordered: number; boxes_ready: number; boxes_godown: number; boxes_dispatched: number; boxes_pending: number;
   current_location: TileLocation; overall_status: TileOverallStatus;
 };
 
-export type CustomerOrderSupplierGroup = { purchase_order_id: string; supplier_name: string; overall_status: TileOverallStatus; items: CustomerOrderItem[] };
+export type CustomerOrderBrandGroup = {
+  purchase_order_id: string; supplier_name: string; brand_id: string | null; brand_name: string;
+  overall_status: TileOverallStatus; items: CustomerOrderItem[];
+};
 
 export type CustomerOrderDetail = {
   summary: {
@@ -32,93 +43,114 @@ export type CustomerOrderDetail = {
     total_products: number; total_boxes: number; completion_percentage: number;
     waiting_days: number; ageing_band: AgeingBand; overall_status: TileOverallStatus;
   };
-  suppliers: CustomerOrderSupplierGroup[];
+  // Backend response key stays "suppliers" for wire-compat, but every group
+  // now also carries brand_id/brand_name — the Customer Detail screen
+  // groups and labels by BRAND, never by dealer/supplier company.
+  suppliers: CustomerOrderBrandGroup[];
 };
 
-export type SupplierLandingCard = { supplier_id: string | null; supplier_name: string; active_orders: number; max_supplier_silent_days: number };
+export type BrandLandingCard = { brand_id: string | null; brand_name: string; active_orders: number; max_supplier_silent_days: number };
 
-export type SupplierOrderRow = {
+export type BrandOrderRow = {
   po_id: string; po_number: string; customer_id: string; customer_name: string; order_date: string;
-  waiting_days: number; ageing_band: AgeingBand; total_products: number; total_boxes: number;
-  overall_status: TileOverallStatus; completion_percentage: number;
+  arrival_date: string; waiting_days: number; ageing_band: AgeingBand; total_products: number; total_boxes: number;
+  boxes_released: number; boxes_remaining: number; overall_status: TileOverallStatus; completion_percentage: number;
 };
 
-export type SupplierOrdersKpi = {
+export type BrandOrdersKpi = {
   orders: number; pending: number; ready: number; partially_dispatched: number; completed: number;
-  boxes_pending: number; boxes_ready: number; boxes_dispatched: number; oldest_pending_days: number;
-};
-
-export type SupplierAnalytics = {
-  orders: number; waiting_avg_days: number; ready_time_avg_days: number; dispatch_time_avg_days: number;
-  fulfilment_time_avg_days: number; oldest_pending_days: number; completion_percentage_avg: number;
+  boxes_remaining: number; boxes_released: number; boxes_dispatched: number; oldest_pending_days: number;
 };
 
 export type PurchaseOrderItemDetail = {
   id: string; name: string; series: string | null; finish: string | null; size: string | null; sku: string | null;
-  qty: number; boxes_ready: number; boxes_dispatched: number; boxes_pending: number;
+  qty: number; boxes_ready: number; boxes_godown: number; boxes_dispatched: number; boxes_pending: number;
   current_location: TileLocation; overall_status: TileOverallStatus;
 };
 
 export type PurchaseOrderDetail = {
   id: string; number: string; customer_name: string; supplier_name: string | null;
+  brand_id: string | null; brand_name: string | null;
   overall_status: TileOverallStatus; items: PurchaseOrderItemDetail[];
-  // Delivery snapshot from the parent TileCustomerOrder (captured once at
-  // placement time) — feeds the Dispatch sheet's destination fields, which
-  // land verbatim on the immutable Chalan.
   delivery_name: string; delivery_phone: string; delivery_address: string; delivery_city: string;
 };
 
-export type ReadyBatch = { id: string; batch_number: string; po_item_id: string; qty: number; remaining_qty: number; created_at: string };
+export type MaterialMovementType =
+  | "order_created" | "release" | "move_to_godown"
+  | "dispatch_from_released" | "dispatch_from_godown" | "delivered";
 
-export type DispatchPreviewLine = { po_item_id: string; tile_name: string; qty: number; source: "existing" | "pending"; remaining_pending_after: number };
-export type DispatchPreview = { po_id: string; items: DispatchPreviewLine[]; warnings: string[]; will_create: { dispatch_number: string; chalan_number: string; creates_dispatch_list_entry: boolean } };
-
-export type DispatchLineInput = { po_item_id: string; ready_batch_id: string | null; qty: number };
-export type DispatchDestination = { destination_type: "Customer" | "Godown"; destination_name: string; destination_address: string; destination_city: string; reference_number?: string; receiver_name?: string; sender_name?: string };
-
-export type DispatchListRow = { dispatch_number: string; chalan_number: string; customer_name: string; supplier_name: string; tile_name: string; tile_size: string | null; boxes: number; dispatch_date: string; destination: string; status: "Dispatched" | "At Godown" | "Delivered" };
+export type MaterialMovementRow = {
+  id: string; movement_type: MaterialMovementType; created_at: string;
+  purchase_order_id: string; po_item_id: string | null; customer_id: string | null; customer_name: string;
+  brand_id: string | null; brand_name: string; tile_name: string; series: string | null; finish: string | null;
+  size: string | null; sku: string | null; boxes: number; source: string | null; destination: string | null;
+  dispatch_id: string | null; dispatch_number: string | null; chalan_id: string | null; chalan_number: string | null;
+  performed_by_name: string;
+};
 
 export type TileOrdersDashboard = {
   customer_orders: number; supplier_orders: number; dispatched_today: number; delivered_today: number;
   pending: number; ready: number; waiting_over_15_days: number; boxes_ordered: number; boxes_pending: number; revenue: number;
 };
 
-const FLOOR = { floorId: "ground-floor" };
+export type MovementItemInput = { po_item_id: string; qty: number };
+export type DispatchDestinationOverride = {
+  destination_name?: string; destination_address?: string; destination_city?: string;
+  reference_number?: string; receiver_name?: string; sender_name?: string;
+};
 
+// No hardcoded floorId here — `api.get/post` already falls back to whatever
+// floor is currently selected in the app's global floor switcher (see
+// src/api/client.ts). Hardcoding "ground-floor" would silently break the
+// module the moment someone switches floors.
 export const tileOrdersApi = {
+  // ---- Customer tab ----
   listCustomerOrders: (params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string }) =>
     api.get<{ orders: CustomerOrderCard[]; page: number; page_size: number; total: number }>(
-      `/tile-orders/customer-orders${toQuery(params)}`, FLOOR,
+      `/tile-orders/customer-orders${toQuery(params)}`,
     ),
-  customerOrderDetail: (id: string) => api.get<CustomerOrderDetail>(`/tile-orders/customer-orders/${id}`, FLOOR),
-  customerOrderTimeline: (id: string) => api.get<{ events: Record<string, any>[] }>(`/tile-orders/customer-orders/${id}/timeline`, FLOOR),
+  customerOrderDetail: (id: string) => api.get<CustomerOrderDetail>(`/tile-orders/customer-orders/${id}`),
+  customerOrderTimeline: (id: string) => api.get<{ events: Record<string, any>[] }>(`/tile-orders/customer-orders/${id}/timeline`),
 
-  listSuppliers: () => api.get<{ suppliers: SupplierLandingCard[] }>("/tile-orders/suppliers", FLOOR),
-  supplierOrders: (supplierId: string, params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string }) =>
-    api.get<{ kpi: SupplierOrdersKpi; orders: SupplierOrderRow[]; page: number; page_size: number; total: number }>(
-      `/tile-orders/suppliers/${supplierId}/orders${toQuery(params)}`, FLOOR,
+  // ---- Brands tab ----
+  listBrands: () => api.get<{ brands: BrandLandingCard[] }>("/tile-orders/brands"),
+  brandOrders: (brandId: string, params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string }) =>
+    api.get<{ kpi: BrandOrdersKpi; orders: BrandOrderRow[]; page: number; page_size: number; total: number }>(
+      `/tile-orders/brands/${brandId}/orders${toQuery(params)}`,
     ),
-  supplierAnalytics: (supplierId: string) => api.get<SupplierAnalytics>(`/tile-orders/suppliers/${supplierId}/analytics`, FLOOR),
+  purchaseOrderDetail: (poId: string) => api.get<PurchaseOrderDetail>(`/tile-orders/purchase-orders/${poId}`),
 
-  purchaseOrderDetail: (poId: string) => api.get<PurchaseOrderDetail>(`/tile-orders/purchase-orders/${poId}`, FLOOR),
-  markItemsReady: (poId: string, items: { po_item_id: string; qty: number }[]) =>
-    api.post<{ po_id: string; ready_batches: ReadyBatch[]; overall_status: TileOverallStatus }>(
-      `/tile-orders/purchase-orders/${poId}/ready`, { items }, FLOOR,
+  // ---- Brand page's ONLY action ----
+  releaseMaterial: (poId: string, items: MovementItemInput[]) =>
+    api.post<{ po_id: string; ready_batches: Record<string, any>[]; overall_status: TileOverallStatus }>(
+      `/tile-orders/purchase-orders/${poId}/ready`, { items },
     ),
-  previewDispatch: (poId: string, items: DispatchLineInput[], destination: DispatchDestination) =>
-    api.post<DispatchPreview>(`/tile-orders/purchase-orders/${poId}/dispatch/preview`, { items, ...destination }, FLOOR),
-  commitDispatch: (poId: string, items: DispatchLineInput[], destination: DispatchDestination) =>
+
+  // ---- Customer page actions (BuildCon decides Godown vs. Dispatch) ----
+  moveToGodown: (poId: string, items: MovementItemInput[]) =>
+    api.post<{ po_id: string; moved: Record<string, any>[] }>(
+      `/tile-orders/purchase-orders/${poId}/items/move-to-godown`, { items },
+    ),
+  dispatchFromReleased: (poId: string, items: MovementItemInput[], destination?: DispatchDestinationOverride) =>
     api.post<{ po_id: string; dispatch: Record<string, any>; chalan: Record<string, any>; overall_status: TileOverallStatus }>(
-      `/tile-orders/purchase-orders/${poId}/dispatch`, { items, ...destination }, FLOOR,
+      `/tile-orders/purchase-orders/${poId}/dispatch-from-released`, { items, ...destination },
     ),
-  itemReadyBatches: (poId: string, itemId: string) => api.get<{ batches: ReadyBatch[] }>(`/tile-orders/purchase-orders/${poId}/items/${itemId}/ready-batches`, FLOOR),
-  markGodownReceived: (dispatchId: string, note?: string) =>
-    api.post<{ dispatch_id: string; godown_received_at: string }>(`/tile-orders/dispatches/${dispatchId}/godown-received`, { note }, FLOOR),
+  dispatchFromGodown: (poId: string, items: MovementItemInput[], destination?: DispatchDestinationOverride) =>
+    api.post<{ po_id: string; dispatch: Record<string, any>; chalan: Record<string, any>; overall_status: TileOverallStatus }>(
+      `/tile-orders/purchase-orders/${poId}/dispatch-from-godown`, { items, ...destination },
+    ),
+  chalanPdfUrl: (chalanId: string) => api.authenticatedUrl(`/tile-orders/chalans/${chalanId}/pdf`),
 
-  listDispatches: (params?: Record<string, string | number | undefined>) =>
-    api.get<{ rows: DispatchListRow[]; page: number; page_size: number; total: number }>(`/tile-orders/dispatches${toQuery(params)}`, FLOOR),
-  itemHistory: (itemId: string) => api.get<{ item_id: string; events: Record<string, any>[] }>(`/tile-orders/items/${itemId}/history`, FLOOR),
-  dashboard: () => api.get<TileOrdersDashboard>("/tile-orders/dashboard", FLOOR),
+  // ---- Material Movement Register ----
+  listMovements: (params?: {
+    customer_id?: string; brand_id?: string; movement_type?: string; date_from?: string; date_to?: string;
+    chalan_number?: string; dispatch_number?: string; search?: string; page?: number; page_size?: number;
+  }) => api.get<{ rows: MaterialMovementRow[]; page: number; page_size: number; total: number }>(
+    `/tile-orders/movements${toQuery(params)}`,
+  ),
+
+  itemHistory: (itemId: string) => api.get<{ item_id: string; events: Record<string, any>[] }>(`/tile-orders/items/${itemId}/history`),
+  dashboard: () => api.get<TileOrdersDashboard>("/tile-orders/dashboard"),
 };
 
 function toQuery(params?: Record<string, string | number | undefined>): string {
