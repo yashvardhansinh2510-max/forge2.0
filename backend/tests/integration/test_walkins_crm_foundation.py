@@ -234,6 +234,26 @@ class TestDuplicateDetection:
         r3 = session.post(f"{API}/walkins", json=attempt_payload)
         assert r3.status_code == 200, f"force_new_customer with unique email should succeed: {r3.text}"
 
+    def test_name_address_match_requires_resolution(self, session, floor_id):
+        name = f"TEST_CRM Address Match {uuid.uuid4().hex[:8]}"
+        address = f"12 TEST Lotus Apartments {uuid.uuid4().hex[:8]}"
+        seed = session.post(f"{API}/walkins", json={
+            "customer_name": name,
+            "customer_phone": _unique_phone(),
+            "address": address,
+            "floor_id": floor_id,
+        })
+        assert seed.status_code == 200, seed.text
+
+        attempt = session.post(f"{API}/walkins", json={
+            "customer_name": name,
+            "customer_phone": _unique_phone(),
+            "address": address,
+            "floor_id": floor_id,
+        })
+        assert attempt.status_code == 409, attempt.text
+        assert "matches" in attempt.json().get("detail", {})
+
 
 class TestSalespersonReassign:
     def test_reassign_updates_walkin_and_its_own_followup(self, session, floor_id, salespeople):

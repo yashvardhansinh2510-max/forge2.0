@@ -1,0 +1,104 @@
+{
+  "summary": "Executed backend + frontend verification for Walk-ins CRM Phase 4 using the public preview URL. Backend duplicate-rule checks passed after transient gateway instability handling; required foundation suite passed 15/15. Responsive UI checks (desktop/tablet/phone) found no horizontal overflow but uncovered medium-duplicate resolution UX/integration issues and phone sheet accessibility concerns.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/login (public preview host)",
+        "issue": "Intermittent 502 Bad Gateway from Cloudflare host during first test run caused setup errors; retry with HTTP retry adapter stabilized subsequent runs.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "pytest config",
+        "issue": "Pytest emits `PytestConfigWarning: Unknown config option: asyncio_mode` during runs (test hygiene/config drift)."
+      },
+      {
+        "endpoint": "backend/tests/integration/test_walkins_crm_foundation.py",
+        "issue": "Test hygiene issue: hardcoded fallback BASE_URL and hardcoded owner credentials in test file instead of strict env-only config."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Walk-ins New -> medium-duplicate resolution sheet",
+        "issue": "`View Customer` action did not navigate away from /walkins/new in browser run where action button was present and clicked.",
+        "testID": "walkin-view-customer-*",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Walk-ins New -> medium-duplicate resolution flow",
+        "issue": "`Use Existing Customer` flow did not complete a new walk-in transition in UI runs; page remained on /walkins/new after attempts (expected redirect to /walkins/[id]).",
+        "testID": "walkin-use-existing-*",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Walk-ins New (phone 390x844) -> Assign Salesperson sheet",
+        "issue": "Bottom sheet content is visually constrained/overlapped by bottom navigation/FAB region; picker options were not reliably interactable in phone check.",
+        "testID": "walkin-salesperson-row",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Regression navigation across /customers, /quotations, /followups, /tiles/orders, /payments",
+        "issue": "Routes loaded, but console log captured repeated request aborts (`net::ERR_ABORTED`) on several API calls while rapidly switching pages; requires validation under normal user pacing.",
+        "affected_testIDs": []
+      },
+      {
+        "flow": "Session transition on /walkins/new",
+        "issue": "Observed burst of 401 API responses before re-login recovery in one retest run.",
+        "affected_testIDs": ["login-email", "login-password", "login-submit"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "/walkins/new (phone 390x844)",
+        "issues": [
+          "Assign Salesperson sheet appears cramped by persistent bottom bar/FAB area, reducing accessibility of lower sheet controls."
+        ]
+      }
+    ],
+    "react_native_issues": [
+      {
+        "component": "Web runtime warnings",
+        "issue": "Console repeatedly logs deprecated style/runtime warnings (`shadow*` -> `boxShadow`, `props.pointerEvents` deprecated, `useNativeDriver` fallback)."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/integration/test_walkins_duplicate_rules_phase4.py",
+    "/app/backend/tests/integration/test_walkins_crm_foundation.py",
+    "/app/test_reports/pytest/pytest_walkins_duplicate_rules_phase4.xml",
+    "/app/test_reports/pytest/pytest_walkins_crm_foundation.xml",
+    "/app/test_reports/phase4_walkins_ui/",
+    "/app/test_reports/phase4_walkins_ui_retest/",
+    "/root/.emergent/automation_output/20260730_233557/console_20260730_233557.log",
+    "/root/.emergent/automation_output/20260730_233712/console_20260730_233712.log",
+    "/root/.emergent/automation_output/20260730_233751/console_20260730_233751.log"
+  ],
+  "action_items": [
+    "Fix medium-duplicate sheet actions: ensure `View Customer` reliably navigates and `Use Existing Customer` reliably completes linked walk-in creation.",
+    "Review phone bottom-sheet layering/z-index/padding so Assign Salesperson sheet controls are fully accessible above the bottom nav/FAB.",
+    "Stabilize preview host/API path against intermittent 502 and noisy aborted requests to reduce flaky E2E behavior.",
+    "Clean test hygiene in `test_walkins_crm_foundation.py` (remove hardcoded fallback URL and credentials)."
+  ],
+  "critical_code_review_comments": [
+    "`backend/tests/integration/test_walkins_crm_foundation.py` violates strict env-only testing policy by including fallback URL and embedded credentials.",
+    "Walk-ins duplicate detection backend behavior for name+city, name+address, high phone reuse, and email force-new conflict is now functionally correct (verified by dedicated pytest).",
+    "Frontend duplicate-resolution sheet is likely functionally brittle under real interaction timing despite backend correctness; UI state handling around resolution selection should be reviewed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/integration/test_walkins_duplicate_rules_phase4.py",
+    "/app/test_reports/iteration_14.json"
+  ],
+  "success_rate": {
+    "backend": "19/19 targeted tests passed (4/4 duplicate-rules + 15/15 foundation) after retry stabilization",
+    "frontend": "Core route loading/responsive checks passed; duplicate-resolution and phone sheet interaction issues remain (partial pass)"
+  },
+  "seed_data_creation": "Created TEST_ prefixed Walk-in records during verification (e.g., TEST_UI_1785454565, TEST_RET_1785454639, TEST_PROBE_*), including duplicate-attempt records for medium/high match validation.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Known created walk-in from primary UI run: cafe2fa5-49a5-4013-a9fa-56ca44432384. Backend endpoints are currently healthy and foundation suite passes. Re-test specifically the medium-duplicate modal actions and phone sheet accessibility after fixes, then rerun the two pytest files listed above.",
+  "rca_of_issue": "UI-side duplicate-resolution flow appears inconsistent: backend correctly returns 409 with resolvable matches, but frontend action handling in the medium-match sheet did not consistently complete expected transitions in automation runs. Reproduction: create seed walk-in, attempt second walk-in with same name+city and different phone, open resolution sheet, use `View Customer` / `Use Existing Customer`; observed no reliable navigation/create completion. Potential mitigation: verify button testID forwarding in shared Button component and confirm resolvedCustomerId state persists through submit path."
+}

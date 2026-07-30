@@ -14664,3 +14664,82 @@ agent_communication:
         Login credentials file: /app/memory/test_credentials.md (owner@forge.app). Note: default
         password for owner@forge.app is a known "default demo password" per backend startup
         warning — this is expected/documented, not a bug to fix in this test pass.
+
+
+user_problem_statement: "BuildCon House ERP — Phase 4 Walk-ins CRM completion. Verify the corrected confidence-tiered duplicate safety net, then complete real responsive UI and journey verification without regressing Customers, Selections, Quotations, Tile Orders, Follow-ups, or Payments."
+
+backend:
+  - task: "Walk-in duplicate-detection safety net — city/address medium matches and high-confidence reuse"
+    implemented: true
+    working: true
+    file: "backend/routes/walkin_routes.py, backend/services/duplicate_detection.py, backend/tests/integration/test_walkins_crm_foundation.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: "Initial CRM integration suite reproduced a real safety-net defect: POST /walkins omitted city and address when calling the matcher, so a name+city duplicate bypassed the medium-confidence 409 resolution flow."
+        - working: true
+          agent: "main"
+          comment: |
+            Fixed POST /walkins to supply city and address to find_customer_matches(). Updated the
+            live New Walk-in duplicate check to supply address too, so name+address matches are
+            surfaced before submit rather than only at persistence time. Hardened the integration
+            suite with isolated data and assertions for: formatted-phone high reuse without
+            overwriting the Customer; email conflict behavior; name+city and name+address 409
+            safety nets; and the correct Tile Orders dashboard regression endpoint. Local focused
+            verification passes 15/15 pytest cases.
+
+frontend:
+  - task: "Walk-ins responsive UI and customer-reuse E2E verification"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/walkins/index.tsx, frontend/app/(admin)/walkins/new.tsx, frontend/app/(admin)/walkins/[id].tsx, frontend/src/api/walkins.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            The New Walk-in form now sends address along with phone, alternate phone, email, name,
+            and city to the live duplicate check. Desktop evidence existed previously, but formal
+            responsive verification remains required for list/create/detail screens, duplicate
+            resolution, salesperson selection/reassignment, and a persisted customer-reuse flow.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.2"
+  test_sequence: 3
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Verify city/address duplicate safety-net behavior remains clean through the live backend"
+    - "Walk-ins list, create, and detail responsive UI at desktop, tablet, and mobile widths"
+    - "High-confidence customer reuse and medium-match resolution actions in the authenticated UI"
+    - "Walk-in lifecycle through selection, quotation, confirmed order, operational follow-up, and timeline where existing data permits"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Please test BOTH backend and frontend. The confirmed duplicate-safety bug is fixed and the
+        focused integration suite now passes 15/15 locally. On the backend, independently verify
+        name+city and name+address create attempts return a resolvable 409, high phone/alternate
+        phone matches reuse the existing customer without overwriting long-lived customer data,
+        and email conflict overrides return a clean 409 rather than 500.
+
+        On the authenticated mobile UI, test /walkins, /walkins/new, and /walkins/[id] at desktop
+        (>=1440), tablet (~820), and phone (390) widths. Exercise the salesperson picker,
+        high-confidence banner, medium-match sheet (Use Existing and View Customer), Create New
+        Anyway when valid, persisted reassignment, and fields for address/city/state/pincode plus
+        reference/architect/builder. Capture screenshots and report console/API errors, overflow,
+        clipping, inaccessible controls, or keyboard obstruction. Also verify the customer reuse
+        flow creates a separate Walk-in linked to the original customer and preserves that
+        customer's identity. Finally, cover selection-to-quotation and order-confirmed operations
+        follow-up/timeline where the available live data supports it, and smoke-test Customers,
+        Quotations, Follow-ups, Tile Orders, and Payments for regressions.
