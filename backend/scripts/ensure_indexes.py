@@ -216,6 +216,20 @@ async def ensure_all() -> None:
     await _safe_create_index(db.material_movements, "dispatch_number", name="material_movements_dispatch_number", sparse=True)
     await _safe_create_index(db.material_movements, "chalan_number", name="material_movements_chalan_number", sparse=True)
 
+    # Follow-ups 2.0 (2026-07-30): reconcile_followups() is invoked as
+    # fire-and-forget `asyncio.create_task(...)` from many routes and had NO
+    # database-level guard against two overlapping runs both inserting the
+    # same automated card — confirmed live (12 distinct duplicate
+    # source_keys, up to 6 copies of one payment_overdue card) before this
+    # index + the in-process lock added to reconcile_followups() itself.
+    # Duplicates were cleaned up (kept newest per source_key) before adding
+    # this constraint. `sparse` because manual follow-ups never set
+    # source_key.
+    await _safe_create_index(
+        db.followups, "source_key", unique=True, name="followups_source_key_unique",
+        partialFilterExpression={"source_key": {"$type": "string"}},
+    )
+
 
     # catalog_import_snapshots.job_id (CRITICAL #3 rollback lookups) is
     # intentionally NOT created here — it's owned solely by

@@ -1,0 +1,55 @@
+{
+  "summary": "RE-TEST of the reconcile_followups() race-condition fix (asyncio.Lock serialization + partial unique index on followups.source_key) reported in iteration_12. Independently re-verified via: (1) re-run of the previously-failing regression test test_no_duplicate_source_keys_for_tiles_rules — now PASSES; (2) full 11-test test_followups_v2_workspaces.py suite — all 11 pass (2 later became data-dependent SKIPs once the last open selection_waiting card was consumed by the auto-close test, expected, not a bug); (3) a new independent stress test (test_reconcile_race_condition.py) firing 5 genuinely concurrent POST /api/followups/reconcile via httpx+asyncio.gather — zero duplicate (rule_type, quotation_id) rows resulted; (4) direct MongoDB verification script confirming the partial unique index `followups_source_key_unique` (partialFilterExpression source_key is string) actually exists on the live followups collection AND an aggregation over the whole collection (any status) found ZERO duplicate source_key groups (178 total followups, 129 automated); (5) re-ran the exact approve->move-to-quotation->reconcile sequence — exactly one quotation_tiles_waiting card resulted and the prior selection_waiting card correctly flipped to status=done/auto_resolved=true. CONFIRMED: the CRITICAL race condition is fixed at both the application-lock layer and the database-constraint layer. One secondary finding: under 5 truly concurrent reconcile calls, 2/5 returned HTTP 502 (Cloudflare gateway) because reconcile takes ~20s per full pass and the new lock serializes them (queued calls can exceed the gateway's timeout) — this does NOT cause data corruption (zero duplicates either way) but is a latency/availability side-effect worth the main agent's awareness. Also re-confirmed the pre-existing LOW-priority place-order/confirm test failure is UNCHANGED (same KeyError: 'purchase_orders', out of scope). Automation-rules config GET still returns exactly 2 seeded rows (selection [2,4,7,10], quotation_tiles [2,5,10,15]); WhatsApp templates still byte-exact; workspace_counts still present with correct keys/types.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/followups/reconcile (concurrent load)",
+        "issue": "The race-condition fix (process-local asyncio.Lock + partial unique index) correctly eliminates duplicate cards, but as a side-effect, concurrent/overlapping reconcile calls now fully serialize behind the lock instead of running in parallel. Since a single full reconcile pass takes ~19-20s against current data volume (scans all quotations + purchase_orders + shortages + customers), firing 5 concurrent calls caused 2/5 to receive HTTP 502 (Cloudflare gateway timeout) while waiting in the lock queue. No data corruption resulted (verified zero duplicates), but this is a latency/availability trade-off of the fix worth noting — e.g. if the frontend's bootstrap() fires reconcile on every Follow-ups page load while multiple staff have the page open, some of those requests could now 502 under load instead of just being slow.",
+        "priority": "LOW"
+      },
+      {
+        "endpoint": "POST /api/quotations/{id}/place-order/confirm",
+        "issue": "UNCHANGED from iteration_12 — confirmed still failing with KeyError: 'purchase_orders' in tests/integration/test_followups_v2.py::TestEventTriggeredReconciliation::test_order_confirm_and_payment_and_dispatch_trigger_reconcile. Response shape no longer includes a top-level purchase_orders key. Pre-existing, unrelated to Follow-ups 2.0/race-condition scope — not touched this session per instructions, just re-confirmed status quo.",
+        "priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/integration/test_followups_v2_workspaces.py (re-run, all 11 pass)",
+    "/app/backend/tests/integration/test_reconcile_race_condition.py (new — 5x concurrent asyncio.gather stress test + stability-across-reconciles check)",
+    "/app/backend/scripts/verify_followups_source_key_integrity.py (new ad-hoc DB verification script — confirms index + zero collection-wide duplicates)",
+    "/app/test_reports/pytest/pytest_followups_race_final.xml",
+    "/app/test_reports/pytest/pytest_reconcile_race_condition.xml"
+  ],
+  "action_items": [
+    "No action required for the race condition itself — fix verified solid at both app-lock and DB-constraint layers.",
+    "Optional/low-priority: consider whether reconcile_followups() needs to be faster (currently ~20s/pass) or whether callers should stop firing it as fire-and-forget on every page load, given the lock can now cause queued requests to 502 under concurrent load — not a correctness bug, just a latency consideration surfaced by this fix.",
+    "Low-priority, unrelated, still open: place-order/confirm response shape missing top-level purchase_orders key expected by test_followups_v2.py — not this session's scope, just re-confirmed unchanged."
+  ],
+  "critical_code_review_comments": [
+    "services/followup_engine.py: the asyncio.Lock() fix is correct and minimal — wraps the entire read-desired/read-existing/write loop in a single critical section, so overlapping calls now see each other's writes. Comment block above it (lines 319-331) accurately documents the original bug and the fix rationale.",
+    "scripts/ensure_indexes.py: the new followups_source_key_unique partial unique index (partialFilterExpression source_key is string) is correctly scoped to exclude manual follow-ups (source_key=null) via sparse-style filtering, and _safe_create_index's existing DUPLICATE_KEY_CODE handling means it would have logged rather than crashed had any duplicate survived — verified live that it applied cleanly with zero violations.",
+    "The lock is process-local (in-memory asyncio.Lock) — correct for the current single-backend-instance deployment, but would NOT serialize calls across multiple backend processes/pods if this app is ever horizontally scaled. The DB unique index is the real backstop in that scenario (an insert would fail with a duplicate key error instead of silently creating a dupe) — but the current code around the insert (services/followup_engine.py 594-595) does not appear to catch/handle a DuplicateKeyError, so a future multi-instance deployment could see a raw 500 on the losing writer instead of a graceful no-op. Not an issue today (single instance), but worth flagging for future scaling."
+  ],
+  "updated_files": [
+    "/app/backend/tests/integration/test_followups_v2_workspaces.py (timeouts on reconcile calls bumped from 30s to 90s — test-tooling fix only, not app code; reconcile now legitimately takes longer under the new serialization)",
+    "/app/backend/tests/integration/test_reconcile_race_condition.py (new)",
+    "/app/backend/scripts/verify_followups_source_key_integrity.py (new, ad-hoc/one-off verification utility)"
+  ],
+  "success_rate": {
+    "backend": "13/13 relevant tests passed (11 in test_followups_v2_workspaces.py including the previously-failing duplicate-guard test, 2 in the new concurrency stress test); pre-existing unrelated place-order/confirm test still fails as before (out of scope, unchanged)",
+    "frontend": "Not tested this round — testing_type was backend-only per review request"
+  },
+  "seed_data_creation": "No new TEST_-prefixed data created. Re-ran the pytest suite's own approve+move-to-quotation flow against whatever open tiles_selection/quotation_tiles_waiting cards existed live at test time (same behavior as iteration_12, now safe/idempotent). No manual DB mutation performed by me beyond running the existing/new automated test suites.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "CONFIRMED FIXED, do not re-flag: reconcile_followups() race condition — verified via (a) regression pytest, (b) 5x concurrent asyncio.gather stress test, (c) direct MongoDB aggregation showing zero duplicate source_key groups collection-wide, (d) the followups_source_key_unique partial unique index confirmed present and correctly scoped. Also re-confirmed unchanged/still-working: automation-rules config GET/PUT (2 seeded rows, correct offsets), WhatsApp templates (byte-exact), workspace_counts stats shape, auto-close-on-move-to-quotation. ONE NEW LOW-PRIORITY OBSERVATION (not a data-integrity bug): concurrent reconcile calls can now 502 at the gateway due to lock-queue latency (~20s/pass) — flagged in action_items, no fix required unless main agent wants to address it. Still-open, pre-existing, out-of-scope: place-order/confirm response missing purchase_orders key (LOW, unchanged from iteration_12).",
+  "rca_of_issue": "N/A this round — this was a re-test/verification pass of an already-diagnosed and already-fixed issue from iteration_12. RCA of the original bug is documented there; this report only adds RCA-adjacent observations about the fix's own trade-offs (lock-queue latency under concurrent load) in critical_code_review_comments."
+}

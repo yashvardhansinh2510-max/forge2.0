@@ -97,7 +97,11 @@ class TestRuleDefinitionsRegression:
 class TestWorkspaceProducer:
     @pytest.fixture(scope="class")
     def reconciled(self, session, owner_token):
-        r = session.post(f"{API}/followups/reconcile", headers=_h(owner_token), timeout=30)
+        # reconcile scans the full quotations/purchase_orders collections and
+        # is now serialized behind a process-local lock (race-condition fix) —
+        # under concurrent load from other callers it can legitimately queue,
+        # so a generous timeout avoids a false-failure test artifact here.
+        r = session.post(f"{API}/followups/reconcile", headers=_h(owner_token), timeout=90)
         assert r.status_code == 200
         return r.json()
 
@@ -164,7 +168,7 @@ class TestWorkspaceProducer:
 class TestContactTemplates:
     @pytest.fixture(scope="class")
     def sel_and_quo_cards(self, session, owner_token):
-        session.post(f"{API}/followups/reconcile", headers=_h(owner_token), timeout=30)
+        session.post(f"{API}/followups/reconcile", headers=_h(owner_token), timeout=90)
         rows = session.get(f"{API}/followups?limit=3000", headers=_h(owner_token), timeout=20).json()
         sel = next((f for f in rows if f["rule_type"] == "selection_waiting" and f["status"] == "open"), None)
         quo = next((f for f in rows if f["rule_type"] == "quotation_tiles_waiting" and f["status"] == "open"), None)
@@ -197,7 +201,7 @@ class TestContactTemplates:
 class TestAutoCloseOnMoveToQuotation:
     def test_approve_and_move_resolves_selection_followup(self, session, owner_token):
         # Find any open tiles_selection with a matching open selection_waiting card.
-        session.post(f"{API}/followups/reconcile", headers=_h(owner_token), timeout=30)
+        session.post(f"{API}/followups/reconcile", headers=_h(owner_token), timeout=90)
         rows = session.get(f"{API}/followups?limit=3000", headers=_h(owner_token), timeout=20).json()
         sel_cards = [f for f in rows if f["rule_type"] == "selection_waiting" and f["status"] == "open"]
         if not sel_cards:
@@ -214,7 +218,7 @@ class TestAutoCloseOnMoveToQuotation:
         assert r2.status_code == 200, r2.text
         assert r2.json()["doc_type"] == "tiles_quotation"
 
-        r3 = session.post(f"{API}/followups/reconcile", headers=_h(owner_token), timeout=30)
+        r3 = session.post(f"{API}/followups/reconcile", headers=_h(owner_token), timeout=90)
         assert r3.status_code == 200
 
         r4 = session.get(f"{API}/followups/{card['id']}", headers=_h(owner_token), timeout=15)

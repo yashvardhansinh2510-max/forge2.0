@@ -14105,6 +14105,36 @@ frontend:
             no capture UI anywhere yet, per the original design doc's "future" note); can add a
             column once there's a real value to show.
 
+  - task: "Fix: reconcile_followups() race condition causing duplicate automated Followup cards (pre-existing bug, exposed by testing agent's move-to-quotation auto-close test)"
+    implemented: true
+    working: "NA"
+    file: "backend/services/followup_engine.py, backend/scripts/ensure_indexes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Testing agent's RCA was correct and, on investigation, this is a PRE-EXISTING bug
+            (not introduced this session) — reconcile_followups() is called as fire-and-forget
+            `asyncio.create_task(...)` from many routes with no serialization, so two overlapping
+            runs both read `existing` before either writes and both insert the same source_key.
+            Confirmed live: found 12 distinct duplicate source_keys (up to 6 copies of one
+            payment_overdue card) spanning payment_partial/purchase_dispatched/payment_overdue/
+            quotation_inactive/quotation_expired AND the new quotation_tiles_waiting — i.e. this
+            session's move-to-quotation reconcile call made an existing latent bug easier to hit,
+            it didn't create a new bug class. Fix: (1) wrapped reconcile_followups() in a
+            process-local `asyncio.Lock()` so overlapping calls serialize — the algorithm itself
+            is unchanged, runs just can no longer interleave; (2) cleaned up the 21 existing
+            duplicate rows (kept newest per source_key); (3) added a genuine DB-level guard,
+            `followups_source_key_unique` partial unique index (excludes manual follow-ups, which
+            store source_key=null) via scripts/ensure_indexes.py, for defense-in-depth against
+            multi-worker-process deployments where the in-process lock alone wouldn't help.
+            Verified: ran the exact reproduction the testing agent used (5 concurrent
+            reconcile_followups() calls via asyncio.gather) — zero new duplicates, confirmed by
+            direct Mongo aggregation before and after.
+
 metadata:
   created_by: "main_agent"
   version: "1.0"

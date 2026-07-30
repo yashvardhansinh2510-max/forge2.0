@@ -318,8 +318,26 @@ async def _tiles_pipeline_producer(quotations: list[dict], customers: dict[str, 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Reconciliation — the single write path for automated cards.
+#
+# `reconcile_followups()` is called as fire-and-forget `asyncio.create_task(...)`
+# from many routes (quotation/payment/PO/dispatch mutations, plus
+# move_to_quotation added this session). Without serialization, two overlapping
+# runs both read `existing` before either has written, both see a brand-new
+# source_key as "not yet created", and both insert — a real duplicate-card
+# race, caught by testing. A process-local lock is the correct, minimal fix:
+# it doesn't change the reconciliation algorithm at all, it just guarantees
+# runs never interleave, so every run's read-then-write sees the previous
+# run's writes.
 # ─────────────────────────────────────────────────────────────────────────────
+_reconcile_lock = asyncio.Lock()
+
+
 async def reconcile_followups() -> dict:
+    async with _reconcile_lock:
+        return await _reconcile_followups_locked()
+
+
+async def _reconcile_followups_locked() -> dict:
     from routes.payment_routes import ORDER_STATUSES, _paid_by_quotation  # local import avoids cycle at module load
 
     now = datetime.now(timezone.utc)
