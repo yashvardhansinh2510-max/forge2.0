@@ -11,40 +11,31 @@ from models import UserPublic, now_iso
 from services.activity_log import log_event
 
 
-def _digits(phone: Optional[str]) -> str:
-    return "".join(c for c in (phone or "") if c.isdigit())
-
-
 async def find_or_create_customer(
     *, name: str, phone: Optional[str], alternate_phone: Optional[str], email: Optional[str],
     floor_id: str, user: UserPublic,
+    address: Optional[str] = None, city: Optional[str] = None,
+    state: Optional[str] = None, pincode: Optional[str] = None,
 ) -> dict:
     """Duplicate detection per the Walk-ins spec: search existing customers
     by phone OR alternate phone (either direction — a new walk-in's phone
     might match an existing customer's alternate_phone, or vice versa)
-    before ever creating a new Customer record. Email match is a stated
-    future extension, not implemented yet (no reliable normalization rule
-    was specified for it this session)."""
-    phone_digits = _digits(phone)
-    alt_digits = _digits(alternate_phone)
-    candidates = [d for d in (phone_digits, alt_digits) if d]
-    existing = None
-    if candidates:
-        existing = await db.customers.find_one(
-            {"$or": [
-                {"phone": {"$regex": f"{d}$"}} for d in candidates
-            ] + [
-                {"alternate_phone": {"$regex": f"{d}$"}} for d in candidates
-            ]},
-            {"_id": 0},
-        )
-    if existing:
-        return existing
+    before ever creating a new Customer record. This is the HIGH-confidence
+    tier only (see services/duplicate_detection.py for the full tiered
+    matcher used by the check-duplicate endpoint / create-walkin decision
+    tree in routes/walkin_routes.py — medium/low confidence matches require
+    an explicit staff decision made BEFORE this function is ever called)."""
+    from services.duplicate_detection import find_customer_matches
+
+    matches = await find_customer_matches(phone=phone, alternate_phone=alternate_phone)
+    if matches["high"]:
+        return matches["high"][0]
 
     from models import CustomerPublic
     data: dict = {
         "name": name, "phone": phone, "alternate_phone": alternate_phone,
         "email": email.lower() if email else None, "floor_id": floor_id,
+        "address": address, "city": city, "state": state, "pincode": pincode,
     }
     cust = CustomerPublic(**data)
     to_store = cust.dict()

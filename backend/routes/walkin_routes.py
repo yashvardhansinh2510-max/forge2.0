@@ -20,11 +20,12 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from auth import floor_query, get_current_user, require_min_role
 from db import db
 from models import UserPublic, now_iso
-from models_walkins import WalkIn, WalkInCreate, WalkInUpdate, WALKIN_OPEN_STATUSES
+from models_walkins import WalkIn, WalkInCreate, WalkInUpdate, ReassignWalkInBody, WALKIN_OPEN_STATUSES
 from services.activity_log import log_event, timeline_for
 from services.followup_engine import parse_iso, reconcile_followups
 from services.sequence import next_number as _next_number_seq
@@ -67,18 +68,21 @@ async def update_lead_sources(body: LeadSourcesSettingsBody, user: UserPublic = 
 
 # ---------- Duplicate check (frontend calls before submit, per spec) ----------
 @router.get("/check-duplicate")
-async def check_duplicate(phone: Optional[str] = None, alternate_phone: Optional[str] = None, _: UserPublic = Depends(get_current_user)):
-    def digits(p):
-        return "".join(c for c in (p or "") if c.isdigit())
+async def check_duplicate(
+    phone: Optional[str] = None, alternate_phone: Optional[str] = None,
+    email: Optional[str] = None, name: Optional[str] = None, city: Optional[str] = None,
+    address: Optional[str] = None,
+    _: UserPublic = Depends(get_current_user),
+):
+    """Confidence-tiered duplicate detection (see services/duplicate_detection.py):
+    high (phone/alt-phone) auto-links, medium (email / name+city / name+address)
+    requires an explicit staff decision, low (name only) is a soft suggestion
+    that never blocks creation."""
+    from services.duplicate_detection import find_customer_matches
 
-    candidates = [d for d in (digits(phone), digits(alternate_phone)) if d]
-    if not candidates:
-        return {"customer": None}
-    existing = await db.customers.find_one(
-        {"$or": [{"phone": {"$regex": f"{d}$"}} for d in candidates] + [{"alternate_phone": {"$regex": f"{d}$"}} for d in candidates]},
-        {"_id": 0, "password_hash": 0},
+    return await find_customer_matches(
+        phone=phone, alternate_phone=alternate_phone, email=email, name=name, city=city, address=address,
     )
-    return {"customer": existing}
 
 
 # ---------- Create ----------
@@ -86,19 +90,50 @@ async def check_duplicate(phone: Optional[str] = None, alternate_phone: Optional
 async def create_walkin(body: WalkInCreate, user: UserPublic = Depends(require_min_role("sales"))):
     if not await db.floors.find_one({"id": body.floor_id}, {"_id": 0, "id": 1}):
         raise HTTPException(status_code=404, detail="Department (floor) not found")
-    customer = await find_or_create_customer(
-        name=body.customer_name, phone=body.customer_phone, alternate_phone=body.alternate_phone,
-        email=body.email, floor_id=body.floor_id, user=user,
-    )
+
+    if body.use_existing_customer_id:
+        customer = await db.customers.find_one({"id": body.use_existing_customer_id}, {"_id": 0})
+        if not customer:
+            raise HTTPException(status_code=404, detail="Selected existing customer not found")
+    else:
+        from services.duplicate_detection import find_customer_matches
+
+        matches = await find_customer_matches(
+            phone=body.customer_phone, alternate_phone=body.alternate_phone,
+            email=body.email, name=body.customer_name,
+        )
+        if matches["high"]:
+            customer = matches["high"][0]
+        elif matches["medium"] and not body.force_new_customer:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "A similar customer may already exist — resolve before creating a new one.",
+                    "matches": matches,
+                },
+            )
+        else:
+            try:
+                customer = await find_or_create_customer(
+                    name=body.customer_name, phone=body.customer_phone, alternate_phone=body.alternate_phone,
+                    email=body.email, floor_id=body.floor_id, user=user,
+                    address=body.address, city=body.city, state=body.state, pincode=body.pincode,
+                )
+            except DuplicateKeyError:
+                raise HTTPException(status_code=409, detail="That email is already used by another customer.")
     salesperson_id = body.salesperson_id or user.id
+    salesperson_doc = await db.users.find_one({"id": salesperson_id}, {"_id": 0, "full_name": 1})
+    if not salesperson_doc:
+        raise HTTPException(status_code=404, detail="Salesperson not found")
     walkin = WalkIn(
         number=await _next_walkin_number(),
         customer_id=customer["id"], customer_name=customer.get("name"),
         customer_phone=body.customer_phone, alternate_phone=body.alternate_phone,
         visited_at=body.visited_at or now_iso(),
         salesperson_id=salesperson_id,
-        salesperson_name=user.full_name if salesperson_id == user.id else None,
-        source=body.source, floor_id=body.floor_id, interested_products=body.interested_products,
+        salesperson_name=salesperson_doc["full_name"],
+        source=body.source, reference_contact=body.reference_contact, architect=body.architect, builder=body.builder,
+        floor_id=body.floor_id, interested_products=body.interested_products,
         budget=body.budget, notes=body.notes, manual_priority_override=body.priority,
         next_followup_at=body.next_followup_at,
         created_by=user.id, created_by_name=user.full_name,
@@ -256,6 +291,36 @@ async def update_walkin(walkin_id: str, body: WalkInUpdate, user: UserPublic = D
             summary=f"Walk-in {doc.get('number')} → {patch['status']}",
         )
         asyncio.create_task(reconcile_followups())
+    fresh = await db.walkins.find_one({"id": walkin_id}, {"_id": 0})
+    return WalkIn(**fresh)
+
+
+@router.patch("/{walkin_id}/reassign", response_model=WalkIn)
+async def reassign_walkin(walkin_id: str, body: ReassignWalkInBody, user: UserPublic = Depends(require_min_role("sales"))):
+    """Explicit salesperson reassignment (2026-08 CRM foundation spec) — never
+    silent. Transfers ownership of this Walk-in's own open automated
+    Follow-up to the new salesperson and preserves the change in the
+    Customer's activity timeline."""
+    doc = await db.walkins.find_one(floor_query(user, {"id": walkin_id}), {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Walk-in not found")
+    new_sp = await db.users.find_one({"id": body.salesperson_id}, {"_id": 0, "full_name": 1})
+    if not new_sp:
+        raise HTTPException(status_code=404, detail="Salesperson not found")
+    old_name = doc.get("salesperson_name") or "Unassigned"
+    await db.walkins.update_one(
+        {"id": walkin_id},
+        {"$set": {"salesperson_id": body.salesperson_id, "salesperson_name": new_sp["full_name"], "updated_at": now_iso()}},
+    )
+    await db.followups.update_many(
+        {"source_key": f"walk_in_new:{walkin_id}"},
+        {"$set": {"assigned_to": body.salesperson_id, "assigned_to_name": new_sp["full_name"]}},
+    )
+    await log_event(
+        event_type="walkin.reassigned", entity_type="walkin", entity_id=walkin_id,
+        customer_id=doc["customer_id"], actor=user,
+        summary=f"Walk-in {doc.get('number')} reassigned from {old_name} to {new_sp['full_name']}",
+    )
     fresh = await db.walkins.find_one({"id": walkin_id}, {"_id": 0})
     return WalkIn(**fresh)
 

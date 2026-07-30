@@ -9,7 +9,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { walkinsApi, type WalkIn } from "@/src/api/walkins";
 import { toast } from "@/src/components/Toast";
-import { Button, Card, PageHeader, Skeleton, TextField } from "@/src/components/ui";
+import { Avatar, Button, Card, ListRow, PageHeader, SearchField, Sheet, Skeleton, TextField } from "@/src/components/ui";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 async function openUrl(url: string) {
@@ -34,6 +34,9 @@ export default function WalkInDetail() {
   const [timeline, setTimeline] = useState<Record<string, any>[]>([]);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [assignees, setAssignees] = useState<{ id: string; full_name: string; role: string }[]>([]);
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const [spSearch, setSpSearch] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +48,7 @@ export default function WalkInDetail() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { walkinsApi.listAssignees().then(setAssignees).catch(() => {}); }, []);
 
   const updateStatus = async (status: string, lostReason?: string) => {
     setBusy(true);
@@ -80,6 +84,22 @@ export default function WalkInDetail() {
     }
   };
 
+  const reassign = async (salespersonId: string) => {
+    setBusy(true);
+    try {
+      await walkinsApi.reassign(id, salespersonId);
+      toast.success("Salesperson reassigned");
+      setReassignOpen(false); setSpSearch("");
+      load();
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not reassign");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const filteredAssignees = assignees.filter((a) => a.full_name.toLowerCase().includes(spSearch.trim().toLowerCase()));
+
   if (!w) {
     return (
       <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
@@ -97,8 +117,23 @@ export default function WalkInDetail() {
           <Text style={type.bodyStrong}>{w.customer_phone} {w.alternate_phone ? `· Alt: ${w.alternate_phone}` : ""}</Text>
           <Text style={type.bodyMuted}>{w.source} · {(w.interested_products || []).join(", ") || "No products noted"}</Text>
           {w.budget ? <Text style={type.bodySm}>Budget: ₹{w.budget.toLocaleString("en-IN")}</Text> : null}
+          {(w.reference_contact || w.architect || w.builder) ? (
+            <Text style={type.bodySm}>
+              {[w.reference_contact && `Ref: ${w.reference_contact}`, w.architect && `Architect: ${w.architect}`, w.builder && `Builder: ${w.builder}`].filter(Boolean).join(" · ")}
+            </Text>
+          ) : null}
           <Text style={[type.captionStrong, { color: colors.brandHover, marginTop: 4 }]}>Status: {w.status.replace(/_/g, " ")}</Text>
         </Card>
+
+        <ListRow
+          title={w.salesperson_name || "Unassigned"}
+          subtitle="Salesperson"
+          leading={<Avatar name={w.salesperson_name || "?"} size={36} />}
+          right={<Text style={[type.captionStrong, { color: colors.brandHover }]}>Reassign</Text>}
+          onPress={() => setReassignOpen(true)}
+          isFirst
+          testID="walkin-reassign-row"
+        />
 
         <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
           <Button label="Call" icon="phone" variant="secondary" size="sm" onPress={() => w.customer_phone && openUrl(`tel:${w.customer_phone}`)} />
@@ -129,6 +164,23 @@ export default function WalkInDetail() {
           ))
         )}
       </ScrollView>
+
+      <Sheet visible={reassignOpen} onClose={() => setReassignOpen(false)} title="Reassign Salesperson" variant="bottom">
+        <View style={{ padding: spacing.lg, gap: spacing.md, flex: 1 }}>
+          <SearchField placeholder="Search staff…" value={spSearch} onChangeText={setSpSearch} onClear={() => setSpSearch("")} />
+          <ScrollView>
+            {filteredAssignees.map((a, i) => (
+              <ListRow
+                key={a.id} title={a.full_name} subtitle={a.role}
+                leading={<Avatar name={a.full_name} size={36} />}
+                onPress={() => reassign(a.id)}
+                isFirst={i === 0}
+                testID={`walkin-reassign-${a.id}`}
+              />
+            ))}
+          </ScrollView>
+        </View>
+      </Sheet>
     </SafeAreaView>
   );
 }

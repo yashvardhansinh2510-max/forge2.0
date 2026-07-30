@@ -30,6 +30,8 @@ export default function NewCustomer() {
   const [phone, setPhone] = useState("");
   const [city, setCity] = useState("");
   const [address, setAddress] = useState("");
+  const [stateField, setStateField] = useState("");
+  const [pincode, setPincode] = useState("");
   const [gstin, setGstin] = useState("");
   const [tier, setTier] = useState<Tier>("retail");
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +51,8 @@ export default function NewCustomer() {
         phone: phone.trim() || null,
         city: city.trim() || null,
         address: address.trim() || null,
+        state: stateField.trim() || null,
+        pincode: pincode.trim() || null,
         gstin: gstin.trim() || null,
         tier,
       };
@@ -124,6 +128,25 @@ export default function NewCustomer() {
             style={{ minHeight: 72, textAlignVertical: "top" }}
             testID="new-customer-address"
           />
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <TextField
+              label="State"
+              placeholder="e.g. Gujarat"
+              value={stateField}
+              onChangeText={setStateField}
+              containerStyle={{ flex: 1 }}
+              testID="new-customer-state"
+            />
+            <TextField
+              label="Pincode"
+              placeholder="6-digit"
+              value={pincode}
+              onChangeText={setPincode}
+              keyboardType="number-pad"
+              containerStyle={{ flex: 1 }}
+              testID="new-customer-pincode"
+            />
+          </View>
           <TextField
             label="GSTIN"
             placeholder="Optional, for trade/VIP invoicing"

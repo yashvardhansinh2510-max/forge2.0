@@ -23,6 +23,7 @@ type Tier = "retail" | "trade" | "vip";
 type Customer = {
   id: string; name: string; company?: string | null; email?: string | null;
   phone?: string | null; city?: string | null; address?: string | null;
+  state?: string | null; pincode?: string | null;
   gstin?: string | null; tier: Tier; notes?: string | null; portal_enabled: boolean;
 };
 
@@ -37,6 +38,8 @@ export default function EditCustomer() {
   const [phone, setPhone] = useState("");
   const [city, setCity] = useState("");
   const [address, setAddress] = useState("");
+  const [stateField, setStateField] = useState("");
+  const [pincode, setPincode] = useState("");
   const [gstin, setGstin] = useState("");
   const [tier, setTier] = useState<Tier>("retail");
   const [notes, setNotes] = useState("");
@@ -56,6 +59,8 @@ export default function EditCustomer() {
     setPhone(c.phone || "");
     setCity(c.city || "");
     setAddress(c.address || "");
+    setStateField(c.state || "");
+    setPincode(c.pincode || "");
     setGstin(c.gstin || "");
     setTier(c.tier || "retail");
     setNotes(c.notes || "");
@@ -78,6 +83,8 @@ export default function EditCustomer() {
         phone: phone.trim() || null,
         city: city.trim() || null,
         address: address.trim() || null,
+        state: stateField.trim() || null,
+        pincode: pincode.trim() || null,
         gstin: gstin.trim() || null,
         tier,
         notes: notes.trim() || null,
@@ -158,6 +165,10 @@ export default function EditCustomer() {
           <TextField label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" testID="edit-customer-phone" />
           <TextField label="City" value={city} onChangeText={setCity} testID="edit-customer-city" />
           <TextField label="Address" value={address} onChangeText={setAddress} multiline numberOfLines={3} style={{ minHeight: 72, textAlignVertical: "top" }} testID="edit-customer-address" />
+          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <TextField label="State" value={stateField} onChangeText={setStateField} containerStyle={{ flex: 1 }} testID="edit-customer-state" />
+            <TextField label="Pincode" value={pincode} onChangeText={setPincode} keyboardType="number-pad" containerStyle={{ flex: 1 }} testID="edit-customer-pincode" />
+          </View>
           <TextField label="GSTIN" value={gstin} onChangeText={setGstin} autoCapitalize="characters" testID="edit-customer-gstin" />
           <TextField label="Notes" value={notes} onChangeText={setNotes} multiline numberOfLines={2} style={{ minHeight: 56, textAlignVertical: "top" }} testID="edit-customer-notes" />
 

@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
+from pydantic import BaseModel
 
 from auth import floor_for_write, floor_query, get_current_user, require_min_role
 from db import db
@@ -31,7 +32,7 @@ from models import (
     FollowupSavedViewCreate, FollowupSnoozePayload, FollowupUpdate,
     UserPublic, now_iso,
 )
-from services import automation_rules
+from services import automation_rules, workflow_transitions
 from services.activity_log import log_event, timeline_for
 from services.followup_engine import (
     RULE_DEFINITIONS, _followup_sort_key, age_days,
@@ -109,6 +110,30 @@ async def assignees(_: UserPublic = Depends(get_current_user)):
     return await db.users.find(
         {"active": True}, {"_id": 0, "id": 1, "full_name": 1, "role": 1},
     ).sort("full_name", 1).to_list(100)
+
+
+class WorkflowTransitionUpdate(BaseModel):
+    title: Optional[str] = None
+    message_template: Optional[str] = None
+    priority: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@router.get("/config/workflow-transitions")
+async def get_workflow_transitions(_: UserPublic = Depends(get_current_user)):
+    """Configurable business-event → operational-follow-up transitions (2026-08
+    CRM foundation) — e.g. Quotation → Order Confirmed. See
+    services/workflow_transitions.py / followup_engine._operational_followup_producer.
+    Editable by manager+ only."""
+    return await workflow_transitions.list_transitions()
+
+
+@router.put("/config/workflow-transitions/{key}")
+async def put_workflow_transition(key: str, body: WorkflowTransitionUpdate, user: UserPublic = Depends(require_min_role("manager"))):
+    patch = body.dict(exclude_unset=True)
+    updated = await workflow_transitions.update_transition(key, patch, user_id=user.id, user_name=user.full_name)
+    asyncio.create_task(reconcile_followups())
+    return updated
 
 
 # ─────────────────────────────────────────────────────────────────────────────

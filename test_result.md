@@ -14281,6 +14281,244 @@ agent_communication:
 
 
 
+user_problem_statement: "BuildCon House ERP — Phase 4 Completion & CRM Foundation. Extends Walk-ins with: (1) full Customer capture — Address/City/State/Pincode as permanent Customer-level fields; (2) Walk-in-level fields kept SEPARATE from Customer — Reference Contact / Architect / Builder are distinct business concepts from Lead Source (never merged); (3) explicit required Salesperson assignment on every Walk-in — never silently defaulted, always shown/editable, with a dedicated Reassign action that transfers the Walk-in's own automated Follow-up ownership and logs to the Customer timeline; (4) confidence-tiered duplicate detection — HIGH (phone/alt-phone, either direction, formatting-tolerant) auto-links silently, MEDIUM (email match, or name+city, or name+address) requires an explicit staff decision via a picker (Use Existing / View Customer / Create New Anyway) shown inline and also enforced server-side as a 409 safety net, LOW (name-only similarity) is a non-blocking soft hint; (5) a new configurable one-time 'Order Confirmed → Operations handoff' Follow-up, created via the SAME reconcile engine as every other automated Follow-up (so it auto-resolves for free once Operations records the first Release Material action on the resulting Purchase Order), with its title/message DB-configurable (services/workflow_transitions.py, GET/PUT /followups/config/workflow-transitions, manager+ to edit) rather than hardcoded; this event must also write an explicit Customer-timeline entry (unlike other silent producers) since it's a cross-team handoff. Must not regress existing Selections/Quotations/Tile Orders/Follow-ups/Payments. Must work correctly at desktop/tablet/mobile widths with no overflow/clipping."
+
+backend:
+  - task: "CRM Foundation — Customer state/pincode fields, tiered duplicate-detection service, Walk-in reference/architect/builder fields, explicit salesperson + reassign endpoint, configurable order-confirmed operational Follow-up"
+    implemented: true
+    working: "NA"
+    file: "backend/models.py, backend/models_walkins.py, backend/services/duplicate_detection.py, backend/services/walkin_service.py, backend/services/workflow_transitions.py, backend/services/followup_engine.py, backend/routes/walkin_routes.py, backend/routes/followup_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            NEW this session (builds on the already-implemented Phase 4 Walk-ins base, which was
+            separately verified via direct curl/db smoke tests in this same session — see below).
+            services/duplicate_detection.py: new reusable tiered matcher — high (phone/alt-phone,
+            formatting-tolerant regex so "+91 98200 12345" matches a typed "9820012345" — this was
+            a real bug found and fixed mid-session, the original suffix-regex broke on any stored
+            phone with internal spaces), medium (email exact / name+city / name+address), low
+            (name substring only, never blocks). routes/walkin_routes.py POST /walkins decision
+            tree: use_existing_customer_id (explicit) -> high match (auto) -> medium match without
+            force_new_customer (409 with match list) -> else create (with address/city/state/
+            pincode now persisted onto Customer). A DuplicateKeyError on the customers.email
+            unique index (force-new with an email already used elsewhere) is now caught and
+            returned as a clean 409, not a 500. New PATCH /walkins/{id}/reassign: validates the new
+            salesperson exists, transfers assigned_to on the walkin's own open followup
+            (source_key walk_in_new:{id}), logs "walkin.reassigned" to the customer timeline.
+            services/workflow_transitions.py + followup_engine._operational_followup_producer:
+            "order_confirmed" transition (title/message_template/priority, DB-backed via
+            GET/PUT /followups/config/workflow-transitions) drives a NEW rule_type
+            "order_confirmed_ops" / category "operations" Follow-up — implemented as a real
+            producer feeding the SAME `desired` dict as every other rule (not a fire-and-forget
+            one-time insert, which would have been immediately auto-resolved as stale by the
+            generic loop on the very next reconcile pass — this was caught during design, not
+            after a bug). It stays open for every quotation with status="ordered" until any
+            Purchase Order from that quotation shows boxes_ready>0 on any item (Operations visibly
+            began processing) — auto-resolves for free via the existing stale-row mechanism. An
+            explicit log_event() was added ONLY for this rule_type's creation branch (every other
+            producer is silent-by-design; this one is a cross-team handoff worth a permanent
+            timeline row per the spec). Verified via curl end-to-end this session: (a) new-customer
+            create with all new fields round-trips correctly (address/city/state/pincode on
+            Customer; reference_contact/architect/builder on WalkIn) — confirmed via GET
+            /customers/{id}; (b) same-phone repeat POST /walkins reuses the same customer_id and
+            creates a distinct new WalkIn; (c) medium-confidence email-only match correctly 409s,
+            and force_new_customer=true correctly bypasses it (and correctly 409s cleanly, not
+            500s, when that email is already taken); (d) reassign correctly updates
+            salesperson_name to the NEW person's real name (previous logic before this session's
+            fix would silently show the CURRENT user's name for any non-self assignment — fixed);
+            (e) reconcile against live "ordered" quotations produced follow-ups for exactly
+            27 of 28 open orders (1 excluded — it already had release-in-progress, confirming the
+            exclusion logic works on real data, not just a synthetic case); (f) manually simulated
+            a Release (boxes_ready 0->1) on one of those 27, reconciled, confirmed status flipped
+            to auto_resolved with a resolution_note AND a "followup.auto_resolved" timeline event
+            fired; (g) confirmed a fresh "created" order_confirmed_ops row fires
+            "quotation.order_confirmed_followup_created" on the customer timeline. All test data
+            (customers/walkins created during verification) was cleaned up; the one simulated
+            boxes_ready mutation was reverted. NEEDS: full authenticated browser E2E (this
+            session's curl work proves backend correctness; UI wiring for the NEW fields was
+            partially screenshot-verified — see frontend task below — but not by the test agent).
+    metadata: {}
+  - task: "Phase 4 Walk-ins base (model/routes/service/producer/hooks) — carried over from prior session, verified via curl this session"
+    implemented: true
+    working: true
+    file: "backend/models_walkins.py, backend/routes/walkin_routes.py, backend/services/walkin_service.py, backend/services/followup_engine.py, backend/routes/quotation_routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Verified this session via curl: login, GET /api/walkins (200, live data), customer
+            dedupe on repeat phone, floor validation, activity logging. Considered backend-verified;
+            no changes needed beyond the CRM-foundation extension above.
+
+frontend:
+  - task: "Walk-in form — Address/City/State/Pincode, explicit Salesperson picker (defaults to logged-in staff, always changeable), Reference/Architect/Builder fields, tiered duplicate-detection UI (high banner / medium picker sheet with Use Existing+View Customer+Create Anyway / low soft hint)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/walkins/new.tsx, frontend/src/api/walkins.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Screenshot-verified this session (desktop width only): all new fields render
+            (Address/City/State/Pincode, Salesperson row, Reference/Architect/Builder), Salesperson
+            correctly defaults to the logged-in staff member's real name (fixed a mount-order bug
+            where useState(staff?.id) missed staff loading asynchronously — added a useEffect sync,
+            same pattern as the existing floorId default), and the HIGH-confidence duplicate banner
+            ("Existing customer found: Rajesh Malhotra...") correctly appears against a real DB
+            customer once the phone-matching backend bug was fixed. NOT YET screenshot-verified:
+            the medium-confidence picker Sheet (Use Existing Customer / View Customer / Create New
+            Anyway actions), the Salesperson-change Sheet interaction, and ANY tablet/mobile
+            breakpoint — this is exactly the gap the user's spec calls "mandatory, prove it, don't
+            just say it's responsive." Needs the test agent's Playwright multi-viewport pass.
+    metadata: {}
+  - task: "Walk-in detail page — Reassign Salesperson action (Sheet), Reference/Architect/Builder display"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/walkins/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Added a ListRow showing current salesperson with a "Reassign" action opening a
+            searchable Sheet (same pattern as new.tsx's salesperson picker) calling PATCH
+            /walkins/{id}/reassign. Added Reference/Architect/Builder to the summary card. Lint
+            clean. NOT screenshot-verified yet — needs test agent.
+    metadata: {}
+  - task: "Customer create/edit forms — add State + Pincode fields (Address/City already existed)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/customers/new.tsx, frontend/app/(admin)/customers/[id]/edit.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: |
+            Added for consistency with the Customer model change (state/pincode are now real
+            Customer fields, not Walk-in-only) — a customer edited directly (not via Walk-in)
+            should be able to set/see the same fields. Lint clean, not yet screenshot/test-agent
+            verified.
+    metadata: {}
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 2
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "CRM Foundation — Customer state/pincode fields, tiered duplicate-detection service, Walk-in reference/architect/builder fields, explicit salesperson + reassign endpoint, configurable order-confirmed operational Follow-up"
+    - "Walk-in form — Address/City/State/Pincode, explicit Salesperson picker (defaults to logged-in staff, always changeable), Reference/Architect/Builder fields, tiered duplicate-detection UI (high banner / medium picker sheet with Use Existing+View Customer+Create Anyway / low soft hint)"
+    - "Walk-in detail page — Reassign Salesperson action (Sheet), Reference/Architect/Builder display"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        This is a SECOND, larger pass on top of the already-curl-verified Phase 4 Walk-ins base
+        (see the other backend task entry above — that part is marked working:true and does not
+        need retesting). This pass adds the CRM-foundation completion features the user explicitly
+        requested. Please test BOTH backend and frontend:
+
+        1. BACKEND (all via API, owner@forge.app):
+           a. POST /api/walkins with a brand-new phone + full address/city/state/pincode +
+              reference_contact/architect/builder -> 200. GET /api/customers/{customer_id} ->
+              confirm address/city/state/pincode all persisted on the CUSTOMER record (not lost).
+              GET /api/walkins/{id} -> confirm reference_contact/architect/builder persisted on
+              the WALK-IN record, and separately from `source` (source should still be whatever
+              Lead Source chip was picked, e.g. "Reference" — NOT equal to the reference_contact
+              text).
+           b. GET /api/walkins/check-duplicate?phone=<a real existing customer's phone, formatted
+              with spaces like "+91 98200 12345" in the DB> -> must return that customer under
+              "high" (this exact formatting-tolerance was a bug fixed this session — please
+              specifically confirm it still works, a regression here means duplicate customers
+              silently get created in production).
+           c. GET /api/walkins/check-duplicate?email=<existing customer's email> -> that customer
+              appears under "medium", not "high".
+           d. POST /api/walkins with only an email match (different name/phone) and no
+              use_existing_customer_id/force_new_customer -> expect HTTP 409 with a body
+              containing "matches". Retry the same payload with force_new_customer:true -> should
+              succeed UNLESS that email is already taken by another customer, in which case expect
+              a clean 409 (NOT a 500) with a message about the email being in use.
+           e. PATCH /api/walkins/{id}/reassign with a different valid salesperson_id -> 200,
+              salesperson_name in the response is the NEW person's actual name (not the caller's).
+              GET /api/followups and confirm that walkin's own open automated Follow-up
+              (source_key walk_in_new:{id}) now shows assigned_to = the new salesperson_id.
+           f. GET /api/followups/config/workflow-transitions -> returns the "order_confirmed"
+              transition with a message_template containing {customer_name}/{quotation_number}
+              placeholders. PUT /api/followups/config/workflow-transitions/order_confirmed with a
+              new message_template (manager+ role required — confirm a "sales" role user gets
+              403) -> GET again confirms the change persisted.
+           g. Find or create a Quotation, move it through move-to-quotation and place-order (or
+              locate an existing status="ordered" quotation) -> call POST
+              /api/followups/reconcile -> GET /api/followups?category=operations (or just filter
+              client-side) and confirm a rule_type="order_confirmed_ops" Follow-up now exists for
+              that quotation, with `reason` text matching the CURRENT configured template
+              (interpolated with the real customer name/quotation number — if you changed the
+              template in step f, this should reflect your new wording).
+           h. GET /api/walkins/{id}/timeline (or the customer's timeline) for that quotation's
+              customer -> confirm a "quotation.order_confirmed_followup_created" event appears.
+           i. REGRESSION: GET /api/followups/stats, GET /api/quotations, GET /api/customers,
+              GET /api/purchase-orders, GET /api/payments/stats, GET /api/tile-orders/... — all
+              still 200 with no behavior change from before this session.
+
+        2. FRONTEND (owner@forge.app / see /app/memory/test_credentials.md) — THIS IS THE PART
+           NOT YET VERIFIED, please prioritize:
+           a. Navigate to /walkins/new. Confirm Address/City/State/Pincode fields render and
+              accept input. Confirm the Salesperson row defaults to the logged-in user's real name
+              (not "Select salesperson" placeholder — if you see the placeholder, that IS a bug,
+              flag it). Tap it, confirm a searchable staff picker Sheet opens, pick a different
+              person, confirm the row updates to show them.
+           b. Type an existing customer's phone (any customer with a phone on file) -> confirm the
+              "Existing customer found: <name>..." banner appears within ~1-2 seconds.
+           c. Clear that, type only an email that matches an existing customer (different
+              name/phone) -> confirm a "similar customer may already exist" prompt appears with a
+              "Review matches" button; tap it, confirm a Sheet opens showing the match with
+              "Use Existing Customer" and "View Customer" buttons; tapping "View Customer" should
+              navigate to that customer's profile page; going back and tapping "Use Existing
+              Customer" should close the sheet and show a "Linking to existing customer: <name>"
+              confirmation card.
+           d. Fill Reference Contact / Architect / Builder (optional fields, separate from the
+              Lead Source chips above them) and submit a complete new Walk-in -> confirm it lands
+              on the new Walk-in's detail page.
+           e. On the detail page, confirm the salesperson row shows with a "Reassign" action;
+              tap it, pick a different staff member, confirm the change persists after reload.
+              Confirm Reference/Architect/Builder show in the summary card if filled.
+           f. RESPONSIVE — this is explicitly mandatory per the user: test /walkins (list),
+              /walkins/new, and /walkins/[id] at THREE viewport widths: desktop (1920x800 or
+              similar ≥1440), tablet (~820x1180), and mobile (~390x844). At each width confirm: no
+              horizontal scrolling, no clipped text/buttons, the Sheets (salesperson picker,
+              duplicate-match picker, reassign picker) render usably (bottom sheet on mobile,
+              appropriately sized on desktop/tablet — check the existing Sheet component's
+              variant="bottom" behavior across breakpoints), and the keyboard doesn't obscure
+              inputs on mobile when filling the form. Report any overflow/clipping found — this
+              must be fixed before Phase 4 is considered done, per the user's explicit instruction.
+           g. Customer create/edit forms (/customers/new, /customers/[id]/edit): confirm new
+              State + Pincode fields render and save correctly.
+           h. REGRESSION: Follow-ups screen, Tile Orders, Quotations list, Customers list all
+              still load with no new console errors, at desktop AND mobile width.
+
+        Please report exact screenshots/evidence for the responsive check (f) since that's the
+        one item the user explicitly said "do not just say it is responsive — prove it."
+
+
 user_problem_statement: "BuildCon House ERP — Phase 4: Walk-ins CRM module (standalone top-level module, entry point of the reusable sales pipeline Walk-in -> Customer -> Selection -> Quotation -> Order -> Material Release -> Dispatch -> Payment). Reuse one Customer profile throughout (dedupe by phone/alternate_phone). Walk-in records capture customer/phone, alternate phone, visit date/time, salesperson, configurable source, interested department/products, budget, notes, priority, next follow-up, lifecycle status (New -> Contacted -> Selection Scheduled -> Selection Completed -> Quotation Created -> Converted, or Lost). Creating a Walk-in creates/reuses a Customer, creates a Walk-in Follow-up via the shared Follow-up engine, and schedules reminders from automation rules. Creating a Tile Selection for that customer must close the linked Walk-in follow-up and advance status; promoting to Quotation must advance status again. New Walk-ins dashboard: KPIs, list/card views, search, filters, actions, analytics funnel. Sources are DB-configurable (not hardcoded). Must not regress Selections/Quotations/Tile Orders/Follow-ups/Payments."
 
 backend:

@@ -65,6 +65,8 @@ RULE_DEFINITIONS = [
      "description": "Escalating reminder while a Tile Quotation awaits approval/order. Day thresholds configurable in Settings → Automation Rules (default 2/5/10/15 days)."},
     {"rule_type": "walk_in_new", "label": "Walk-in waiting", "category": "walk_in",
      "description": "Escalating reminder while a Walk-in has not yet reached a Selection. Day thresholds configurable in Settings → Automation Rules (default 1/3/7/14 days). Auto-closes the moment a Selection is created for that customer."},
+    {"rule_type": "order_confirmed_ops", "label": "Order confirmed — Operations handoff", "category": "operations",
+     "description": "One-time follow-up fired the moment a Quotation is placed as a confirmed Order — notifies the owning salesperson to hand off to Operations. Message text is DB-configurable (see services/workflow_transitions.py). Auto-closes the moment the first Release Material action is recorded against any resulting Purchase Order (Operations has visibly begun processing)."},
     {"rule_type": "quotation_expiring", "label": "Quotation expiring", "category": "quotation",
      "description": "Valid-until date falls within the next 3 days."},
     {"rule_type": "quotation_expired", "label": "Quotation expired", "category": "quotation",
@@ -367,10 +369,68 @@ async def _walkin_producer(customers: dict[str, dict], contact_map: dict) -> dic
     return out
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Reconciliation — the single write path for automated cards.
-#
-# `reconcile_followups()` is called as fire-and-forget `asyncio.create_task(...)`
+async def _operational_followup_producer(quotations: list[dict], customers: dict[str, dict]) -> dict[str, dict]:
+    """Order-confirmed → Operations handoff (2026-08 CRM-foundation spec).
+
+    Data-driven, same auto-close-for-free mechanism as every other producer
+    here: a confirmed order ("ordered" status) stays in `desired` (i.e. the
+    Follow-up card stays open) until the first Release Material action is
+    recorded against any Purchase Order that came out of it — the moment
+    that happens, this producer simply stops returning it, and the generic
+    persist loop below marks it auto_resolved. Message text is DB-configured
+    (services/workflow_transitions.py), never hardcoded, per spec — the
+    whole card is skipped if the "order_confirmed" transition is disabled.
+    """
+    from services.workflow_transitions import get_transition
+
+    transition = await get_transition("order_confirmed")
+    if not transition or not transition.get("is_active", True):
+        return {}
+
+    ordered = [q for q in quotations if q.get("status") == "ordered"]
+    if not ordered:
+        return {}
+    quotation_ids = [q["id"] for q in ordered]
+    pos = await db.purchase_orders.find(
+        {"quotation_id": {"$in": quotation_ids}}, {"_id": 0, "quotation_id": 1, "items": 1},
+    ).to_list(5000)
+    release_started: set[str] = {
+        po["quotation_id"] for po in pos
+        if any((item.get("boxes_ready") or 0) > 0 for item in po.get("items", []))
+    }
+
+    template = transition.get("message_template") or "{customer_name}'s order {quotation_number} has been confirmed."
+    priority = transition.get("priority", "medium")
+    out: dict[str, dict] = {}
+    for q in ordered:
+        if q["id"] in release_started:
+            continue  # Operations has visibly begun — auto-resolves for free.
+        cust = customers.get(q.get("customer_id"))
+        if not cust:
+            continue
+        message = template.format(
+            customer_name=cust.get("company") or cust.get("name") or "Customer",
+            quotation_number=q.get("number") or "",
+        )
+        out[f"order_confirmed_ops:{q['id']}"] = {
+            "rule_type": "order_confirmed_ops", "category": "operations",
+            "customer_id": cust["id"], "customer_name": cust.get("company") or cust.get("name"),
+            "customer_phone": cust.get("phone"), "customer_tier": cust.get("tier", "retail"),
+            "quotation_id": q["id"], "quotation_number": q.get("number"),
+            "purchase_id": None, "purchase_number": None, "project_name": q.get("project_name"),
+            "value": round(float(q.get("grand_total") or 0), 2),
+            "reason": message,
+            "reason_factors": ["Order confirmed — awaiting Operations handoff"],
+            "next_action": "Proceed with order processing",
+            "next_action_reason": transition.get("title", "Order Confirmed"),
+            "suggested_channel": "call",
+            "priority_score": {"critical": 85, "high": 65, "medium": 45, "low": 25}.get(priority, 45),
+            "priority_level": priority,
+            "tags": ["OPERATIONS"], "due_at": now_iso(),
+            "floor_id": _followup_floor_id(q, None),
+            "assigned_to": q.get("created_by"),
+        }
+    return out
 # from many routes (quotation/payment/PO/dispatch mutations, plus
 # move_to_quotation added this session). Without serialization, two overlapping
 # runs both read `existing` before either has written, both see a brand-new
@@ -538,6 +598,9 @@ async def _reconcile_followups_locked() -> dict:
     # ---- Walk-ins (Phase 4) -----------------------------------------------------
     desired.update(await _walkin_producer(customers, contact_map))
 
+    # ---- Order confirmed → Operations handoff (2026-08 CRM foundation) --------
+    desired.update(await _operational_followup_producer(quotations, customers))
+
     # ---- Purchase-based rules ---------------------------------------------------
     pos = await db.purchase_orders.find({"status": {"$ne": "cancelled"}}, {"_id": 0}).to_list(10000)
     for po in pos:
@@ -660,6 +723,17 @@ async def _reconcile_followups_locked() -> dict:
             f = Followup(source_key=key, is_automated=True, **fields)
             await db.followups.insert_one(f.dict())
             created += 1
+            # Operational handoff follow-ups (2026-08) must show up on the
+            # customer's unified timeline the moment they're created — every
+            # other producer's card creation is silent by design (the
+            # Follow-ups list IS its visibility), but this one is a
+            # cross-team business-event handoff worth a permanent audit row.
+            if fields.get("rule_type") == "order_confirmed_ops":
+                await log_event(
+                    event_type="quotation.order_confirmed_followup_created", entity_type="followup", entity_id=f.id,
+                    customer_id=fields.get("customer_id"), quotation_id=fields.get("quotation_id"),
+                    actor_name="Automation", summary=fields.get("reason"),
+                )
             # Nudge the rep who owns this customer's quotation the moment a
             # new high-priority follow-up appears — this is the ONLY place
             # in the app that ever wrote a Notification before this fix

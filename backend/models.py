@@ -89,6 +89,8 @@ class CustomerBase(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
     gstin: Optional[str] = None
     tier: Literal["retail", "trade", "vip"] = "retail"
     notes: Optional[str] = None
@@ -123,6 +125,8 @@ class CustomerUpdatePayload(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
     gstin: Optional[str] = None
     tier: Optional[Literal["retail", "trade", "vip"]] = None
     notes: Optional[str] = None
@@ -929,11 +933,11 @@ FollowupRuleType = Literal[
     "quotation_new", "quotation_inactive", "quotation_followup", "quotation_expiring",
     "quotation_expired", "payment_overdue", "payment_partial", "purchase_dispatched",
     "purchase_delivered", "customer_inactive", "shortage_reorder", "manual",
-    "selection_waiting", "quotation_tiles_waiting", "walk_in_new",
+    "selection_waiting", "quotation_tiles_waiting", "walk_in_new", "order_confirmed_ops",
 ]
 FollowupCategory = Literal[
     "quotation", "payment", "purchase", "dispatch", "delivery",
-    "complaint", "general", "sales", "support", "selection", "walk_in",
+    "complaint", "general", "sales", "support", "selection", "walk_in", "operations",
 ]
 FollowupChannel = Literal["call", "whatsapp", "email", "visit"]
 FollowupPriorityLevel = Literal["critical", "high", "medium", "low"]

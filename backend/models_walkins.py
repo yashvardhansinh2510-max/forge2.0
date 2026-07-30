@@ -39,6 +39,16 @@ class WalkIn(TimestampedModel):
     salesperson_id: Optional[str] = None
     salesperson_name: Optional[str] = None
     source: str = "Walk-in"                   # configurable — see routes/walkin_routes.py lead-sources config
+    # ---- Reference relationships (2026-08). Deliberately separate from
+    # `source` — Source answers "how did the customer find us" (Walk-in,
+    # Instagram, Google, ...), these answer "who is the referring party for
+    # this specific project" (a real person/business, not a channel). Kept
+    # as plain optional text for now, not linked entities — cheap to
+    # evolve into a proper Architect/Builder directory later without a
+    # schema migration on Walk-in itself. ----
+    reference_contact: Optional[str] = None
+    architect: Optional[str] = None
+    builder: Optional[str] = None
     floor_id: str                             # "Interested Department" — reuses the existing Floor entity
     interested_products: list[str] = []
     budget: Optional[float] = None
@@ -59,15 +69,28 @@ class WalkInCreate(BaseModel):
     customer_phone: str
     alternate_phone: Optional[str] = None
     email: Optional[str] = None
+    # ---- Customer-level fields (permanent, stored on Customer — 2026-08) ----
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
     visited_at: Optional[str] = None          # defaults to now if omitted
     salesperson_id: Optional[str] = None
     source: str = "Walk-in"
+    reference_contact: Optional[str] = None
+    architect: Optional[str] = None
+    builder: Optional[str] = None
     floor_id: str
     interested_products: list[str] = []
     budget: Optional[float] = None
     notes: Optional[str] = None
     priority: Optional[Literal["low", "medium", "high", "critical"]] = None
     next_followup_at: Optional[str] = None
+    # ---- Duplicate-resolution (set by the frontend after the staff member
+    # resolves a medium/low-confidence match prompt — see
+    # services/duplicate_detection.py) ----
+    use_existing_customer_id: Optional[str] = None
+    force_new_customer: bool = False
 
 
 class WalkInUpdate(BaseModel):
@@ -80,6 +103,13 @@ class WalkInUpdate(BaseModel):
     alternate_phone: Optional[str] = None
     budget: Optional[float] = None
     interested_products: Optional[list[str]] = None
+    reference_contact: Optional[str] = None
+    architect: Optional[str] = None
+    builder: Optional[str] = None
+
+
+class ReassignWalkInBody(BaseModel):
+    salesperson_id: str
 
 
 class LeadSourcesSettings(BaseModel):
