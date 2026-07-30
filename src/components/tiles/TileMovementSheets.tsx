@@ -9,7 +9,7 @@
 // Replaces src/components/tiles/ReadyDispatchSheets.tsx (MarkReadySheet /
 // DispatchSheet), which conflated all of this into one Brand-owned action.
 import { useState } from "react";
-import { Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
 import { tileOrdersApi, type CustomerOrderItem, type PurchaseOrderItemDetail } from "@/src/api/tileOrders";
 import { toast } from "@/src/components/Toast";
@@ -40,11 +40,12 @@ function Sheet({ title, children, onClose, maxHeight = "80%" }: { title: string;
 function SheetFooter({ onCancel, onConfirm, confirmLabel, busy }: { onCancel: () => void; onConfirm: () => void; confirmLabel: string; busy: boolean }) {
   return (
     <View style={{ flexDirection: "row", gap: spacing.sm }}>
-      <Pressable onPress={onCancel} style={{ flex: 1, padding: spacing.md, alignItems: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border }}>
+      <Pressable disabled={busy} onPress={onCancel} style={{ flex: 1, padding: spacing.md, alignItems: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, opacity: busy ? 0.5 : 1 }}>
         <Text style={type.bodyStrong}>Cancel</Text>
       </Pressable>
-      <Pressable disabled={busy} onPress={onConfirm} style={{ flex: 1, padding: spacing.md, alignItems: "center", borderRadius: radius.md, backgroundColor: colors.brand, opacity: busy ? 0.6 : 1 }}>
-        <Text style={[type.bodyStrong, { color: colors.onBrand }]}>{confirmLabel}</Text>
+      <Pressable disabled={busy} onPress={onConfirm} style={{ flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: spacing.xs, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brand, opacity: busy ? 0.85 : 1 }}>
+        {busy ? <ActivityIndicator size="small" color={colors.onBrand} /> : null}
+        <Text style={[type.bodyStrong, { color: colors.onBrand }]}>{busy ? "Processing…" : confirmLabel}</Text>
       </Pressable>
     </View>
   );
@@ -152,16 +153,27 @@ async function submitDispatch(
   onDone: () => void, setBusy: (b: boolean) => void,
 ) {
   setBusy(true);
+  let result: { chalan: { id: string } };
   try {
-    const result = await fn(poId, entries);
-    toast.success("Dispatched — Chalan generated");
-    onDone();
-    const url = await tileOrdersApi.chalanPdfUrl(result.chalan.id);
-    await openPdf(url);
+    result = await fn(poId, entries);
   } catch (e: any) {
     toast.error(e?.detail || "Could not dispatch");
-  } finally {
     setBusy(false);
+    return;
+  }
+  // Dispatch + Chalan are already committed server-side at this point —
+  // anything below (minting a download token, opening the PDF) is a
+  // best-effort convenience. A failure here must never surface as "Could
+  // not dispatch" (that already succeeded); it only affects whether the
+  // PDF opens automatically.
+  toast.success("Dispatched — Chalan generated");
+  onDone();
+  setBusy(false);
+  try {
+    const url = await tileOrdersApi.chalanPdfUrl(result.chalan.id);
+    await openPdf(url);
+  } catch {
+    toast.error("Dispatch saved. Open the Chalan PDF from the Dispatch List tab.");
   }
 }
 

@@ -12,18 +12,32 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { tileOrdersApi, type BrandLandingCard, type CustomerOrderCard, type MaterialMovementRow } from "@/src/api/tileOrders";
+import { tileOrdersApi, type BrandLandingCard, type CustomerOrderCard, type DispatchListRow, type MaterialMovementRow } from "@/src/api/tileOrders";
 import { toast } from "@/src/components/Toast";
 import { AgeingBadge, BrandStatusChips, StatusPill } from "@/src/components/tiles/TileOrderStatusUI";
 import { useBp } from "@/src/design/responsive";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
-type TabKey = "customer" | "brands" | "material-register";
-const TABS: [TabKey, string][] = [["customer", "Customer"], ["brands", "Brands"], ["material-register", "Material Movement Register"]];
+type TabKey = "customer" | "brands" | "dispatch-list" | "material-register";
+const TABS: [TabKey, string][] = [
+  ["customer", "Customer"], ["brands", "Brands"],
+  ["dispatch-list", "Dispatch List"], ["material-register", "Material Movement Register"],
+];
+
+const DISPATCH_STATUS_FILTERS = ["All", "Dispatched", "At Godown", "Delivered"] as const;
+
+async function openPdf(url: string) {
+  if (Platform.OS === "web") {
+    // @ts-ignore — web only
+    window.open(url, "_blank");
+  } else {
+    await Linking.openURL(url);
+  }
+}
 
 const MOVEMENT_LABEL: Record<string, string> = {
   order_created: "Order Created", release: "Release", move_to_godown: "Move to Godown",
@@ -43,6 +57,9 @@ export default function TileOrdersScreen() {
   const [brands, setBrands] = useState<BrandLandingCard[]>([]);
   const [movements, setMovements] = useState<MaterialMovementRow[]>([]);
   const [movementSearch, setMovementSearch] = useState("");
+  const [dispatchRows, setDispatchRows] = useState<DispatchListRow[]>([]);
+  const [dispatchSearch, setDispatchSearch] = useState("");
+  const [dispatchStatus, setDispatchStatus] = useState<typeof DISPATCH_STATUS_FILTERS[number]>("All");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -52,6 +69,11 @@ export default function TileOrdersScreen() {
         setCustomerOrders((await tileOrdersApi.listCustomerOrders()).orders);
       } else if (tab === "brands") {
         setBrands((await tileOrdersApi.listBrands()).brands);
+      } else if (tab === "dispatch-list") {
+        setDispatchRows((await tileOrdersApi.listDispatchList({
+          search: dispatchSearch || undefined,
+          status: dispatchStatus === "All" ? undefined : dispatchStatus,
+        })).rows);
       } else {
         setMovements((await tileOrdersApi.listMovements({ search: movementSearch || undefined })).rows);
       }
@@ -62,12 +84,20 @@ export default function TileOrdersScreen() {
     } finally {
       setLoading(false);
     }
-  }, [tab, movementSearch]);
+  }, [tab, movementSearch, dispatchSearch, dispatchStatus]);
 
   useEffect(() => { load(); }, [load]);
 
   const openCustomerOrder = (id: string) => router.push(`/(admin)/tiles/orders/${id}` as any);
   const openBrand = (brandId: string | null) => router.push(`/(admin)/tiles/orders/brands/${brandId || "unassigned"}` as any);
+  const viewChalanPdf = async (chalanId: string) => {
+    try {
+      const url = await tileOrdersApi.chalanPdfUrl(chalanId);
+      await openPdf(url);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not open Chalan PDF");
+    }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -138,6 +168,49 @@ export default function TileOrdersScreen() {
               ))}
             </View>
           )
+        ) : tab === "dispatch-list" ? (
+          <View style={{ marginTop: spacing.md }}>
+            <TextInput
+              placeholder="Search customer, brand, product, dispatch, chalan…" value={dispatchSearch}
+              onChangeText={setDispatchSearch} onSubmitEditing={() => load()} style={styles.searchInput}
+            />
+            <View style={styles.filterRow}>
+              {DISPATCH_STATUS_FILTERS.map((s) => (
+                <Pressable key={s} onPress={() => setDispatchStatus(s)} style={[styles.filterChip, dispatchStatus === s ? styles.filterChipActive : null]}>
+                  <Text style={[type.captionStrong, dispatchStatus === s ? { color: colors.brandHover } : null]}>{s}</Text>
+                </Pressable>
+              ))}
+            </View>
+            {dispatchRows.length === 0 ? (
+              <Text style={[type.bodyMuted, { marginTop: spacing.lg }]}>No dispatches recorded yet.</Text>
+            ) : (
+              dispatchRows.map((row) => (
+                <View key={`${row.dispatch_id}-${row.chalan_id}-${row.tile_name}`} style={styles.dispatchRow}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={type.bodyStrong}>{row.dispatch_number}</Text>
+                    <View style={styles.dispatchStatusBadge}><Text style={type.captionStrong}>{row.status}</Text></View>
+                  </View>
+                  <Text style={type.bodyMuted}>{row.dispatch_date?.slice(0, 16).replace("T", " ")}</Text>
+                  <Text style={type.bodySm}>{row.customer_name} · {row.brand_name}</Text>
+                  <Text style={type.bodyMuted}>{row.tile_name}{row.tile_size ? ` · ${row.tile_size}` : ""} · {row.boxes} boxes · from {row.source}</Text>
+                  <Text style={type.captionStrong}>Chalan {row.chalan_number} · {row.performed_by_name}</Text>
+                  <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.sm }}>
+                    <Pressable onPress={() => viewChalanPdf(row.chalan_id)} style={styles.smallButtonSolid}>
+                      <Text style={[type.captionStrong, { color: colors.onBrand }]}>View Chalan</Text>
+                    </Pressable>
+                    <Pressable onPress={() => viewChalanPdf(row.chalan_id)} style={styles.smallButton}>
+                      <Text style={[type.captionStrong, { color: colors.brandHover }]}>Download PDF</Text>
+                    </Pressable>
+                    {row.customer_order_id ? (
+                      <Pressable onPress={() => openCustomerOrder(row.customer_order_id!)} style={styles.smallButton}>
+                        <Text style={[type.captionStrong, { color: colors.brandHover }]}>View Customer</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
         ) : (
           <View style={{ marginTop: spacing.md }}>
             <TextInput
@@ -184,4 +257,11 @@ const styles = StyleSheet.create({
   brandCard: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: spacing.xs },
   searchInput: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.md, marginBottom: spacing.md },
   movementRow: { flexDirection: "row", justifyContent: "space-between", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm },
+  filterRow: { flexDirection: "row", gap: spacing.xs, marginBottom: spacing.md, flexWrap: "wrap" },
+  filterChip: { paddingVertical: spacing.xs, paddingHorizontal: spacing.md, borderRadius: radius.pill, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  filterChipActive: { backgroundColor: colors.brandTint, borderColor: colors.brandBorder },
+  dispatchRow: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginBottom: spacing.sm, gap: 2 },
+  dispatchStatusBadge: { paddingVertical: 3, paddingHorizontal: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, alignSelf: "flex-start" },
+  smallButton: { borderWidth: 1, borderColor: colors.brandBorder, borderRadius: radius.md, paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
+  smallButtonSolid: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
 });
