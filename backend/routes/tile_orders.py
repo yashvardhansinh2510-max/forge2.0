@@ -20,6 +20,7 @@ from models_tile_orders import TileChalan, TileChalanItem, TileDispatch, TileDis
 from pdf_chalan import build_tile_chalan_pdf, tile_chalan_pdf_filename
 from services.activity_log import log_event
 from services.sequence import next_number
+from services.tile_movement_log import record_movement
 from services.tile_order_status import (
     ageing_band, completion_percentage, derive_current_location, derive_item_status,
     rollup_status, supplier_silent_days, waiting_days,
@@ -152,6 +153,18 @@ async def mark_items_ready(
             customer_id=po.get("customer_id"), purchase_id=po_id,
             summary=f"Marked {batch['qty']:g} boxes of '{batch['tile_name']}' ready ({batch['batch_number']})",
             payload={"ready_batch_id": batch["id"], "batch_number": batch["batch_number"], "po_item_id": batch["po_item_id"], "qty": batch["qty"]},
+        )
+        # Material Movement Register — "Release" row. Logged after the
+        # transaction commits (same place the pre-existing activity-log
+        # call above already lives), one row per released line.
+        await record_movement(
+            movement_type="release", purchase_order_id=po_id, po_item_id=batch["po_item_id"],
+            customer_order_id=po.get("customer_order_id"), floor_id=po.get("floor_id", "first-floor"),
+            customer_id=po.get("customer_id"), customer_name=po.get("customer_name") or "",
+            brand_id=po.get("brand_id"), brand_name=po.get("brand_name") or po.get("supplier_name") or "Unassigned",
+            tile_name=batch["tile_name"], series=batch.get("series"), finish=batch.get("finish"),
+            size=batch.get("size"), sku=batch.get("sku"), boxes=batch["qty"], source="Brand",
+            destination="BuildCon", performed_by=user.id, performed_by_name=user.full_name,
         )
     if new_status:
         await log_event(
@@ -372,6 +385,277 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
     )
     return {"po_id": po_id, "dispatch": dispatch.dict(), "chalan": chalan.dict(), "overall_status": new_status}
 
+async def _consume_released_pool(po_id: str, po_item_id: str, qty: float, session) -> list[TileDispatchLineConsumed]:
+    """FIFO-consumes `qty` boxes from this item's active Released pool
+    (ready_batches with remaining_qty > 0, oldest first), $inc-ing
+    remaining_qty down on each. Used by both 'Move to Godown' and 'Dispatch
+    from Released' — Godown-bound boxes are still released material, just
+    parked at a different BuildCon-side location, so they draw from the
+    exact same batch pool a customer dispatch would."""
+    batches = await db.ready_batches.find(
+        {"purchase_order_id": po_id, "po_item_id": po_item_id, "remaining_qty": {"$gt": 0}, "is_deleted": False},
+        {"_id": 0}, session=session,
+    ).to_list(500)
+    batches.sort(key=lambda b: b.get("created_at", ""))
+    remaining = qty
+    consumed: list[TileDispatchLineConsumed] = []
+    for batch in batches:
+        if remaining <= 1e-9:
+            break
+        take = min(remaining, float(batch.get("remaining_qty") or 0))
+        if take <= 0:
+            continue
+        await db.ready_batches.update_one({"id": batch["id"]}, {"$inc": {"remaining_qty": -take}}, session=session)
+        consumed.append(TileDispatchLineConsumed(ready_batch_id=batch["id"], po_item_id=po_item_id, qty=take))
+        remaining -= take
+    if remaining > 1e-6:
+        raise HTTPException(status_code=400, detail=f"Only {qty - remaining:g} of {qty:g} boxes available in Released stock for this item")
+    return consumed
+
+
+class GodownItemInput(BaseModel):
+    po_item_id: str
+    qty: float = Field(gt=0)
+
+
+class MoveToGodownBody(BaseModel):
+    items: list[GodownItemInput] = Field(min_length=1)
+
+
+@router.post("/purchase-orders/{po_id}/items/move-to-godown")
+async def move_material_to_godown(
+    po_id: str, body: MoveToGodownBody, user: UserPublic = Depends(require_min_role("warehouse")),
+):
+    """Customer-page-only action ('Move to Godown'). Moves boxes already
+    Released by the brand into BuildCon's own warehouse. Never generates a
+    Chalan or a Dispatch — per the workflow redesign, Release and Move to
+    Godown are internal BuildCon movements; a Chalan is generated only when
+    material actually leaves for the customer (see the two dispatch-from-*
+    endpoints below)."""
+    session = await client.start_session()
+    moved_rows: list[dict] = []
+    async with session:
+        async with session.start_transaction():
+            po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0}, session=session)
+            if not po:
+                raise HTTPException(status_code=404, detail="Purchase order not found")
+            items_by_id = {item["id"]: item for item in po.get("items", [])}
+            for entry in body.items:
+                item = items_by_id.get(entry.po_item_id)
+                if not item:
+                    raise HTTPException(status_code=400, detail=f"Unknown item {entry.po_item_id}")
+                released = float(item.get("boxes_ready") or 0)
+                if entry.qty > released + 1e-6:
+                    raise HTTPException(status_code=400, detail=f"Only {released:g} boxes of '{item.get('name')}' are Released")
+                await _consume_released_pool(po_id, entry.po_item_id, entry.qty, session)
+                item["boxes_ready"] = released - entry.qty
+                item["boxes_godown"] = float(item.get("boxes_godown") or 0) + entry.qty
+                item["current_location"] = derive_current_location(
+                    item["qty"], item["boxes_ready"], float(item.get("boxes_dispatched") or 0),
+                    any_at_godown=item["boxes_godown"] > 0,
+                )
+                moved_rows.append({
+                    "po_item_id": entry.po_item_id, "qty": entry.qty, "tile_name": item.get("name"),
+                    "series": item.get("series"), "finish": item.get("finish"), "size": item.get("size"),
+                    "sku": item.get("sku"),
+                })
+
+            items = list(items_by_id.values())
+            now = now_iso()
+            await db.purchase_orders.update_one({"id": po_id}, {"$set": {"items": items, "updated_at": now}}, session=session)
+
+    for row in moved_rows:
+        await log_event(
+            event_type="item.moved_to_godown", entity_type="purchase", entity_id=po_id, actor=user,
+            customer_id=po.get("customer_id"), purchase_id=po_id,
+            summary=f"Moved {row['qty']:g} boxes of '{row['tile_name']}' to Godown",
+            payload={"po_item_id": row["po_item_id"], "qty": row["qty"]},
+        )
+        await record_movement(
+            movement_type="move_to_godown", purchase_order_id=po_id, po_item_id=row["po_item_id"],
+            customer_order_id=po.get("customer_order_id"), floor_id=po.get("floor_id", "first-floor"),
+            customer_id=po.get("customer_id"), customer_name=po.get("customer_name") or "",
+            brand_id=po.get("brand_id"), brand_name=po.get("brand_name") or po.get("supplier_name") or "Unassigned",
+            tile_name=row["tile_name"], series=row.get("series"), finish=row.get("finish"), size=row.get("size"),
+            sku=row.get("sku"), boxes=row["qty"], source="Released", destination="BuildCon Godown",
+            performed_by=user.id, performed_by_name=user.full_name,
+        )
+    return {"po_id": po_id, "moved": moved_rows}
+
+
+class SimpleDispatchItemInput(BaseModel):
+    po_item_id: str
+    qty: float = Field(gt=0)
+
+
+class SimpleDispatchBody(BaseModel):
+    items: list[SimpleDispatchItemInput] = Field(min_length=1)
+    destination_name: Optional[str] = None
+    destination_address: Optional[str] = None
+    destination_city: Optional[str] = None
+    reference_number: Optional[str] = None
+    receiver_name: Optional[str] = None
+    sender_name: Optional[str] = None
+
+
+async def _commit_simple_dispatch(
+    po_id: str, body: SimpleDispatchBody, source: Literal["released", "godown"], user: UserPublic,
+) -> dict:
+    """Shared by dispatch-from-released and dispatch-from-godown — both are
+    Customer-page-only actions (per the redesign: the Brand/Supplier page's
+    only action is Release; deciding Godown vs. Dispatch — and generating
+    the Chalan — belongs to BuildCon on the Customer page). Always creates
+    a Dispatch + immutable Chalan + PDF-ready record + a Material Movement
+    Register row. Destination defaults to the customer's delivery snapshot
+    on the parent CustomerOrder but can be overridden per-call."""
+    session = await client.start_session()
+    async with session:
+        async with session.start_transaction():
+            po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0}, session=session)
+            if not po:
+                raise HTTPException(status_code=404, detail="Purchase order not found")
+            co_id = po.get("customer_order_id")
+            co = None
+            if co_id:
+                co = await db.customer_orders.find_one({"id": co_id, "is_deleted": False}, {"_id": 0}, session=session)
+            destination_name = body.destination_name or (co.get("delivery_name") if co else None) or po.get("customer_name") or ""
+            destination_address = body.destination_address or (co.get("delivery_address") if co else None) or ""
+            destination_city = body.destination_city or (co.get("delivery_city") if co else None) or ""
+
+            items_by_id = {item["id"]: item for item in po.get("items", [])}
+            year = datetime.now(timezone.utc).year
+            consumed: list[TileDispatchLineConsumed] = []
+            chalan_items: list[TileChalanItem] = []
+            movement_rows: list[dict] = []
+
+            for entry in body.items:
+                item = items_by_id.get(entry.po_item_id)
+                if not item:
+                    raise HTTPException(status_code=400, detail=f"Unknown item {entry.po_item_id}")
+                qty = entry.qty
+                if source == "released":
+                    released = float(item.get("boxes_ready") or 0)
+                    if qty > released + 1e-6:
+                        raise HTTPException(status_code=400, detail=f"Only {released:g} boxes of '{item.get('name')}' are Released")
+                    consumed.extend(await _consume_released_pool(po_id, entry.po_item_id, qty, session))
+                    item["boxes_ready"] = released - qty
+                else:
+                    godown = float(item.get("boxes_godown") or 0)
+                    if qty > godown + 1e-6:
+                        raise HTTPException(status_code=400, detail=f"Only {godown:g} boxes of '{item.get('name')}' are at Godown")
+                    item["boxes_godown"] = godown - qty
+
+                item["boxes_dispatched"] = float(item.get("boxes_dispatched") or 0) + qty
+                item["overall_status"] = derive_item_status(item["qty"], float(item.get("boxes_ready") or 0), item["boxes_dispatched"])
+                item["current_location"] = derive_current_location(
+                    item["qty"], float(item.get("boxes_ready") or 0), item["boxes_dispatched"],
+                    any_at_godown=float(item.get("boxes_godown") or 0) > 0,
+                )
+                chalan_items.append(TileChalanItem(
+                    po_item_id=entry.po_item_id, tile_name=item.get("name", ""), series=item.get("series"),
+                    finish=item.get("finish"), size=item.get("size"), sku=item.get("sku"),
+                    boxes=qty, pieces_per_box=item.get("pieces_per_box"), quantity=qty,
+                ))
+                movement_rows.append({
+                    "po_item_id": entry.po_item_id, "tile_name": item.get("name"), "series": item.get("series"),
+                    "finish": item.get("finish"), "size": item.get("size"), "sku": item.get("sku"), "qty": qty,
+                })
+
+            now = now_iso()
+            dispatch_number = await next_number("dispatch", f"DSP-{year}-", collection="dispatches", session=session)
+            # Shares the "chalan:CH-" counter key with both the old
+            # embedded-chalans path and the generic /dispatch endpoint above
+            # — one continuously-incrementing sequence across all 3 code
+            # paths, never restarts / collides.
+            chalan_number = await next_number(
+                "chalan", "CH-", collection="purchase_orders", array_field="chalans", width=4, session=session,
+            )
+            chalan = TileChalan(
+                number=chalan_number, dispatch_id="", purchase_order_id=po_id, customer_order_id=co_id or "",
+                floor_id=po.get("floor_id", "first-floor"), supplier_name=po.get("supplier_name") or "Unassigned",
+                customer_name=po.get("customer_name") or "", customer_phone=po.get("customer_phone") or "",
+                delivery_address=destination_address, delivery_city=destination_city,
+                reference_number=body.reference_number, items=chalan_items,
+                receiver_name=body.receiver_name, sender_name=body.sender_name,
+                created_by=user.id, created_by_name=user.full_name, generated_at=now, generated_by_name=user.full_name,
+            )
+            dispatch = TileDispatch(
+                dispatch_number=dispatch_number, purchase_order_id=po_id, customer_order_id=co_id or "",
+                floor_id=po.get("floor_id", "first-floor"), supplier_id=po.get("supplier_id"),
+                supplier_name=po.get("supplier_name") or "Unassigned", customer_id=po.get("customer_id"),
+                customer_name=po.get("customer_name") or "", ready_batches_consumed=consumed, source=source,
+                destination_type="Customer", destination_name=destination_name, destination_address=destination_address,
+                destination_city=destination_city, dispatch_date=now[:10], dispatch_time=now[11:16],
+                created_by=user.id, created_by_name=user.full_name, chalan_id=chalan.id,
+            )
+            chalan.dispatch_id = dispatch.id
+            await db.chalans.insert_one(chalan.dict(), session=session)
+            await db.dispatches.insert_one(dispatch.dict(), session=session)
+
+            items = list(items_by_id.values())
+            ordered_boxes = sum(float(i.get("qty") or 0) for i in items)
+            dispatched_boxes = sum(float(i.get("boxes_dispatched") or 0) for i in items)
+            new_status = rollup_status([i["overall_status"] for i in items])
+            await db.purchase_orders.update_one(
+                {"id": po_id}, {"$set": {
+                    "items": items,
+                    "ready_boxes": sum(float(i.get("boxes_ready") or 0) for i in items),
+                    "pending_boxes": sum(float(i.get("boxes_pending") or 0) for i in items),
+                    "dispatched_boxes": dispatched_boxes, "overall_status": new_status,
+                    "completion_percentage": completion_percentage(ordered_boxes, dispatched_boxes),
+                    "latest_dispatch_date": now, "last_supplier_activity_at": now, "updated_at": now,
+                }}, session=session,
+            )
+            await _sync_customer_order_brand_status(co_id, po_id, new_status, session, dispatched_boxes=dispatched_boxes)
+
+    movement_type = "dispatch_from_released" if source == "released" else "dispatch_from_godown"
+    source_label = "Released" if source == "released" else "Godown"
+    for row in movement_rows:
+        await record_movement(
+            movement_type=movement_type, purchase_order_id=po_id, po_item_id=row["po_item_id"],
+            customer_order_id=co_id, floor_id=po.get("floor_id", "first-floor"), customer_id=po.get("customer_id"),
+            customer_name=po.get("customer_name") or "", brand_id=po.get("brand_id"),
+            brand_name=po.get("brand_name") or po.get("supplier_name") or "Unassigned",
+            tile_name=row["tile_name"], series=row.get("series"), finish=row.get("finish"), size=row.get("size"),
+            sku=row.get("sku"), boxes=row["qty"], source=source_label, destination=destination_name,
+            dispatch_id=dispatch.id, dispatch_number=dispatch.dispatch_number, chalan_id=chalan.id,
+            chalan_number=chalan.number, performed_by=user.id, performed_by_name=user.full_name,
+        )
+    await log_event(
+        event_type="dispatch.created", entity_type="purchase", entity_id=po_id, actor=user,
+        customer_id=po.get("customer_id"), purchase_id=po_id,
+        summary=f"Dispatch {dispatch.dispatch_number} created from {source_label} — {len(chalan_items)} line(s)",
+        payload={"dispatch_id": dispatch.id, "dispatch_number": dispatch.dispatch_number, "source": source},
+    )
+    await log_event(
+        event_type="chalan.generated", entity_type="purchase", entity_id=po_id, actor=user,
+        customer_id=po.get("customer_id"), purchase_id=po_id,
+        summary=f"Chalan {chalan.number} generated for Dispatch {dispatch.dispatch_number}",
+        payload={"chalan_id": chalan.id, "chalan_number": chalan.number, "dispatch_id": dispatch.id},
+    )
+    await log_event(
+        event_type="status.changed", entity_type="purchase", entity_id=po_id, actor=user,
+        customer_id=po.get("customer_id"), purchase_id=po_id,
+        summary=f"Status changed to {new_status}", payload={"to": new_status},
+    )
+    return {"po_id": po_id, "dispatch": dispatch.dict(), "chalan": chalan.dict(), "overall_status": new_status}
+
+
+@router.post("/purchase-orders/{po_id}/dispatch-from-released")
+async def dispatch_from_released(
+    po_id: str, body: SimpleDispatchBody, user: UserPublic = Depends(require_min_role("warehouse")),
+):
+    return await _commit_simple_dispatch(po_id, body, "released", user)
+
+
+@router.post("/purchase-orders/{po_id}/dispatch-from-godown")
+async def dispatch_from_godown(
+    po_id: str, body: SimpleDispatchBody, user: UserPublic = Depends(require_min_role("warehouse")),
+):
+    return await _commit_simple_dispatch(po_id, body, "godown", user)
+
+
+
 
 @router.get("/chalans/{chalan_id}/pdf")
 async def chalan_pdf(chalan_id: str, user: UserPublic = Depends(require_min_role("sales"))):
@@ -461,6 +745,82 @@ async def list_suppliers(user: UserPublic = Depends(require_min_role("sales"))):
     return {"suppliers": suppliers}
 
 
+@router.get("/brands")
+async def list_brands(user: UserPublic = Depends(require_min_role("sales"))):
+    """Tile Orders 'Brands' tab landing — one card per Brand (Qutone,
+    Dimore, Kajaria…), NOT per dealer/supplier company. A brand and its
+    supplier can differ (Supplier.name is 'a dealership we buy from,
+    normally one per brand but not strict') — grouping here is on
+    PurchaseOrder.brand_id/brand_name, which is set once per-brand at
+    order-placement time (services/domain_outbox.py), so this always
+    matches the brand the customer actually ordered, never the dealer."""
+    pos = await db.purchase_orders.find(floor_query(user, {"customer_order_id": {"$ne": None}}), {"_id": 0}).to_list(5000)
+    grouped: dict[str, dict] = {}
+    for po in pos:
+        key = po.get("brand_id") or "unassigned"
+        bucket = grouped.setdefault(key, {
+            "brand_id": po.get("brand_id"), "brand_name": po.get("brand_name") or "Unassigned",
+            "active_orders": 0, "max_supplier_silent_days": 0,
+        })
+        if po.get("overall_status") != "Delivered":
+            bucket["active_orders"] += 1
+        silent = supplier_silent_days(po.get("last_supplier_activity_at"), po["created_at"])
+        bucket["max_supplier_silent_days"] = max(bucket["max_supplier_silent_days"], silent)
+    brands = sorted(grouped.values(), key=lambda g: g["brand_name"])
+    return {"brands": brands}
+
+
+@router.get("/brands/{brand_id}/orders")
+async def brand_orders(
+    brand_id: str, page: int = 1, page_size: int = 20, sort: str = "waiting_desc",
+    status: Optional[str] = None, search: Optional[str] = None,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Brand Detail page — this brand's Customer Orders only, one row per
+    PO. Mirrors supplier_orders() above but grouped by brand_id, and adds
+    `arrival_date` (the date this order was placed with the brand — there's
+    no separate 'expected arrival' field on PurchaseOrder today, so this is
+    order_date) + `boxes_released`/`boxes_remaining` for the Ordered/
+    Released/Remaining columns the Brand page shows."""
+    filters: dict = {"brand_id": brand_id}
+    if status:
+        filters["overall_status"] = status
+    if search:
+        filters["$or"] = [
+            {"customer_name": {"$regex": search, "$options": "i"}},
+            {"number": {"$regex": search, "$options": "i"}},
+        ]
+    all_pos = await db.purchase_orders.find(floor_query(user, filters), {"_id": 0}).to_list(5000)
+
+    kpi = {"orders": len(all_pos), "pending": 0, "ready": 0, "partially_dispatched": 0, "completed": 0,
+           "boxes_remaining": 0.0, "boxes_released": 0.0, "boxes_dispatched": 0.0, "oldest_pending_days": 0}
+    for po in all_pos:
+        kpi[_STATUS_TO_KPI_KEY.get(po.get("overall_status"), "pending")] += 1
+        kpi["boxes_remaining"] += float(po.get("pending_boxes") or 0)
+        kpi["boxes_released"] += float(po.get("ready_boxes") or 0)
+        kpi["boxes_dispatched"] += float(po.get("dispatched_boxes") or 0)
+        if po.get("overall_status") == "Pending":
+            kpi["oldest_pending_days"] = max(kpi["oldest_pending_days"], waiting_days(po["created_at"]))
+
+    rows = []
+    for po in all_pos:
+        days = waiting_days(po["created_at"])
+        total_boxes = sum(float(i.get("qty") or 0) for i in po.get("items", []))
+        boxes_released = sum(float(i.get("boxes_ready") or 0) for i in po.get("items", []))
+        boxes_remaining = sum(float(i.get("boxes_pending") or 0) for i in po.get("items", []))
+        rows.append({
+            "po_id": po["id"], "po_number": po.get("number"), "customer_id": po.get("customer_id"),
+            "customer_name": po.get("customer_name"), "order_date": po.get("created_at"),
+            "arrival_date": po.get("created_at"), "waiting_days": days, "ageing_band": ageing_band(days),
+            "total_products": len(po.get("items", [])), "total_boxes": total_boxes,
+            "boxes_released": boxes_released, "boxes_remaining": boxes_remaining,
+            "overall_status": po.get("overall_status"), "completion_percentage": po.get("completion_percentage"),
+        })
+    rows.sort(key=lambda r: r["waiting_days"], reverse=(sort != "waiting_asc"))
+    start = (page - 1) * page_size
+    return {"kpi": kpi, "orders": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+
+
 @router.get("/purchase-orders/{po_id}")
 async def purchase_order_detail(po_id: str, user: UserPublic = Depends(require_min_role("sales"))):
     po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
@@ -483,13 +843,15 @@ async def purchase_order_detail(po_id: str, user: UserPublic = Depends(require_m
             delivery_city = co.get("delivery_city") or ""
     return {
         "id": po["id"], "number": po.get("number"), "customer_name": po.get("customer_name"),
-        "supplier_name": po.get("supplier_name"), "overall_status": po.get("overall_status"),
+        "supplier_name": po.get("supplier_name"), "brand_id": po.get("brand_id"), "brand_name": po.get("brand_name"),
+        "overall_status": po.get("overall_status"),
         "delivery_name": delivery_name, "delivery_phone": delivery_phone,
         "delivery_address": delivery_address, "delivery_city": delivery_city,
         "items": [{
             "id": item["id"], "name": item.get("name"), "series": item.get("series"), "finish": item.get("finish"),
             "size": item.get("size"), "sku": item.get("sku"), "qty": item.get("qty"),
-            "boxes_ready": item.get("boxes_ready"), "boxes_dispatched": item.get("boxes_dispatched"),
+            "boxes_ready": item.get("boxes_ready"), "boxes_godown": item.get("boxes_godown") or 0,
+            "boxes_dispatched": item.get("boxes_dispatched"),
             "boxes_pending": item.get("boxes_pending"), "current_location": item.get("current_location"),
             "overall_status": item.get("overall_status"),
         } for item in po.get("items", [])],
@@ -621,11 +983,13 @@ async def customer_order_detail(co_id: str, user: UserPublic = Depends(require_m
     pos = await db.purchase_orders.find(floor_query(user, {"customer_order_id": co_id}), {"_id": 0}).to_list(50)
     suppliers = [{
         "purchase_order_id": po["id"], "supplier_name": po.get("supplier_name") or "Unassigned",
+        "brand_id": po.get("brand_id"), "brand_name": po.get("brand_name") or po.get("supplier_name") or "Unassigned",
         "overall_status": po.get("overall_status"),
         "items": [{
             "po_item_id": item["id"], "tile_name": item.get("name"), "series": item.get("series"),
             "finish": item.get("finish"), "size": item.get("size"),
             "boxes_ordered": item.get("qty"), "boxes_ready": item.get("boxes_ready"),
+            "boxes_godown": item.get("boxes_godown") or 0,
             "boxes_dispatched": item.get("boxes_dispatched"), "boxes_pending": item.get("boxes_pending"),
             "current_location": item.get("current_location"), "overall_status": item.get("overall_status"),
         } for item in po.get("items", [])],
@@ -786,3 +1150,51 @@ async def item_ready_batches(po_id: str, item_id: str, user: UserPublic = Depend
     ).to_list(200)
     batches.sort(key=lambda b: b.get("created_at", ""))
     return {"batches": batches}
+
+
+@router.get("/movements")
+async def list_material_movements(
+    customer_id: Optional[str] = None, brand_id: Optional[str] = None, movement_type: Optional[str] = None,
+    date_from: Optional[str] = None, date_to: Optional[str] = None,
+    chalan_number: Optional[str] = None, dispatch_number: Optional[str] = None, search: Optional[str] = None,
+    page: int = 1, page_size: int = 50,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Material Movement Register — the permanent, chronological audit
+    trail of every box's journey (Order Created → Release → Move to
+    Godown → Dispatch from Released/Godown → Delivered). One immutable row
+    per event, written transactionally by services/tile_movement_log.py at
+    the moment each action happens — never reconstructed here from other
+    collections, so this is a straight filtered read."""
+    filters: dict = {"is_deleted": False}
+    if customer_id:
+        filters["customer_id"] = customer_id
+    if brand_id:
+        filters["brand_id"] = brand_id
+    if movement_type:
+        filters["movement_type"] = movement_type
+    if chalan_number:
+        filters["chalan_number"] = {"$regex": chalan_number, "$options": "i"}
+    if dispatch_number:
+        filters["dispatch_number"] = {"$regex": dispatch_number, "$options": "i"}
+    if date_from or date_to:
+        date_filter: dict = {}
+        if date_from:
+            date_filter["$gte"] = date_from
+        if date_to:
+            date_filter["$lte"] = date_to + "T23:59:59.999999"
+        filters["created_at"] = date_filter
+    if search:
+        filters["$or"] = [
+            {"customer_name": {"$regex": search, "$options": "i"}},
+            {"brand_name": {"$regex": search, "$options": "i"}},
+            {"tile_name": {"$regex": search, "$options": "i"}},
+            {"sku": {"$regex": search, "$options": "i"}},
+            {"chalan_number": {"$regex": search, "$options": "i"}},
+            {"dispatch_number": {"$regex": search, "$options": "i"}},
+        ]
+    rows = await db.material_movements.find(floor_query(user, filters), {"_id": 0}).to_list(20000)
+    rows.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+    start = (page - 1) * page_size
+    return {"rows": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+

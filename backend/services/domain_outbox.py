@@ -19,6 +19,7 @@ from models_tile_orders import TileCustomerOrder, TileCustomerOrderBrand, TileCu
 from services.notifications import notify
 from services.pricing import per_line_net_amounts
 from services.sequence import next_number
+from services.tile_movement_log import record_movement
 from services.tile_order_status import rollup_status
 from pymongo import ReturnDocument
 
@@ -296,6 +297,21 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
                 summary=f"Supplier {supplier.get('name') or 'Unassigned'} assigned for {group['brand_name']}",
                 payload={"supplier_id": supplier.get("id"), "brand_id": group["brand_id"]}, session=session,
             )
+            # Material Movement Register — "Order Created" is the first row
+            # in every tile's lifecycle (Ordered → Released → Godown →
+            # Dispatched → Delivered). One row per line item, boxes = qty
+            # ordered. Never re-emitted on a retry because this whole branch
+            # is unreachable once `existing` above is truthy.
+            for po_item in po_items:
+                await record_movement(
+                    movement_type="order_created", purchase_order_id=po["id"], po_item_id=po_item.id,
+                    customer_order_id=customer_order.id if customer_order else None,
+                    floor_id=po["floor_id"], customer_id=quotation.get("customer_id"),
+                    customer_name=quotation.get("customer_name", ""), brand_id=group["brand_id"],
+                    brand_name=group["brand_name"], tile_name=po_item.name, series=po_item.series,
+                    finish=po_item.finish, size=po_item.size, sku=po_item.sku, boxes=po_item.qty,
+                    performed_by=event["actor_id"], performed_by_name=event["actor_name"], session=session,
+                )
 
     if is_tiles and customer_order is not None:
         if customer_order_is_new:

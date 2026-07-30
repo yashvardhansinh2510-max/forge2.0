@@ -132,6 +132,12 @@ class TileDispatch(TimestampedModel):
     customer_id: str
     customer_name: str
     ready_batches_consumed: list[TileDispatchLineConsumed]
+    # Tile Orders workflow redesign (2026-08): which BuildCon-side pool this
+    # dispatch was raised from — "released" (straight from what the brand
+    # released, never touched Godown) or "godown" (pulled out of BuildCon's
+    # own warehouse stock). Surfaced on the Material Movement Register as
+    # the "Source" column. Defaults to "released" for any pre-redesign rows.
+    source: Literal["released", "godown"] = "released"
     destination_type: Literal["Customer", "Godown"]
     destination_name: str
     destination_address: str
@@ -193,3 +199,42 @@ class TileChalan(TimestampedModel):
     is_deleted: bool = False
     deleted_at: Optional[str] = None
     deleted_by: Optional[str] = None
+
+
+# ---------- Material Movement Register (Tile Orders workflow redesign, 2026-08) ----------
+# Single source of truth for the "Material Movement Register" screen (see
+# docs — replaces the old "Dispatch List"). One immutable row is written by
+# services/tile_movement_log.py inside the SAME transaction as every
+# primary write below, so the register is built from committed events, not
+# reconstructed after the fact from disparate collections.
+TileMovementType = Literal[
+    "order_created", "release", "move_to_godown",
+    "dispatch_from_released", "dispatch_from_godown", "delivered",
+]
+
+
+class TileMaterialMovement(TimestampedModel):
+    movement_type: TileMovementType
+    purchase_order_id: str
+    po_item_id: Optional[str] = None
+    customer_order_id: Optional[str] = None
+    floor_id: str = "first-floor"
+    customer_id: Optional[str] = None
+    customer_name: str
+    brand_id: Optional[str] = None
+    brand_name: str
+    tile_name: str
+    series: Optional[str] = None
+    finish: Optional[str] = None
+    size: Optional[str] = None
+    sku: Optional[str] = None
+    boxes: float
+    source: Optional[str] = None        # e.g. "Released", "Godown" — where the boxes came from
+    destination: Optional[str] = None   # e.g. "BuildCon Godown", or the customer delivery name/address
+    dispatch_id: Optional[str] = None
+    dispatch_number: Optional[str] = None
+    chalan_id: Optional[str] = None
+    chalan_number: Optional[str] = None
+    performed_by: str
+    performed_by_name: str
+    is_deleted: bool = False

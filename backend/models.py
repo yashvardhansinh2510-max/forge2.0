@@ -668,8 +668,17 @@ class PurchaseOrderItem(BaseModel):
     series: Optional[str] = None
     size: Optional[str] = None
     pieces_per_box: Optional[str] = None   # free text, printed as-is — mirrors ChalanLineItem.unit convention
-    # Box-counter invariant: qty == boxes_ready + boxes_dispatched + boxes_pending
+    # Box-counter invariant: qty == boxes_ready + boxes_godown + boxes_dispatched + boxes_pending
+    # UI vocabulary (Tile Orders workflow redesign, 2026-08): boxes_ready is
+    # shown to staff as "Released" (Brand/Supplier released this many boxes
+    # to BuildCon), boxes_godown is BuildCon's own warehouse stock (moved
+    # there out of boxes_ready, never chalan'd), boxes_dispatched is shown
+    # as "Delivered" (left BuildCon for the customer via a Dispatch+Chalan,
+    # sourced from either boxes_ready or boxes_godown), boxes_pending is
+    # shown as "Remaining" (not yet released by the brand). Field names kept
+    # as-is (internal/model layer) — only UI labels changed, per design.
     boxes_ready: float = 0
+    boxes_godown: float = 0
     boxes_dispatched: float = 0
     boxes_pending: float = 0
     current_location: str = "Pending"   # TileLocation — Pending|Ready|Dispatched|Godown|Delivered

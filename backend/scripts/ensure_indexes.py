@@ -200,6 +200,23 @@ async def ensure_all() -> None:
     await _safe_create_index(db.suppliers, "floor_id", name="suppliers_floor_id", sparse=True)
     await _safe_create_index(db.suppliers, "name", name="suppliers_name")
 
+    # Material Movement Register (Tile Orders workflow redesign, 2026-08) —
+    # every filter the GET /tile-orders/movements endpoint supports.
+    await _safe_create_index(db.material_movements, "id", unique=True, name="material_movements_id")
+    await _safe_create_index(
+        db.material_movements, [("customer_id", 1), ("created_at", -1)], name="material_movements_customer",
+    )
+    await _safe_create_index(
+        db.material_movements, [("brand_id", 1), ("created_at", -1)], name="material_movements_brand",
+    )
+    await _safe_create_index(
+        db.material_movements, [("movement_type", 1), ("created_at", -1)], name="material_movements_type",
+    )
+    await _safe_create_index(db.material_movements, "purchase_order_id", name="material_movements_po")
+    await _safe_create_index(db.material_movements, "dispatch_number", name="material_movements_dispatch_number", sparse=True)
+    await _safe_create_index(db.material_movements, "chalan_number", name="material_movements_chalan_number", sparse=True)
+
+
     # catalog_import_snapshots.job_id (CRITICAL #3 rollback lookups) is
     # intentionally NOT created here — it's owned solely by
     # migrations/0002_add_catalog_import_snapshots_index.py. The two

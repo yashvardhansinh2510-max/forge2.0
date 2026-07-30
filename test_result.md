@@ -13460,3 +13460,183 @@ agent_communication:
         RECOMMENDATION: Mark catalog responsive testing as COMPLETE. The partial test results
         are due to test script issues, not actual functionality problems. Manual spot-check
         recommended for tests D, E, F, H, I if needed, but automated testing shows no red flags.
+
+
+
+backend:
+  - task: "Tile Orders Workflow Redesign — Brand/Supplier Release + BuildCon Customer Move to Godown & Dispatch endpoints"
+    implemented: true
+    working: true
+    file: "backend/routes/tile_orders.py, backend/services/tile_movement_log.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: |
+            Tile Orders Workflow Redesign Testing COMPLETE (2026-08)
+            
+            Comprehensive end-to-end testing of redesigned Ground Floor Tiles module workflow.
+            ALL 11 TEST SCENARIOS PASSED (100% success rate).
+            
+            CONTEXT: This is a workflow redesign. The Brand/Supplier page's ONLY action is now
+            "Release" (existing POST /api/tile-orders/purchase-orders/{po_id}/ready endpoint,
+            unchanged, now also writes a Material Movement Register row). BuildCon's Customer
+            page now owns two NEW decisions that used to live on the supplier page: "Move to
+            Godown" (internal, no chalan) and "Dispatch" — split into two NEW endpoints:
+            dispatch-from-released and dispatch-from-godown (both create Dispatch + Chalan + PDF).
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST RESULTS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ TEST 1: GET /api/tile-orders/brands
+            • Returns brands grouped by brand_id/brand_name (NOT supplier)
+            • Response shape verified: {brands: [{brand_id, brand_name, active_orders, max_supplier_silent_days}]}
+            • Found 2 brands: Dimore (1 active order), Qutone (3 active orders)
+            
+            ✅ TEST 2: GET /api/tile-orders/brands/{brand_id}/orders
+            • Response has kpi + orders[] array
+            • Each order row includes boxes_released, boxes_remaining, arrival_date fields
+            • KPI object present with correct structure
+            • Selected test PO: FPO-2026-0338 with 4.0 boxes_remaining
+            
+            ✅ TEST 3: GET /api/tile-orders/purchase-orders/{po_id}
+            • Each item includes boxes_godown field (default 0)
+            • brand_id and brand_name present at top level
+            • Test item: ALBA FIORIO - Luminoso (1200X2400)
+            • Initial state: boxes_pending=4.0, boxes_ready=0.0, boxes_godown=0, boxes_dispatched=6.0
+            
+            ✅ TEST 4: POST /api/tile-orders/purchase-orders/{po_id}/ready (Release action)
+            • Released 1.0 boxes from pending
+            • boxes_pending decreased: 4.0 → 3.0 ✓
+            • boxes_ready increased: 0.0 → 1.0 ✓
+            • Material Movement Register entry created with movement_type="release"
+            • Entry includes customer_name, brand_name, tile_name, boxes
+            • No chalan_number/dispatch_number (as expected for Release)
+            
+            ✅ TEST 5: POST /api/tile-orders/purchase-orders/{po_id}/items/move-to-godown
+            • Moved 0.5 boxes to godown
+            • boxes_ready decreased: 1.0 → 0.5 ✓
+            • boxes_godown increased: 0 → 0.5 ✓
+            • NO chalan/dispatch created (verified via movements?movement_type=move_to_godown)
+            • Error path tested: 400 returned when requesting more than available boxes_ready ✓
+            
+            ✅ TEST 6: POST /api/tile-orders/purchase-orders/{po_id}/dispatch-from-released
+            • Dispatched 0.5 boxes from released
+            • boxes_ready decreased: 0.5 → 0.0 ✓
+            • boxes_dispatched increased: 6.0 → 6.5 ✓
+            • Dispatch created: DSP-2026-0006
+            • Chalan created: CH-0009
+            • PDF generation verified: GET /api/tile-orders/chalans/{chalan_id}/pdf returns
+              application/pdf content-type ✓
+            • Material Movement Register entry has chalan_number and dispatch_number populated ✓
+            • Error path tested: 400 returned when requesting more than available boxes_ready ✓
+            
+            ✅ TEST 7: POST /api/tile-orders/purchase-orders/{po_id}/dispatch-from-godown
+            • Dispatched 0.5 boxes from godown (all remaining godown stock)
+            • boxes_godown decreased: 0.5 → 0 ✓
+            • boxes_dispatched increased: 6.5 → 7.0 ✓
+            • Dispatch created: DSP-2026-0007 with source="godown"
+            • Chalan created: CH-0010
+            • PDF generation verified ✓
+            • Material Movement Register entry created with movement_type=dispatch_from_godown ✓
+            • Error path tested: 400 returned when godown is empty ✓
+            
+            ✅ TEST 8: Verify invariant
+            • qty (ordered) = 10.0
+            • boxes_ready = 0.0
+            • boxes_godown = 0
+            • boxes_dispatched = 7.0
+            • boxes_pending = 3.0
+            • Sum = 10.0
+            • Invariant holds: qty == boxes_ready + boxes_godown + boxes_dispatched + boxes_pending ✓
+            
+            ✅ TEST 9: GET /api/tile-orders/customer-orders/{id}
+            • Each group in "suppliers" array includes brand_id and brand_name fields ✓
+            • Each item includes boxes_godown field ✓
+            • Tested customer order: TORD-2026-0003
+            
+            ✅ TEST 10: GET /api/tile-orders/movements with filters
+            • brand_id filter: 12 movements found, all with correct brand_id ✓
+            • customer_id filter: working correctly ✓
+            • Filtering logic verified
+            
+            ✅ TEST 11: Regression check on pre-existing endpoints
+            • GET /api/tile-orders/dashboard: 200 OK ✓
+            • GET /api/tile-orders/customer-orders (list): 200 OK ✓
+            • GET /api/tile-orders/suppliers: 200 OK ✓
+            • No regressions detected
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            WORKFLOW VERIFICATION
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            Complete workflow tested end-to-end:
+            1. Brand/Supplier page: Release action (boxes_pending → boxes_ready)
+            2. Customer page: Move to Godown (boxes_ready → boxes_godown, no chalan)
+            3. Customer page: Dispatch from Released (boxes_ready → boxes_dispatched, creates chalan+PDF)
+            4. Customer page: Dispatch from Godown (boxes_godown → boxes_dispatched, creates chalan+PDF)
+            
+            All state transitions verified correct. All Material Movement Register entries created
+            with proper movement_type, chalan_number, dispatch_number fields. All error paths
+            (over-consumption) return 400 as expected.
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            CRITICAL VERIFICATIONS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ Brand grouping: Endpoints group by brand_id/brand_name (NOT supplier_id)
+            ✅ boxes_godown field: Present in all item responses (PO detail, customer order detail)
+            ✅ Material Movement Register: All actions write correct movement_type rows
+            ✅ Chalan generation: Only dispatch actions create chalans (not Release or Move to Godown)
+            ✅ PDF generation: All chalans generate valid PDFs (application/pdf content-type)
+            ✅ State invariant: qty == boxes_ready + boxes_godown + boxes_dispatched + boxes_pending
+            ✅ Error handling: 400 returned for over-consumption in all endpoints
+            ✅ Regression: Pre-existing endpoints (dashboard, customer-orders, suppliers) unaffected
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            SUMMARY
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            • Workflow redesign: COMPLETE and WORKING
+            • New endpoints: dispatch-from-released, dispatch-from-godown, move-to-godown: ALL WORKING
+            • Material Movement Register: WORKING (all movement types logged correctly)
+            • Chalan PDF generation: WORKING (both dispatch endpoints)
+            • Brand grouping: CORRECT (by brand_id, not supplier_id)
+            • boxes_godown field: PRESENT in all responses
+            • State invariant: HOLDS across all operations
+            • Error handling: CORRECT (400 for over-consumption)
+            • Regression: NONE (pre-existing endpoints unaffected)
+            
+            CONCLUSION: Tile Orders Workflow Redesign is COMPLETE and PRODUCTION-READY.
+            All 11 test scenarios passed with zero failures. The redesigned workflow correctly
+            separates Brand/Supplier actions (Release only) from BuildCon Customer actions
+            (Move to Godown, Dispatch from Released, Dispatch from Godown). Material Movement
+            Register provides complete audit trail. Chalan generation and PDF export working
+            correctly. No regressions detected in pre-existing endpoints.
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Tile Orders Workflow Redesign testing complete. All 11 test scenarios passed (100%).
+        
+        Tested end-to-end:
+        • Brand/Supplier page Release action (writes Material Movement Register)
+        • Customer page Move to Godown (internal, no chalan)
+        • Customer page Dispatch from Released (creates Dispatch + Chalan + PDF)
+        • Customer page Dispatch from Godown (creates Dispatch + Chalan + PDF)
+        
+        All state transitions verified correct. boxes_godown field present in all responses.
+        Material Movement Register entries created with correct movement_type, chalan_number,
+        dispatch_number. PDF generation working. State invariant holds. Error paths return 400.
+        No regressions in pre-existing endpoints.
+        
+        The redesigned workflow is production-ready.
