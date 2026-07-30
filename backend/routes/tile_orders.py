@@ -732,3 +732,12 @@ async def tile_orders_dashboard(user: UserPublic = Depends(require_min_role("sal
         "pending": pending, "ready": ready, "waiting_over_15_days": waiting_over_15,
         "boxes_ordered": boxes_ordered, "boxes_pending": boxes_pending, "revenue": round(revenue, 2),
     }
+
+
+@router.get("/purchase-orders/{po_id}/items/{item_id}/ready-batches")
+async def item_ready_batches(po_id: str, item_id: str, user: UserPublic = Depends(require_min_role("warehouse"))):
+    batches = await db.ready_batches.find(
+        {"purchase_order_id": po_id, "po_item_id": item_id, "remaining_qty": {"$gt": 0}}, {"_id": 0},
+    ).to_list(200)
+    batches.sort(key=lambda b: b.get("created_at", ""))
+    return {"batches": batches}

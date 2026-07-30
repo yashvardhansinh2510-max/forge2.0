@@ -107,6 +107,7 @@ export const tileOrdersApi = {
     api.post<{ po_id: string; dispatch: Record<string, any>; chalan: Record<string, any>; overall_status: TileOverallStatus }>(
       `/tile-orders/purchase-orders/${poId}/dispatch`, { items, ...destination }, FLOOR,
     ),
+  itemReadyBatches: (poId: string, itemId: string) => api.get<{ batches: ReadyBatch[] }>(`/tile-orders/purchase-orders/${poId}/items/${itemId}/ready-batches`, FLOOR),
   markGodownReceived: (dispatchId: string, note?: string) =>
     api.post<{ dispatch_id: string; godown_received_at: string }>(`/tile-orders/dispatches/${dispatchId}/godown-received`, { note }, FLOOR),
 
