@@ -14,19 +14,25 @@ import uuid
 
 import pytest
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
-if not BASE_URL:
-    BASE_URL = "https://walkins-crm-phase4.preview.emergentagent.com"
-
 API = f"{BASE_URL}/api"
+TEST_STAFF_EMAIL = os.environ.get("TEST_STAFF_EMAIL", "")
+TEST_STAFF_PASSWORD = os.environ.get("TEST_STAFF_PASSWORD", "")
 
 
 @pytest.fixture(scope="module")
 def session():
+    if not BASE_URL or not TEST_STAFF_EMAIL or not TEST_STAFF_PASSWORD:
+        pytest.skip("EXPO_PUBLIC_BACKEND_URL, TEST_STAFF_EMAIL, and TEST_STAFF_PASSWORD are required")
     s = requests.Session()
+    retry = Retry(total=4, backoff_factor=1.0, status_forcelist=[502, 503, 504], allowed_methods=None)
+    s.mount("https://", HTTPAdapter(max_retries=retry))
+    s.mount("http://", HTTPAdapter(max_retries=retry))
     s.headers.update({"Content-Type": "application/json"})
-    resp = s.post(f"{API}/auth/login", json={"email": "owner@forge.app", "password": "Forge@2026"})
+    resp = s.post(f"{API}/auth/login", json={"email": TEST_STAFF_EMAIL, "password": TEST_STAFF_PASSWORD}, timeout=90)
     assert resp.status_code == 200, f"login failed: {resp.text}"
     token = resp.json()["access_token"]
     s.headers.update({"Authorization": f"Bearer {token}"})

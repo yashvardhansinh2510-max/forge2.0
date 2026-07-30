@@ -19,6 +19,8 @@ from urllib3.util.retry import Retry
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 API = f"{BASE_URL}/api"
+TEST_STAFF_EMAIL = os.environ.get("TEST_STAFF_EMAIL", "")
+TEST_STAFF_PASSWORD = os.environ.get("TEST_STAFF_PASSWORD", "")
 
 
 def _phone() -> str:
@@ -27,14 +29,14 @@ def _phone() -> str:
 
 @pytest.fixture(scope="module")
 def session():
-    if not BASE_URL:
-        pytest.skip("EXPO_PUBLIC_BACKEND_URL is required for integration tests")
+    if not BASE_URL or not TEST_STAFF_EMAIL or not TEST_STAFF_PASSWORD:
+        pytest.skip("EXPO_PUBLIC_BACKEND_URL, TEST_STAFF_EMAIL, and TEST_STAFF_PASSWORD are required")
     s = requests.Session()
     retry = Retry(total=4, backoff_factor=1.0, status_forcelist=[502, 503, 504], allowed_methods=None)
     s.mount("https://", HTTPAdapter(max_retries=retry))
     s.mount("http://", HTTPAdapter(max_retries=retry))
     s.headers.update({"Content-Type": "application/json"})
-    r = s.post(f"{API}/auth/login", json={"email": "owner@forge.app", "password": "Forge@2026"}, timeout=90)
+    r = s.post(f"{API}/auth/login", json={"email": TEST_STAFF_EMAIL, "password": TEST_STAFF_PASSWORD}, timeout=90)
     assert r.status_code == 200, f"login failed: {r.text}"
     token = r.json()["access_token"]
     s.headers.update({"Authorization": f"Bearer {token}"})

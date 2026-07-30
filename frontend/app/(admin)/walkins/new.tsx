@@ -77,17 +77,18 @@ export default function NewWalkIn() {
   useEffect(() => {
     const digits = phone.replace(/\D/g, "");
     const hasSignal = digits.length >= 10 || email.trim().length >= 5 || name.trim().length >= 3;
+    setResolvedCustomerId(null);
+    setForceNew(false);
     if (!hasSignal) { setMatches({ high: [], medium: [], low: [] }); return; }
+    let active = true;
     const t = setTimeout(() => {
       walkinsApi.checkDuplicate({ phone, alternatePhone: altPhone, email, name, city, address })
         .then((r) => {
-          setMatches(r);
-          setResolvedCustomerId(null);
-          setForceNew(false);
+          if (active) setMatches(r);
         })
         .catch(() => {});
     }, 450);
-    return () => clearTimeout(t);
+    return () => { active = false; clearTimeout(t); };
   }, [phone, altPhone, email, name, city, address]);
 
   const resolvedHigh = matches.high[0] || null;
@@ -105,6 +106,10 @@ export default function NewWalkIn() {
   const linkExistingCustomer = (c: CustomerMatch) => {
     setResolvedCustomerId(c.id); setForceNew(false); setDupSheetOpen(false);
     toast.success(`Will link this walk-in to ${c.name}`);
+  };
+  const viewExistingCustomer = (customerId: string) => {
+    setDupSheetOpen(false);
+    router.push(`/(admin)/customers/${customerId}` as any);
   };
   const createNewAnyway = () => {
     setForceNew(true); setResolvedCustomerId(null); setDupSheetOpen(false);
@@ -174,7 +179,7 @@ export default function NewWalkIn() {
             </Card>
           ) : null}
           {!resolvedHigh && resolvedCustomerId ? (
-            <Card variant="outlined" style={{ backgroundColor: colors.brandTint }}>
+            <Card variant="outlined" style={{ backgroundColor: colors.brandTint }} testID="walkin-linked-customer-confirmation">
               <Text style={type.bodySm}>Linking to existing customer: <Text style={type.bodyStrong}>{matches.medium.find((m) => m.id === resolvedCustomerId)?.name}</Text></Text>
             </Card>
           ) : null}
@@ -233,7 +238,7 @@ export default function NewWalkIn() {
       </KeyboardAvoidingView>
 
       {/* Salesperson picker */}
-      <Sheet visible={spSheetOpen} onClose={() => setSpSheetOpen(false)} title="Assign Salesperson" variant="bottom">
+      <Sheet visible={spSheetOpen} onClose={() => setSpSheetOpen(false)} title="Assign Salesperson" variant="bottom" minHeight="56%" testID="walkin-salesperson-sheet">
         <View style={{ padding: spacing.lg, gap: spacing.md, flex: 1 }}>
           <SearchField placeholder="Search staff…" value={spSearch} onChangeText={setSpSearch} onClear={() => setSpSearch("")} />
           <ScrollView>
@@ -254,7 +259,7 @@ export default function NewWalkIn() {
       <Sheet
         visible={dupSheetOpen} onClose={() => setDupSheetOpen(false)}
         title="Possible existing customer" subtitle="A similar customer may already exist. Choose how to proceed."
-        variant="bottom"
+        variant="bottom" minHeight="48%" testID="walkin-duplicate-sheet"
       >
         <View style={{ padding: spacing.lg, gap: spacing.md, flex: 1 }}>
           <ScrollView>
@@ -266,7 +271,7 @@ export default function NewWalkIn() {
                   <Button label="Use Existing Customer" size="sm" onPress={() => linkExistingCustomer(m)} testID={`walkin-use-existing-${m.id}`} />
                   <Button
                     label="View Customer" variant="secondary" size="sm"
-                    onPress={() => router.push(`/(admin)/customers/${m.id}` as any)}
+                    onPress={() => viewExistingCustomer(m.id)}
                     testID={`walkin-view-customer-${m.id}`}
                   />
                 </View>
