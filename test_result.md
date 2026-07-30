@@ -504,6 +504,93 @@ backend:
             Settings reverted to defaults to avoid affecting other functionality/demo.
             Zero regressions detected. Backend is stable and ready for production use.
 
+user_problem_statement: "BuildCon House — Ground Floor Tiles: Tile Orders workflow REDESIGN (2026-08). The previous implementation modeled the workflow around Purchase Orders/Company (supplier-owned Ready+Dispatch), which does not match BuildCon's real process. Redesigned around business ownership: Brand page's ONLY action is Release Material (Ordered/Released/Remaining); BuildCon's Customer page decides Move to Godown vs. Dispatch (Ordered/Released/Godown/Delivered), with two explicit actions — Dispatch from Released and Dispatch from Godown — each creating a Dispatch+Chalan+PDF (Release and Move to Godown never do). Nav renamed Customer/Brands/Material Movement Register (was Customer/Company/Dispatch List). Material Movement Register is a new permanent, filterable, chronological audit log (order_created/release/move_to_godown/dispatch_from_released/dispatch_from_godown/delivered) — one immutable row per event via services/tile_movement_log.py. Backend models preserved (CustomerOrder, PurchaseOrder, ReadyBatch, Dispatch, Chalan) — only additive changes (new boxes_godown counter, new endpoints, new material_movements collection); old /suppliers, /dispatch, /dispatch/preview, /godown-received endpoints left untouched/unused for backward compat. Boxes are the one operational unit throughout (existing `qty`/`boxes_*` fields reused, only UI labels changed)."
+
+backend:
+  - task: "Tile Orders workflow redesign — Brands grouping, Move to Godown, Dispatch from Released/Godown, Material Movement Register"
+    implemented: true
+    working: true
+    file: "backend/routes/tile_orders.py, backend/services/tile_movement_log.py, backend/services/domain_outbox.py, backend/models.py, backend/models_tile_orders.py, backend/scripts/ensure_indexes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: >
+            Added PurchaseOrderItem.boxes_godown (new bucket, invariant qty ==
+            boxes_ready+boxes_godown+boxes_dispatched+boxes_pending).
+            New TileMaterialMovement model + services/tile_movement_log.py
+            (record_movement) — one immutable row per event, written
+            transactionally alongside the primary write. domain_outbox.py now
+            emits an "order_created" movement per PO item at quotation-approval
+            time. New endpoints (all additive, old ones untouched):
+            GET /tile-orders/brands, GET /tile-orders/brands/{id}/orders,
+            POST /tile-orders/purchase-orders/{id}/items/move-to-godown,
+            POST /tile-orders/purchase-orders/{id}/dispatch-from-released,
+            POST /tile-orders/purchase-orders/{id}/dispatch-from-godown,
+            GET /tile-orders/movements (filters: customer_id, brand_id,
+            movement_type, date range, chalan/dispatch number, search).
+            mark_items_ready (Release) now also logs a "release" movement row.
+            purchase_order_detail / customer_order_detail responses extended
+            with boxes_godown + brand_id/brand_name (response envelope key
+            "suppliers" kept for backward-compat, groups now also carry brand
+            fields). Added material_movements indexes to ensure_indexes.py.
+            Environment note: this session started with backend/.env +
+            frontend/.env wiped (expected reset pattern) — restored using
+            user-provided Mongo Atlas + Supabase credentials, confirmed
+            DB_NAME=buildcon_house (NOT "buildcon", a stale 20-product demo db
+            on the same cluster) holds the real catalog (3529 products).
+        - working: true
+          agent: "testing"
+          comment: >
+            All 11 test scenarios passed (100%). Verified: brands grouping
+            (not supplier), brand orders KPI/rows, boxes_godown on item
+            responses, Release writes movement row, Move to Godown moves
+            boxes_ready->boxes_godown with NO chalan, Dispatch from
+            Released/Godown both create Dispatch+Chalan+PDF and write
+            correctly-typed movement rows (chalan/dispatch numbers populated
+            only for the two dispatch types), 400 on over-consumption for all
+            three mutating endpoints, state invariant holds after the full
+            sequence, customer_order_detail groups carry brand_id/brand_name,
+            movements filtering by brand_id/customer_id works, and pre-existing
+            endpoints (dashboard, customer-orders, suppliers) unaffected. Ran
+            against real MongoDB Atlas data (buildcon_house).
+
+frontend:
+  - task: "Tile Orders workflow redesign — Brands tab/detail (Release only), Customer detail (Move to Godown / Dispatch from Released / Dispatch from Godown), Material Movement Register tab"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/tiles/orders/index.tsx, frontend/app/(admin)/tiles/orders/brands/[brandId].tsx, frontend/app/(admin)/tiles/orders/po/[poId].tsx, frontend/app/(admin)/tiles/orders/[id].tsx, frontend/src/api/tileOrders.ts, frontend/src/components/tiles/TileMovementSheets.tsx, frontend/src/components/tiles/TileOrderStatusUI.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: >
+            Nav renamed to Customer / Brands / Material Movement Register.
+            Deleted orders/company/[supplierId].tsx + ReadyDispatchSheets.tsx
+            (fully replaced, no aliases, per explicit user instruction).
+            New orders/brands/[brandId].tsx (Brand Detail — Ordered/Released/
+            Remaining rows, links to po/[poId]). po/[poId].tsx now has ONLY a
+            "Release Material" action (BrandBoxCounterRow: Ordered/Released/
+            Remaining). [id].tsx (Customer Detail) groups items by brand_name
+            (not supplier_name), shows CustomerBoxCounterRow (Ordered/
+            Released/Godown/Delivered) per item with 3 per-item action
+            buttons — Move to Godown, Dispatch from Released, Dispatch from
+            Godown (each enabled only when its source bucket has stock) —
+            opening TileMovementSheets.tsx sheets scoped to that single item.
+            Dispatch sheets auto-open the generated Chalan PDF on success
+            (api.authenticatedUrl + Linking.openURL / window.open, same
+            pattern as purchases.tsx's doExport). StatusPill now renders
+            statusLabel() (Ready->"Released", Dispatched->"Delivered",
+            "Partially Dispatched"->"Partially Delivered") instead of raw
+            backend ladder words. Lint clean on every touched file. NOT YET
+            browser-tested — awaiting explicit user go-ahead per workflow
+            rules before invoking the frontend testing agent.
+
+
 user_problem_statement: "BuildCon House — complete product design reboot ('Showroom' design language). Phase 1: design system foundation, navigation shell, command palette, Today (dashboard), authentication. Later phases migrate Quotation Builder, Customers, Catalogue, Purchases, Payments, Follow-ups, Reports, Settings onto the new system. Catalog restoration (2,872 supplier products) is a separate parallel workstream — blocked on user-provided Supabase credentials + supplier source files."
 
 ## Launch Candidate 1 (LC-1) — Mobile, Customer Portal & Store Readiness (2026-08, in progress)
