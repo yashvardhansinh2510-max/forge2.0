@@ -24,6 +24,7 @@ type NavItem = { href: string; label: string; icon: FeatherName; match: string; 
 
 const PRIMARY: NavItem[] = [
   { href: "/(admin)/dashboard", label: "Today", icon: "sunrise", match: "dashboard" },
+  { href: "/(admin)/walkins", label: "Walk-ins", icon: "user-plus", match: "walkins" },
   { href: "/(admin)/quotations", label: "Quotations", icon: "file-text", match: "quotations" },
   { href: "/(admin)/catalog", label: "Catalog", icon: "package", match: "catalog" },
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
@@ -326,6 +327,7 @@ const PHONE_TABS_RIGHT: NavItem[] = [
   { href: "/(admin)/followups", label: "Tasks", icon: "check-square", match: "followups" },
 ];
 const MORE_ITEMS: NavItem[] = [
+  { href: "/(admin)/walkins", label: "Walk-ins", icon: "user-plus", match: "walkins" },
   { href: "/(admin)/catalog", label: "Catalog", icon: "package", match: "catalog" },
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
