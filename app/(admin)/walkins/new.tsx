@@ -79,7 +79,7 @@ export default function NewWalkIn() {
     const hasSignal = digits.length >= 10 || email.trim().length >= 5 || name.trim().length >= 3;
     if (!hasSignal) { setMatches({ high: [], medium: [], low: [] }); return; }
     const t = setTimeout(() => {
-      walkinsApi.checkDuplicate({ phone, alternatePhone: altPhone, email, name, city })
+      walkinsApi.checkDuplicate({ phone, alternatePhone: altPhone, email, name, city, address })
         .then((r) => {
           setMatches(r);
           setResolvedCustomerId(null);
@@ -88,7 +88,7 @@ export default function NewWalkIn() {
         .catch(() => {});
     }, 450);
     return () => clearTimeout(t);
-  }, [phone, altPhone, email, name, city]);
+  }, [phone, altPhone, email, name, city, address]);
 
   const resolvedHigh = matches.high[0] || null;
 
