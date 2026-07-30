@@ -360,3 +360,61 @@ gap found + fixed: "At Godown"/"Delivered" status filter chips were unreachable 
   backend startup) via `backend/scripts/rotate_demo_credentials.py --apply`.
 - P2: Expo `54.0.35` vs `~54.0.36` compatibility warning (non-blocking).
 - P2: pre-existing unrelated ESLint warning in `TilesDocBuilder.tsx` (unescaped apostrophe).
+
+## Follow-ups 2.0 — Workspaces redesign, Phase 1+2+3 (2026-07-30, DELIVERED)
+
+Redesign per user's context-engineered spec: replace generic Follow-ups with event-driven
+workspaces (Walk-ins, Tile Selections, Tile Quotations, Payments). Architecture audit found
+"Tile Selection" and "Tile Quotation" already share ONE model (`Quotation`, distinguished by
+`doc_type`) — no new entity needed, so Phases 2&3 were delivered together this session.
+
+**User's explicit Phase 1 decisions (binding for future work):**
+- Walk-ins = brand-new, department-agnostic module (Phase 4, NOT built yet — needs a new
+  `WalkIn` entity, "Log Walk-in" quick-entry UI, generic enough for Sanitary/Paints/Hardware later).
+- WhatsApp = `wa.me` deep-link only (Phase 1), behind a `MessagingProvider` interface for a
+  future Business API swap. Never auto-sends.
+- Email = `mailto:` deep-link only (Phase 1), behind an `EmailProvider` interface.
+- Payments (Phase 5, NOT built yet) needs a new **Payment Terms** model (milestones,
+  date-based OR event-based due conditions like "Before Dispatch") — explicitly NOT a fixed
+  N-days-overdue rule.
+- Sequencing: shared engine → Selections → Quotations → Walk-ins → Payments.
+
+**Delivered this session (backend):**
+- `backend/services/automation_rules.py` — DB-backed reminder cadences (`automation_rules`
+  collection), seeded defaults `selection: [2,4,7,10]`, `quotation_tiles: [2,5,10,15]` days,
+  editable via `GET/PUT /followups/config/automation-rules` (manager+ for PUT).
+- `backend/services/messaging_service.py` / `email_service.py` — Provider-interface pattern,
+  category-keyed template registry, exact copy from the user's spec.
+- `backend/services/followup_engine.py` — new `_tiles_pipeline_producer()` reading
+  `doc_type=="tiles_selection"/"tiles_quotation"` from the same `quotations` list, reusing the
+  existing generic `score_followup()` for priority (days-waiting + value + tier). Auto-close is
+  free (generic reconcile diff). Legacy `quotation_followup` rule explicitly excludes tiles
+  doc_types (zero regression on Sanitary/First-Floor).
+- `routes/quotation_routes.py` `move_to_quotation` now fires `reconcile_followups()` so the
+  Selection card closes immediately instead of waiting for an unrelated trigger.
+- **Bug found + fixed (pre-existing, not introduced this session)**: `reconcile_followups()`
+  had a real race condition — no serialization across the many `asyncio.create_task(...)`
+  call sites, causing up to 6 duplicate copies of one automated card in live data (12 distinct
+  duplicate `source_key`s found). Fixed with a process-local `asyncio.Lock()` (non-blocking —
+  concurrent callers get an instant `{"skipped": true}` instead of queuing/timing out) +
+  cleaned up 21 duplicate rows + added a genuine DB-level partial unique index on
+  `followups.source_key` (`scripts/ensure_indexes.py`) for defense-in-depth.
+
+**Delivered this session (frontend, `app/(admin)/followups.tsx`):**
+- 3-way workspace `SegmentedControl` ("All" / "Selections · N" / "Quotations · N", counts from
+  new `stats.workspace_counts`) — reuses the ENTIRE existing premium inbox (Mission Hero, KPI
+  strip, Call/WhatsApp/Snooze/Assign/bulk actions, saved views, export) rather than new screens,
+  per explicit "no new visual style" requirement.
+- "Open Selection"/"Open Quotation" card action, deep-linking to the real Tiles builder
+  (`/tiles/selection|quotation?id=`) instead of duplicating business logic on the card.
+
+**Testing**: 2 full rounds via `expo_testing_agent_v4_fork`. Round 1 found the race condition
+(genuine catch). Round 2 confirmed the fix at both the app-lock and DB-constraint layers
+(11/11 pytest, live concurrency stress test, zero duplicates). Full regression of the existing
+generic inbox confirmed unaffected.
+
+**NOT built yet (explicitly deferred, confirm before starting):**
+- Phase 4 — Walk-ins module (new entity + UI + auto-convert-on-Selection-created).
+- Phase 5 — Payments workspace + Payment Terms model (milestones, event-based due dates).
+- Dashboard "Revenue At Risk" / analytics funnel / global search-across-everything / morning
+  notification digest — mentioned in the original spec, not started.

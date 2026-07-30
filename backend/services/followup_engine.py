@@ -333,6 +333,18 @@ _reconcile_lock = asyncio.Lock()
 
 
 async def reconcile_followups() -> dict:
+    if _reconcile_lock.locked():
+        # Another reconcile is already mid-flight. Its desired-state pass
+        # already covers whatever DB write just triggered this call (routes
+        # always await their own write before firing
+        # asyncio.create_task(reconcile_followups())), so a second full
+        # collection scan queued behind it adds latency without adding
+        # correctness — skip instead of blocking the caller. Mutation routes
+        # fire this fire-and-forget and never look at the return value; the
+        # only caller that reads it is the manual POST /followups/reconcile
+        # admin endpoint, which gets an instant, honest "already running"
+        # instead of stalling behind another ~seconds-long full scan.
+        return {"skipped": True, "reason": "reconcile already in progress"}
     async with _reconcile_lock:
         return await _reconcile_followups_locked()
 

@@ -14133,7 +14133,14 @@ frontend:
             multi-worker-process deployments where the in-process lock alone wouldn't help.
             Verified: ran the exact reproduction the testing agent used (5 concurrent
             reconcile_followups() calls via asyncio.gather) — zero new duplicates, confirmed by
-            direct Mongo aggregation before and after.
+            direct Mongo aggregation before and after. Testing agent's re-test found one more LOW
+            issue: under 5 truly concurrent calls, 2/5 timed out (502) queuing behind the lock
+            (each full reconcile pass is a whole-collection scan, ~18s). Fixed by making the lock
+            non-blocking: if a reconcile is already in-flight, subsequent concurrent callers get
+            an instant `{"skipped": true}` instead of queuing — correct because mutation routes
+            fire this fire-and-forget and never read the result, and the in-flight pass already
+            covers whatever DB write just triggered the call. Re-verified: 5x concurrent calls now
+            return in ~18s total (1 real pass + 4 instant skips) with zero duplicates.
 
 metadata:
   created_by: "main_agent"
