@@ -102,7 +102,8 @@ export default function SupplierOrderDetailScreen() {
       ) : null}
       {sheet === "dispatch" ? (
         <DispatchSheet
-          poId={order.id} items={order.items} customerName={order.customer_name} customerAddress="" customerCity=""
+          poId={order.id} items={order.items} customerName={order.customer_name}
+          customerAddress={order.delivery_address || ""} customerCity={order.delivery_city || ""}
           onClose={() => setSheet(null)} onDone={async () => { setSheet(null); await load(); }}
         />
       ) : null}

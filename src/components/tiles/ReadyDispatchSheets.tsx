@@ -152,8 +152,8 @@ export function DispatchSheet({ poId, items, customerName, customerAddress, cust
               <View>
                 <Text style={type.bodyStrong}>Will create: Dispatch → Chalan → Dispatch List entry</Text>
                 {preview.warnings.map((w, i) => <Text key={i} style={[type.bodyMuted, { color: colors.warningFg }]}>{w}</Text>)}
-                {preview.items.map((line) => (
-                  <Text key={line.po_item_id} style={type.bodySm}>{line.tile_name} · {line.qty} boxes · {line.remaining_pending_after} pending after</Text>
+                {preview.items.map((line, i) => (
+                  <Text key={`${line.po_item_id}-${i}`} style={type.bodySm}>{line.tile_name} · {line.qty} boxes · {line.remaining_pending_after} pending after</Text>
                 ))}
               </View>
             )}
