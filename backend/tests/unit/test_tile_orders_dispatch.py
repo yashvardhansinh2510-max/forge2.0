@@ -125,7 +125,7 @@ class _FakeDb:
 
 
 def _customer_order():
-    return {"id": "co-1", "version": 0, "brands": [{
+    return {"id": "co-1", "version": 0, "total_boxes": 20, "brands": [{
         "brand_id": "b-1", "brand_name": "Qutone", "supplier_id": "s-1", "supplier_name": "Qutone Rajkot",
         "purchase_order_id": "po-1", "status": "Ready",
     }]}
@@ -180,6 +180,12 @@ def test_dispatch_from_existing_ready_batch(monkeypatch):
     assert item["boxes_dispatched"] == 5
     assert item["boxes_pending"] == 8
     assert item["overall_status"] == "Partially Dispatched"
+    # Important-finding regression: CustomerOrder.completion_percentage must
+    # be recomputed on every dispatch (5 dispatched / 20 total_boxes = 25%),
+    # not permanently stuck at its creation-time 0 — the same class of bug
+    # Task 9 already fixed once for supplier_analytics.
+    assert fake_db.customer_orders.co["completion_percentage"] == 25.0
+    assert fake_db.customer_orders.co["dashboard_summary"]["completion_percentage"] == 25.0
 
 
 def test_direct_dispatch_from_pending_auto_creates_ready_batch(monkeypatch):

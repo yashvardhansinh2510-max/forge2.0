@@ -29,6 +29,12 @@ class TileCustomerOrderBrand(BaseModel):
     supplier_name: str
     purchase_order_id: str
     status: TileOverallStatus = "Pending"
+    # This PO's own cumulative dispatched-box count — kept in sync by
+    # routes/tile_orders.py's _sync_customer_order_brand_status alongside
+    # `status`. Summed across every brand entry, this is the numerator
+    # completion_percentage() uses against the order's (immutable,
+    # set-once-at-placement) total_boxes — see TileCustomerOrder.completion_percentage.
+    boxes_dispatched: float = 0
 
 
 class TileCustomerOrderDashboardSummary(BaseModel):

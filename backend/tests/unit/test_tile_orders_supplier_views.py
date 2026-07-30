@@ -43,7 +43,9 @@ class _FakePOs:
 
 
 class _FakeDb:
-    def __init__(self, docs): self.purchase_orders = _FakePOs(docs)
+    def __init__(self, docs, customer_order_docs=None):
+        self.purchase_orders = _FakePOs(docs)
+        self.customer_orders = _FakePOs(customer_order_docs or [])
 
 
 def test_list_suppliers_sorts_by_most_stalled_first(monkeypatch):
@@ -91,6 +93,39 @@ def test_purchase_order_detail_returns_item_box_breakdown(monkeypatch):
     assert result["id"] == "po-1"
     assert result["items"][0]["boxes_ready"] == 4
     assert result["items"][0]["boxes_dispatched"] == 8
+
+
+def test_purchase_order_detail_includes_customer_order_delivery_snapshot(monkeypatch):
+    """Critical bug fix: the Supplier order-detail response must surface the
+    parent TileCustomerOrder's delivery snapshot, so the frontend's Dispatch
+    sheet stops hardcoding customerAddress/customerCity to "" — which used
+    to land verbatim on the immutable Chalan, permanently blank."""
+    fake_db = _FakeDb(
+        [_po(customer_order_id="co-1")],
+        [{
+            "id": "co-1", "is_deleted": False,
+            "delivery_name": "Nileshbhai Pokiya", "delivery_phone": "9909900000",
+            "delivery_address": "123 Ring Road", "delivery_city": "Rajkot",
+        }],
+    )
+    monkeypatch.setattr(router_module, "db", fake_db)
+
+    result = asyncio.run(router_module.purchase_order_detail("po-1", user=_user()))
+
+    assert result["delivery_name"] == "Nileshbhai Pokiya"
+    assert result["delivery_phone"] == "9909900000"
+    assert result["delivery_address"] == "123 Ring Road"
+    assert result["delivery_city"] == "Rajkot"
+
+
+def test_purchase_order_detail_defaults_delivery_fields_when_no_customer_order(monkeypatch):
+    fake_db = _FakeDb([_po()])  # no customer_order_id, no customer_orders docs
+    monkeypatch.setattr(router_module, "db", fake_db)
+
+    result = asyncio.run(router_module.purchase_order_detail("po-1", user=_user()))
+
+    assert result["delivery_address"] == ""
+    assert result["delivery_city"] == ""
 
 
 def test_supplier_analytics_averages(monkeypatch):

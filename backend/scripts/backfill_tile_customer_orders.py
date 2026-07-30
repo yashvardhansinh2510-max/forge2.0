@@ -96,6 +96,7 @@ async def backfill(*, dry_run: bool) -> dict:
 
         for po in group_pos:
             items = po.get("items", [])
+            items_by_id = {item["id"]: item for item in items}
             total_products += len(items)
             total_boxes += sum(float(i.get("qty") or 0) for i in items)
             item_statuses: list[str] = []
@@ -122,55 +123,7 @@ async def backfill(*, dry_run: bool) -> dict:
                     for line in old_chalan.get("items", []):
                         if line.get("po_item_id") != item["id"]:
                             continue
-                        qty = float(line.get("qty") or 0)
-                        boxes_dispatched += qty
-                        # Finding 3: only "at_godown" represents material
-                        # actually sitting at Buildcon's own warehouse as a
-                        # destination — "released"/"dispatched" are direct-to-
-                        # customer or already-at-customer, respectively.
-                        destination_type = "Godown" if old_chalan.get("stage") == "at_godown" else "Customer"
-
-                        if not dry_run:
-                            batch_number = await next_number("ready_batch", f"RB-{year_str}-", collection="ready_batches")
-                            batch = TileReadyBatch(
-                                batch_number=batch_number, purchase_order_id=po["id"], po_item_id=item["id"],
-                                customer_order_id=customer_order.id, floor_id=po.get("floor_id", "first-floor"),
-                                supplier_id=po.get("supplier_id"), supplier_name=po.get("supplier_name") or "Unassigned",
-                                customer_id=po.get("customer_id"), customer_name=po.get("customer_name") or "",
-                                tile_name=item.get("name", ""), qty=qty, remaining_qty=0,
-                                created_by="system-backfill", created_by_name="Backfill script", auto_created=True,
-                            )
-                            await db.ready_batches.insert_one(batch.dict())
-
-                            chalan = TileChalan(
-                                number=old_chalan.get("number", ""), dispatch_id="", purchase_order_id=po["id"],
-                                customer_order_id=customer_order.id, floor_id=po.get("floor_id", "first-floor"),
-                                supplier_name=po.get("supplier_name") or "Unassigned", customer_name=po.get("customer_name") or "",
-                                customer_phone="", delivery_address="", delivery_city="",
-                                items=[TileChalanItem(po_item_id=item["id"], tile_name=item.get("name", ""), boxes=qty, quantity=qty)],
-                                created_by=old_chalan.get("created_by", "system-backfill"),
-                                created_by_name=old_chalan.get("created_by_name", "Backfill script"),
-                                generated_at=old_chalan.get("created_at", datetime.now(timezone.utc).isoformat()),
-                                generated_by_name=old_chalan.get("created_by_name", "Backfill script"),
-                            )
-                            dispatch = TileDispatch(
-                                dispatch_number=await next_number("dispatch", f"DSP-{year_str}-", collection="dispatches"),
-                                purchase_order_id=po["id"], customer_order_id=customer_order.id,
-                                floor_id=po.get("floor_id", "first-floor"), supplier_id=po.get("supplier_id"),
-                                supplier_name=po.get("supplier_name") or "Unassigned", customer_id=po.get("customer_id"),
-                                customer_name=po.get("customer_name") or "",
-                                ready_batches_consumed=[TileDispatchLineConsumed(ready_batch_id=batch.id, po_item_id=item["id"], qty=qty)],
-                                destination_type=destination_type, destination_name=po.get("customer_name") or "",
-                                destination_address="", destination_city="",
-                                dispatch_date=old_chalan.get("created_at", "")[:10], dispatch_time=old_chalan.get("created_at", "")[11:16],
-                                created_by="system-backfill", created_by_name="Backfill script", chalan_id=chalan.id,
-                            )
-                            chalan.dispatch_id = dispatch.id
-                            if old_chalan.get("stage") == "at_godown":
-                                dispatch.godown_received_at = old_chalan.get("created_at")
-                            await db.chalans.insert_one(chalan.dict())
-                            await db.dispatches.insert_one(dispatch.dict())
-                        chalans_migrated += 1
+                        boxes_dispatched += float(line.get("qty") or 0)
 
                 qty_ordered = float(item.get("qty") or 0)
                 current_location = derive_current_location(
@@ -191,6 +144,81 @@ async def backfill(*, dry_run: bool) -> dict:
                     item["boxes_pending"] = qty_ordered - boxes_dispatched
                     item["current_location"] = current_location
                     item["overall_status"] = overall_status
+
+            # One TileChalan + one TileDispatch per OLD chalan (not per
+            # item!) — Chalan.items is itself a list, so a single real
+            # historic chalan can cover 2+ items of this PO in one delivery.
+            # The old (buggy) version of this loop created one TileChalan
+            # per (item x matching old chalan) pairing, all reusing the same
+            # old_chalan.number — the second insert for a real multi-item
+            # chalan would hard-crash on chalans.number's unique index. One
+            # ready batch is still created per line (ReadyBatch is
+            # per-po_item_id), but they're all consumed by the single
+            # dispatch this old chalan produces, matching TileDispatch's
+            # documented 1:1 chalan_id invariant.
+            for old_chalan in po.get("chalans", []):
+                matching_lines = [
+                    line for line in old_chalan.get("items", []) if line.get("po_item_id") in items_by_id
+                ]
+                if not matching_lines:
+                    continue
+                chalans_migrated += 1
+                if dry_run:
+                    continue
+
+                new_chalan_items: list[TileChalanItem] = []
+                consumed: list[TileDispatchLineConsumed] = []
+                for line in matching_lines:
+                    line_item = items_by_id[line["po_item_id"]]
+                    qty = float(line.get("qty") or 0)
+                    batch_number = await next_number("ready_batch", f"RB-{year_str}-", collection="ready_batches")
+                    batch = TileReadyBatch(
+                        batch_number=batch_number, purchase_order_id=po["id"], po_item_id=line_item["id"],
+                        customer_order_id=customer_order.id, floor_id=po.get("floor_id", "first-floor"),
+                        supplier_id=po.get("supplier_id"), supplier_name=po.get("supplier_name") or "Unassigned",
+                        customer_id=po.get("customer_id"), customer_name=po.get("customer_name") or "",
+                        tile_name=line_item.get("name", ""), qty=qty, remaining_qty=0,
+                        created_by="system-backfill", created_by_name="Backfill script", auto_created=True,
+                    )
+                    await db.ready_batches.insert_one(batch.dict())
+                    new_chalan_items.append(
+                        TileChalanItem(po_item_id=line_item["id"], tile_name=line_item.get("name", ""), boxes=qty, quantity=qty)
+                    )
+                    consumed.append(TileDispatchLineConsumed(ready_batch_id=batch.id, po_item_id=line_item["id"], qty=qty))
+
+                # Finding 3: only "at_godown" represents material actually
+                # sitting at Buildcon's own warehouse as a destination —
+                # "released"/"dispatched" are direct-to-customer or
+                # already-at-customer, respectively.
+                destination_type = "Godown" if old_chalan.get("stage") == "at_godown" else "Customer"
+                chalan = TileChalan(
+                    number=old_chalan.get("number", ""), dispatch_id="", purchase_order_id=po["id"],
+                    customer_order_id=customer_order.id, floor_id=po.get("floor_id", "first-floor"),
+                    supplier_name=po.get("supplier_name") or "Unassigned", customer_name=po.get("customer_name") or "",
+                    customer_phone="", delivery_address="", delivery_city="",
+                    items=new_chalan_items,
+                    created_by=old_chalan.get("created_by", "system-backfill"),
+                    created_by_name=old_chalan.get("created_by_name", "Backfill script"),
+                    generated_at=old_chalan.get("created_at", datetime.now(timezone.utc).isoformat()),
+                    generated_by_name=old_chalan.get("created_by_name", "Backfill script"),
+                )
+                dispatch = TileDispatch(
+                    dispatch_number=await next_number("dispatch", f"DSP-{year_str}-", collection="dispatches"),
+                    purchase_order_id=po["id"], customer_order_id=customer_order.id,
+                    floor_id=po.get("floor_id", "first-floor"), supplier_id=po.get("supplier_id"),
+                    supplier_name=po.get("supplier_name") or "Unassigned", customer_id=po.get("customer_id"),
+                    customer_name=po.get("customer_name") or "",
+                    ready_batches_consumed=consumed,
+                    destination_type=destination_type, destination_name=po.get("customer_name") or "",
+                    destination_address="", destination_city="",
+                    dispatch_date=old_chalan.get("created_at", "")[:10], dispatch_time=old_chalan.get("created_at", "")[11:16],
+                    created_by="system-backfill", created_by_name="Backfill script", chalan_id=chalan.id,
+                )
+                chalan.dispatch_id = dispatch.id
+                if old_chalan.get("stage") == "at_godown":
+                    dispatch.godown_received_at = old_chalan.get("created_at")
+                await db.chalans.insert_one(chalan.dict())
+                await db.dispatches.insert_one(dispatch.dict())
 
             po_status = rollup_status(item_statuses)
             brands.append(TileCustomerOrderBrand(

@@ -343,6 +343,64 @@ def test_backfill_retry_recomputes_totals_from_all_quotation_pos_not_just_this_r
     assert po2_after["items"][0]["current_location"] == "Dispatched"  # old stage "released"
 
 
+def _multi_item_tiles_po():
+    """A real historic chalan covering 2+ items in one delivery — the exact
+    shape that crashed the old per-item backfill loop: it would try to
+    insert 2 TileChalan documents reusing the same old_chalan.number,
+    colliding with chalans.number's unique index on the second insert."""
+    return {
+        "id": "po-4", "number": "FPO-2026-0004", "quotation_id": "q-4", "quotation_number": "FQ-2026-0004",
+        "customer_id": "cust-4", "customer_name": "Deepak Mehta", "supplier_id": "s-1", "supplier_name": "Qutone Rajkot",
+        "brand_id": "b-1", "brand_name": "Qutone", "floor_id": "ground-floor", "created_at": "2026-07-22T10:00:00+00:00",
+        "items": [
+            {"id": "item-1", "name": "Glossy Ivory 600x600", "qty": 20, "finish": None, "series": None, "size": None, "sku": "SKU-1"},
+            {"id": "item-2", "name": "Matte Grey 300x300", "qty": 15, "finish": None, "series": None, "size": None, "sku": "SKU-2"},
+        ],
+        "chalans": [{
+            "id": "old-ch-1", "number": "CH-0001", "stage": "released",
+            "items": [
+                {"po_item_id": "item-1", "name": "Glossy Ivory 600x600", "qty": 8, "unit": "Box"},
+                {"po_item_id": "item-2", "name": "Matte Grey 300x300", "qty": 5, "unit": "Box"},
+            ],
+            "created_at": "2026-07-23T10:00:00+00:00", "created_by": "u-1", "created_by_name": "Warehouse Rep",
+        }],
+    }
+
+
+def test_backfill_multi_item_chalan_creates_one_chalan_dispatch_pair(monkeypatch):
+    """Critical bug fix: a single old chalan covering 2+ items must produce
+    exactly ONE TileChalan/TileDispatch pair (not one per item), with every
+    item's line appearing in that one chalan's `items` list and every
+    matching ready batch consumed by that same single dispatch."""
+    po = _multi_item_tiles_po()
+    db = _make_db([po])
+    monkeypatch.setattr(backfill_module, "db", db)
+    monkeypatch.setattr(backfill_module, "next_number", _fake_next_number)
+
+    result = asyncio.run(backfill_module.backfill(dry_run=False))
+
+    assert result["chalans_migrated"] == 1
+    assert len(db.chalans.docs) == 1
+    assert len(db.dispatches.docs) == 1
+
+    chalan = db.chalans.docs[0]
+    assert chalan["number"] == "CH-0001"
+    assert sorted(line["po_item_id"] for line in chalan["items"]) == ["item-1", "item-2"]
+
+    dispatch = db.dispatches.docs[0]
+    assert dispatch["chalan_id"] == chalan["id"]
+    assert chalan["dispatch_id"] == dispatch["id"]
+    assert sorted(c["po_item_id"] for c in dispatch["ready_batches_consumed"]) == ["item-1", "item-2"]
+
+    assert len(db.ready_batches.docs) == 2  # one ReadyBatch per item line, still
+
+    po_after = db.purchase_orders.docs[0]
+    item_1 = next(i for i in po_after["items"] if i["id"] == "item-1")
+    item_2 = next(i for i in po_after["items"] if i["id"] == "item-2")
+    assert item_1["boxes_dispatched"] == 8
+    assert item_2["boxes_dispatched"] == 5
+
+
 def test_backfill_dry_run_makes_no_mutations(monkeypatch):
     """Finding 5: --dry-run must be a true no-op — zero writes to any
     collection, and the original PO document (including its items) left

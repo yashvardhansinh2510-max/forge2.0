@@ -37,24 +37,39 @@ class BulkReadyBody(BaseModel):
     items: list[ReadyItemInput] = Field(min_length=1)
 
 
-async def _sync_customer_order_brand_status(co_id: Optional[str], po_id: str, new_status: str, session) -> None:
+async def _sync_customer_order_brand_status(
+    co_id: Optional[str], po_id: str, new_status: str, session, *, dispatched_boxes: float = 0.0,
+) -> None:
     """Updates this PO's entry in TileCustomerOrder.brands[], then rolls the
     CustomerOrder's own overall_status/dashboard_summary up from all
     brands. Increments `version` as the defense-in-depth CAS guard the
     design doc calls for — the enclosing transaction is the primary safety
-    net (see Task 6's transaction-strategy note)."""
+    net (see Task 6's transaction-strategy note).
+
+    Also recomputes completion_percentage — the same class of bug Task 9
+    already fixed once for supplier_analytics (a stored field that only a
+    subset of write paths ever touched, so it went permanently stale/0
+    everywhere else). Rather than re-querying every sibling PurchaseOrder
+    for this order (which the codebase already avoids elsewhere), each
+    brand entry carries its own PO's current boxes_dispatched — summed
+    across brands, that's the numerator against the order's total_boxes
+    (immutable, set once at placement) as the denominator, via the same
+    completion_percentage() helper the write endpoints already use."""
     if not co_id:
         return
-    co = await db.customer_orders.find_one({"id": co_id}, {"_id": 0}, session=session)
+    co = await db.customer_orders.find_one({"id": co_id, "is_deleted": False}, {"_id": 0}, session=session)
     if not co:
         return
     brands = co.get("brands", [])
     for brand in brands:
         if brand.get("purchase_order_id") == po_id:
             brand["status"] = new_status
+            brand["boxes_dispatched"] = dispatched_boxes
     overall = rollup_status([b.get("status", "Pending") for b in brands])
+    total_dispatched = sum(float(b.get("boxes_dispatched") or 0) for b in brands)
+    pct = completion_percentage(float(co.get("total_boxes") or 0), total_dispatched)
     summary = {
-        "completion_percentage": co.get("completion_percentage", 0),
+        "completion_percentage": pct,
         "overall_status": overall,
         "supplier_statuses": [{"supplier_name": b.get("supplier_name"), "status": b.get("status")} for b in brands],
     }
@@ -62,6 +77,7 @@ async def _sync_customer_order_brand_status(co_id: Optional[str], po_id: str, ne
         {"id": co_id, "version": co.get("version", 0)},
         {"$set": {
             "brands": brands, "overall_status": overall, "dashboard_summary": summary,
+            "completion_percentage": pct,
             "last_activity": "Status changed", "last_activity_at": now_iso(),
             "version": co.get("version", 0) + 1, "updated_at": now_iso(),
         }},
@@ -126,7 +142,9 @@ async def mark_items_ready(
                     "latest_ready_date": now, "last_supplier_activity_at": now, "updated_at": now,
                 }}, session=session,
             )
-            await _sync_customer_order_brand_status(po.get("customer_order_id"), po_id, new_status, session)
+            await _sync_customer_order_brand_status(
+                po.get("customer_order_id"), po_id, new_status, session, dispatched_boxes=dispatched_boxes,
+            )
 
     for batch in created_batches:
         await log_event(
@@ -184,7 +202,9 @@ async def _resolve_dispatch_lines(po: dict, body: DispatchBody, session=None) ->
         if not item:
             raise HTTPException(status_code=400, detail=f"Unknown item {entry.po_item_id}")
         if entry.ready_batch_id:
-            batch = await db.ready_batches.find_one({"id": entry.ready_batch_id}, {"_id": 0}, session=session)
+            batch = await db.ready_batches.find_one(
+                {"id": entry.ready_batch_id, "is_deleted": False}, {"_id": 0}, session=session,
+            )
             if not batch or batch.get("po_item_id") != entry.po_item_id:
                 raise HTTPException(status_code=400, detail=f"Ready batch {entry.ready_batch_id} not found for this item")
             already_claimed = claimed_batch.get(entry.ready_batch_id, 0.0)
@@ -294,7 +314,7 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
                 number=chalan_number, dispatch_id="", purchase_order_id=po_id, customer_order_id=po.get("customer_order_id") or "",
                 floor_id=po.get("floor_id", "first-floor"),
                 supplier_name=po.get("supplier_name") or "Unassigned", customer_name=po.get("customer_name") or "",
-                customer_phone=body.destination_name and po.get("customer_phone") or "",
+                customer_phone=po.get("customer_phone") or "",
                 delivery_address=body.destination_address, delivery_city=body.destination_city,
                 reference_number=body.reference_number, items=chalan_items,
                 receiver_name=body.receiver_name, sender_name=body.sender_name,
@@ -329,7 +349,9 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
                     "latest_dispatch_date": now, "last_supplier_activity_at": now, "updated_at": now,
                 }}, session=session,
             )
-            await _sync_customer_order_brand_status(po.get("customer_order_id"), po_id, new_status, session)
+            await _sync_customer_order_brand_status(
+                po.get("customer_order_id"), po_id, new_status, session, dispatched_boxes=dispatched_boxes,
+            )
 
     await log_event(
         event_type="dispatch.created", entity_type="purchase", entity_id=po_id, actor=user,
@@ -353,7 +375,7 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
 
 @router.get("/chalans/{chalan_id}/pdf")
 async def chalan_pdf(chalan_id: str, user: UserPublic = Depends(require_min_role("sales"))):
-    chalan = await db.chalans.find_one(floor_query(user, {"id": chalan_id}), {"_id": 0})
+    chalan = await db.chalans.find_one(floor_query(user, {"id": chalan_id, "is_deleted": False}), {"_id": 0})
     if not chalan:
         raise HTTPException(status_code=404, detail="Chalan not found")
     company = await db.settings.find_one({"key": "company"}, {"_id": 0}) or {}
@@ -378,7 +400,7 @@ class GodownReceivedBody(BaseModel):
 async def mark_dispatch_godown_received(
     dispatch_id: str, body: GodownReceivedBody, user: UserPublic = Depends(require_min_role("warehouse")),
 ):
-    dispatch = await db.dispatches.find_one(floor_query(user, {"id": dispatch_id}), {"_id": 0})
+    dispatch = await db.dispatches.find_one(floor_query(user, {"id": dispatch_id, "is_deleted": False}), {"_id": 0})
     if not dispatch:
         raise HTTPException(status_code=404, detail="Dispatch not found")
     if dispatch.get("godown_received_at"):
@@ -444,9 +466,26 @@ async def purchase_order_detail(po_id: str, user: UserPublic = Depends(require_m
     po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+    # Delivery snapshot lives on the parent TileCustomerOrder (captured once
+    # at placement time by domain_outbox.py's _handle_order_placed), not on
+    # the PurchaseOrder itself — a Supplier-side dispatch still needs it to
+    # fill in the (otherwise permanently blank) immutable Chalan's delivery
+    # address/city. Defaults to "" only if there's no linked CustomerOrder
+    # (e.g. a non-tiles PO) or it can't be found.
+    delivery_name = delivery_phone = delivery_address = delivery_city = ""
+    co_id = po.get("customer_order_id")
+    if co_id:
+        co = await db.customer_orders.find_one({"id": co_id, "is_deleted": False}, {"_id": 0})
+        if co:
+            delivery_name = co.get("delivery_name") or ""
+            delivery_phone = co.get("delivery_phone") or ""
+            delivery_address = co.get("delivery_address") or ""
+            delivery_city = co.get("delivery_city") or ""
     return {
         "id": po["id"], "number": po.get("number"), "customer_name": po.get("customer_name"),
         "supplier_name": po.get("supplier_name"), "overall_status": po.get("overall_status"),
+        "delivery_name": delivery_name, "delivery_phone": delivery_phone,
+        "delivery_address": delivery_address, "delivery_city": delivery_city,
         "items": [{
             "id": item["id"], "name": item.get("name"), "series": item.get("series"), "finish": item.get("finish"),
             "size": item.get("size"), "sku": item.get("sku"), "qty": item.get("qty"),
@@ -576,7 +615,7 @@ async def list_customer_orders(
 
 @router.get("/customer-orders/{co_id}")
 async def customer_order_detail(co_id: str, user: UserPublic = Depends(require_min_role("sales"))):
-    co = await db.customer_orders.find_one(floor_query(user, {"id": co_id}), {"_id": 0})
+    co = await db.customer_orders.find_one(floor_query(user, {"id": co_id, "is_deleted": False}), {"_id": 0})
     if not co:
         raise HTTPException(status_code=404, detail="Customer order not found")
     pos = await db.purchase_orders.find(floor_query(user, {"customer_order_id": co_id}), {"_id": 0}).to_list(50)
@@ -606,7 +645,7 @@ async def customer_order_detail(co_id: str, user: UserPublic = Depends(require_m
 
 @router.get("/customer-orders/{co_id}/timeline")
 async def customer_order_timeline(co_id: str, user: UserPublic = Depends(require_min_role("sales"))):
-    co = await db.customer_orders.find_one(floor_query(user, {"id": co_id}), {"_id": 0, "id": 1})
+    co = await db.customer_orders.find_one(floor_query(user, {"id": co_id, "is_deleted": False}), {"_id": 0, "id": 1})
     if not co:
         raise HTTPException(status_code=404, detail="Customer order not found")
     pos = await db.purchase_orders.find(floor_query(user, {"customer_order_id": co_id}), {"_id": 0, "id": 1}).to_list(50)
@@ -656,7 +695,9 @@ async def list_dispatches(
         ]
     dispatches = await db.dispatches.find(floor_query(user, filters), {"_id": 0}).to_list(5000)
     chalan_ids = [d["chalan_id"] for d in dispatches]
-    chalans = await db.chalans.find(floor_query(user, {"id": {"$in": chalan_ids}}), {"_id": 0}).to_list(len(chalan_ids) + 5)
+    chalans = await db.chalans.find(
+        floor_query(user, {"id": {"$in": chalan_ids}, "is_deleted": False}), {"_id": 0},
+    ).to_list(len(chalan_ids) + 5)
     chalan_by_id = {c["id"]: c for c in chalans}
 
     # TileDispatch itself carries no brand_id — brand lives on the
@@ -703,8 +744,12 @@ async def list_dispatches(
 
 @router.get("/items/{item_id}/history")
 async def item_history(item_id: str, user: UserPublic = Depends(require_min_role("sales"))):
-    ready_batches = await db.ready_batches.find(floor_query(user, {"po_item_id": item_id}), {"_id": 0}).to_list(200)
-    dispatches = await db.dispatches.find(floor_query(user, {"ready_batches_consumed.po_item_id": item_id}), {"_id": 0}).to_list(200)
+    ready_batches = await db.ready_batches.find(
+        floor_query(user, {"po_item_id": item_id, "is_deleted": False}), {"_id": 0},
+    ).to_list(200)
+    dispatches = await db.dispatches.find(
+        floor_query(user, {"ready_batches_consumed.po_item_id": item_id, "is_deleted": False}), {"_id": 0},
+    ).to_list(200)
     events = [{"kind": "ready_batch", "at": rb.get("created_at"), "detail": rb} for rb in ready_batches]
     events += [{"kind": "dispatch", "at": d.get("created_at"), "detail": d} for d in dispatches]
     events.sort(key=lambda e: e["at"] or "", reverse=True)
@@ -737,7 +782,7 @@ async def tile_orders_dashboard(user: UserPublic = Depends(require_min_role("sal
 @router.get("/purchase-orders/{po_id}/items/{item_id}/ready-batches")
 async def item_ready_batches(po_id: str, item_id: str, user: UserPublic = Depends(require_min_role("warehouse"))):
     batches = await db.ready_batches.find(
-        {"purchase_order_id": po_id, "po_item_id": item_id, "remaining_qty": {"$gt": 0}}, {"_id": 0},
+        {"purchase_order_id": po_id, "po_item_id": item_id, "remaining_qty": {"$gt": 0}, "is_deleted": False}, {"_id": 0},
     ).to_list(200)
     batches.sort(key=lambda b: b.get("created_at", ""))
     return {"batches": batches}

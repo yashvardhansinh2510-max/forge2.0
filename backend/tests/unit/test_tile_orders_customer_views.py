@@ -97,7 +97,7 @@ def test_list_customer_orders_sorted_oldest_first(monkeypatch):
 
 
 def test_customer_order_detail_groups_by_supplier(monkeypatch):
-    co = {"id": "co-1", "number": "TORD-2026-0001", "customer_name": "Nileshbhai", "created_at": _iso_days_ago(5), "brands": [{"purchase_order_id": "po-1"}, {"purchase_order_id": "po-2"}], "total_products": 2, "total_boxes": 30, "completion_percentage": 0, "overall_status": "Pending", "floor_id": "ground-floor"}
+    co = {"id": "co-1", "number": "TORD-2026-0001", "customer_name": "Nileshbhai", "created_at": _iso_days_ago(5), "is_deleted": False, "brands": [{"purchase_order_id": "po-1"}, {"purchase_order_id": "po-2"}], "total_products": 2, "total_boxes": 30, "completion_percentage": 0, "overall_status": "Pending", "floor_id": "ground-floor"}
     pos = [
         {"id": "po-1", "customer_order_id": "co-1", "floor_id": "ground-floor", "supplier_name": "Qutone Rajkot", "overall_status": "Pending", "items": [{"id": "i-1", "name": "Tile A", "qty": 20, "boxes_ready": 0, "boxes_dispatched": 0, "boxes_pending": 20, "current_location": "Pending", "overall_status": "Pending"}]},
         {"id": "po-2", "customer_order_id": "co-1", "floor_id": "ground-floor", "supplier_name": "Dimore Rajkot", "overall_status": "Pending", "items": [{"id": "i-2", "name": "Tile B", "qty": 10, "boxes_ready": 0, "boxes_dispatched": 0, "boxes_pending": 10, "current_location": "Pending", "overall_status": "Pending"}]},
@@ -118,7 +118,7 @@ def test_customer_order_detail_excludes_pos_from_other_customer_orders(monkeypat
     this order's supplier breakdown, even though the parent CustomerOrder
     lookup itself is floor-scoped. Guards the floor_query(...) fix applied
     to the child purchase_orders.find() call in customer_order_detail."""
-    co = {"id": "co-1", "number": "TORD-2026-0001", "customer_name": "Nileshbhai", "created_at": _iso_days_ago(5), "brands": [{"purchase_order_id": "po-1"}], "total_products": 1, "total_boxes": 20, "completion_percentage": 0, "overall_status": "Pending", "floor_id": "ground-floor"}
+    co = {"id": "co-1", "number": "TORD-2026-0001", "customer_name": "Nileshbhai", "created_at": _iso_days_ago(5), "is_deleted": False, "brands": [{"purchase_order_id": "po-1"}], "total_products": 1, "total_boxes": 20, "completion_percentage": 0, "overall_status": "Pending", "floor_id": "ground-floor"}
     pos = [
         {"id": "po-1", "customer_order_id": "co-1", "floor_id": "ground-floor", "supplier_name": "Qutone Rajkot", "overall_status": "Pending", "items": []},
         {"id": "po-2", "customer_order_id": "co-2", "floor_id": "ground-floor", "supplier_name": "Wrong CO Supplier", "overall_status": "Pending", "items": []},
@@ -134,7 +134,7 @@ def test_customer_order_detail_excludes_pos_from_other_customer_orders(monkeypat
 
 
 def test_timeline_merges_events_across_pos(monkeypatch):
-    co = {"id": "co-1", "floor_id": "ground-floor"}
+    co = {"id": "co-1", "floor_id": "ground-floor", "is_deleted": False}
     pos = [
         {"id": "po-1", "customer_order_id": "co-1", "floor_id": "ground-floor"},
         {"id": "po-2", "customer_order_id": "co-1", "floor_id": "ground-floor"},
@@ -161,7 +161,7 @@ def test_timeline_excludes_events_for_pos_not_linked_to_this_customer_order(monk
     A broken/incomplete cross-PO merge (e.g. po_ids computed wrong, or the
     $or filter dropped) would leak e-3 into the result and fail this test —
     something the old always-return-everything fake could never catch."""
-    co = {"id": "co-1", "floor_id": "ground-floor"}
+    co = {"id": "co-1", "floor_id": "ground-floor", "is_deleted": False}
     pos = [
         {"id": "po-1", "customer_order_id": "co-1", "floor_id": "ground-floor"},
         {"id": "po-2", "customer_order_id": "co-1", "floor_id": "ground-floor"},
@@ -190,7 +190,7 @@ def test_timeline_excludes_events_from_pos_on_different_floor(monkeypatch):
     applied to the child purchase_orders.find() call in customer_order_timeline.
     This mirrors test_customer_order_detail_excludes_pos_from_other_customer_orders
     but for the timeline endpoint's cross-PO event merge."""
-    co = {"id": "co-1", "floor_id": "ground-floor"}
+    co = {"id": "co-1", "floor_id": "ground-floor", "is_deleted": False}
     pos = [
         {"id": "po-1", "customer_order_id": "co-1", "floor_id": "ground-floor"},
         {"id": "po-2", "customer_order_id": "co-1", "floor_id": "second-floor"},  # same CO, different floor — must be excluded

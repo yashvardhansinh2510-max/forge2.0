@@ -62,6 +62,10 @@ export type PurchaseOrderItemDetail = {
 export type PurchaseOrderDetail = {
   id: string; number: string; customer_name: string; supplier_name: string | null;
   overall_status: TileOverallStatus; items: PurchaseOrderItemDetail[];
+  // Delivery snapshot from the parent TileCustomerOrder (captured once at
+  // placement time) — feeds the Dispatch sheet's destination fields, which
+  // land verbatim on the immutable Chalan.
+  delivery_name: string; delivery_phone: string; delivery_address: string; delivery_city: string;
 };
 
 export type ReadyBatch = { id: string; batch_number: string; po_item_id: string; qty: number; remaining_qty: number; created_at: string };
