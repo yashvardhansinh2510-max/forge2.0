@@ -709,6 +709,116 @@ frontend:
             - Backend testing already verified all movement endpoints and state transitions work correctly
             - PDF generation verified in backend tests (Chalan PDFs auto-open on Dispatch actions)
             - No critical issues found, zero regressions detected
+        - working: true
+          agent: "testing"
+          comment: |
+            Tile Orders Partial Quantity Math Verification COMPLETE (2026-07-30)
+            
+            Focused end-to-end test of partial quantity operations on a single target record.
+            Login: owner@forge.app / Forge@2026 (patient login with 8-10 second wait resolved previous timing issue).
+            ALL 8 STEPS PASSED (100% math accuracy verified).
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TARGET RECORD
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            • Brand: Qutone
+            • Customer: Task19 SingleSupplier Test
+            • Purchase Order: FPO-2026-0339
+            • Customer Order: TORD-2026-0005
+            • Product: ARGENTA TUSK - Glossy (600X1200)
+            • Initial State: Ordered=5, Released=0, Godown=0, Delivered=0, Remaining=5
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            STEP-BY-STEP VERIFICATION (with page reloads after each action)
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ STEP 1: Release Material (qty=3)
+               • Action: Brands → Qutone → Task19 SingleSupplier Test → Release Material → qty=3
+               • Expected: Released=3, Remaining=2
+               • Verified: ✅ PASS (screenshot: step1_after_release_3.jpeg)
+            
+            ✅ STEP 2: Release Material again (qty=2)
+               • Action: Release Material → qty=2
+               • Expected: Released=5, Remaining=0
+               • Verified: ✅ PASS (screenshot: step2_after_release_2.jpeg)
+            
+            ✅ STEP 3: Customer tab verification
+               • Action: Customer → Task19 SingleSupplier Test (TORD-2026-0005)
+               • Expected: Ordered=5, Released=5, Godown=0, Delivered=0
+               • Verified: ✅ PASS (screenshot: step3_customer_view.jpeg)
+               • Status: "Released" (correct)
+            
+            ✅ STEP 4: Move to Godown (qty=2)
+               • Action: Move to Godown → qty=2
+               • Expected: Released=3, Godown=2
+               • Verified: ✅ PASS (screenshot: step4_after_move_godown.jpeg)
+            
+            ✅ STEP 5: Dispatch from Released (qty=1)
+               • Action: Dispatch from Released → qty=1
+               • Expected: Released=2, Godown=2, Delivered=1
+               • Verified: ✅ PASS (screenshot: step5_after_dispatch_released.jpeg)
+               • Status changed to: "Partially Delivered" (correct)
+               • Completion: 20% (1/5 boxes delivered)
+               • PDF generation: Chalan PDF should have opened (cannot verify in automation)
+            
+            ✅ STEP 6: Dispatch from Godown (qty=1)
+               • Action: Dispatch from Godown → qty=1
+               • Expected: Released=2, Godown=1, Delivered=2
+               • Verified: ✅ PASS (screenshot: step6_after_dispatch_godown.jpeg)
+               • Completion: 40% (2/5 boxes delivered)
+               • PDF generation: Chalan PDF should have opened (cannot verify in automation)
+            
+            ✅ STEP 7: Final State Verification
+               • Expected: Ordered=5, Released=2, Godown=1, Delivered=2
+               • Verified: ✅ PASS (screenshot: step7_final_state.jpeg)
+               • Math check: 5 = 2 + 1 + 2 ✅ CORRECT
+               • API verification: boxes_ordered=5, boxes_ready=2, boxes_godown=1, boxes_dispatched=2 ✅
+            
+            ✅ STEP 8: Material Movement Register Verification
+               • Action: Material Movement Register tab → search "ARGENTA TUSK"
+               • Expected: 5 movement rows in chronological order (newest first)
+               • Verified via API (UI session expired, used backend API for verification):
+               
+               Found exactly 5 movement rows for ARGENTA TUSK:
+               1. dispatch_from_godown | boxes=1 | Chalan CH-0016 | Dispatch DSP-2026-0013 | 2026-07-30 13:10:45
+               2. dispatch_from_released | boxes=1 | Chalan CH-0015 | Dispatch DSP-2026-0012 | 2026-07-30 13:10:36
+               3. move_to_godown | boxes=2 | NO Chalan | NO Dispatch | 2026-07-30 13:10:25
+               4. release | boxes=2 | NO Chalan | NO Dispatch | 2026-07-30 13:10:11
+               5. release | boxes=3 | NO Chalan | NO Dispatch | 2026-07-30 13:10:03
+               
+               ✅ 2 Release entries (qty=3, qty=2) - CORRECT
+               ✅ 1 Move to Godown (qty=2, no Chalan) - CORRECT
+               ✅ 1 Dispatch from Released (qty=1, Chalan CH-0015, Dispatch DSP-2026-0012) - CORRECT
+               ✅ 1 Dispatch from Godown (qty=1, Chalan CH-0016, Dispatch DSP-2026-0013) - CORRECT
+               ✅ Chronological order (newest first) - CORRECT
+               ✅ Chalan numbers ONLY on Dispatch operations - CORRECT
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            SUMMARY
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            • Partial quantity math: ✅ WORKING (all 8 steps verified correct)
+            • Release Material: ✅ WORKING (incremental accumulation: 3+2=5)
+            • Move to Godown: ✅ WORKING (Released 5→3, Godown 0→2)
+            • Dispatch from Released: ✅ WORKING (Released 3→2, Delivered 0→1, Chalan generated)
+            • Dispatch from Godown: ✅ WORKING (Godown 2→1, Delivered 1→2, Chalan generated)
+            • State invariant: ✅ MAINTAINED (Ordered = Released + Godown + Delivered at all times)
+            • Material Movement Register: ✅ WORKING (5 rows, correct types, correct Chalan logic)
+            • Status transitions: ✅ WORKING (Released → Partially Delivered at 20% completion)
+            • Completion percentage: ✅ WORKING (20% after 1/5, 40% after 2/5)
+            
+            CONCLUSION: Partial quantity math verification COMPLETE and PRODUCTION-READY.
+            All partial quantity operations work correctly with proper state transitions, audit
+            logging, and Chalan generation. The math is accurate at every step, and the invariant
+            (Ordered = Released + Godown + Delivered) holds throughout the entire workflow.
+            
+            NOTES:
+            - Login timing issue from previous attempt resolved by waiting 8-10 seconds as instructed
+            - All UI interactions successful (Steps 1-7)
+            - Step 8 verified via backend API due to UI session expiration (data confirmed correct)
+            - Screenshots captured for Steps 1-7 showing exact numbers at each stage
+            - Zero math errors, zero state inconsistencies detected
 
 
 user_problem_statement: "BuildCon House — complete product design reboot ('Showroom' design language). Phase 1: design system foundation, navigation shell, command palette, Today (dashboard), authentication. Later phases migrate Quotation Builder, Customers, Catalogue, Purchases, Payments, Follow-ups, Reports, Settings onto the new system. Catalog restoration (2,872 supplier products) is a separate parallel workstream — blocked on user-provided Supabase credentials + supplier source files."
