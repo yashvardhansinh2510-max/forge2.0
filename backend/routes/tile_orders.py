@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -1031,32 +1031,29 @@ def _dispatch_status(dispatch: dict) -> str:
 
 @router.get("/dispatches")
 async def list_dispatches(
-    supplier: Optional[str] = None, customer: Optional[str] = None, brand: Optional[str] = None,
-    status: Optional[str] = None, from_: Optional[str] = Query(None, alias="from"), to: Optional[str] = None,
-    destination: Optional[str] = None, search: Optional[str] = None,
+    customer_id: Optional[str] = None, brand_id: Optional[str] = None, product: Optional[str] = None,
+    dispatch_number: Optional[str] = None, chalan_number: Optional[str] = None, status: Optional[str] = None,
+    date_from: Optional[str] = None, date_to: Optional[str] = None, search: Optional[str] = None,
     page: int = 1, page_size: int = 50, sort: str = "date_desc",
     user: UserPublic = Depends(require_min_role("sales")),
 ):
+    """Dispatch List — operational, dispatch-only view (Tile Orders workflow
+    redesign, 2026-08). Every row is ONE dispatched product line — never a
+    Release or Move-to-Godown event (those only ever appear on the
+    Material Movement Register, see list_material_movements above). Built
+    from TileDispatch + its 1:1 TileChalan, one row per Chalan line item."""
     filters: dict = {"is_deleted": False}
-    if supplier:
-        filters["supplier_id"] = supplier
-    if customer:
-        filters["customer_id"] = customer
-    if destination:
-        filters["destination_type"] = destination
-    if from_ or to:
+    if customer_id:
+        filters["customer_id"] = customer_id
+    if dispatch_number:
+        filters["dispatch_number"] = {"$regex": dispatch_number, "$options": "i"}
+    if date_from or date_to:
         date_filter: dict = {}
-        if from_:
-            date_filter["$gte"] = from_
-        if to:
-            date_filter["$lte"] = to
+        if date_from:
+            date_filter["$gte"] = date_from
+        if date_to:
+            date_filter["$lte"] = date_to
         filters["dispatch_date"] = date_filter
-    if search:
-        filters["$or"] = [
-            {"customer_name": {"$regex": search, "$options": "i"}},
-            {"supplier_name": {"$regex": search, "$options": "i"}},
-            {"dispatch_number": {"$regex": search, "$options": "i"}},
-        ]
     dispatches = await db.dispatches.find(floor_query(user, filters), {"_id": 0}).to_list(5000)
     chalan_ids = [d["chalan_id"] for d in dispatches]
     chalans = await db.chalans.find(
@@ -1064,43 +1061,50 @@ async def list_dispatches(
     ).to_list(len(chalan_ids) + 5)
     chalan_by_id = {c["id"]: c for c in chalans}
 
-    # TileDispatch itself carries no brand_id — brand lives on the
-    # PurchaseOrder it was raised against (PurchaseOrder.brand_id), reachable
-    # one hop away via dispatch["purchase_order_id"]. Resolve it here so the
-    # `brand` filter below has something real to compare against.
+    # TileDispatch itself carries no brand — brand lives on the
+    # PurchaseOrder it was raised against (PurchaseOrder.brand_id/brand_name),
+    # reachable one hop away via dispatch["purchase_order_id"]. Resolved here
+    # so the `brand_id` filter/column below has something real to use.
     po_ids = [d["purchase_order_id"] for d in dispatches]
     purchase_orders = await db.purchase_orders.find(
-        floor_query(user, {"id": {"$in": po_ids}}), {"_id": 0, "id": 1, "brand_id": 1},
+        floor_query(user, {"id": {"$in": po_ids}}), {"_id": 0, "id": 1, "brand_id": 1, "brand_name": 1},
     ).to_list(len(po_ids) + 5)
-    brand_by_po_id = {po["id"]: po.get("brand_id") for po in purchase_orders}
+    brand_by_po_id = {po["id"]: (po.get("brand_id"), po.get("brand_name")) for po in purchase_orders}
 
     rows = []
     for dispatch in dispatches:
         dispatch_status = _dispatch_status(dispatch)
         if status and status != dispatch_status:
             continue
-        # supplier/customer/destination are already pushed into the Mongo
-        # filter above (so a real MongoDB does this filtering server-side);
-        # re-checked here too, in the same spirit as the status/brand checks
-        # right below, so the endpoint's own filtering logic doesn't silently
-        # depend on the query engine actually honoring those filter keys.
-        if supplier and dispatch.get("supplier_id") != supplier:
-            continue
-        if customer and dispatch.get("customer_id") != customer:
-            continue
-        if destination and dispatch.get("destination_type") != destination:
-            continue
-        if brand and brand_by_po_id.get(dispatch["purchase_order_id"]) != brand:
+        this_brand_id, this_brand_name = brand_by_po_id.get(dispatch["purchase_order_id"], (None, None))
+        if brand_id and this_brand_id != brand_id:
             continue
         chalan = chalan_by_id.get(dispatch["chalan_id"], {})
+        if chalan_number and chalan_number.lower() not in (chalan.get("number") or "").lower():
+            continue
+        source_label = "Godown" if dispatch.get("source") == "godown" else "Released"
         for line in chalan.get("items", []):
-            rows.append({
-                "dispatch_number": dispatch.get("dispatch_number"), "chalan_number": chalan.get("number"),
-                "customer_name": dispatch.get("customer_name"), "supplier_name": dispatch.get("supplier_name"),
+            if product and product.lower() not in (line.get("tile_name") or "").lower():
+                continue
+            row = {
+                "dispatch_id": dispatch.get("id"), "dispatch_number": dispatch.get("dispatch_number"),
+                "dispatch_date": dispatch.get("dispatch_date"),
+                "customer_id": dispatch.get("customer_id"), "customer_name": dispatch.get("customer_name"),
+                "customer_order_id": dispatch.get("customer_order_id"),
+                "brand_id": this_brand_id, "brand_name": this_brand_name or dispatch.get("supplier_name") or "Unassigned",
                 "tile_name": line.get("tile_name"), "tile_size": line.get("size"), "boxes": line.get("boxes"),
-                "dispatch_date": dispatch.get("dispatch_date"), "destination": dispatch.get("destination_name"),
-                "status": dispatch_status,
-            })
+                "source": source_label,
+                "chalan_id": chalan.get("id"), "chalan_number": chalan.get("number"),
+                "vehicle_number": chalan.get("vehicle_number"), "driver_name": chalan.get("driver_name"),
+                "status": dispatch_status, "performed_by_name": dispatch.get("created_by_name"),
+            }
+            if search:
+                haystack = " ".join(str(row.get(k) or "") for k in (
+                    "customer_name", "brand_name", "tile_name", "dispatch_number", "chalan_number",
+                )).lower()
+                if search.lower() not in haystack:
+                    continue
+            rows.append(row)
     rows.sort(key=lambda r: r["dispatch_date"] or "", reverse=(sort != "date_asc"))
     start = (page - 1) * page_size
     return {"rows": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}

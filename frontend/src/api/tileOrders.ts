@@ -88,6 +88,18 @@ export type MaterialMovementRow = {
   performed_by_name: string;
 };
 
+export type DispatchListRow = {
+  dispatch_id: string; dispatch_number: string; dispatch_date: string;
+  customer_id: string | null; customer_name: string; customer_order_id: string | null;
+  brand_id: string | null; brand_name: string;
+  tile_name: string; tile_size: string | null; boxes: number;
+  source: "Released" | "Godown";
+  chalan_id: string; chalan_number: string;
+  vehicle_number: string | null; driver_name: string | null;
+  status: "Dispatched" | "At Godown" | "Delivered";
+  performed_by_name: string;
+};
+
 export type TileOrdersDashboard = {
   customer_orders: number; supplier_orders: number; dispatched_today: number; delivered_today: number;
   pending: number; ready: number; waiting_over_15_days: number; boxes_ordered: number; boxes_pending: number; revenue: number;
@@ -151,6 +163,15 @@ export const tileOrdersApi = {
 
   itemHistory: (itemId: string) => api.get<{ item_id: string; events: Record<string, any>[] }>(`/tile-orders/items/${itemId}/history`),
   dashboard: () => api.get<TileOrdersDashboard>("/tile-orders/dashboard"),
+
+  // ---- Dispatch List (operational, dispatch-only) ----
+  listDispatchList: (params?: {
+    customer_id?: string; brand_id?: string; product?: string; dispatch_number?: string;
+    chalan_number?: string; status?: string; date_from?: string; date_to?: string;
+    search?: string; page?: number; page_size?: number;
+  }) => api.get<{ rows: DispatchListRow[]; page: number; page_size: number; total: number }>(
+    `/tile-orders/dispatches${toQuery(params)}`,
+  ),
 };
 
 function toQuery(params?: Record<string, string | number | undefined>): string {

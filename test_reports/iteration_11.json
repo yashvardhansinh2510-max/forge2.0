@@ -1,0 +1,51 @@
+{
+  "summary": "Tested the BuildCon House Tile Orders workflow end-to-end (Ground Floor -> Tiles -> Tile Orders) per the user's original 'static UI' complaint and the main agent's fixes. Confirmed all 4 workflow actions (Release Material, Move to Godown, Dispatch from Released, Dispatch from Godown) are genuinely wired button->handler->API->DB->UI-refresh via a full live sequence on Task18 Test Customer / Qutone / AEMILIA GRIGIO (Ordered=10): Release 5 (Released 0->5, Remaining 5->0), Move to Godown 2 (Released 5->3, Godown 0->2), Dispatch from Released 1 (Released 3->2, Delivered 5->6), Dispatch from Godown 2 (Godown 2->0, Delivered 6->8). Final invariant Ordered=Remaining+Released+Godown+Delivered (10=0+2+0+8) verified BOTH in the UI and via a direct GET /api/tile-orders/purchase-orders/{id} call. Both previously-reported UX bugs are confirmed FIXED: every action showed a real 'Processing...' spinner (ActivityIndicator) while in flight, and both dispatch actions showed the correct success toast 'Dispatched \u2014 Chalan generated' with NO false 'Could not dispatch' error. Material Movement Register: newest-first order, chalan/dispatch numbers present ONLY on the two dispatch-type rows, search works. NEW Dispatch List tab (4th tab, correct position after Brands/before Material Movement Register) shows only dispatch rows with all required columns; View Chalan / Download PDF opens the correct URL pattern (/tile-orders/chalans/{id}/pdf?dl={token}, fresh single-use token each click, both worked live); View Customer navigates correctly. Also proved live (via a fresh TEST_-prefixed quotation created through the real place-order API flow, not a DB seed) that the 'Order Created' Material Movement row IS written correctly by domain_outbox.py \u2014 the pre-existing Task18/19 test orders simply predate this movement type's rollout, which is a historical data gap, not a current bug. Wrote and ran 20 backend pytest cases (all passed) covering every documented filter on GET /tile-orders/dispatches (customer_id, brand_id, product, dispatch_number, chalan_number, status, date range, search), the Material Movement Register's chalan-only-on-dispatch-rows invariant, and Quotations/Purchases/Brands regression. Found one real design gap: the Dispatch List's 'At Godown' and 'Delivered' status filter chips are permanently dead under the current workflow (see action_items). No mock/hardcoded data found in any reviewed tile-orders file.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/tile-orders/dispatches (status filter)",
+        "issue": "The 'At Godown' and 'Delivered' status filter chips can never return any rows under the current redesigned workflow. _dispatch_status() derives status from Dispatch.godown_received_at ('At Godown') and Dispatch.delivered_at ('Delivered'), but (a) godown_received_at is only ever set by the OLD /dispatches/{id}/godown-received endpoint, which no current frontend code calls anywhere (grepped, zero references), and (b) delivered_at is explicitly commented in models_tile_orders.py line 153 as 'future \u2014 modeled now, no action/UI this pass'. Every dispatch created via the new Dispatch-from-Released/Dispatch-from-Godown actions will forever show status='Dispatched'. Confirmed live: filtering by 'At Godown' returns 'No dispatches recorded yet.' even though real Godown-sourced dispatches exist (source=Godown, a different field, is unaffected and still correctly populated).",
+        "priority": "MEDIUM"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Dispatch List status filter chips",
+        "issue": "'At Godown' and 'Delivered' chips are non-functional dead ends (always empty) because nothing in the new workflow ever transitions a Dispatch out of the 'Dispatched' status \u2014 see backend_issues above for root cause.",
+        "affected_testIDs": ["N/A \u2014 no testID on the status filter chips; located via text 'At Godown'/'Delivered'"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tile_orders_dispatch_workflow.py",
+    "/app/test_reports/pytest/pytest_tile_orders_dispatch.xml"
+  ],
+  "action_items": [
+    "Decide the intended semantics of 'At Godown' / 'Delivered' Dispatch statuses under the new workflow and either (a) wire a UI action that sets godown_received_at/delivered_at so these chips become reachable, or (b) remove/relabel the two dead chips (e.g. drop to just All/Dispatched, or repurpose 'At Godown' to mean 'source=Godown' instead of a lifecycle status) since as shipped they can never show data and will confuse staff.",
+    "No code fix required for Release/Move to Godown/Dispatch from Released/Dispatch from Godown, Material Movement Register, or the new Dispatch List's data/search/filter behavior \u2014 all verified working correctly end-to-end.",
+    "Optional polish: add testID props throughout frontend/app/(admin)/tiles/orders/index.tsx, [id].tsx, po/[poId].tsx and src/components/tiles/TileMovementSheets.tsx \u2014 currently zero testID coverage on any Tile Orders screen/button/input, so all automated testing had to rely on visible text selectors."
+  ],
+  "critical_code_review_comments": [
+    "services/tile_movement_log.py + the record_movement() call sites in routes/tile_orders.py and services/domain_outbox.py are correctly transactional (movement rows are written inside the SAME MongoDB session/transaction as the primary write) \u2014 verified there is no risk of a movement row silently going missing for a committed mutation.",
+    "The models_tile_orders.py TileDispatch.godown_received_at / delivered_at fields are half-implemented placeholders for a future feature (explicitly commented as such) that the current GET /tile-orders/dispatches status-derivation logic (_dispatch_status) already actively depends on \u2014 this mismatch between 'modeled for later' and 'read from today' is what produces the dead filter chips flagged above.",
+    "Zero testID attributes across the entire Tile Orders frontend surface (orders/index.tsx, [id].tsx, po/[poId].tsx, TileMovementSheets.tsx) \u2014 violates the project's own testID convention used elsewhere (e.g. tiles/index.tsx, TilesDocBuilder.tsx, login.tsx all have testID) and made every interaction in this test pass dependent on exact button-label text matching."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tile_orders_dispatch_workflow.py (new: 20 pytest cases for Dispatch List filters, Material Movement Register invariants, order_created regression via live quotation->order flow, and Quotations/Purchases smoke checks)"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 pytest cases passed)",
+    "frontend": "100% of tested flows (Release Material, Move to Godown, Dispatch from Released, Dispatch from Godown, Material Movement Register, Dispatch List incl. View Chalan/Download PDF/View Customer, search/filters) worked correctly end-to-end; the one design gap found (dead At Godown/Delivered status chips) is a backend-data-availability issue surfaced through a correctly-functioning UI, not a broken UI flow"
+  },
+  "seed_data_creation": "Created 2 throwaway TEST_-prefixed tiles quotations (project_name 'TEST_OrderCreatedMovement' and 'TEST_pytest_order_created_regression', both against the existing customer 'Task19 SingleSupplier Test') via the real place-order API flow, specifically to prove the 'order_created' Material Movement row is written live for genuinely NEW orders. Not cleaned up (no delete/cancel-order endpoint was in scope to test) \u2014 both are clearly TEST_-tagged and low-value (3-7 box test lines, ~\u20b9150-700) if the main agent wants to remove them.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "CONFIRMED WORKING END-TO-END, do not re-flag: all 4 workflow actions (Release/Move to Godown/Dispatch from Released/Dispatch from Godown) are correctly wired to their APIs and persist to Mongo with correct UI refresh, busy-spinner feedback, and accurate success toasts (the two bugs described in the task's agent_communication_note are genuinely fixed). Dispatch List tab (customer/brand/product/dispatch-no/chalan-no search, View Chalan/Download PDF/View Customer) and Material Movement Register (chronological order, chalan-only-on-dispatch-rows, search) both work correctly. Order Created movement type works for NEW orders (verified live) \u2014 old Task18/19 test orders simply predate the feature and will never show an Order Created row retroactively, that's expected and not fixable by re-testing. ONLY open item: the Dispatch List's 'At Godown'/'Delivered' status filter chips are permanently dead given the current data model \u2014 needs a main-agent product decision (see action_items), not a retest.",
+  "rca_of_issue": "'At Godown'/'Delivered' dead filter chips: routes/tile_orders.py's _dispatch_status() helper derives the Dispatch List row's status purely from two TileDispatch fields \u2014 godown_received_at and delivered_at. godown_received_at is only ever written by the standalone POST /tile-orders/dispatches/{id}/godown-received endpoint, a holdover from the PRE-redesign workflow that is not called from anywhere in the current frontend (grep confirms zero call sites). delivered_at has no writer at all anywhere in the codebase \u2014 models_tile_orders.py's own inline comment calls it 'future \u2014 modeled now, no action/UI this pass'. Since the redesigned Dispatch-from-Released/Dispatch-from-Godown actions never touch either field, every dispatch they create is permanently stuck at the 'Dispatched' status bucket, making 2 of the Dispatch List's 4 status filter chips unreachable by design, not by accident."
+}
