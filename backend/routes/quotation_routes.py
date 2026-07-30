@@ -203,6 +203,10 @@ async def create_quotation(
         summary=f"{quot.number} · {quot.customer_name} · {len(items)} items",
         payload={"items": len(items), "grand_total": quot.grand_total},
     )
+    if quot.doc_type == "tiles_selection":
+        from services.walkin_service import on_selection_created
+        await on_selection_created(customer["id"], quot.id, quot.number)
+        asyncio.create_task(reconcile_followups())
     return quot
 
 
@@ -491,6 +495,8 @@ async def move_to_quotation(
         {"id": quotation_id},
         {"$set": {"doc_type": "tiles_quotation", "status": "draft", "updated_at": now_iso()}},
     )
+    from services.walkin_service import on_moved_to_quotation
+    await on_moved_to_quotation(quotation_id, doc.get("number"))
     asyncio.create_task(reconcile_followups())
     fresh = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
     return fresh

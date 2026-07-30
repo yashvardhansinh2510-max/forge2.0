@@ -97,6 +97,17 @@ class CustomerBase(BaseModel):
     # when this is true, regardless of whether a password_hash exists.
     portal_enabled: bool = False
     floor_id: str = "first-floor"
+    # ---- Reserved CRM fields (Walk-ins module, 2026-07-30) ----
+    # Cheap to add now, all optional/defaulted so every existing Customer
+    # document reads back identically — no migration. Not yet exposed in
+    # any UI beyond Walk-ins; reserved so future channels (SMS, branch
+    # transfers, lead scoring, segmentation) don't need a schema change.
+    alternate_phone: Optional[str] = None
+    preferred_contact_method: Optional[Literal["call", "whatsapp", "email", "sms"]] = None
+    preferred_contact_time: Optional[str] = None
+    assigned_branch: Optional[str] = None
+    tags: list[str] = []
+    lead_temperature: Optional[Literal["cold", "warm", "hot"]] = None
 
 
 class CustomerCreate(CustomerBase):
@@ -116,6 +127,12 @@ class CustomerUpdatePayload(BaseModel):
     tier: Optional[Literal["retail", "trade", "vip"]] = None
     notes: Optional[str] = None
     portal_enabled: Optional[bool] = None
+    alternate_phone: Optional[str] = None
+    preferred_contact_method: Optional[Literal["call", "whatsapp", "email", "sms"]] = None
+    preferred_contact_time: Optional[str] = None
+    assigned_branch: Optional[str] = None
+    tags: Optional[list[str]] = None
+    lead_temperature: Optional[Literal["cold", "warm", "hot"]] = None
 
 
 class CustomerPublic(CustomerBase, TimestampedModel):
@@ -851,7 +868,7 @@ class PurchaseAttachmentCreate(BaseModel):
 
 
 # ---------- Activity Log (audit trail) ----------
-ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup", "user", "product", "tile_customer_order"]
+ActivityEntity = Literal["quotation", "purchase", "customer", "project", "payment", "followup", "user", "product", "tile_customer_order", "walkin"]
 
 
 class ActivityEvent(TimestampedModel):

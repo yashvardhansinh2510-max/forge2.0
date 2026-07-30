@@ -63,6 +63,8 @@ RULE_DEFINITIONS = [
      "description": "Escalating reminder while a Tile Selection awaits conversion to a Quotation. Day thresholds configurable in Settings → Automation Rules (default 2/4/7/10 days)."},
     {"rule_type": "quotation_tiles_waiting", "label": "Tile Quotation waiting", "category": "quotation",
      "description": "Escalating reminder while a Tile Quotation awaits approval/order. Day thresholds configurable in Settings → Automation Rules (default 2/5/10/15 days)."},
+    {"rule_type": "walk_in_new", "label": "Walk-in waiting", "category": "walk_in",
+     "description": "Escalating reminder while a Walk-in has not yet reached a Selection. Day thresholds configurable in Settings → Automation Rules (default 1/3/7/14 days). Auto-closes the moment a Selection is created for that customer."},
     {"rule_type": "quotation_expiring", "label": "Quotation expiring", "category": "quotation",
      "description": "Valid-until date falls within the next 3 days."},
     {"rule_type": "quotation_expired", "label": "Quotation expired", "category": "quotation",
@@ -316,6 +318,55 @@ async def _tiles_pipeline_producer(quotations: list[dict], customers: dict[str, 
     return out
 
 
+async def _walkin_producer(customers: dict[str, dict], contact_map: dict) -> dict[str, dict]:
+    """Walk-ins (Phase 4). Same shape as _tiles_pipeline_producer above —
+    reads the customer's own `visited_at`, escalates via the existing
+    generic score_followup(), and auto-closes for free once status leaves
+    WALKIN_OPEN_STATUSES (Selection created for that customer)."""
+    from models_walkins import WALKIN_OPEN_STATUSES
+    from services.automation_rules import get_offsets
+
+    offsets = await get_offsets("walk_in")
+    first_offset = offsets[0] if offsets else 1
+    out: dict[str, dict] = {}
+    walkins = await db.walkins.find(
+        {"status": {"$in": WALKIN_OPEN_STATUSES}, "is_deleted": False}, {"_id": 0},
+    ).to_list(5000)
+    for w in walkins:
+        cust = customers.get(w.get("customer_id")) or {"id": w.get("customer_id"), "tier": "retail"}
+        visited_at = parse_iso(w.get("visited_at"))
+        if not visited_at:
+            continue
+        days_waiting = age_days(visited_at)
+        if days_waiting < first_offset:
+            continue
+        stage = min(4, sum(1 for o in offsets if days_waiting >= o))
+        stage_label = _STAGE_LABELS.get(stage, "Follow-up due")
+        tier = cust.get("tier", "retail")
+        last_contact = contact_map.get(w.get("customer_id")) or visited_at
+        days_since_contact = age_days(last_contact)
+        urgency_pts = min(35, days_waiting * 4)  # walk-ins escalate a little faster than Selections (shorter cadence)
+        score, level = score_followup(0, days_since_contact, urgency_pts, tier)
+        if stage >= 4:
+            level = "critical"
+        out[f"walk_in_new:{w['id']}"] = {
+            "rule_type": "walk_in_new", "category": "walk_in",
+            "customer_id": w.get("customer_id"), "customer_name": w.get("customer_name"),
+            "customer_phone": w.get("customer_phone"), "customer_tier": tier,
+            "quotation_id": None, "quotation_number": None,
+            "purchase_id": None, "purchase_number": None, "project_name": None,
+            "value": 0.0,
+            "reason": f"Walk-in {w.get('number')} waiting {days_waiting} day(s) — {stage_label}.",
+            "reason_factors": reason_factors_for(0, days_since_contact, f"Walk-in waiting {days_waiting} day(s)", tier),
+            "next_action": "Call customer", "next_action_reason": stage_label,
+            "suggested_channel": "call" if stage < 3 else "whatsapp",
+            "priority_score": score, "priority_level": level,
+            "tags": [tier.upper(), "WALK_IN"], "due_at": now_iso(),
+            "floor_id": w.get("floor_id"),
+        }
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Reconciliation — the single write path for automated cards.
 #
@@ -483,6 +534,9 @@ async def _reconcile_followups_locked() -> dict:
 
     # ---- Tile Selections / Tile Quotations (Follow-ups 2.0 workspaces) --------
     desired.update(await _tiles_pipeline_producer(quotations, customers, contact_map))
+
+    # ---- Walk-ins (Phase 4) -----------------------------------------------------
+    desired.update(await _walkin_producer(customers, contact_map))
 
     # ---- Purchase-based rules ---------------------------------------------------
     pos = await db.purchase_orders.find({"status": {"$ne": "cancelled"}}, {"_id": 0}).to_list(10000)

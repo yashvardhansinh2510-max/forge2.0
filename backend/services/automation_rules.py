@@ -23,6 +23,7 @@ from models import AutomationRule, now_iso
 DEFAULT_RULES: dict[str, dict] = {
     "selection": {"label": "Tile Selection waiting", "reminder_offsets_days": [2, 4, 7, 10]},
     "quotation_tiles": {"label": "Tile Quotation waiting", "reminder_offsets_days": [2, 5, 10, 15]},
+    "walk_in": {"label": "Walk-in waiting", "reminder_offsets_days": [1, 3, 7, 14]},
 }
 
 

@@ -1,410 +1,564 @@
 <analysis>original_problem_statement:
-BuildCon House requested a **Tile Orders business-workflow redesign** for Ground Floor Tiles. The workflow must be owned by Brands and Customers—not by technical Purchase Order/Supplier screens—while reusing existing backend logistics entities where possible.
+BuildCon House ERP is being extended from the approved Follow-ups 2.0 Selections/Quotations work into **Phase 4: a company-wide Walk-ins CRM module**.
 
 PRODUCT REQUIREMENTS:
-- After approved quotation, grouped Purchase Orders by Brand must appear in both Customer Orders and Brand Orders.
-- Navigation under Tile Orders must be:
-  - Customer
-  - Brands
-  - Material Movement Register
-- Replace all user-facing vocabulary:
-  - Company → Brands
-  - Dispatch List → Material Movement Register
-  - Mark Ready For Pickup → Release Material
-  - Ready → Released
-  - Pending in supplier context → Remaining
-- Brand responsibility: **Release Material only**.
-  - Show Ordered / Released / Remaining in Boxes.
-  - Partial releases allowed.
-  - No Godown, customer delivery, or Chalan controls on Brand screens.
-- Customer responsibility:
-  - Show Ordered / Released / Godown / Delivered, grouped by Brand.
-  - Move to Godown transfers Released → Godown.
-  - Dispatch from Released and Dispatch from Godown support partial Boxes.
-- Dispatch must create Dispatch record, Chalan, and Chalan PDF.
-- Release and Godown movements must not create Chalans.
-- Material Movement Register must be the immutable, chronological audit source of truth:
-  - Order Created
-  - Release
-  - Move to Godown
-  - Dispatch from Released
-  - Dispatch from Godown
-  - Delivered (future)
-  - Include datetime, type, customer, brand, product, boxes, source/destination, chalan/dispatch numbers if applicable, and actor.
-  - Filters: customer, brand, movement type, date range, chalan number, dispatch number, search.
-- Use **Boxes** consistently in UI; existing  persists as internal storage.
-- Fully replace old internal ERP routes/labels; no legacy aliases needed.
-- Preserve backend/internal class names such as , ,  unless user-facing behavior requires a change.
+- Walk-ins are a standalone top-level module, not inside Follow-ups.
+- Walk-ins are the entry point of the reusable sales pipeline:
+  .
+- Reuse one Customer profile throughout; never create duplicate customers.
+- Walk-in records require customer/phone, alternate phone, visit date/time, salesperson, configurable source, interested department/products, budget, notes, priority, next follow-up, and lifecycle status.
+- Lifecycle: New → Contacted → Selection Scheduled → Selection Completed → Quotation Created → Converted, or Lost.
+- Creating a Walk-in must create/reuse a Customer, create a Walk-in Follow-up through the shared Follow-up engine, and schedule reminders from automation rules.
+- Creating a Tile Selection for that customer should update/close the linked Walk-in follow-up and continue into Selection Follow-ups.
+- New Walk-ins dashboard: KPIs, list/card views, global search, filters, actions, and analytics.
+- Sources must be database-configurable rather than hardcoded.
+- Future-ready optional CRM fields: preferred contact method/time, branch, department, tags, lead temperature.
+- Reuse existing customer, activity timeline, Follow-up engine, automation engine, WhatsApp/email provider abstractions.
+- Do not regress Selections, Quotations, Tile Orders, Follow-ups, or Payments.
+- Mandatory verification before declaring completion: customer dedupe, follow-up creation/scheduling, selection transition/closure, customer timeline, KPI/search/filter correctness, no duplicate customers, and regressions.
 
 **User's preferred language**: English. Respond in English only.
 
-**what currently exists?**
-- Full-stack Expo Router + FastAPI + MongoDB Atlas application.
-- Tile workflow has been redesigned and implemented around:
-  - customer-facing operational controls,
-  - brand-specific Release-only workflow,
-  - Material Movement Register audit log.
-- Backend health was verified after restart:
-  - MongoDB connected.
-  - Supabase connected.
-  - Backend healthy.
-  - Expo service running.
-- Backend and frontend workflow testing passed, including targeted partial-quantity math.
+---
 
-**Last working item**:
-- Last item agent was working: Closing and handing over the completed Tile Orders workflow redesign after testing.
-- Status: USER VERIFICATION PENDING.
-- Agent Testing Done: Y.
-- Which testing method agent to use?: Both backend testing agent and browser-based frontend testing agent were used.
-- User Testing Done: N.
+## what currently exists?
+- Full-stack Expo Router + FastAPI + MongoDB BuildCon House ERP.
+- Previously completed and tested:
+  - Tile Orders redesign, movements, Chalan workflow, Dispatch List.
+  - Follow-ups 2.0 shared event/reconciliation engine.
+  - Tile Selections and Tile Quotations dedicated Follow-up workspaces.
+  - Configurable selection/quotation automation cadence and priority logic.
+  - Reconcile concurrency race-condition protection using an application lock plus unique  index.
+- Phase 4 Walk-ins implementation has been started substantially:
+  - Backend Walk-in model, routes, service, indexes, configuration handling, automation producer, quotation transition hooks, and activity entity support were added.
+  - Frontend Walk-ins API wrapper, dashboard/list, new Walk-in form, detail page, card component, and sidebar/mobile navigation entries were added.
+- Backend Python syntax checks succeeded and direct service-level smoke checks were performed.
+- The frontend was linted cleanly.
+- Services were restarted and appeared running.
+- However, real authenticated frontend Walk-ins flow testing has **not** been successfully completed, and testing agent verification has not yet occurred.
 
-**All Pending/In progress Issue list**:
+---
 
-Issue 1: User acceptance / real-device validation of redesigned Tile Orders workflow (P0)
-- Attempted fixes: Not applicable; automated testing passed.
-- Next debug checklist:
-  - Test a brand release on a real Expo device.
-  - Verify Customer page counters after release.
-  - Verify Godown and both dispatch source actions.
-  - Confirm Chalan PDF opens/downloads correctly in intended mobile environment.
-  - Verify Material Movement Register filters against production-like data.
-- Why fix this issue and what will be achieved with the fix?: Confirms operational usability beyond browser automation.
-- Status: USER VERIFICATION PENDING.
-- Is recurring issue?: N.
-- Should Test frontend/backend/both after fix?: Both if a user-reported data/state discrepancy is found.
-- Blocked on other issue: None.
+## Last working item
+- **Last item agent was working:** Phase 4 Walk-ins frontend verification after implementing backend, API client, dashboard, form, detail page, navigation, Follow-up producer, dedupe, and selection/quotation transition hooks.
+  - The agent attempted browser screenshots, but login automation repeatedly remained at  due to an authentication/session issue. The final screenshot did reach , but the Walk-ins page/action flow was not exercised.
+  - This means the core requested end-to-end verification has not happened yet.
+- **Status:** IN PROGRESS
+- **Agent Testing Done:** N
+- **Which testing method agent to use?:** Both backend testing agent and frontend Expo testing agent. Use  after first updating  according to its Testing Protocol.
+- **User Testing Done:** N
 
-Issue 2: Expo compatibility warning (P2)
-- Attempted fixes: None; it did not block Metro bundling or tests.
-- Next debug checklist:
-  - Inspect .
-  - Upgrade Expo from  to the expected compatible patch version , only after checking project dependency compatibility.
-  - Restart Expo and verify bundle.
-- Why fix this issue and what will be achieved with the fix?: Removes non-blocking Metro compatibility warning.
-- Status: NOT STARTED.
-- Is recurring issue?: N.
-- Should Test frontend/backend/both after fix?: Frontend.
-- Blocked on other issue: None.
+---
 
-Issue 3: Default demo owner password warning (P1 security/operations)
-- Attempted fixes: The owner password was temporarily rotated during work to enable login, but a later backend restart reported that  still has a known default password.
-- Next debug checklist:
+## All Pending/In progress Issue list
+
+### Issue 1: Complete Phase 4 Walk-ins end-to-end verification and fix any discovered integration defects — P0
+- **Attempted fixes:**  
+  - Backend syntax compilation passed for new/changed files.
+  - Direct Python smoke test created a test customer/walk-in, confirmed duplicate detection found the same customer, reconciled follow-ups, then tested selection and quotation status transition helpers.
+  - Test data was cleaned up afterward.
+  - Frontend lint passed for new Walk-ins files and layout.
+  - Browser screenshot attempts were blocked by login/session interaction inconsistency; Walk-ins UI was not actually tested.
+- **Next debug checklist:**
+  1. Read  before attempting login.
+  2. Check backend logs for login/auth errors and use  if authentication code needs modification.
+  3. Authenticate successfully in the preview using the valid test account.
+  4. Verify  renders and fetches live  data without 401s.
+  5. Create a fresh Walk-in from UI with a unique test phone.
+  6. Verify backend persistence in , customer create-or-reuse logic, and a  Follow-up created exactly once after reconcile.
+  7. Create a second Walk-in using same phone/alternate phone and confirm it links to the existing Customer but creates a distinct Walk-in activity.
+  8. Verify dashboard KPIs, search, status/priority/source/date/department filters, detail page, timeline, and actions.
+  9. Create a Tile Selection linked to the Walk-in customer and verify the Walk-in changes status/auto-closes correctly while Selection Follow-up opens.
+  10. Promote the selection to quotation and verify quotation status hook.
+  11. Run regression checks for existing Follow-ups Selections/Quotations, Tile Orders, Payments.
+  12. Invoke ; only its report can mark the user-reported verification requirement tested.
+- **Why fix this issue and what will be achieved with the fix?:** Confirms the new CRM foundation is genuinely wired to live backend data and automation rather than only compiling/rending.
+- **Status:** TESTING PENDING
+- **Is recurring issue?:** N
+- **Should Test frontend/backend/both after fix?:** Both
+- **Blocked on other issue:** Login/session reliability during browser automation may need resolution.
+
+### Issue 2: Browser login automation/session behavior blocks frontend test flow — P0
+- **Attempted fixes:**
+  - Multiple screenshot-tool login attempts were made.
+  - Earlier test attempts reached  even after filling credentials; browser console showed 401s for protected endpoints when not authenticated.
+  - Final attempt reached , indicating backend/auth may be healthy and issue could be automation timing/session state rather than API logic.
+- **Next debug checklist:**
   - Read .
-  - Review .
-  - Rotate demo/default credentials using the supported script and update the credential file.
-  - Re-authenticate and rerun an authenticated smoke test.
-- Why fix this issue and what will be achieved with the fix?: Removes a startup CRITICAL security warning and prevents publicly known demo credentials in the active environment.
-- Status: NOT STARTED.
-- Is recurring issue?: N.
-- Should Test frontend/backend/both after fix?: Backend and auth frontend smoke test.
-- Blocked on other issue: None.
+  - Confirm credential validity through the supported UI flow, checking backend logs simultaneously.
+  - Check current auth UI selectors and whether browser script clicks the correct submit control.
+  - Confirm AsyncStorage/web storage token persistence and  response after login.
+  - Do not treat cache clearing/incognito as an auth fix.
+  - If auth source modification is needed, call  first, as required by system instructions.
+- **Why fix this issue and what will be achieved with the fix?:** Enables mandatory real UI validation of Walk-ins.
+- **Status:** IN PROGRESS
+- **Is recurring issue?:** Y; browser login timing/automation had also been flaky in earlier Tile Orders testing, although previous flows were ultimately tested.
+- **Should Test frontend/backend/both after fix?:** Both
+- **Blocked on other issue:** None.
 
-**In progress Task List**:
-- No implementation task remains actively in progress. The completed feature awaits user confirmation.
+### Issue 3: Walk-in activity timeline model addition needs verified API/UI consumption — P1
+- **Attempted fixes:**
+  - Direct service smoke test initially revealed activity logging failed because  did not permit .
+  - Agent updated the literal to include , restarted backend, and created a direct activity record successfully.
+- **Next debug checklist:**
+  - Confirm  / customer timeline query includes Walk-in events as intended.
+  - Test Walk-in detail screen timeline with events generated from actual UI actions.
+  - Confirm the newly created direct smoke activity was cleaned; only temporary test activity deletion was confirmed.
+- **Why fix this issue and what will be achieved with the fix?:** Ensures the requested customer journey timeline is usable, not just write-capable.
+- **Status:** TESTING PENDING
+- **Is recurring issue?:** N
+- **Should Test frontend/backend/both after fix?:** Both
+- **Blocked on other issue:** Issue 2 login automation.
 
-**Upcoming and Future Tasks**
-Upcoming Tasks:
-- P0: User validation of Tiles workflow on Expo Go / mobile device.
-- P1: Rotate/remove default demo credentials safely, update .
-- P2: Resolve Expo package patch compatibility warning.
+### Issue 4: Default demo owner password security warning — P1
+- **Status:** NOT STARTED
+- **Details:** Backend still reports  has the known default demo password at startup.
+- **Next debug checklist:** Read , use , update credentials file safely, then perform authenticated smoke test.
+- **Should Test frontend/backend/both after fix?:** Both
+- **Blocked on other issue:** None.
 
-Future Tasks:
-- P1: Add Delivered as an actual operational movement/action once business process requirements are confirmed; it is already represented as a future movement type concept.
-- P2: Add richer Material Movement Register search/filter UI testing, particularly search/chalan/dispatch filters. Current workflow/API verification passed, but browser agent noted this can be expanded later.
-- P2: Clean up old unlinked legacy tile endpoints/models only after rollout stability, per prior design scope. Do not remove existing engine routes without regression assessment.
+### Issue 5: Expo package patch warning — P2
+- **Status:** NOT STARTED
+- **Details:** Expo  versus expected ; non-blocking in previous sessions.
+- **Should Test frontend/backend/both after fix?:** Frontend.
 
-**Completed work in this session**
-- Designed sitemap, navigation flow, screen hierarchy, and quantity state transitions; user approved before implementation.
-- Added immutable material movement audit logging.
-- Added initial Order Created movements when Tile customer orders are generated from quotation processing.
-- Added Release Material workflow with partial quantities.
-- Added Move to Godown workflow with partial quantities.
-- Added source-specific dispatch workflows:
-  - Dispatch from Released
-  - Dispatch from Godown
-- Preserved automatic Dispatch, Chalan, and PDF generation for dispatch only.
-- Added Material Movement Register backend query/filtering.
-- Replaced Tile Orders UI terminology and removed old Company UI route.
-- Built new Customer, Brands, Brand Detail, Release-only PO Detail, and Material Movement Register UI.
-- Updated typed frontend API client for new endpoints.
-- Updated indexes for material movements.
-- Backend testing: 11/11 workflow scenarios passed.
-- Browser E2E testing passed.
-- Targeted browser verification of partial math passed:
-  - Release → Godown → dispatch-from-released → dispatch-from-godown.
-  - Counter invariants and audit entries verified.
+---
 
-- Recently completed:
-  - Tile Orders workflow redesign (implementation complete; user verification pending).
-  - Material Movement Register audit model/service/endpoints.
-  - Brand Release-only UI.
-  - Customer Godown/direct dispatch UI.
-  - Chalan generation restricted to dispatch.
+## In progress Task List
 
-**Earlier issues found/mentioned but not fixed**
-- Expo reports expected package patch mismatch: installed , expected . Non-blocking.
-- Backend startup reports known default demo-password warning for ; must be addressed in a separate credential/security task.
-- Existing unrelated lint warning in :
-  -  around line 794.
-  - It pre-existed and was not part of new Tile Orders files.
-  - Debug checklist: replace apostrophe text with JSX-safe syntax.
-  - Test frontend afterward.
-  - Recurring: N.
+### Task 1: Finish Phase 4 Walk-ins verification — P0
+- **Where to resume:** Start from authenticated frontend validation of  and , then invoke the mandated testing agent.
+- **What will be achieved with this?:** Confirms the Walk-ins CRM module satisfies the user’s mandatory verification criteria.
+- **Status:** TESTING PENDING
+- **Should Test frontend/backend/both after fix?:** Both
+- **Blocked on something:** Browser login/session automation uncertainty.
 
-**Known issue recurrence from previous fork**
-- No previous handoff summary was provided in this conversation.
-- Recurrence count: 0.
-- Status: NONE.
+### Task 2: Validate and refine Walk-in → Tile Selection → Tile Quotation progression — P0
+- **Where to resume:**  
+  - 
+  - 
+  - 
+  - 
+- **What will be achieved with this?:** Ensures automatic status advancement, Follow-up auto-close, and new Selection/Quotation Follow-up creation have no lifecycle gaps.
+- **Status:** TESTING PENDING
+- **Should Test frontend/backend/both after fix?:** Both
+- **Blocked on something:** Issue 2.
 
-**Code Architecture**
+---
+
+## Upcoming and Future Tasks
+
+### Upcoming Tasks
+1. **P0 — Phase 4 Walk-ins formal test and verification**
+   - Complete mandatory user-specified test matrix with .
+   - Update  before test-agent invocation.
+
+2. **P1 — Implement configurable Walk-in source management UI**
+   - Backend groundwork appears to use settings/configuration, but it needs confirmation that authorized staff can configure lead sources through a settings UI rather than only code/database defaults.
+   - Relevant files: , , settings frontend/backend modules.
+
+3. **P1 — Confirm/implement full Walk-ins analytics**
+   - User requested funnel metrics: Walk-ins → Selections → Quotations → Orders plus conversion rate, average days, lost leads, revenue generated/lost, salesperson performance.
+   - Current dashboard implementation must be checked against this complete list; no testing evidence yet confirms all required metrics exist and are live.
+
+4. **P1 — Resolve default demo credentials**
+   - Rotate safely and update test credentials documentation.
+
+### Future Tasks
+1. **P1 — Phase 5 Payments workspace**
+   - Payment milestones/terms must be modeled at quotation/order level.
+   - Payment follow-ups must derive from milestone conditions and outstanding balances, not fixed due-date assumptions.
+   - Do not implement unless user confirms scope/phase start.
+
+2. **P2 — Full communication channel implementation**
+   - Current WhatsApp and email behavior is intended to be provider-based deep links only.
+   - Future options include WhatsApp Business API, transactional email, delivery/open tracking, attachment support, templates, scheduled sends, and communication history.
+
+3. **P2 — Additional departments**
+   - Reuse Walk-ins CRM foundation for Sanitary, Paints, Hardware, Kitchens, Lighting, etc. through configurable departments, not separate entities.
+
+4. **P2 — Delivered movement action**
+   - Tile workflow audit retains Delivered as a future concept; it is not yet an operational movement/action.
+
+---
+
+## Completed work in this session
+- Follow-ups 2.0 Selection and Tile Quotation workspaces, shared automation, priority/reminder configuration, and deep-link actions were completed in the prior part of this session and testing agent verified the race-condition repair.
+- Follow-up reconcile race condition fixed:
+  - Application-level in-progress lock.
+  - Unique  database index.
+  - Existing duplicate follow-up rows cleaned.
+  - Testing agent regression suite passed 11/11 after repair.
+- Phase 4 Walk-ins implementation started:
+  - Added reusable Walk-in model and service foundation.
+  - Added customer dedupe/reuse behavior by phone/alternate phone.
+  - Added Walk-in Follow-up automation producer and default Walk-in automation rule.
+  - Added quotation transition hooks for linked Walk-ins.
+  - Added Walk-ins routes and Mongo indexes.
+  - Added frontend Walk-ins list/dashboard, create, detail, card component, typed API wrapper, and navigation.
+  - Added  activity entity support after direct test exposed the missing literal.
+
+---
+
+## Earlier issues found/mentioned but not fixed
+1. **Authenticated UI testing not completed**
+   - Debug checklist: resolve/reproduce login automation issue; validate Walk-ins pages end-to-end.
+   - Why to solve: required before calling the phase complete.
+   - Should Test frontend/backend/both after fix: Both.
+   - Is recurring issue: Y, automation login has been unreliable in prior browser tooling runs.
+
+2. **Known default demo password**
+   - Debug checklist: run supported rotation script and update the secure credentials file.
+   - Why to solve: removes backend startup critical security warning.
+   - Should Test frontend/backend/both after fix: Both.
+   - Is recurring issue: N.
+
+3. **Expo patch compatibility warning**
+   - Debug checklist: carefully upgrade patch version only through package manager/Expo-compatible procedure.
+   - Should Test frontend/backend/both after fix: Frontend.
+   - Is recurring issue: N.
+
+4. **Pre-existing ESLint warning**
+   - , unescaped apostrophe around historical line ~794.
+   - Not caused by Walk-ins work.
+   - Should Test frontend/backend/both after fix: Frontend.
+   - Is recurring issue: N.
+
+---
+
+## Known issue recurrence from previous fork
+- **Issue recurrence in previous fork:** Browser automated login/session checks periodically failed or required retries during earlier Tile Orders and Follow-ups verification.
+- **Recurrence count:** At least 2 feature cycles.
+- **Status:** IN PROGRESS
+- **Important:** The API/backend may work; do not assume failed screenshot login means feature failure. Inspect actual auth logs and credentials, then use testing agent after successful authentication.
+
+---
+
+## Code Architecture
 
 
-**Key Technical Concepts**
-- Frontend: Expo, Expo Router file-based routes, React Native, TypeScript, StyleSheet-based native UI.
-- Backend: FastAPI, Pydantic models, Motor async MongoDB access.
-- Database: MongoDB Atlas ( was identified as the relevant active dataset).
-- File/PDF: Existing ReportLab Chalan generation retained.
-- Storage: Supabase configured for application storage.
-- Auth: JWT staff authentication, role/floor-scoped API behavior.
-- Domain/outbox: quotation processing creates Purchase Orders and Tile Customer Orders, with movement log entries now created for order creation.
-- Audit logging: material movements recorded append-only/immutable in .
+---
 
-**key DB schema**
--  / CustomerOrder:
-  - uid=0(root) gid=0(root) groups=0(root), , , , , , , timestamps.
-  - Groups customer view by brand/products.
--  / PurchaseOrder:
-  - uid=0(root) gid=0(root) groups=0(root), , , , , , , , .
-  - Item quantity fields include internal quantity values for ordered, released/ready, godown, dispatched, and remaining/pending.
--  / ReadyBatch:
-  - Existing underlying logistics data for released material.
--  / Dispatch:
-  - Created only for dispatch operations, includes dispatch source semantics and links to Chalans.
--  / Chalan:
-  - Generated only by dispatch operations, has PDF endpoint.
--  / TileMaterialMovement:
-  - Immutable history records for Order Created, Release, Godown movement, and dispatch movement.
-  - Key fields: datetime, movement type, customer/brand/product identity, boxes, source, destination, dispatch/chalan identifiers where applicable, actor, related PO/customer order/item identifiers, floor scope.
+## Key Technical Concepts
+- **Frontend:** Expo, Expo Router file-based routes, React Native, TypeScript, StyleSheet-based UI.
+- **Backend:** FastAPI, Pydantic v2 models, asynchronous Motor MongoDB driver.
+- **Database:** MongoDB collections with floor-scoped access.
+- **Authentication:** JWT staff auth; active floor passed through frontend API client headers.
+- **Follow-up architecture:** deterministic, event/reconciliation-oriented engine; no LLM involved.
+- **Concurrency safety:** application lock skips concurrent reconciliations; unique  index protects against duplicated active automated Follow-ups.
+- **CRM architecture:** reusable Walk-ins model designed for multiple departments rather than Tile-specific entities.
+- **Messaging:** provider abstraction; Phase 1 uses generated WhatsApp and mailto deep links, not external messaging/email API integration.
+- **Audit timeline:** activity events stored in activity collection and rendered as timeline read models.
+- **Tile workflow:** immutable material movement ledger, source-specific dispatch, Chalan/PDF generation.
 
-**changes in tech stack**
+---
+
+## key DB schema
+- **customers**
+  - Existing core customer profile.
+  - Extended/reserved fields likely include CRM contact and segmentation fields such as alternate phone, preferred contact method/time, assigned branch/department, tags, lead temperature.
+  - Relationship: , quotations/customer orders/payments link to same customer ID.
+
+- **walkins** *(new)*
+  - Key fields: uid=0(root) gid=0(root) groups=0(root), , , , customer snapshot/contact fields, alternate phone, visit datetime, salesperson fields, source, interested department/products, budget, notes, priority, status, next follow-up, conversion/loss metadata, linked selection/quotation IDs, timestamps.
+  - Supports multiple Walk-in activities linked to a single customer.
+
+- **followups**
+  - Existing Follow-up entity.
+  - Automated rows use unique .
+  - New Walk-in category/rule type expected: .
+  - Lifecycle uses open/snoozed/completed/resolved states and auto-resolution from reconciliation.
+
+- **automation_rules**
+  - Stores configurable reminder cadence by category, including Selection, Tile Quotation, and newly seeded Walk-in cadence/rule.
+
+- **activity_events**
+  - Immutable timeline data.
+  -  expanded to include .
+
+- **quotations**
+  - Existing shared entity where  distinguishes  and .
+  - Quotation transition hooks now update related Walk-in status where linked.
+
+- **tile_customer_orders**, **purchase_orders**, **dispatches**, **chalans**, **material_movements**
+  - Existing Tile logistics workflow schema remains unchanged by Phase 4.
+
+---
+
+## changes in tech stack
 - No tech stack migration.
 - No MongoDB → PostgreSQL migration.
-- Existing MongoDB, FastAPI, Expo Router, and Supabase setup retained.
+- No new paid third-party integration.
+- WhatsApp/email remain local deep-link functionality through service abstractions; no WhatsApp Business API or transactional email provider integration was introduced.
 
-**All files of reference**
-Files created/updated this session:
-- 
-  - Added  model and related Tile order quantity support.
-- 
-  - New movement-log helper/service for immutable register entries.
-- 
-  - Emits initial “Order Created” material movement records when Tile orders arise from quotation processing.
-- 
-  - Added/updated brand listing/detail, Release, Move to Godown, dispatch source endpoints, movement register filters, and data returned for counters.
-- 
-  - Material movement indexes.
-- 
-  - Updated API client for redesigned workflow endpoints and active floor behavior.
-- 
-  - Reworked reusable display counters for Brand vs Customer operational quantities.
-- 
-  - New quantity-entry bottom sheets for Release, Godown movement, and dispatch workflows.
-- 
-  - Removed because it was replaced by .
-- 
-  - Redesigned tab navigation: Customer, Brands, Material Movement Register.
-- 
-  - New Brand-specific customer orders screen.
-- 
-  - Converted to Release-only Brand PO detail.
-- 
-  - Customer operational detail with grouped brands and Godown/dispatch actions.
-- 
-  - Removed along with old Company folder.
-- 
-  - Updated with testing/report status according to protocol.
-- 
-  - Created/updated with owner test credentials during session.
-- , 
-  - Restored locally to get preview services running. These contain sensitive configuration and must not be exposed.
+---
 
-Other important files:
-- 
-  - Approved workflow specification/design reference.
-- 
-  - Existing status derivation logic; contains some historical terminology internally but user-facing UI was refactored.
-- 
-  - Existing Chalan PDF machinery retained.
-- 
-  - API client/token handling; active floor headers are applied centrally.
-- 
-  - Product context and historical restoration notes.
-- 
-  - Must be read and obeyed before future test agent invocation.
+## All files of reference
 
-**Areas that need refactoring**
--  still exposes an internal ; operational box counters are now primary. Consider removing generic status emphasis only after verifying no other Tile view requires it.
-- Legacy endpoints/screens and old terminology may remain internally/unlinked; do not delete them until post-rollout stabilization and regression coverage.
--  has unrelated existing ESLint issue requiring escaping an apostrophe.
-- The testing flow used real records; future tests should either provision and clean up dedicated test fixtures or isolate a test tenant to avoid cluttering operational data.
+### Created or updated in current Walk-ins work
+- 
+  - Extended Customer/Activity/Follow-up related typed schema support.
+  - Added  to activity entity literal after smoke test revealed missing support.
+- 
+  - New Pydantic Walk-in request/response/domain models.
+- 
+  - New reusable Walk-in dedupe, creation/reuse, transition, and automation-support logic.
+- 
+  - Added Walk-in Follow-up producer and reconciliation integration.
+  - Previously also contains reconciliation concurrency protections.
+- 
+  - Added/seeded Walk-in automation rule behavior.
+- 
+  - New Walk-ins API endpoints.
+- 
+  - Added hooks to update linked Walk-ins when a Tile Selection is created/promoted to quotation.
+- 
+  - Registered Walk-ins router.
+- 
+  - Added Walk-ins collection indexes plus previous Follow-up  unique index.
+- 
+  - New typed Walk-ins API client.
+- 
+  - New live-data Walk-in card component.
+- 
+  - New Walk-ins dashboard/list and filters.
+- 
+  - New Walk-in form with duplicate-detection UI flow.
+- 
+  - New Walk-in detail/action/timeline screen.
+- 
+  - Added Walk-ins to desktop/sidebar and mobile navigation.
+- 
+  - Updated for previous Follow-ups testing work; must be read and updated again before the next test-agent call.
+- 
+  - Updated earlier for Follow-ups 2.0 progress, but should be updated again when Phase 4 is actually tested/finished.
 
-**key api endpoints**
-All endpoints are under  through ingress:
+### Important existing files
 - 
-  - Customer Tile Orders list.
 - 
-  - Customer operational detail, grouped product/brand values.
 - 
-  - Brand list for current floor.
 - 
-  - Orders under a selected Brand.
 - 
-  - Brand-facing PO detail.
 - 
-  - Existing endpoint reused/relabelled for **Release Material**.
 - 
-  - Transfers Released → Godown.
 - 
-  - Partial dispatch from Released; creates Dispatch + Chalan + PDF.
 - 
-  - Partial dispatch from Godown; creates Dispatch + Chalan + PDF.
 - 
-  - Material Movement Register with filters.
-- 
-  - Chalan PDF download.
-- Existing history/ready-batch/detail endpoints remain for underlying compatibility.
 
-**Critical Info for New Agent**
-- Follow the user’s business language exactly in new user-facing changes:
-  - Brands, Release Material, Released, Remaining, Godown, Dispatch from Released, Dispatch from Godown, Material Movement Register, Boxes.
-- Do not reintroduce Company, Dispatch List, Mark Ready For Pickup, Ready, or supplier-managed Godown/Dispatch actions into frontend UI.
-- Brand screens must contain Release Material only.
-- Customer screens own warehouse/direct-delivery decisions.
-- Chalan must only be created on dispatch.
-- Maintain quantity invariant per item:
-  - Ordered Boxes = Remaining + Released + Godown + Delivered/Dispatched, according to the model’s existing representation.
-- Use existing internal  storage and existing models where possible; avoid model renames that create unnecessary migration risk.
-- Use current active-floor API/header behavior; do not hardcode .
-- Do not alter protected frontend/backend environment URL configuration.
-- Before running any test agent, read and update  in accordance with its Testing Protocol.
-- For any authentication issue, read , inspect backend logs, and use the existing auth approach. Do not merely suggest clearing cache.
-- The session created local  files because they had disappeared in the ephemeral workspace. Treat all secrets as sensitive; do not repeat or expose their contents.
+---
 
-**documents and test reports created in this job**
-Supporting docs:
-- Existing design reference used:
-  - 
-- Test protocol/report updated:
-  - 
-- Credential tracking:
-  - 
-- Existing test report locations:
-  - 
-  - Exact new test report paths were not visible in the supplied history; inspect this directory and  before relying on a specific iteration file.
+## Areas that need refactoring
+- The Follow-ups screen is large (, approximately 1900 lines). Future workspace additions should avoid making it larger; extract workspace-specific views if modifying it substantially.
+- Validate whether  returns all frontend-required fields consistently and shares response shapes with .
+- Verify customer lookup/dedupe normalizes phone values consistently (spaces, country prefixes, punctuation) before production reliance; direct smoke only confirmed one matching case.
+- Confirm settings-based lead sources are actually editable through UI, not merely seeded/read in backend.
+- Confirm activity timeline query includes customer-linked Walk-in events, rather than only entity-specific lookup, on the customer-facing timeline.
+- Avoid injecting additional lifecycle logic directly into quotation routes if future event processor abstraction is introduced; current hooks are acceptable for MVP but should remain centralized over time.
+- Do not remove legacy Follow-up/Tile endpoints until all current consumers are regression-tested.
 
-**Last 10 User Messages and any pending HUMAN messages**
-1. User requested a complete browser E2E verification of Tile Orders workflow, including actions, backend state, register, Chalan PDF, regressions, floor scoping, multi-brand orders, and partial invariants.  
-   - Status: Completed through frontend testing agents; no failures reported in final targeted run.
-2. System reminder following bug report required testing agent verification after a fix.  
-   - Status: Satisfied; testing agents were invoked.
-3. User responded “Start the task now” after initial continuation request.  
-   - Status: Completed.
-4. User approved the Material Movement Register as complete immutable audit source of truth and specified movement/event/filter requirements.  
-   - Status: Implemented and tested.
-5. User approved complete replacement of old UI terminology/routes, with no aliases.  
-   - Status: Implemented.
-6. User confirmed Boxes as the sole primary operational unit.  
-   - Status: Implemented.
-7. User approved separate customer buttons/operations for Dispatch from Released and Dispatch from Godown.  
-   - Status: Implemented.
-8. Initial continuation request instructed planning/sitemap approval before implementation.  
-   - Status: Agent provided plan and sought/received approval before coding.
-9. User asked for summary of the conversation.  
-   - Status: This handover summary.
+---
 
-No pending human question remains.
+## key api endpoints
+### Walk-ins (new)
+Exact routes should be rechecked in  before writing tests, but implementation is intended around:
+- 
+- 
+- 
+- 
+- Walk-in action/status, source/configuration, and dashboard endpoints as defined in the new route file.
 
-**Project Health Check:**
-Broken:
-- No known blocking functional issue in redesigned Tile Orders workflow.
-- Expo patch version warning exists but did not block app startup/bundling.
-- Default demo password security warning needs remediation.
+### Existing relevant endpoints
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- 
+- Tile Order endpoints remain under .
 
-Mocked:
-- No core Tile movement/Chalan workflow was mocked; testing used real backend/MongoDB data.
-- “Delivered” is currently a future movement concept, not a newly implemented active operational action.
+---
 
-**3rd Party Integrations**
-- MongoDB Atlas / Motor async driver — MongoDB connection configured server-side; requires environment-provided Mongo URI, not Emergent LLM key.
-- Supabase Storage — configured through server environment variables; requires Supabase URL/service role/anon credentials, not Emergent LLM key.
-- ReportLab — local Python package for Chalan/PDF generation; no external API key.
-- Expo / Expo Router — frontend runtime/tooling; no API key for current preview.
-- No OpenAI, Anthropic, Gemini, Stripe, or other LLM/payment integration was added or used in this task.
-- Emergent LLM Key: not applicable.
+## Critical Info for New Agent
+- The user explicitly chose:
+  - **Walk-ins as a dedicated reusable company-wide module**, not Tile-only.
+  - **WhatsApp deep links** for Phase 1; user reviews/sends manually, no auto-send.
+  - **Email  deep links** for Phase 1; no automated attachment/send.
+  - **Shared Follow-up engine first**, then Selections/Quotations, then Walk-ins, and Payments last.
+  - Payment due logic must later be milestone/payment-term based, not hardcoded calendar days.
+- Do not add WhatsApp Business API, Resend, or similar external integration without user approval and .
+- Do not modify protected  URL entries or .
+- Do not call Phase 4 complete until testing agent verifies the user’s mandatory matrix.
+- Before invoking any testing agent:
+  1. Read .
+  2. Follow its Testing Protocol exactly.
+  3. Update its non-protocol test plan/communication section.
+- The service starts with a known demo-password warning. Do not expose credentials in response.
+-  initially missed ; it was corrected. Preserve it or walk-in activity writes will silently fail/log errors.
+- User asked for all data to be live, with no mock cards/counters/placeholders. Validate this with testing agent.
+- The prior agent stated frontend lint and backend syntax pass, but that is not equivalent to functional verification.
 
-**Testing status**
-- Testing agent used after significant changes: YES.
-- Troubleshoot agent used after agent stuck in loop: NO.
-- Backend tests:
-  -  executed.
-  - Result: 11/11 scenarios passed, zero regressions.
-- Frontend tests:
-  -  executed for complete workflow and targeted partial-math verification.
-  - First full E2E report: passed core workflow/navigation and audit/chalan behavior.
-  - One targeted run was incomplete due to transient browser login interaction issue.
-  - Login API was verified; test was rerun.
-  - Final targeted partial-quantity browser run passed.
-- Test files created: No source test file paths were provided in history; test agents likely updated  and their report directory.
-- Known regressions:
-  - None reported for the Tile Orders redesign.
-  - Existing unrelated ESLint warning in .
+---
 
-**Credentials to test flow:**
+## documents and test reports created in this job
+- 
+  - Existing product and implementation history; updated through Follow-ups phases.
+- 
+  - Protocol and test reports; must be updated before testing Phase 4.
+- 
+  - Secure test credential reference; do not expose contents.
+- 
+  - Existing testing agent reports; inspect directory and latest  entries for exact paths.
+- No dedicated Walk-ins Phase 4 test report exists yet.
+
+---
+
+## Last 10 User Messages and any pending HUMAN messages
+1. **Phase 4 Walk-ins detailed specification** — implementation requested with dedicated module, dedupe, automation, customer timeline, configurable sources, dashboard, analytics, actions, and mandatory verification.  
+   - Status: Implementation in progress; verification pending.
+
+2. **Follow-ups Phase 1–3 approval/context** — user directed that Selections/Quotations were approved and Walk-ins must not modify existing engine unnecessarily.  
+   - Status: Previously implemented; Phase 4 now underway.
+
+3. **Detailed Follow-ups 2.0 product specification** — requested event-driven Follow-up engine and separate workspaces.  
+   - Status: Shared engine + Selections/Quotations completed and tested; Walk-ins underway; Payments deferred.
+
+4. **Walk-ins decision:** Build a brand-new dedicated cross-department module.  
+   - Status: Implemented foundation; needs end-to-end verification.
+
+5. **WhatsApp decision:** Use deep-link messaging only for Phase 1.  
+   - Status: Existing provider/deep-link approach retained.
+
+6. **Email decision:** Use  deep-link only for Phase 1.  
+   - Status: Existing provider/deep-link approach retained.
+
+7. **Payments decision:** Use configurable payment terms/milestones; no hardcoded due days.  
+   - Status: Deferred to Phase 5.
+
+8. **Implementation ordering decision:** Shared engine → Selections → Quotations → Walk-ins → Payments.  
+   - Status: Walk-ins phase started; Payments not started.
+
+9. **Earlier Tile Orders requirement:** Verify integration/actions and add Dispatch List.  
+   - Status: Completed and tested in prior work.
+
+10. **Preview site request.**  
+   - Status: Previously provided, but URLs are fork-specific and must not be carried forward.
+
+**Pending human messages:** None. The next agent should proceed with the specified verification work, not seek confirmation unless scope changes.
+
+---
+
+## Project Health Check
+
+### Broken
+- No confirmed Walk-ins functional defect yet, but end-to-end validation has not occurred.
+- Browser authentication/session automation currently prevents reliable frontend Walk-ins validation.
+- Default demo owner password warning persists.
+
+### Mocked
+- No intentional mock data should be present in Walk-ins implementation, but this claim is unverified until test-agent inspection.
+- WhatsApp and email use intentional deep-link providers, not mocked APIs.
+- Future Payment milestones/workspace are intentionally not implemented.
+- No external notification delivery service is active; current Follow-up notifications are app/system-level workflow behavior.
+
+---
+
+## 3rd Party Integrations
+- **MongoDB Atlas / Motor** — database access; requires environment-provided Mongo URI; no Emergent LLM Key.
+- **Supabase Storage** — server-configured storage; requires Supabase environment credentials; no Emergent LLM Key.
+- **Expo / Expo Router** — mobile/web runtime and navigation; no external API key required for current preview.
+- **ReportLab** — local PDF/Chalan generation package; no external API key.
+- **Sentry React Native** — package present; configuration warning indicates organization/project environment configuration is missing. No key actively used in this workflow.
+- **WhatsApp deep-link ()** — URL-based device/browser handoff; no user API key and no Emergent LLM Key.
+- **Email  deep-link** — OS/client handoff; no API key and no Emergent LLM Key.
+- **Emergent LLM Key:** Not applicable; no LLM integration was added.
+
+---
+
+## Testing status
+- **Testing agent used after significant changes:**  
+  - YES for earlier Follow-ups/Tile work and race-condition retest.
+  - **NO for the current Phase 4 Walk-ins implementation.**
+- **Troubleshoot agent used after agent stuck in loop:** NO.
+- **Test files created:** Existing Follow-up test suite includes ; no dedicated Walk-ins test file reported.
+- **Testing performed for Walk-ins:**
+  - Python syntax checks: passed.
+  - Frontend lint: passed.
+  - Direct backend service smoke: customer creation/reuse, Walk-in creation, dedupe, reconcile, status transitions; temporary records cleaned.
+  - Backend restart: passed.
+  - Screenshot/UI flow: incomplete due to login/session issue.
+- **Known regressions:** None confirmed; regression testing has not yet covered Walk-ins changes.
+- **Required next step:** Update , then call  for backend + frontend verification.
+
+---
+
+## Credentials to test flow
 - Consult .
-- It was created during this session and should be treated as the sole credential source for automated testing.
-- Do not include credentials in source, chat, or this handoff summary.
-- Note: backend startup later detected a known default-password warning; rotate through  before sensitive/production use.
+- Never include credentials in chat, code, test report summaries, or handover.
+- Backend startup indicates the owner account may still use a known default password; rotate separately before production use.
 
-**What agent forgot to execute**
-- No material feature request from the Tile Orders redesign appears overlooked.
-- The agent did not resolve:
-  - the unrelated  lint warning,
-  - Expo  vs  warning,
-  - default demo password warning.
-- The agent did not create a durable dedicated automated test fixture/cleanup suite for Tile workflow; testing acted against real data.
-- The user has not personally verified the workflow on a real mobile device.
+---
 
-**Debugging checklist for current issue**
-Issue: No active functional Tile Orders bug; use this if user reports a counter or movement discrepancy.
+## What agent forgot to execute
+1. Did not run  after implementing Phase 4 Walk-ins, despite system requirement.
+2. Did not complete real authenticated frontend testing of:
+   - Walk-ins dashboard/list.
+   - Create Walk-in form.
+   - Customer dedupe user flow.
+   - Walk-in details/actions.
+   - Search/filter/KPI behavior.
+   - Timeline UI.
+   - Walk-in → Selection → Quotation lifecycle.
+3. Did not verify no mock/hardcoded Walk-ins values with test agent.
+4. Did not execute regression tests for Customers, Selections, Quotations, Tile Orders, Follow-ups, and Payments after Phase 4 changes.
+5. Did not verify/implement UI administration for configurable lead sources.
+6. Did not resolve default demo password warning.
+7. Did not update PRD/test results with a verified Phase 4 completion because Phase 4 is not complete.
 
-Frontend files to check:
-- 
-  - Tab labels, register filter/query UI.
-- 
-  - Brand-specific filtering and navigation to release-only detail.
-- 
-  - Release-only action and Ordered/Released/Remaining counters.
-- 
-  - Customer grouped quantities, Godown, dispatch source actions.
-- 
-  - Quantity validation, box labels, submission wiring.
-- 
-  - Endpoint payloads and active-floor behavior.
+### Debugging checklist for current issue
+**Issue:** Walk-ins implementation needs real end-to-end test completion.
 
-Backend files to check:
+**Frontend files to check:**
 - 
-  - Release, Godown, dispatch source logic, counter updates, and  filtering.
+  - Live query, KPIs, cards, filters, search, route navigation.
 - 
-  - Immutable register writes and movement payloads.
+  - Required values, duplicate lookup/result selection, create request, keyboard handling.
 - 
-  - “Order Created” register entry on Tile order creation.
+  - Detail data, status/action wiring, timeline rendering, selection scheduling.
 - 
-  - Movement and quantity model fields.
+  - Endpoint paths, request/response typed shapes.
 - 
-  - Movement query indexes.
+  - No derived hardcoded values; action handlers should flow to live data.
+- 
+  - Navigation visibility/access and route match behavior.
+- 
+  - JWT/floor header/token behavior if protected Walk-ins endpoints return 401.
 
-Database to check:
+**Backend files to check:**
+- 
+  - Route prefix, authorization, floor scope, create/list/detail/patch/action/query behavior.
+- 
+  - Phone normalization/dedupe, customer create/reuse, status updates.
+- 
+  - , source keys, auto-resolution behavior, lock/skip semantics.
+- 
+  - Walk-in rule seed/retrieval/update behavior.
+- 
+  - Linked Walk-in status updates for selection creation/move-to-quotation.
+- 
+  - Field validation and API model serializability.
+- 
+  - , , , activity model fields.
+- 
+  - Walk-ins indexes and  unique constraint.
 
-Validate:
+**Database to check:**
 
-Then confirm the active floor header matches the expected order and that no movement write was skipped due to an authorization/error response.</analysis>
+
+**Verification invariants:**
+
+</analysis>

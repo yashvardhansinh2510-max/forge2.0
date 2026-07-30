@@ -230,6 +230,18 @@ async def ensure_all() -> None:
         partialFilterExpression={"source_key": {"$type": "string"}},
     )
 
+    # Walk-ins (Phase 4, 2026-07-30)
+    await _safe_create_index(db.walkins, [("customer_id", 1)], name="walkins_customer_id")
+    await _safe_create_index(db.walkins, [("status", 1)], name="walkins_status")
+    await _safe_create_index(db.walkins, [("floor_id", 1)], name="walkins_floor_id")
+    await _safe_create_index(db.walkins, [("visited_at", -1)], name="walkins_visited_at")
+    await _safe_create_index(db.walkins, [("selection_quotation_id", 1)], name="walkins_selection_quotation_id", sparse=True)
+    # Duplicate-detection lookups (services/walkin_service.py) filter by phone
+    # suffix — a plain index still helps the initial customers scan even
+    # though the query is a $regex suffix match, not a prefix match.
+    await _safe_create_index(db.customers, [("phone", 1)], name="customers_phone")
+    await _safe_create_index(db.customers, [("alternate_phone", 1)], name="customers_alternate_phone", sparse=True)
+
 
     # catalog_import_snapshots.job_id (CRITICAL #3 rollback lookups) is
     # intentionally NOT created here — it's owned solely by
