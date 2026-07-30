@@ -10,7 +10,7 @@ import json
 from typing import Optional
 
 # Backend URL
-BASE_URL = "https://walkin-crm.preview.emergentagent.com/api"
+BASE_URL = "https://walkins-crm-phase4.preview.emergentagent.com/api"
 
 # Test credentials
 OWNER_EMAIL = "owner@forge.app"

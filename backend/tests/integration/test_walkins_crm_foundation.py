@@ -17,7 +17,7 @@ import requests
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    BASE_URL = "https://walkin-crm.preview.emergentagent.com"
+    BASE_URL = "https://walkins-crm-phase4.preview.emergentagent.com"
 
 API = f"{BASE_URL}/api"
 
@@ -59,12 +59,13 @@ class TestFullCustomerCapture:
 
     def test_full_capture_splits_customer_and_walkin_fields(self, session, floor_id):
         phone = _unique_phone()
+        label = f"TEST_CRM Full Capture {uuid.uuid4().hex[:8]}"
         payload = {
-            "customer_name": "TEST_CRM Full Capture",
+            "customer_name": label,
             "customer_phone": phone,
             "email": f"test.crm.{uuid.uuid4().hex[:8]}@example.com",
-            "address": "12 TEST Lotus Apartments",
-            "city": "TEST City",
+            "address": f"12 TEST Lotus Apartments {label}",
+            "city": f"TEST City {label}",
             "state": "TEST State",
             "pincode": "123456",
             "source": "Reference",
@@ -97,8 +98,8 @@ class TestFullCustomerCapture:
         r_c = session.get(f"{API}/customers/{customer_id}")
         assert r_c.status_code == 200
         cdoc = r_c.json()
-        assert cdoc["address"] == "12 TEST Lotus Apartments"
-        assert cdoc["city"] == "TEST City"
+        assert cdoc["address"] == f"12 TEST Lotus Apartments {label}"
+        assert cdoc["city"] == f"TEST City {label}"
         assert cdoc["state"] == "TEST State"
         assert cdoc["pincode"] == "123456"
         # Customer doc has no reference_contact/architect/builder fields
@@ -121,6 +122,22 @@ class TestDuplicateDetection:
         }
         r = session.post(f"{API}/walkins", json=payload)
         assert r.status_code == 200, r.text
+        first_walkin = r.json()
+
+        # A high-confidence phone match must create a second Walk-in linked
+        # to the original Customer; it must never overwrite that Customer.
+        repeat = session.post(f"{API}/walkins", json={
+            "customer_name": "TEST_CRM Different Submitted Name",
+            "customer_phone": raw_digits,
+            "floor_id": floor_id,
+        })
+        assert repeat.status_code == 200, repeat.text
+        repeated_walkin = repeat.json()
+        assert repeated_walkin["id"] != first_walkin["id"]
+        assert repeated_walkin["customer_id"] == first_walkin["customer_id"]
+        customer = session.get(f"{API}/customers/{first_walkin['customer_id']}")
+        assert customer.status_code == 200
+        assert customer.json()["name"] == "TEST_CRM Formatted Phone"
 
         # check-duplicate with the same digits, no formatting
         r2 = session.get(f"{API}/walkins/check-duplicate", params={"phone": raw_digits})
@@ -188,23 +205,25 @@ class TestDuplicateDetection:
         # Sanity counterpart: force_new_customer succeeds (200) when the
         # email genuinely isn't taken by anyone else.
         email = f"test.crm.uniqueforce.{uuid.uuid4().hex[:8]}@example.com"
+        name = f"TEST_CRM Medium Seed {uuid.uuid4().hex[:8]}"
+        city = f"TEST Vadodara {uuid.uuid4().hex[:8]}"
         seed_payload = {
-            "customer_name": "TEST_CRM Medium Seed",
+            "customer_name": name,
             "customer_phone": _unique_phone(),
             "customer_name_city_seed": None,
             "floor_id": floor_id,
         }
         del seed_payload["customer_name_city_seed"]
-        seed_payload["city"] = "TEST Vadodara"
+        seed_payload["city"] = city
         r = session.post(f"{API}/walkins", json=seed_payload)
         assert r.status_code == 200, r.text
 
         # Trigger a name+city MEDIUM match (not email) so force_new_customer
         # creates a brand-new, non-conflicting customer.
         attempt_payload = {
-            "customer_name": "TEST_CRM Medium Seed",
+            "customer_name": name,
             "customer_phone": _unique_phone(),
-            "city": "TEST Vadodara",
+            "city": city,
             "email": email,
             "floor_id": floor_id,
         }
@@ -314,7 +333,7 @@ class TestOrderConfirmedOpsFollowup:
 class TestBackendRegression:
     @pytest.mark.parametrize("path", [
         "/followups/stats", "/quotations", "/customers", "/purchase-orders",
-        "/payments/stats", "/tile-orders",
+        "/payments/stats", "/tile-orders/dashboard",
     ])
     def test_endpoint_still_200(self, session, path):
         r = session.get(f"{API}{path}")

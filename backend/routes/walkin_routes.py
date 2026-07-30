@@ -101,6 +101,7 @@ async def create_walkin(body: WalkInCreate, user: UserPublic = Depends(require_m
         matches = await find_customer_matches(
             phone=body.customer_phone, alternate_phone=body.alternate_phone,
             email=body.email, name=body.customer_name,
+            city=body.city, address=body.address,
         )
         if matches["high"]:
             customer = matches["high"][0]
