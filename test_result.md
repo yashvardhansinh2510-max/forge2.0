@@ -586,9 +586,30 @@ frontend:
             pattern as purchases.tsx's doExport). StatusPill now renders
             statusLabel() (Ready->"Released", Dispatched->"Delivered",
             "Partially Dispatched"->"Partially Delivered") instead of raw
-            backend ladder words. Lint clean on every touched file. NOT YET
-            browser-tested — awaiting explicit user go-ahead per workflow
-            rules before invoking the frontend testing agent.
+            backend ladder words. Lint clean on every touched file.
+        - working: true
+          agent: "testing"
+          comment: >
+            Full browser E2E pass (owner@forge.app). Structural pass: tab
+            names correct (Customer/Brands/Material Movement Register, no
+            old Company/Dispatch List labels), Brand Detail shows only its
+            own customer orders, Brand Order Detail has ONLY Release
+            Material (no Dispatch/Godown), Customer Detail groups by brand
+            with all 4 counters + 3 action buttons, Movement Register shows
+            all 4 movement types chronologically with chalan numbers only on
+            dispatch rows, regression clean (Quotations/Purchases load OK).
+            Follow-up focused run on a fresh record (Qutone / Task19
+            SingleSupplier Test / ARGENTA TUSK, Ordered=5) verified the
+            EXACT partial-quantity math end-to-end through the UI: Release
+            3 then 2 (Released 3->5, Remaining 2->0), Move to Godown 2
+            (Released 5->3, Godown 0->2), Dispatch from Released 1
+            (Released 3->2, Delivered 0->1, Chalan CH-0015/DSP-2026-0012),
+            Dispatch from Godown 1 (Godown 2->1, Delivered 1->2, Chalan
+            CH-0016/DSP-2026-0013). Final invariant confirmed: 5 = 2+1+2.
+            Material Movement Register showed exactly 5 rows for this item
+            (2 Release, 1 Move to Godown, 1 Dispatch-from-Released, 1
+            Dispatch-from-Godown), newest-first, chalan numbers present only
+            on the two dispatch rows. Zero bugs found.
         - working: true
           agent: "testing"
           comment: |
