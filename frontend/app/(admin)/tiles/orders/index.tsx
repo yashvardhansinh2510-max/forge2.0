@@ -28,7 +28,11 @@ const TABS: [TabKey, string][] = [
   ["dispatch-list", "Dispatch List"], ["material-register", "Material Movement Register"],
 ];
 
-const DISPATCH_STATUS_FILTERS = ["All", "Dispatched", "At Godown", "Delivered"] as const;
+// Only "Dispatched" is a real, reachable status today — nothing in the
+// current workflow ever sets Dispatch.godown_received_at or delivered_at
+// (both explicitly modeled as future/unimplemented, see models_tile_orders.py),
+// so "At Godown"/"Delivered" filter chips would be permanently dead options.
+const DISPATCH_STATUS_FILTERS = ["All", "Dispatched"] as const;
 
 async function openPdf(url: string) {
   if (Platform.OS === "web") {

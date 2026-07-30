@@ -314,3 +314,49 @@ Done in this session (UI only, zero business-logic changes):
   BuilderFooter + MobileControls brass primary CTA, refined totals; QuotationPane serif document number; ProductModal ink price
 - Purchases: serif page title, local STAGE_TONE map (dot+word badges), all Tailwind hexes → Showroom tokens, brass rail markers
 - Quotations list: removed blue number pill, brass New CTA, refined row typography
+
+
+## Tile Orders — Workflow Redesign hardening + Dispatch List tab (2026-07-30, DELIVERED)
+
+Continuation of the Tile Orders business-workflow redesign (Brands=Release only, Customer=
+Godown/Dispatch decisions, Material Movement Register=audit log). User reported the UI
+"behaves as a static interface... none of the workflow actions are functioning" and demanded
+live-integration verification (not curl) plus a new Dispatch List tab before further review.
+
+**Root-cause investigation (reproduced live on the preview first, before any fix):**
+Logged into the real preview, drove Move to Godown / Dispatch from Released / Dispatch from
+Godown, and confirmed via direct MongoDB reads that every action DID already persist correctly
+(buttons were genuinely wired end-to-end). The real bugs were UX-level:
+1. Dispatch endpoints are multi-step MongoDB Atlas transactions (several sequential network
+   round trips) taking a few seconds, with the old UI showing only a subtle opacity change while
+   busy — read as "nothing is happening."
+2. Real bug: `submitDispatch()` wrapped the dispatch call AND the subsequent PDF auto-open in one
+   try/catch — a failed PDF-open (e.g. blocked popup) after a SUCCESSFUL dispatch was wrongly
+   reported to the user as "Could not dispatch."
+
+**Fixes (`frontend/src/components/tiles/TileMovementSheets.tsx`):**
+- All 4 movement sheets now show a real spinner + "Processing…" label while a request is in
+  flight (Cancel also disabled while busy).
+- Dispatch success is now reported immediately after the dispatch call succeeds; PDF-open is a
+  separate best-effort step whose failure shows an accurate secondary toast instead of a false
+  "Could not dispatch."
+
+**New Dispatch List tab** (4th tab: Customer / Brands / Dispatch List / Material Movement
+Register) — operational, dispatch-only view. Backend: rewrote `GET /tile-orders/dispatches`
+(`backend/routes/tile_orders.py`) to return one row per dispatched Chalan line item with
+brand_name, source (Released/Godown), chalan/dispatch numbers, customer_order_id, performed_by,
+status; filters: customer_id, brand_id, product, dispatch_number, chalan_number, status,
+date_from/date_to, search. Frontend: new tab in `app/(admin)/tiles/orders/index.tsx` with
+search + status filter chips + View Chalan / Download PDF / View Customer actions.
+
+**Testing:** 20/20 new backend pytest cases pass. Live end-to-end sequence verified (Release 5 →
+Move 2 to Godown → Dispatch 1 from Released → Dispatch 2 from Godown, invariant holds exactly).
+Dispatch List verified live (real data, View Chalan opens a valid signed PDF URL). One dead-UI
+gap found + fixed: "At Godown"/"Delivered" status filter chips were unreachable (nothing sets
+`godown_received_at`/`delivered_at` under the new workflow) — removed, kept only "All"/"Dispatched".
+
+**Outstanding (not part of this bug report, deferred):**
+- P1: rotate the default demo password for `owner@forge.app` (still flagged CRITICAL at every
+  backend startup) via `backend/scripts/rotate_demo_credentials.py --apply`.
+- P2: Expo `54.0.35` vs `~54.0.36` compatibility warning (non-blocking).
+- P2: pre-existing unrelated ESLint warning in `TilesDocBuilder.tsx` (unescaped apostrophe).
