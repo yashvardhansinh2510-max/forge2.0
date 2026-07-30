@@ -1,129 +1,410 @@
-<analysis>Here is the useful handover summary for the next agent:
+<analysis>original_problem_statement:
+BuildCon House requested a **Tile Orders business-workflow redesign** for Ground Floor Tiles. The workflow must be owned by Brands and Customers—not by technical Purchase Order/Supplier screens—while reusing existing backend logistics entities where possible.
 
-**original_problem_statement**: The user requested a complete, production-grade data migration to replace the existing GROHE catalog with new supplier Excel files, strictly adhering to deterministic rules (no AI generation, no guessing categories, accurate variant grouping). Following 4 batches of GROHE imports, the user requested a data-quality audit/repair for the VITRA catalog. Finally, the user reported a bug where variant product images were cross-contaminating (showing incorrect variant images) and variant selectors were displaying generic labels instead of actual finishes.
+PRODUCT REQUIREMENTS:
+- After approved quotation, grouped Purchase Orders by Brand must appear in both Customer Orders and Brand Orders.
+- Navigation under Tile Orders must be:
+  - Customer
+  - Brands
+  - Material Movement Register
+- Replace all user-facing vocabulary:
+  - Company → Brands
+  - Dispatch List → Material Movement Register
+  - Mark Ready For Pickup → Release Material
+  - Ready → Released
+  - Pending in supplier context → Remaining
+- Brand responsibility: **Release Material only**.
+  - Show Ordered / Released / Remaining in Boxes.
+  - Partial releases allowed.
+  - No Godown, customer delivery, or Chalan controls on Brand screens.
+- Customer responsibility:
+  - Show Ordered / Released / Godown / Delivered, grouped by Brand.
+  - Move to Godown transfers Released → Godown.
+  - Dispatch from Released and Dispatch from Godown support partial Boxes.
+- Dispatch must create Dispatch record, Chalan, and Chalan PDF.
+- Release and Godown movements must not create Chalans.
+- Material Movement Register must be the immutable, chronological audit source of truth:
+  - Order Created
+  - Release
+  - Move to Godown
+  - Dispatch from Released
+  - Dispatch from Godown
+  - Delivered (future)
+  - Include datetime, type, customer, brand, product, boxes, source/destination, chalan/dispatch numbers if applicable, and actor.
+  - Filters: customer, brand, movement type, date range, chalan number, dispatch number, search.
+- Use **Boxes** consistently in UI; existing  persists as internal storage.
+- Fully replace old internal ERP routes/labels; no legacy aliases needed.
+- Preserve backend/internal class names such as , ,  unless user-facing behavior requires a change.
 
-**User's preferred language**: English.
-**INSTRUCTION**: Next agent MUST respond in English.
+**User's preferred language**: English. Respond in English only.
 
-**what currently exists?**: A full-stack application (Expo frontend, FastAPI backend, MongoDB, Supabase for storage). The GROHE catalog has been completely wiped and replaced with 508 accurate products across 4 incremental batches of supplier Excel files. A headless LibreOffice pipeline was built to convert EMF vector images to PNGs. A critical backend bug causing variant images to pool globally by  instead of specific  has been successfully isolated and fixed in .
+**what currently exists?**
+- Full-stack Expo Router + FastAPI + MongoDB Atlas application.
+- Tile workflow has been redesigned and implemented around:
+  - customer-facing operational controls,
+  - brand-specific Release-only workflow,
+  - Material Movement Register audit log.
+- Backend health was verified after restart:
+  - MongoDB connected.
+  - Supabase connected.
+  - Backend healthy.
+  - Expo service running.
+- Backend and frontend workflow testing passed, including targeted partial-quantity math.
 
-**Last working item**: 
-- **Last item agent was working**: Fixing a variant image and label bug. The agent modified  () and  () to ensure media resolution uses  strictly, stopping the cross-contamination of images among family siblings.
-- **Status**: USER VERIFICATION PENDING
-- **Agent Testing Done**: Y
-- **Which testing method agent to use?**:  was used and passed. Next agent should use frontend testing/screenshot tool if user asks to verify the UI.
-- **User Testing Done**: N
+**Last working item**:
+- Last item agent was working: Closing and handing over the completed Tile Orders workflow redesign after testing.
+- Status: USER VERIFICATION PENDING.
+- Agent Testing Done: Y.
+- Which testing method agent to use?: Both backend testing agent and browser-based frontend testing agent were used.
+- User Testing Done: N.
 
 **All Pending/In progress Issue list**:
-- **Issue 1: Resolve Flagged Data Conflicts from Imports (P1)**
-  - **Attempted fixes**: During GROHE imports (Batches 2 & 3), the agent intentionally skipped rows that had conflicting data or lacked pricing, adhering strictly to the never guess rule.
-  - **Next debug checklist**: Ask user how to proceed with the 5 flagged conflicts:
-    1. SKU  exists in two different category files (Bau Line & Short Body Basin Mixer).
-    2. SKUs  &  from Bau Line already existed in Shower.
-    3. 10 rows lacked MRP entirely.
-    4. SKU  (and angle valves) appeared in Tall Body Basin Mixer but belong to Kitchen Tap.
-    5. SKU  appeared in Spout but already exists in Bau Line.
-  - **Why fix this issue and what will be achieved with the fix?**: Ensures 100% catalog completeness.
-  - **Status**: BLOCKED (Waiting on User Decision)
-  - **Is recurring issue?**: N
-  - **Should Test frontend/backend/both after fix?**: Backend
 
-**In progress Task List**: 
-- None. Agent is currently waiting for user feedback on frontend UI verification for the variant bug fix.
+Issue 1: User acceptance / real-device validation of redesigned Tile Orders workflow (P0)
+- Attempted fixes: Not applicable; automated testing passed.
+- Next debug checklist:
+  - Test a brand release on a real Expo device.
+  - Verify Customer page counters after release.
+  - Verify Godown and both dispatch source actions.
+  - Confirm Chalan PDF opens/downloads correctly in intended mobile environment.
+  - Verify Material Movement Register filters against production-like data.
+- Why fix this issue and what will be achieved with the fix?: Confirms operational usability beyond browser automation.
+- Status: USER VERIFICATION PENDING.
+- Is recurring issue?: N.
+- Should Test frontend/backend/both after fix?: Both if a user-reported data/state discrepancy is found.
+- Blocked on other issue: None.
 
-**Upcoming and Future Tasks**:
-- **Upcoming Task (P0)**: Execute frontend UI verification of the variant selector (to ensure distinct images switch properly and labels read Chrome, Matt Black, etc. instead of Variant).
-- **Upcoming Task (P1)**: Ingest missing pricing or category assignments for the 5 flagged conflict groups once the user provides direction.
+Issue 2: Expo compatibility warning (P2)
+- Attempted fixes: None; it did not block Metro bundling or tests.
+- Next debug checklist:
+  - Inspect .
+  - Upgrade Expo from  to the expected compatible patch version , only after checking project dependency compatibility.
+  - Restart Expo and verify bundle.
+- Why fix this issue and what will be achieved with the fix?: Removes non-blocking Metro compatibility warning.
+- Status: NOT STARTED.
+- Is recurring issue?: N.
+- Should Test frontend/backend/both after fix?: Frontend.
+- Blocked on other issue: None.
 
-**Completed work in this session**:
-- Implemented  with raw openpyxl XML parsing and headless LibreOffice conversion to salvage EMF images.
-- Full GROHE Replacement (Batch 1: 133 products) via .
-- Additive GROHE Imports (Batches 2, 3, 4: brought total to 508 products) via additive scripts.
-- Detected and resolved a duplicate ingestion infrastructure glitch (removed 36 duplicated Thermostat products).
-- VITRA Catalog Quality Audit & Repair (repaired 1 broken image mapping and 1 price mismatch).
-- Fixed variant cross-contamination bug in  () and .
+Issue 3: Default demo owner password warning (P1 security/operations)
+- Attempted fixes: The owner password was temporarily rotated during work to enable login, but a later backend restart reported that  still has a known default password.
+- Next debug checklist:
+  - Read .
+  - Review .
+  - Rotate demo/default credentials using the supported script and update the credential file.
+  - Re-authenticate and rerun an authenticated smoke test.
+- Why fix this issue and what will be achieved with the fix?: Removes a startup CRITICAL security warning and prevents publicly known demo credentials in the active environment.
+- Status: NOT STARTED.
+- Is recurring issue?: N.
+- Should Test frontend/backend/both after fix?: Backend and auth frontend smoke test.
+- Blocked on other issue: None.
 
-**Earlier issues found/mentioned but not fixed**:
-- None. All requested bugs were addressed and verified.
+**In progress Task List**:
+- No implementation task remains actively in progress. The completed feature awaits user confirmation.
 
-**Known issue recurrence from previous fork**:
-- **Issue**: The MongoDB connection details. The legacy DB  is stale (20 products). The real database is .
-- **Recurrence count**: 1
-- **Status**: RESOLVED (Agent explicitly targeted  and updated  successfully).
+**Upcoming and Future Tasks**
+Upcoming Tasks:
+- P0: User validation of Tiles workflow on Expo Go / mobile device.
+- P1: Rotate/remove default demo credentials safely, update .
+- P2: Resolve Expo package patch compatibility warning.
 
-**Code Architecture**:
-- : Expo React Native app.
-- : FastAPI backend.
-- : Data ingestion logic.
-- : Migration, backup, and extraction execution scripts.
-- : Core read-models and API business logic.
+Future Tasks:
+- P1: Add Delivered as an actual operational movement/action once business process requirements are confirmed; it is already represented as a future movement type concept.
+- P2: Add richer Material Movement Register search/filter UI testing, particularly search/chalan/dispatch filters. Current workflow/API verification passed, but browser agent noted this can be expanded later.
+- P2: Clean up old unlinked legacy tile endpoints/models only after rollout stability, per prior design scope. Do not remove existing engine routes without regression assessment.
 
-**Key Technical Concepts**:
-- FastAPI, MongoDB, Supabase Storage.
-- Headless LibreOffice () used for vector (EMF) to raster (PNG/JPEG) conversion.
-- Backend catalog employs an in-memory caching mechanism () that requires a supervisor restart to reflect DB changes.
+**Completed work in this session**
+- Designed sitemap, navigation flow, screen hierarchy, and quantity state transitions; user approved before implementation.
+- Added immutable material movement audit logging.
+- Added initial Order Created movements when Tile customer orders are generated from quotation processing.
+- Added Release Material workflow with partial quantities.
+- Added Move to Godown workflow with partial quantities.
+- Added source-specific dispatch workflows:
+  - Dispatch from Released
+  - Dispatch from Godown
+- Preserved automatic Dispatch, Chalan, and PDF generation for dispatch only.
+- Added Material Movement Register backend query/filtering.
+- Replaced Tile Orders UI terminology and removed old Company UI route.
+- Built new Customer, Brands, Brand Detail, Release-only PO Detail, and Material Movement Register UI.
+- Updated typed frontend API client for new endpoints.
+- Updated indexes for material movements.
+- Backend testing: 11/11 workflow scenarios passed.
+- Browser E2E testing passed.
+- Targeted browser verification of partial math passed:
+  - Release → Godown → dispatch-from-released → dispatch-from-godown.
+  - Counter invariants and audit entries verified.
 
-**key DB schema**:
-- : {sku, name, category, brand_id, family_key, finish, colour, price}
-- : {product_id, family_key, url, quality, sha1}
+- Recently completed:
+  - Tile Orders workflow redesign (implementation complete; user verification pending).
+  - Material Movement Register audit model/service/endpoints.
+  - Brand Release-only UI.
+  - Customer Godown/direct dispatch UI.
+  - Chalan generation restricted to dispatch.
 
-**changes in tech stack**:
-- Installed  and  in the container to handle  image format conversions which openpyxl drops natively.
+**Earlier issues found/mentioned but not fixed**
+- Expo reports expected package patch mismatch: installed , expected . Non-blocking.
+- Backend startup reports known default demo-password warning for ; must be addressed in a separate credential/security task.
+- Existing unrelated lint warning in :
+  -  around line 794.
+  - It pre-existed and was not part of new Tile Orders files.
+  - Debug checklist: replace apostrophe text with JSX-safe syntax.
+  - Test frontend afterward.
+  - Recurring: N.
 
-**All files of reference**:
--  (Created)
--  (Created)
-- , ,  (Created)
--  (Updated to fix bug)
--  (Updated to fix bug)
--  (Constantly updated by testing subagent)
+**Known issue recurrence from previous fork**
+- No previous handoff summary was provided in this conversation.
+- Recurrence count: 0.
+- Status: NONE.
 
-**Areas that need refactoring**: 
-- The additive import scripts (batch 2, 3, 4) are essentially duplicated files with minor variable changes. Could be refactored into a single generic additive runner.
+**Code Architecture**
 
-**key api endpoints**:
+
+**Key Technical Concepts**
+- Frontend: Expo, Expo Router file-based routes, React Native, TypeScript, StyleSheet-based native UI.
+- Backend: FastAPI, Pydantic models, Motor async MongoDB access.
+- Database: MongoDB Atlas ( was identified as the relevant active dataset).
+- File/PDF: Existing ReportLab Chalan generation retained.
+- Storage: Supabase configured for application storage.
+- Auth: JWT staff authentication, role/floor-scoped API behavior.
+- Domain/outbox: quotation processing creates Purchase Orders and Tile Customer Orders, with movement log entries now created for order creation.
+- Audit logging: material movements recorded append-only/immutable in .
+
+**key DB schema**
+-  / CustomerOrder:
+  - uid=0(root) gid=0(root) groups=0(root), , , , , , , timestamps.
+  - Groups customer view by brand/products.
+-  / PurchaseOrder:
+  - uid=0(root) gid=0(root) groups=0(root), , , , , , , , .
+  - Item quantity fields include internal quantity values for ordered, released/ready, godown, dispatched, and remaining/pending.
+-  / ReadyBatch:
+  - Existing underlying logistics data for released material.
+-  / Dispatch:
+  - Created only for dispatch operations, includes dispatch source semantics and links to Chalans.
+-  / Chalan:
+  - Generated only by dispatch operations, has PDF endpoint.
+-  / TileMaterialMovement:
+  - Immutable history records for Order Created, Release, Godown movement, and dispatch movement.
+  - Key fields: datetime, movement type, customer/brand/product identity, boxes, source, destination, dispatch/chalan identifiers where applicable, actor, related PO/customer order/item identifiers, floor scope.
+
+**changes in tech stack**
+- No tech stack migration.
+- No MongoDB → PostgreSQL migration.
+- Existing MongoDB, FastAPI, Expo Router, and Supabase setup retained.
+
+**All files of reference**
+Files created/updated this session:
 - 
+  - Added  model and related Tile order quantity support.
 - 
-
-**Critical Info for New Agent**:
-- **NEVER GUESS**: The primary rule for this job is strict adherence to supplier data. Do not fabricate prices, images, or categories.
-- **BACKEND RESTART**: Any changes to catalog data (MongoDB products/media) or python service logic REQUIRE a backend restart (backend: ERROR (not running)
-backend: ERROR (abnormal termination)) because  caches the catalog in-memory via .
-- The variant bug was fixed *on the backend*. The frontend UI now automatically receives distinct images per variant because  no longer globally pools media objects by .
-
-**documents and test reports created in this job**:
+  - New movement-log helper/service for immutable register entries.
 - 
+  - Emits initial “Order Created” material movement records when Tile orders arise from quotation processing.
 - 
+  - Added/updated brand listing/detail, Release, Move to Godown, dispatch source endpoints, movement register filters, and data returned for counters.
 - 
+  - Material movement indexes.
 - 
+  - Updated API client for redesigned workflow endpoints and active floor behavior.
 - 
+  - Reworked reusable display counters for Brand vs Customer operational quantities.
+- 
+  - New quantity-entry bottom sheets for Release, Godown movement, and dispatch workflows.
+- 
+  - Removed because it was replaced by .
+- 
+  - Redesigned tab navigation: Customer, Brands, Material Movement Register.
+- 
+  - New Brand-specific customer orders screen.
+- 
+  - Converted to Release-only Brand PO detail.
+- 
+  - Customer operational detail with grouped brands and Godown/dispatch actions.
+- 
+  - Removed along with old Company folder.
+- 
+  - Updated with testing/report status according to protocol.
+- 
+  - Created/updated with owner test credentials during session.
+- , 
+  - Restored locally to get preview services running. These contain sensitive configuration and must not be exposed.
 
-**Last 10 User Messages and any pending HUMAN messages**:
-1. User provides 4 initial Excel files and asks to start.
-2. User provides Mongo/Supabase credentials, instructs Option B (Full replacement of Grohe), and reinforces strict validation rules.
-3. User uploads 5 more files (Batch 2) to add incrementally.
-4. User uploads 5 more files (Batch 3) to add incrementally.
-5. User uploads 1 more file (Batch 4) to add incrementally.
-6. User uploads  and requests an audit/repair without overwriting/deleting good data.
-7. User reports 3 bugs related to variant image cross-contamination and variant labels, asking for a backend-level fix. 
-*Status: All handled. Agent asked user if they want to proceed with frontend UI visual verification.*
+Other important files:
+- 
+  - Approved workflow specification/design reference.
+- 
+  - Existing status derivation logic; contains some historical terminology internally but user-facing UI was refactored.
+- 
+  - Existing Chalan PDF machinery retained.
+- 
+  - API client/token handling; active floor headers are applied centrally.
+- 
+  - Product context and historical restoration notes.
+- 
+  - Must be read and obeyed before future test agent invocation.
 
-**Project Health Check**:
-- Broken: None
-- Mocked: None
+**Areas that need refactoring**
+-  still exposes an internal ; operational box counters are now primary. Consider removing generic status emphasis only after verifying no other Tile view requires it.
+- Legacy endpoints/screens and old terminology may remain internally/unlinked; do not delete them until post-rollout stabilization and regression coverage.
+-  has unrelated existing ESLint issue requiring escaping an apostrophe.
+- The testing flow used real records; future tests should either provision and clean up dedicated test fixtures or isolate a test tenant to avoid cluttering operational data.
 
-**3rd Party Integrations**:
-- MongoDB Atlas (Database) — requires User provided key/URL
-- Supabase (Image Storage) — requires User provided key/URL
+**key api endpoints**
+All endpoints are under  through ingress:
+- 
+  - Customer Tile Orders list.
+- 
+  - Customer operational detail, grouped product/brand values.
+- 
+  - Brand list for current floor.
+- 
+  - Orders under a selected Brand.
+- 
+  - Brand-facing PO detail.
+- 
+  - Existing endpoint reused/relabelled for **Release Material**.
+- 
+  - Transfers Released → Godown.
+- 
+  - Partial dispatch from Released; creates Dispatch + Chalan + PDF.
+- 
+  - Partial dispatch from Godown; creates Dispatch + Chalan + PDF.
+- 
+  - Material Movement Register with filters.
+- 
+  - Chalan PDF download.
+- Existing history/ready-batch/detail endpoints remain for underlying compatibility.
 
-**Testing status**:
-- Testing agent used after significant changes: YES ( ran 5 times successfully).
-- Troubleshoot agent used after agent stuck in loop: NO
-- Test files created: None explicitly created by main agent, but  heavily updated.
-- Known regressions: None.
+**Critical Info for New Agent**
+- Follow the user’s business language exactly in new user-facing changes:
+  - Brands, Release Material, Released, Remaining, Godown, Dispatch from Released, Dispatch from Godown, Material Movement Register, Boxes.
+- Do not reintroduce Company, Dispatch List, Mark Ready For Pickup, Ready, or supplier-managed Godown/Dispatch actions into frontend UI.
+- Brand screens must contain Release Material only.
+- Customer screens own warehouse/direct-delivery decisions.
+- Chalan must only be created on dispatch.
+- Maintain quantity invariant per item:
+  - Ordered Boxes = Remaining + Released + Godown + Delivered/Dispatched, according to the model’s existing representation.
+- Use existing internal  storage and existing models where possible; avoid model renames that create unnecessary migration risk.
+- Use current active-floor API/header behavior; do not hardcode .
+- Do not alter protected frontend/backend environment URL configuration.
+- Before running any test agent, read and update  in accordance with its Testing Protocol.
+- For any authentication issue, read , inspect backend logs, and use the existing auth approach. Do not merely suggest clearing cache.
+- The session created local  files because they had disappeared in the ephemeral workspace. Treat all secrets as sensitive; do not repeat or expose their contents.
 
-**Credentials to test flow**:
-Check  (Usually  / ).
+**documents and test reports created in this job**
+Supporting docs:
+- Existing design reference used:
+  - 
+- Test protocol/report updated:
+  - 
+- Credential tracking:
+  - 
+- Existing test report locations:
+  - 
+  - Exact new test report paths were not visible in the supplied history; inspect this directory and  before relying on a specific iteration file.
 
-**What agent forgot to execute**:
-The agent did not forget anything, but explicitly and intentionally left 5 data conflicts unresolved awaiting the user's manual decision.</analysis>
+**Last 10 User Messages and any pending HUMAN messages**
+1. User requested a complete browser E2E verification of Tile Orders workflow, including actions, backend state, register, Chalan PDF, regressions, floor scoping, multi-brand orders, and partial invariants.  
+   - Status: Completed through frontend testing agents; no failures reported in final targeted run.
+2. System reminder following bug report required testing agent verification after a fix.  
+   - Status: Satisfied; testing agents were invoked.
+3. User responded “Start the task now” after initial continuation request.  
+   - Status: Completed.
+4. User approved the Material Movement Register as complete immutable audit source of truth and specified movement/event/filter requirements.  
+   - Status: Implemented and tested.
+5. User approved complete replacement of old UI terminology/routes, with no aliases.  
+   - Status: Implemented.
+6. User confirmed Boxes as the sole primary operational unit.  
+   - Status: Implemented.
+7. User approved separate customer buttons/operations for Dispatch from Released and Dispatch from Godown.  
+   - Status: Implemented.
+8. Initial continuation request instructed planning/sitemap approval before implementation.  
+   - Status: Agent provided plan and sought/received approval before coding.
+9. User asked for summary of the conversation.  
+   - Status: This handover summary.
+
+No pending human question remains.
+
+**Project Health Check:**
+Broken:
+- No known blocking functional issue in redesigned Tile Orders workflow.
+- Expo patch version warning exists but did not block app startup/bundling.
+- Default demo password security warning needs remediation.
+
+Mocked:
+- No core Tile movement/Chalan workflow was mocked; testing used real backend/MongoDB data.
+- “Delivered” is currently a future movement concept, not a newly implemented active operational action.
+
+**3rd Party Integrations**
+- MongoDB Atlas / Motor async driver — MongoDB connection configured server-side; requires environment-provided Mongo URI, not Emergent LLM key.
+- Supabase Storage — configured through server environment variables; requires Supabase URL/service role/anon credentials, not Emergent LLM key.
+- ReportLab — local Python package for Chalan/PDF generation; no external API key.
+- Expo / Expo Router — frontend runtime/tooling; no API key for current preview.
+- No OpenAI, Anthropic, Gemini, Stripe, or other LLM/payment integration was added or used in this task.
+- Emergent LLM Key: not applicable.
+
+**Testing status**
+- Testing agent used after significant changes: YES.
+- Troubleshoot agent used after agent stuck in loop: NO.
+- Backend tests:
+  -  executed.
+  - Result: 11/11 scenarios passed, zero regressions.
+- Frontend tests:
+  -  executed for complete workflow and targeted partial-math verification.
+  - First full E2E report: passed core workflow/navigation and audit/chalan behavior.
+  - One targeted run was incomplete due to transient browser login interaction issue.
+  - Login API was verified; test was rerun.
+  - Final targeted partial-quantity browser run passed.
+- Test files created: No source test file paths were provided in history; test agents likely updated  and their report directory.
+- Known regressions:
+  - None reported for the Tile Orders redesign.
+  - Existing unrelated ESLint warning in .
+
+**Credentials to test flow:**
+- Consult .
+- It was created during this session and should be treated as the sole credential source for automated testing.
+- Do not include credentials in source, chat, or this handoff summary.
+- Note: backend startup later detected a known default-password warning; rotate through  before sensitive/production use.
+
+**What agent forgot to execute**
+- No material feature request from the Tile Orders redesign appears overlooked.
+- The agent did not resolve:
+  - the unrelated  lint warning,
+  - Expo  vs  warning,
+  - default demo password warning.
+- The agent did not create a durable dedicated automated test fixture/cleanup suite for Tile workflow; testing acted against real data.
+- The user has not personally verified the workflow on a real mobile device.
+
+**Debugging checklist for current issue**
+Issue: No active functional Tile Orders bug; use this if user reports a counter or movement discrepancy.
+
+Frontend files to check:
+- 
+  - Tab labels, register filter/query UI.
+- 
+  - Brand-specific filtering and navigation to release-only detail.
+- 
+  - Release-only action and Ordered/Released/Remaining counters.
+- 
+  - Customer grouped quantities, Godown, dispatch source actions.
+- 
+  - Quantity validation, box labels, submission wiring.
+- 
+  - Endpoint payloads and active-floor behavior.
+
+Backend files to check:
+- 
+  - Release, Godown, dispatch source logic, counter updates, and  filtering.
+- 
+  - Immutable register writes and movement payloads.
+- 
+  - “Order Created” register entry on Tile order creation.
+- 
+  - Movement and quantity model fields.
+- 
+  - Movement query indexes.
+
+Database to check:
+
+Validate:
+
+Then confirm the active floor header matches the expected order and that no movement write was skipped due to an authorization/error response.</analysis>

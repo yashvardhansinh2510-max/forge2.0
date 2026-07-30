@@ -8,7 +8,7 @@ import json
 from typing import Optional
 
 # Configuration
-BASE_URL = "https://a8dd3b56-185f-4c7c-9980-087ebbbcdd31.preview.emergentagent.com/api"
+BASE_URL = "https://tile-orders-audit.preview.emergentagent.com/api"
 LOGIN_EMAIL = "owner@forge.app"
 LOGIN_PASSWORD = "Forge@2026"
 
