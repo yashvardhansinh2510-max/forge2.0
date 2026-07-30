@@ -1030,7 +1030,7 @@ export function Icon({
 type SheetVariant = "drawer" | "modal" | "bottom";
 export function Sheet({
   visible, onClose, title, subtitle, variant = "drawer",
-  children, footer, width, testID, dismissable = true, headerRight,
+  children, footer, width, minHeight, testID, dismissable = true, headerRight,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -1040,6 +1040,7 @@ export function Sheet({
   children: React.ReactNode;
   footer?: React.ReactNode;
   width?: number;
+  minHeight?: ViewStyle["minHeight"];
   testID?: string;
   dismissable?: boolean;
   headerRight?: React.ReactNode;
@@ -1068,6 +1069,7 @@ export function Sheet({
     marginBottom: "auto",
   } : {
     width: "100%",
+    minHeight,
     maxHeight: "92%",
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
@@ -1081,12 +1083,12 @@ export function Sheet({
 
   return (
     <RNModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={[{ flex: 1, backgroundColor: colors.overlay }, backdropAlign]}>
+      <View style={[{ flex: 1, backgroundColor: colors.overlay, zIndex: 1000 }, backdropAlign]}>
         {dismissable ? <Pressable onPress={onClose} style={StyleSheet.absoluteFillObject} /> : null}
         <View
           testID={testID}
           style={[
-            { backgroundColor: colors.surfaceSecondary, overflow: "hidden" },
+            { backgroundColor: colors.surfaceSecondary, overflow: "hidden", position: "relative", zIndex: 1001 },
             elevation.high,
             panelStyle,
           ]}

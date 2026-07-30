@@ -48,7 +48,6 @@ export default function Settings() {
 
   const confirmLogoutAll = () => {
     if (Platform.OS === "web") {
-      // eslint-disable-next-line no-alert
       if (window.confirm("Sign out of every device where you're logged in?")) doLogoutAll();
       return;
     }
@@ -88,12 +87,13 @@ export default function Settings() {
     ] },
   ];
 
-  const workspaceRows: { icon: keyof typeof Feather.glyphMap; label: string; hint: string; href: string; testId: string }[] = [
+  const workspaceRows: { icon: keyof typeof Feather.glyphMap; label: string; hint: string; href: string; testId: string; roles?: string[] }[] = [
     { icon: "briefcase", label: "Company", hint: "Name, contact, logo", href: "/(admin)/settings-company", testId: "settings-nav-company" },
     { icon: "file-text", label: "PDF branding", hint: "Footer, terms, watermark", href: "/(admin)/settings-pdf", testId: "settings-nav-pdf" },
     { icon: "users", label: "Team", hint: "Add, edit roles, deactivate", href: "/(admin)/team", testId: "settings-nav-team" },
     { icon: "shield", label: "Roles & permissions", hint: "What each role can do", href: "/(admin)/settings-permissions", testId: "settings-nav-permissions" },
     { icon: "bell", label: "Notifications", hint: "Channels & follow-up rules", href: "/(admin)/settings-notifications", testId: "settings-nav-notifications" },
+    { icon: "user-plus", label: "Walk-in setup", hint: "Manage lead sources", href: "/(admin)/settings-walkins", testId: "settings-nav-walkins", roles: ["owner", "admin", "manager"] },
     { icon: "database", label: "Catalog tools", hint: "Import, export, backup", href: "/(admin)/settings-catalog", testId: "settings-nav-catalog" },
     { icon: "activity", label: "System", hint: "Health, version, storage", href: "/(admin)/settings-system", testId: "settings-nav-system" },
     { icon: "file-text", label: "Privacy & data", hint: "What we collect, deletion requests", href: "/(admin)/settings-privacy", testId: "settings-nav-privacy" },
@@ -141,7 +141,7 @@ export default function Settings() {
       {/* Workspace — every functional Settings section lives behind these rows */}
       <Card style={{ padding: 0 }} variant="flat">
         <Text style={[type.overline, { padding: spacing.md, paddingBottom: 8 }]}>Workspace</Text>
-        {workspaceRows.map((r, i) => (
+        {workspaceRows.filter((r) => !r.roles || r.roles.includes(staff?.role || "")).map((r, i) => (
           <Pressable
             key={r.href}
             testID={r.testId}
