@@ -14858,3 +14858,22 @@ metadata:
   version: "1.4"
   test_sequence: 5
   run_ui: true
+
+user_problem_statement: "Sales Data 2.0 Executive Analytics Dashboard — replace legacy Sales Data with a premium database-driven analytics workspace using confirmed-order revenue, floor/date/entity filters, funnel, drill-downs, and exports."
+test_plan:
+  current_focus:
+    - "Executive analytics API baseline: confirmed-order revenue, dynamic filters, floor isolation, funnel, pagination, drill-down, export"
+    - "New Sales Data executive route mobile loading, filters, KPI refresh, and error-free rendering"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+agent_communication:
+  - agent: "main"
+    message: |
+      Test only the implemented Executive Analytics baseline. New routes are under
+      /api/executive-analytics: filters, dashboard, funnel, products, export,
+      brands/{id}, customers/{id}, salespeople/{id}, referrers/{id}. Revenue must
+      contain only status=ordered records. Verify floor/date query isolation,
+      response safety, CSV/XLSX/PDF responses, and mobile /sales-data/executive
+      rendering/filter interaction. Report missing future-scope metrics separately
+      from actual regressions; do not mark unimplemented P1/P2 as defects.
