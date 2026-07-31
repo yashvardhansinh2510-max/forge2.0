@@ -171,7 +171,10 @@ async def brand_detail(
     brand = await db.brands.find_one({"id": brand_id}, {"_id": 0, "id": 1, "name": 1, "floor_id": 1})
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found")
-    analytics = await dashboard(floor_id, preset, date_from, date_to, brand_id, None, None, granularity, user)
+    analytics = await dashboard(
+        floor_id=floor_id, preset=preset, date_from=date_from, date_to=date_to,
+        brand_id=brand_id, granularity=granularity, user=user,
+    )
     return {"brand": brand, **analytics}
 
 
