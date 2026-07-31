@@ -99,3 +99,38 @@ async def dashboard(
     )
     totals = kpi[0] if kpi else {"revenue": 0, "orders": 0, "customers": [], "gross_sales": 0}
     return {"meta": {"revenue_definition": "Confirmed and completed orders only"}, "kpis": {"revenue": round(totals["revenue"], 2), "orders": totals["orders"], "aov": round(totals["revenue"] / totals["orders"], 2) if totals["orders"] else 0, "gross_sales": round(totals["gross_sales"], 2), "customers": len(totals["customers"])}, "trend": trend, "floors": floors, "brands": brands, "products": products, "customers": customers, "salespeople": salespeople, "referrals": referrals}
+
+
+@router.get("/funnel")
+async def funnel(
+    floor_id: Optional[str] = None, preset: str = "this_month", date_from: Optional[str] = None, date_to: Optional[str] = None,
+    user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
+):
+    order_match = await _match(user, floor_id, preset, date_from, date_to, None, None, None)
+    floor_match = {"floor_id": order_match["floor_id"]} if "floor_id" in order_match else {}
+    start, end = _date_range(preset, date_from, date_to)
+    date_match = {"created_at": {k: v for k, v in (("$gte", start), ("$lte", end)) if v}} if start or end else {}
+    walkins, selections, quotes, orders, releases, dispatches, payments = await __import__("asyncio").gather(
+        db.walkins.count_documents({**floor_match, **date_match, "is_deleted": False}),
+        db.quotations.count_documents({**floor_match, **date_match, "doc_type": "tiles_selection"}),
+        db.quotations.count_documents({**floor_match, **date_match, "doc_type": {"$in": ["tiles_quotation", "standard"]}, "status": {"$nin": ["rejected", "lost"]}}),
+        db.quotations.count_documents(order_match),
+        db.purchase_orders.count_documents({**floor_match, "ready_boxes": {"$gt": 0}}),
+        db.purchase_orders.count_documents({**floor_match, "dispatched_boxes": {"$gt": 0}}),
+        db.payments.count_documents({**floor_match, "status": "completed", **({"paid_at": {"$gte": start, "$lte": end}} if start and end else {})}),
+    )
+    counts = [walkins, selections, quotes, orders, releases, dispatches, payments]
+    names = ["Walk-ins", "Selections", "Quotations", "Confirmed Orders", "Release", "Dispatch", "Payments"]
+    revenue = (await _rows("quotations", [{"$match": order_match}, {"$group": {"_id": None, "revenue": {"$sum": "$grand_total"}}}]))
+    total = revenue[0]["revenue"] if revenue else 0
+    return {"stages": [{"key": name.lower().replace(" ", "_"), "label": name, "count": count, "conversion_pct": round(count / counts[0] * 100, 1) if counts[0] else 0, "dropoff_pct": round((counts[i - 1] - count) / counts[i - 1] * 100, 1) if i and counts[i - 1] else 0, "revenue": round(total if i >= 3 else 0, 2)} for i, (name, count) in enumerate(zip(names, counts))]}
+
+
+@router.get("/products")
+async def products(
+    floor_id: Optional[str] = None, preset: str = "this_month", date_from: Optional[str] = None, date_to: Optional[str] = None,
+    page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=100), user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
+):
+    match = await _match(user, floor_id, preset, date_from, date_to, None, None, None)
+    pipeline = [{"$match": match}, {"$unwind": "$items"}, {"$group": {"_id": {"id": "$items.product_id", "name": "$items.name"}, "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}, "quantity": {"$sum": "$items.qty"}, "customers": {"$addToSet": "$customer_id"}, "average_price": {"$avg": "$items.unit_price"}}}, {"$sort": {"revenue": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit}, {"$project": {"_id": 0, "product_id": "$_id.id", "name": "$_id.name", "revenue": 1, "quantity": 1, "average_price": 1, "customers": {"$size": "$customers"}}}]
+    return {"page": page, "items": await _rows("quotations", pipeline)}
