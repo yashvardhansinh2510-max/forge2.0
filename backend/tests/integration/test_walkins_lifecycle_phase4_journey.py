@@ -190,11 +190,11 @@ class TestWalkinLifecyclePhase4:
             and walkin_rows[0].get("auto_resolved") is True
         )
 
-        # Selection follow-up cadence is config-driven and time-based (not immediate by design)
-        selection_rows = [
-            f for f in fl_after_selection.json()
-            if f.get("quotation_id") == quotation_id and f.get("rule_type") == "selection_waiting"
-        ]
+        selection_rows = _wait_for_followup_source_key(
+            session, f"selection_waiting:{quotation_id}", category="selection",
+        )
+        assert len(selection_rows) == 1, "Selection follow-up must begin immediately at handoff"
+        assert selection_rows[0].get("status") in ("open", "snoozed")
 
         # 3) Selection -> Quotation -> Confirmed order
         s_to_pending = session.patch(
@@ -298,10 +298,6 @@ class TestWalkinLifecyclePhase4:
         assert post_rows, "Operational follow-up row missing after release"
         assert post_rows[0].get("status") == "done", post_rows[0]
         assert post_rows[0].get("auto_resolved") is True
-
-        # Keep evidence of selection follow-up behavior for report context
-        # (time-based by configuration; may be zero immediately after creation)
-        assert isinstance(selection_rows, list)
 
         # Primary lifecycle blocker check kept at the end so downstream
         # operational follow-up checks are still exercised in the same run.

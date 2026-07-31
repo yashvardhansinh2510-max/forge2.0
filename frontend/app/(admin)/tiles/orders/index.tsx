@@ -25,7 +25,7 @@ import { colors, radius, spacing, type } from "@/src/theme/tokens";
 type TabKey = "customer" | "brands" | "dispatch-list" | "material-register";
 const TABS: [TabKey, string][] = [
   ["customer", "Customer"], ["brands", "Brands"],
-  ["dispatch-list", "Dispatch List"], ["material-register", "Material Movement Register"],
+  ["material-register", "Material Movement Register"],
 ];
 
 // Only "Dispatched" is a real, reachable status today — nothing in the
