@@ -186,7 +186,11 @@ async def customer_lifetime(
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     analytics = await dashboard(floor_id=floor_id, preset="all", customer_id=customer_id, user=user)
-    return {"customer": customer, "lifetime": analytics}
+    lifetime_rows = await _rows("quotations", [{"$match": {"status": "ordered", "customer_id": customer_id}}, {"$group": {"_id": None, "first_visit": {"$min": "$created_at"}, "last_purchase": {"$max": "$updated_at"}, "orders": {"$sum": 1}, "revenue": {"$sum": "$grand_total"}, "floors": {"$push": "$floor_id"}}}])
+    lifetime = lifetime_rows[0] if lifetime_rows else {"first_visit": None, "last_purchase": None, "orders": 0, "revenue": 0, "floors": []}
+    preferred_floor = max(set(lifetime["floors"]), key=lifetime["floors"].count) if lifetime["floors"] else None
+    brands = await _rows("quotations", [{"$match": {"status": "ordered", "customer_id": customer_id}}, {"$unwind": "$items"}, {"$lookup": {"from": "products", "localField": "items.product_id", "foreignField": "id", "as": "product"}}, {"$unwind": "$product"}, {"$group": {"_id": "$product.brand_id", "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}}}, {"$sort": {"revenue": -1}}, {"$limit": 1}])
+    return {"customer": customer, "lifetime": analytics, "lifetime_value": {"revenue": lifetime["revenue"], "orders": lifetime["orders"], "average_order": round(lifetime["revenue"] / lifetime["orders"], 2) if lifetime["orders"] else 0, "first_visit": lifetime["first_visit"], "last_purchase": lifetime["last_purchase"], "preferred_floor": preferred_floor, "preferred_brand_id": brands[0]["_id"] if brands else None}}
 
 
 @router.get("/salespeople/{salesperson_id}")
