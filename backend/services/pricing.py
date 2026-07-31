@@ -90,9 +90,10 @@ def recalc_quotation_totals(
     rows = _resolve_line_rows(items, project_discount_pct, category_discounts or {}, room_discounts or {})
     # Explicit fold, NOT sum(): CPython >= 3.12 gives sum() a Neumaier
     # compensated-summation fast path, which shifts grand_total by ₹0.01 on
-    # roughly 1 in 300 real quotations versus the accumulator this code has
-    # always used. grand_total values are already persisted and are
-    # re-written on every quotation edit, so they must not move.
+    # roughly 1 in 60 to 1 in 160 real quotations, depending on line count,
+    # versus the accumulator this code has always used. grand_total values are
+    # already persisted and are re-written on every quotation edit, so they
+    # must not move.
     subtotal = 0.0
     discount_total = 0.0
     for row in rows:
@@ -113,9 +114,11 @@ def net_amounts(
 ) -> dict[str, float]:
     """Return {line_id: post-discount line total}.
 
-    Sums to grand_total to within per-line rounding (each line is rounded to
-    paise independently, so a quotation with N lines can differ from
-    grand_total by at most N x ₹0.01 — assert with that tolerance, not equality.
+    Sums to grand_total to within per-line rounding. Each line is rounded to
+    paise independently, so the tight bound is 0.005 * (N + 1) for N lines —
+    half a paisa per line plus half a paisa on the total. Assert with that
+    bound, not equality, and not N * 0.01: the looser figure would let a
+    systematic one-paisa-per-line error pass at every N.
     """
     rows = _resolve_line_rows(items, project_discount_pct, category_discounts or {}, room_discounts or {})
     return {row["line_id"]: round(row["gross"] - row["disc"], 2) for row in rows}
