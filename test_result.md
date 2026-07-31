@@ -14931,3 +14931,33 @@ frontend:
       - working: true
         agent: "testing"
         comment: "Iteration 18 verified the complete live backend workflow and iteration 19 verified console-clean Dispatch List UI after the key-collision correction. All required restoration paths passed."
+
+user_problem_statement: "Tile Orders UX Restoration — Production P0. Keep the verified Release, Customer Orders, Dispatch, Material Movement Register, Dispatch List, Chalan, PDF, and persistence backend endpoints unchanged. Replace only the oversized card-based UI with dense ERP grids, make the Release-to-Dispatch path clear, support multi-product batch release, use rule-based actions only, and verify the full workflow on desktop, tablet, and mobile."
+frontend:
+  - task: "Tile Orders production ERP UX restoration"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/tiles/orders/index.tsx, frontend/app/(admin)/tiles/orders/[id].tsx, frontend/app/(admin)/tiles/orders/brands/[brandId].tsx, frontend/app/(admin)/tiles/orders/po/[poId].tsx, frontend/src/components/tiles/TileOrderStatusUI.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "User reported the restored workflow remained card-heavy, whitespace-intensive, and unclear: Brand release was not visibly connected to Customer downstream actions."
+      - working: "NA"
+        agent: "main"
+        comment: "Replaced UI only: 30-row dashboard grid, brand queue grid, per-brand batch release grid with existing release API, customer operations grid using existing move/dispatch APIs, dispatch logistics grid, movement audit grid, and workflow rails. Existing backend routes were not changed. Static lint, targeted TypeScript checks, and desktop screenshots passed."
+test_plan:
+  current_focus:
+    - "Verify compact ERP table layouts and workflow rails at desktop, tablet, and phone sizes"
+    - "Verify batch release immediately refreshes Customer released quantity and enables only rule-valid downstream action controls"
+    - "Verify full existing endpoint chain: release, move to Godown, direct dispatch, Godown dispatch, Dispatch List, movement register, Chalan/PDF, MongoDB persistence after refresh"
+    - "Verify no console/API errors, no disconnected controls, and no duplicate records"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+agent_communication:
+  - agent: "main"
+    message: |
+      User requested a P0 Tile Orders UX restoration, not backend changes. Test current frontend against live existing APIs. The new UI must be high-density, responsive, operational, and use the exact Release → Customer → Move to Godown or Dispatch from Released → Dispatch → Dispatch List → Material Register → Chalan/PDF workflow. Do not pass based only on screenshots: verify actions persist after refresh and state enables/hides downstream controls correctly. Test desktop, tablet, and phone. Report all visual density, responsiveness, console/API, and workflow defects.
