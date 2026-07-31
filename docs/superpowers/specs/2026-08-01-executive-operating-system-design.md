@@ -138,7 +138,7 @@ Edited in Settings. Unset targets are **excluded from the score**, which then
 reports how many signals it is based on. No invented benchmarks, ever.
 
 **This is the interim entry point, not the final one.** The Goals & Targets
-workspace (§16, Phase 8) becomes the real home for declaring targets and measuring
+workspace (§17, Phase 8) becomes the real home for declaring targets and measuring
 progress against them. It reads and writes this same `settings.analytics_targets`
 document — so targets are stored once, and nothing is built twice.
 
@@ -775,7 +775,116 @@ writes as everything else.
 
 ---
 
-## 14. Global search
+## 14. Executive Command Center
+
+Everything above tells the owner what happened. This is what lets them act on it
+without leaving the page. It is the difference between a dashboard and an operating
+system.
+
+### 14.1 The action model
+
+Every Attention row, Opportunity row, and Operations row carries context and
+actions, not just a number:
+
+```
+₹5.4L quotation pending 9 days
+  Customer      JK Enterprises
+  Architect     ABC Architects
+  Salesperson   Rahul
+  Days pending  9
+
+  [Open]  [Assign]  [Call]  [WhatsApp]  [Schedule Follow-up]
+```
+
+```
+Payment overdue
+  Outstanding   ₹2.4L
+  Customer      Menon Architects
+  Salesperson   Aarav
+
+  [Call]  [Send Reminder]  [Open Customer]  [Record Payment]
+```
+
+```
+Supplier delayed
+  Supplier   Dimore
+  Brand      Dimore
+  Boxes      120
+  ETA        6 days overdue
+
+  [Call Supplier]  [Send Reminder]  [Open Purchase Order]
+```
+
+**Every action reuses an existing endpoint. No new write paths.** This keeps one
+source of truth for behaviour, not just for numbers:
+
+| Action | Wired to |
+|---|---|
+| Call | `Linking.openURL('tel:…')` — the pattern already in `dashboard.tsx:180` and `followups.tsx:361` |
+| WhatsApp | `POST /followups/{id}/contact {channel:"whatsapp"}` → `wa_url`, message text built by `followup_engine.build_whatsapp_message` |
+| Schedule Follow-up | existing follow-up create |
+| Assign | existing follow-up assignment |
+| Record Payment | existing payments create |
+| Open / Open Customer / Open PO | the drill-down graph (§6) |
+| Send Reminder | existing messaging service |
+
+**Four rules the implementation must hold:**
+
+1. **Permissions are re-checked per action, never inherited from the analytics
+   gate.** Sales Data is gated `owner`/`admin`/`manager`, but each underlying
+   endpoint has its own role requirement. An action the caller could not perform on
+   the operational screen must not become performable here. Actions the caller
+   lacks rights for are hidden, not shown-and-failing.
+2. **Acting invalidates the cache.** Because every action goes through an existing
+   write path, the §4.4 version counters bump automatically and the surface
+   refreshes with correct numbers. No special-casing.
+3. **No nested interactive elements.** An action row is a clickable row containing
+   buttons — the exact shape that produced literal `<button>`-inside-`<button>` on
+   RN-Web in the 2026-07-24 `QueueRow` bug. Rows use the `HoverCard` pattern and
+   must not set `accessibilityRole="button"` on the outer `Pressable`.
+4. **44px minimum tap target** on every action control, per the app's existing floor.
+
+### 14.2 Today's Priorities (Daily Focus Mode)
+
+One surface at `/sales-data/today` where the owner can complete the day's work.
+
+```
+Today's Priorities                       7 things need attention
+
+★★★★★   ₹8.2L quotation stalled 9 days          [actions]
+★★★★☆   Payment overdue ₹2.4L                   [actions]
+★★★★☆   Dispatch pending 4 days                 [actions]
+★★★☆☆   Supplier delayed — Dimore, 120 boxes    [actions]
+★★☆☆☆   ABC Architects — no referral in 90 days [actions]
+
+Done today
+  ✓ Payment received ₹2.3L
+  ✓ Dispatch completed
+  ✓ New quotation created
+```
+
+**This is not a second rule set.** It is the full, actionable surface of the same
+Attention (§9) and Opportunity (§10) rules that feed the Overview — same triggers,
+same ₹ impact, same ranking. The Overview shows the top few; this shows all of them
+with room to act. A rule can never fire here and not there.
+
+**Stars reuse the existing priority engine.** `followup_engine.score_followup(value,
+days_since_contact, urgency_pts, tier)` already returns a score and level, and
+`reason_factors_for()` already explains why. Today's Priorities maps that existing
+score to the five-star scale rather than inventing a second, conflicting notion of
+priority. Tapping the stars shows the reason factors.
+
+**Done today** reads the Activity Feed allowlist (§13.1) filtered to today and to
+completion-shaped events — payments recorded, dispatches completed, orders placed,
+follow-ups closed. It is a record of what actually happened, not a checklist the
+owner ticks.
+
+The section shows a genuine all-clear when nothing needs attention. It never
+manufactures work to look busy.
+
+---
+
+## 15. Global search
 
 One search field in the Sales Data shell. Typing `JK` surfaces, without leaving the
 page, grouped results across:
@@ -801,9 +910,9 @@ produce results that dead-end, violating §6.
 
 ---
 
-## 15. Frontend architecture
+## 16. Frontend architecture
 
-### 15.1 Routes
+### 16.1 Routes
 
 ```
 /sales-data                              → Executive Overview
@@ -820,6 +929,7 @@ produce results that dead-end, violating §6.
 /sales-data/collections
 /sales-data/operations
 /sales-data/forecasting
+/sales-data/today
 /sales-data/goals
 ```
 
@@ -827,7 +937,7 @@ Sidebar keeps the single entry **Sales Data**. Existing `/sales-data/*` deep lin
 keep working; legacy screens and `sales_data_routes.py` are removed only after the
 replacing phase is verified feature-for-feature.
 
-### 15.2 Workspace navigation — grouped by business question
+### 16.2 Workspace navigation — grouped by business question
 
 Engineering-shaped navigation (Referrals, Brands, Forecasting as peers) is not how
 an owner thinks. Navigation groups by the question being asked; **the backend and
@@ -835,7 +945,7 @@ the route table do not change at all.**
 
 ```
 Sales Data
-  Overview
+  Overview   ▸ Executive · Today's Priorities · Activity Feed
   Money      ▸ Revenue · Performance · Collections · Revenue Trends · Forecasting
   Customers  ▸ Customers · Architects · Interior Designers · Relationships
   Products   ▸ Products · Brands · Suppliers
@@ -861,19 +971,21 @@ analytics:
 `Revenue Trends` and `Forecasting` are the same Workspace 8 surface, entered at
 different default tabs — not two implementations.
 
-### 15.3 Shared shell — `src/components/analytics/`
+### 16.3 Shared shell — `src/components/analytics/`
 
 | Component | Role |
 |---|---|
 | `WorkspaceSwitcher` | five groups + More, group and member both shown, keyboard navigable |
 | `ActivityFeed` | §13.1, grouped Today / Yesterday / This Week, each entry linked |
-| `GlobalSearch` | §14, in the shell header |
+| `GlobalSearch` | §15, in the shell header |
 | `FilterBar` | sticky. Floor · Date (incl. Yesterday/Today/This Week) · Brand · Category · Supplier · Salesperson · Architect · Interior Designer · Customer · Status. One implementation, every workspace |
 | `KpiRow` | sticky KPI strip |
 | `KpiCard` | value, comparison, delta, sparkline, **the question it answers**, click → drill-down |
 | `HealthScoreCard` | score, band, direction, expandable component breakdown |
 | `MorningBrief` | §11 |
 | `AttentionList` / `OpportunityList` | ranked rows with ₹ impact and destination |
+| `ActionRow` | §14.1 — context fields plus permission-filtered actions, `HoverCard` based so no nested buttons |
+| `TodaysPriorities` | §14.2 — star-ranked actionable list plus Done today |
 | `MoneyBlockedCard` | ₹-first operational summary |
 | `HeatBadge` | Hot / Warm / Cold / Lost with signal breakdown on tap |
 | `RelationshipTimeline` | §13 |
@@ -884,7 +996,7 @@ different default tabs — not two implementations.
 **Filter state lives in URL query params** so every drill-down is shareable,
 bookmarkable, and back-navigable with context intact.
 
-### 15.4 BuildCon chart kit — `src/components/charts/`
+### 16.4 BuildCon chart kit — `src/components/charts/`
 
 New dependency: **`react-native-svg`** (`expo install`, works web + iOS + Android).
 No third-party charting library — the visual language stays ours.
@@ -898,7 +1010,7 @@ responsive sizing, hover (web) and touch (mobile), tooltips, click-through to th
 drill-down graph, loading / empty / no-data states, and accessibility labels.
 Adding a chart type must not require changing the frame.
 
-### 15.5 Visual system
+### 16.5 Visual system
 
 Warm white. High typography. Large whitespace. 12-column responsive grid, 8px
 spacing system, 32px section spacing, 24px card padding, 16px row padding. Sticky
@@ -914,21 +1026,22 @@ inner vertical `ScrollView`; sticky-top and sticky-right are mutually exclusive;
 
 ---
 
-## 16. Phasing
+## 17. Phasing
 
 Each phase is fully functional and verified before the next begins.
 
 | Phase | Contents |
 |---|---|
 | **0** | Correctness fixes: `ordered_at`, `items.net_amount`, index migration, owner targets in Settings, `services/analytics/` skeleton (`filters`, `periods`, `metrics`, `cache`), chart kit foundation, grouped workspace shell |
-| **1** | Executive Overview · Business Health Score · Attention Center · Opportunity Center · Morning Brief · Activity Feed |
+| **1** | Executive Overview · Business Health Score · Attention Center · Opportunity Center · Morning Brief · Activity Feed · **Command Center action model** · **Today's Priorities** |
 | **2** | Performance · Collections · Referral Analytics · shared `ReferredByField` in both builders · partner CRM profiles |
 | **3** | Products · Brands (full brand intelligence set) · Suppliers |
 | **4** | Customers · Heat Score · Relationship timeline · Relationships view |
 | **5** | Operations (money-first) · Global search |
 | **6** | Forecasting & Historical Trends · legacy `sales_data_routes.py` and old screens removed |
-| **7** | Alerts: notify-me subscriptions (revenue drop, collections overdue, architect inactive, brand collapse, large quotation expiring) delivered through the existing `notifications` collection and `services/notifications.py` |
+| **7** | Alerts + **Notification Center**: notify-me subscriptions (revenue drop, collections overdue, architect inactive, brand collapse, large quotation expiring) delivered through the existing `notifications` collection and `services/notifications.py`, surfaced in an inbox-style centre grouped by Revenue · Collections · Dispatch · Architects · Suppliers · Customers. This **upgrades the existing `app/(admin)/notifications.tsx`** (119 lines, already carrying `kind` and `link`) rather than adding a second notification surface, and every entry carries the §14.1 action model so a notification can be acted on where it is read |
 | **8** | **Goals & Targets workspace**: monthly revenue, collection, orders, conversion, architect acquisition, and customer retention targets — declared in one place, with every workspace measuring progress against them instead of showing isolated numbers. Reads and writes the same `settings.analytics_targets` document created in Phase 0, so nothing is stored or built twice. |
+| **9** | **Executive Assistant** (future, not scoped here): natural-language questions — *"Why did revenue fall this week?"*, *"Which architects should I meet this month?"*, *"Which quotations are worth calling today?"* — answered **only** by calling the analytics services defined in this document. It is a language front-end over the metric registry, never a generator over raw data: every answer resolves to a defined KPI and inherits that KPI's `history_state`, so a question whose underlying metric reports `insufficient_history` gets that answer, not a confident invented one. Requires §4 to be complete and stable; scoping happens in its own design pass. |
 
 Phase 0 is not optional and not deferrable — Phase 1's numbers are wrong without it.
 
@@ -938,7 +1051,7 @@ written against it, and no phase's plan may introduce an aggregation, KPI, or
 drill-down path that is not in the Blueprint (§7) without amending this document
 first.
 
-## 17. Verification protocol (every phase)
+## 18. Verification protocol (every phase)
 
 1. Every KPI cross-checked against a direct Mongo query, value for value.
 2. Every aggregation reconciles: product = brand = category = quotation revenue.
@@ -947,12 +1060,18 @@ first.
    `first-floor` / `ground-floor`) that catches ambient-state leaks the UI hides.
 5. Every drill-down path opens the right record with filter context preserved.
 6. Every export (CSV / Excel / PDF) opens and matches the on-screen data.
-7. Responsive pass at 1280 / 768 / 375.
-8. No placeholder components. No empty cards. No fabricated values.
-9. Backend unit tests for every new service module.
-10. Fix, re-verify, and only then proceed.
+7. **Every Command Center action re-checks its own permission.** Verified by calling
+   each action's endpoint as a role that should be refused — the analytics gate must
+   never widen access to an underlying operation.
+8. **No nested interactive elements** in any action row — checked against the live
+   accessibility tree, not by eye (the 2026-07-24 `QueueRow` bug was invisible
+   visually and only showed as real `<button>` nesting in the DOM).
+9. Responsive pass at 1280 / 768 / 375.
+10. No placeholder components. No empty cards. No fabricated values.
+11. Backend unit tests for every new service module.
+12. Fix, re-verify, and only then proceed.
 
-## 18. Risks and open items
+## 19. Risks and open items
 
 - **Referral workspaces stay empty until the field is used.** The build is correct
   and the onboarding state is honest, but partner numbers only appear once
@@ -978,5 +1097,20 @@ first.
 - **Goals & Targets is Phase 8, but the Health Score needs two of its targets in
   Phase 0.** Those two live in Settings until the workspace exists. The storage
   document is the same, so the migration is a UI move, not a data move.
+- **The Command Center makes Sales Data a write surface for the first time.** Every
+  other part of this design reads. The permission re-check (§14.1 rule 1) is the
+  control that keeps a reporting role from becoming an operating role by accident,
+  and it is the single most important thing to get right in Phase 1.
+
+---
+
+## 20. Architecture freeze
+
+As of 2026-08-01 this document is **frozen**. The remaining risk is execution
+quality, data correctness, and consistency as the implementation grows — not design.
+
+Changes from here are amendments, not redesigns: any new KPI, aggregation,
+drill-down path, or above-the-fold element is added to this document first, in the
+section that owns it, and only then built.
 - The shared backend on `:8010` does not auto-reload and may be in use by another
   session; confirm before restarting.
