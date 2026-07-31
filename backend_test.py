@@ -8,7 +8,7 @@ import json
 from typing import Optional
 
 # Configuration
-BASE_URL = "https://walkins-crm-phase4.preview.emergentagent.com/api"
+BASE_URL = "https://management-intel-1.preview.emergentagent.com/api"
 LOGIN_EMAIL = "owner@forge.app"
 LOGIN_PASSWORD = "Forge@2026"
 

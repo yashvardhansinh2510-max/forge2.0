@@ -1,7 +1,7 @@
 # Forge Expo/React Native Web - Performance Investigation Report
 **Date**: 2026-07-12  
 **Environment**: Desktop 1920x800  
-**URL**: https://walkins-crm-phase4.preview.emergentagent.com  
+**URL**: https://management-intel-1.preview.emergentagent.com  
 **Credentials**: owner@forge.app / Forge@2026 (staff owner)
 
 ---

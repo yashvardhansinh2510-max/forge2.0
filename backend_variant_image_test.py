@@ -15,7 +15,7 @@ import sys
 from typing import Dict, List, Any, Optional
 
 # Backend URL from frontend/.env
-BASE_URL = "https://walkins-crm-phase4.preview.emergentagent.com/api"
+BASE_URL = "https://management-intel-1.preview.emergentagent.com/api"
 
 # Test credentials from review request
 TEST_EMAIL = "owner@forge.app"

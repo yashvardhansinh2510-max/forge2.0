@@ -5,7 +5,7 @@ Debug rate limit - check what IP the backend sees
 
 import requests
 
-BASE_URL = "https://walkins-crm-phase4.preview.emergentagent.com/api"
+BASE_URL = "https://management-intel-1.preview.emergentagent.com/api"
 
 # Make a request and check headers
 response = requests.post(
