@@ -7,7 +7,7 @@
 // pattern for the Customer-level fields.
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from "react-native";
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { type CustomerMatch, type DuplicateMatches, parseDuplicateConflict, walkinsApi } from "@/src/api/walkins";
@@ -162,7 +162,7 @@ export default function NewWalkIn() {
     <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
       <PageHeader title="Log Walk-in" overline="CRM" back={() => router.back()} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-        <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.md }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: spacing.xxl, gap: spacing.md }} keyboardShouldPersistTaps="handled">
           <Text style={type.overline}>Customer</Text>
           <TextField label="Customer Name *" value={name} onChangeText={setName} placeholder="Full name" testID="walkin-name" />
           <TextField label="Phone *" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="10-digit mobile" testID="walkin-phone" />
@@ -232,9 +232,11 @@ export default function NewWalkIn() {
           <TextField label="Budget (₹)" value={budget} onChangeText={setBudget} keyboardType="numeric" placeholder="Optional" testID="walkin-budget" />
           <TextField label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional" multiline numberOfLines={3} testID="walkin-notes" />
 
-          {error ? <Text style={[type.bodySm, { color: colors.error }]}>{error}</Text> : null}
-          <Button label="Log Walk-in" onPress={save} loading={saving} testID="walkin-save-btn" />
         </ScrollView>
+        <View style={styles.submitFooter}>
+          {error ? <Text testID="walkin-submit-error" style={[type.bodySm, { color: colors.error }]}>{error}</Text> : null}
+          <Button label="Log Walk-in" onPress={save} loading={saving} fullWidth testID="walkin-save-btn" />
+        </View>
       </KeyboardAvoidingView>
 
       {/* Salesperson picker */}
@@ -284,3 +286,14 @@ export default function NewWalkIn() {
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  submitFooter: {
+    backgroundColor: colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+  },
+});
