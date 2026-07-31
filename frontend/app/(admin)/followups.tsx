@@ -289,11 +289,9 @@ export default function FollowupsScreen() {
   }, []);
 
   const bootstrap = useCallback(async () => {
-    // Reconcile used to be awaited BEFORE the main fetch even started, adding
-    // its full ~5s latency on top of everything else — the page would sit on
-    // the loading skeleton for 6-7s. It's best-effort and idempotent, so fire
-    // it in the background and let the real data load (and render) immediately.
-    api.post("/followups/reconcile").catch(() => { /* best-effort */ });
+      // Reconciliation remains available as an explicit administrative action.
+      // Do not fire a mutation during workspace bootstrap: navigation can abort
+      // an unawaited POST and create a visible browser network error.
     try {
       const [s, m, i, list, a, c, sv] = await Promise.all([
         api.get<Stats>("/followups/stats"),

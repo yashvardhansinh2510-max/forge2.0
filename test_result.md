@@ -14961,3 +14961,6 @@ agent_communication:
   - agent: "main"
     message: |
       User requested a P0 Tile Orders UX restoration, not backend changes. Test current frontend against live existing APIs. The new UI must be high-density, responsive, operational, and use the exact Release → Customer → Move to Godown or Dispatch from Released → Dispatch → Dispatch List → Material Register → Chalan/PDF workflow. Do not pass based only on screenshots: verify actions persist after refresh and state enables/hides downstream controls correctly. Test desktop, tablet, and phone. Report all visual density, responsiveness, console/API, and workflow defects.
+  - agent: "testing"
+    message: |
+      Iteration 20 passed all backend Tile Orders workflow tests and responsive desktop/tablet/mobile UX checks, but found two remaining frontend quality defects: an aborted background follow-up reconciliation POST during rapid navigation, and a Customer table Delivered column that duplicated Dispatched. Main agent removed fire-and-forget reconciliation during dashboard/follow-up bootstrap (explicit reconciliation endpoint remains) and made Delivered render only when the existing workflow records Delivered location; otherwise it displays an honest em dash with explanatory note. Targeted lint and TypeScript checks pass. Focused retest is required.
