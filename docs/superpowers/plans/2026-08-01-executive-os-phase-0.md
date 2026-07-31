@@ -498,16 +498,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `backend/tests/unit/test_migration_0011_net_amounts.py`:
-
-```python
-"""The backfill must reproduce exactly what the write path now stamps."""
-from __future__ import annotations
-
-from migrations import _0011 as _unused  # noqa: F401  (import guard, see below)
-```
-
-Replace that placeholder import with the real one once the module exists — the actual test file content is:
+Create `backend/tests/unit/test_migration_0011_net_amounts.py`. The module name starts with a digit, so it must be imported via `importlib`, not a plain `import` statement:
 
 ```python
 """The backfill must reproduce exactly what the write path now stamps."""
@@ -1908,11 +1899,14 @@ def test_line_revenue_groups_by_the_requested_field():
 
 
 def test_outstanding_only_counts_completed_payments():
-    # 23 of 31 live payments are "pending" — recorded, not received.
+    # 23 of 31 live payments are "pending" — recorded, not received. Counting
+    # those as collected would understate what the business is owed.
     stages = outstanding_pipeline({"status": "ordered"})
     lookup = next(s["$lookup"] for s in stages if "$lookup" in s)
     assert lookup["from"] == "payments"
-    assert {"$eq": ["$status", "completed"]} in str(lookup["pipeline"]) or "completed" in str(lookup["pipeline"])
+    conditions = lookup["pipeline"][0]["$match"]["$expr"]["$and"]
+    assert {"$eq": ["$status", "completed"]} in conditions
+    assert {"$eq": ["$quotation_id", "$$qid"]} in conditions
 
 
 def test_every_metric_declares_its_source_collections():
@@ -2454,7 +2448,7 @@ No new code — this proves the foundation before Phase 1 builds on it.
 - [ ] **Step 1: Full backend suite**
 
 Run: `cd backend && ./.venv/bin/python -m pytest tests/unit -v`
-Expected: all pass, count ≥ 197 + 63 new. Zero previously-passing tests broken.
+Expected: all pass. This plan adds 72 tests (Task 1: 10, Task 2: 4, Task 3: 3, Task 4: 4, Task 8: 5, Task 9: 12, Task 10: 16, Task 11: 8, Task 12: 10), so the count should be the pre-plan baseline plus 72. **Record the real baseline before Task 1 rather than trusting 197** — the working tree carries uncommitted edits from earlier sessions, and the Tile Orders ledger notes 2 pre-existing unrelated failures. Zero previously-passing tests may break.
 
 - [ ] **Step 2: Reconciliation against live data**
 
