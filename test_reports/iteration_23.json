@@ -1,0 +1,63 @@
+{
+  "summary": "Frontend-only final route-lifecycle retest completed on desktop and phone. Immediate dashboard -> Tile Orders rapid navigation still produces aborted dashboard bootstrap GETs in network logs; no aborted /api/followups/reconcile observed; no browser console errors observed. Tile Orders tabs and compact customer grid load successfully after navigation settles.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Desktop immediate post-login rapid dashboard <-> Tile Orders navigation",
+        "issue": "Aborted dashboard GETs still observed in network: /api/followups/mission, /api/followups?limit=12, /api/dashboard/stats (net::ERR_ABORTED).",
+        "affected_testIDs": [
+          "nav-dashboard",
+          "nav-orders"
+        ]
+      },
+      {
+        "flow": "Phone immediate post-login rapid dashboard <-> Tile Orders navigation",
+        "issue": "Aborted dashboard bootstrap GETs still observed repeatedly for full set: /api/followups/mission, /api/followups?limit=12, /api/dashboard/stats, /api/payments/stats, /api/quotations/recent?limit=5, /api/purchases/shortages?status=awaiting_reorder.",
+        "affected_testIDs": [
+          "bottom-nav-dashboard",
+          "bottom-nav-more",
+          "nav-orders"
+        ]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_23_ui_smoke/desktop_initial.jpeg",
+    "/app/test_reports/iteration_23_ui_smoke/mobile_initial.jpeg",
+    "/app/test_reports/iteration_23_ui_desktop_rerun/final_tile_orders_desktop.jpeg",
+    "/app/test_reports/iteration_23_ui_phone/final_tile_orders_phone.jpeg",
+    "/app/test_reports/iteration_23_ui_desktop_settle/tile_orders_settled_desktop.jpeg",
+    "/root/.emergent/automation_output/20260731_120753/console_20260731_120753.log",
+    "/root/.emergent/automation_output/20260731_120818/console_20260731_120818.log",
+    "/root/.emergent/automation_output/20260731_120845/console_20260731_120845.log",
+    "/root/.emergent/automation_output/20260731_120934/console_20260731_120934.log"
+  ],
+  "action_items": [
+    "Further tighten dashboard focus-lifecycle bootstrapping so immediate route exit does not emit aborted dashboard bootstrap requests in browser network traces.",
+    "Decide whether intentional blur aborts must be fully network-silent in this acceptance criterion; if yes, gate request start more aggressively before firing the six dashboard reads.",
+    "Re-run desktop and phone rapid navigation scenario after fix and verify zero aborted dashboard bootstrap GETs and zero aborted /api/followups/reconcile."
+  ],
+  "critical_code_review_comments": [
+    "dashboard.tsx now uses useFocusEffect + AbortController with 350ms delayed load; this avoids many stale state updates, but rapid focus/blur still starts requests that get aborted when route changes quickly.",
+    "api/client.ts correctly wires caller signal into fetch and removes listener in finally; abort behavior is controlled and console-silent, but request cancellation remains visible as net::ERR_ABORTED in browser network tooling."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_23.json"
+  ],
+  "success_rate": {
+    "backend": "N/A (frontend-only scope)",
+    "frontend": "70%"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Credentials read from /app/memory/test_credentials.md (owner@forge.app). Desktop rapid navigation still showed aborted dashboard GET subset; phone rapid navigation reproduced repeated aborts for all tracked dashboard bootstrap endpoints. No aborted reconcile POST observed. No browser console errors observed. Optional settled desktop navigation (wait ~3s on dashboard before moving to Tile Orders) produced 0 dashboard aborts during that settle transition and no user-visible errors.",
+  "rca_of_issue": "Repro: login -> rapidly bounce dashboard and Tile Orders immediately. Observed repeated net::ERR_ABORTED for dashboard bootstrap GET endpoints, especially on phone where each rapid cycle triggered and then canceled the full dashboard bootstrap batch. Likely cause is focus-scoped loader still beginning requests on dashboard focus; when user exits quickly, AbortController cancels in-flight requests, which is user-silent/console-silent but still network-visible."
+}

@@ -14967,3 +14967,6 @@ agent_communication:
   - agent: "main"
     message: |
       Iteration 21 verified the two reported fixes cleanly but recorded optional aborted dashboard GET requests under extremely rapid dashboard-to-Tile-Orders switching. To remove that navigation noise, dashboard bootstrap reads now begin after a 350ms settling window and are cancelled if the user leaves immediately. Static lint and TypeScript checks pass. Run one final focused rapid-navigation browser retest; no user-facing console/network errors should remain.
+  - agent: "main"
+    message: |
+      Iteration 22 proved delay-only cleanup was insufficient because Expo Router keeps the dashboard mounted while blurred. RCA confirms useEffect cleanup did not run on blur. Dashboard now uses useFocusEffect plus an AbortController passed through the shared API client; bootstrap reads are focus-scoped, prevent state updates after blur, and never start when immediate navigation wins. Static lint and TypeScript checks pass. Final retest must confirm rapid dashboard → Tile Orders navigation has no aborted dashboard/followup requests and Tile Orders still loads.

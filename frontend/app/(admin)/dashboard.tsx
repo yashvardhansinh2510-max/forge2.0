@@ -6,8 +6,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Feather } from "@expo/vector-icons";
 import dayjs from "dayjs";
-import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import React, { useCallback, useMemo, useState } from "react";
 import { Linking, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { api } from "@/src/api/client";
@@ -120,20 +120,21 @@ export default function Today() {
   const [shortages, setShortages] = useState<Shortage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async (isRefresh = false) => {
+  const load = useCallback(async (isRefresh = false, signal?: AbortSignal) => {
     if (isRefresh) setRefreshing(true);
     // Fire-and-forget: this reconcile pass can take several seconds under
     // load and is best-effort housekeeping, not something the user should
     // ever sit on a skeleton for. Same "soft" semantics as before — we just
     // no longer block the critical render path on it.
     const [m, fus, st, ps, rq, sh] = await Promise.allSettled([
-      api.get<Mission>("/followups/mission"),
-      api.get<Fu[]>("/followups?limit=12"),
-      api.get<DashStats>("/dashboard/stats"),
-      api.get<PayStats>("/payments/stats"),
-      api.get<RecentQ[]>("/quotations/recent?limit=5"),
-      api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder"),
+      api.get<Mission>("/followups/mission", { signal }),
+      api.get<Fu[]>("/followups?limit=12", { signal }),
+      api.get<DashStats>("/dashboard/stats", { signal }),
+      api.get<PayStats>("/payments/stats", { signal }),
+      api.get<RecentQ[]>("/quotations/recent?limit=5", { signal }),
+      api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder", { signal }),
     ]);
+    if (signal?.aborted) return;
     if (m.status === "fulfilled") setMission(m.value);
     if (fus.status === "fulfilled") setQueue((Array.isArray(fus.value) ? fus.value : []).filter((f) => f.status === "open").slice(0, 6));
     else setQueue([]);
@@ -145,13 +146,16 @@ export default function Today() {
     setRefreshing(false);
   }, []);
 
-  useEffect(() => {
-    // Let an immediate post-login navigation settle before issuing the six
-    // dashboard reads. This keeps rapid dashboard → operations navigation
-    // free of browser-cancelled background requests.
-    const timer = setTimeout(() => { void load(); }, 350);
-    return () => clearTimeout(timer);
-  }, [load]);
+  useFocusEffect(useCallback(() => {
+    const controller = new AbortController();
+    // Avoid starting noncritical dashboard reads if the user immediately
+    // navigates into an operations workspace after login.
+    const timer = setTimeout(() => { void load(false, controller.signal); }, 350);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [load]));
 
   const name = mission?.greeting_name || staff?.full_name?.split(" ")[0] || "there";
   const due = mission?.due_count ?? 0;
