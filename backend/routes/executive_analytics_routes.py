@@ -159,7 +159,7 @@ async def products(
     page: int = Query(1, ge=1), limit: int = Query(25, ge=1, le=100), user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
 ):
     match = await _match(user, floor_id, preset, date_from, date_to, None, None, None)
-    pipeline = [{"$match": match}, {"$unwind": "$items"}, {"$group": {"_id": {"id": "$items.product_id", "name": "$items.name"}, "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}, "quantity": {"$sum": "$items.qty"}, "customers": {"$addToSet": "$customer_id"}, "average_price": {"$avg": "$items.unit_price"}}}, {"$sort": {"revenue": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit}, {"$project": {"_id": 0, "product_id": "$_id.id", "name": "$_id.name", "revenue": 1, "quantity": 1, "average_price": 1, "customers": {"$size": "$customers"}}}]
+    pipeline = [{"$match": match}, {"$unwind": "$items"}, {"$lookup": {"from": "products", "localField": "items.product_id", "foreignField": "id", "as": "product"}}, {"$unwind": {"path": "$product", "preserveNullAndEmptyArrays": True}}, {"$group": {"_id": {"id": "$items.product_id", "name": "$items.name", "brand": "$product.brand_id", "category": "$product.category"}, "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}, "quantity": {"$sum": "$items.qty"}, "customers": {"$addToSet": "$customer_id"}, "average_price": {"$avg": "$items.unit_price"}}}, {"$sort": {"revenue": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit}, {"$project": {"_id": 0, "product_id": "$_id.id", "name": "$_id.name", "brand_id": "$_id.brand", "category": "$_id.category", "revenue": 1, "quantity": 1, "average_price": 1, "customers": {"$size": "$customers"}}}]
     return {"page": page, "items": await _rows("quotations", pipeline)}
 
 
