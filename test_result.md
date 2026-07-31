@@ -14743,3 +14743,72 @@ agent_communication:
         customer's identity. Finally, cover selection-to-quotation and order-confirmed operations
         follow-up/timeline where the available live data supports it, and smoke-test Customers,
         Quotations, Follow-ups, Tile Orders, and Payments for regressions.
+
+
+user_problem_statement: "BuildCon House ERP — Phase 4 Walk-ins CRM: final QA for duplicate resolution, responsive Walk-ins UX, and database-configurable lead-source management."
+
+frontend:
+  - task: "Walk-ins duplicate resolution and phone sheet accessibility"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/walkins/new.tsx, frontend/src/components/ui.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: "Iteration 14 reported inconsistent medium-match View Customer/Use Existing actions and phone salesperson-sheet overlap."
+        - working: true
+          agent: "main"
+          comment: |
+            Fixed a stale-response race where a late live duplicate lookup could clear an already
+            selected existing customer. View Customer now closes the sheet before navigation.
+            The shared Sheet supports a caller-set minimum height and elevated stacking; Walk-in
+            salesperson and duplicate sheets use mobile-safe heights. Real phone test created a
+            seed Walk-in, selected its medium-confidence match, and successfully submitted the
+            linked second Walk-in.
+  - task: "Manager Walk-in lead-source configuration"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/settings.tsx, frontend/app/(admin)/settings-walkins.tsx, frontend/src/api/walkins.ts"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            Added a manager-only Settings entry and live CRUD editor for the existing DB-backed
+            Walk-in lead-source API. Fixed a React Native Web load race by withholding edits until
+            sources finish loading; the page owns one vertical ScrollView to avoid nested-scroll
+            interaction issues. Real phone browser verification added/saved a new source and
+            confirmed the New Walk-in form read it live.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.3"
+  test_sequence: 4
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Retest medium-match Use Existing and View Customer actions after race/navigation fixes"
+    - "Retest phone salesperson picker accessibility after shared Sheet sizing/stacking fix"
+    - "Verify manager lead-source add/remove/save and live New Walk-in readback"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        This is a focused final QA pass after two UI fixes and a new manager-only source editor.
+        Do not use mocked data. Verify: (1) medium-match Use Existing closes the sheet, preserves
+        the chosen Customer, and then creates a linked Walk-in after the normal Log Walk-in submit;
+        (2) View Customer closes the sheet and visibly navigates to the existing Customer; (3) at
+        390px the salesperson picker is visually above the bottom navigation and its options are
+        selectable; (4) owner/manager can add, remove, save, and reload a lead source in Settings
+        > Walk-in setup, and the saved source appears in New Walk-in. Run the two Walk-ins pytest
+        suites with credentials supplied through TEST_STAFF_EMAIL/TEST_STAFF_PASSWORD environment
+        variables and EXPO_PUBLIC_BACKEND_URL; credentials must never be embedded in test code.

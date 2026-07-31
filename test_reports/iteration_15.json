@@ -1,0 +1,76 @@
+{
+  "summary": "Backend Phase-4 walk-ins suites passed fully (19/19). Focused mobile retest validated medium-duplicate sheet actions, salesperson sheet behavior, manager lead-source persistence, and responsive no-overflow checks. One critical phone flow remains blocked: submitting New Walk-in from UI after Use Existing path.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Walk-ins New (phone 390x844) submit",
+        "issue": "`Log Walk-in` submit did not create a walk-in in 3 attempts during phone runs (no POST /api/walkins observed in backend logs for those submit attempts). This blocked completing the required 'Use Existing Customer -> submit -> second walk-in created' verification purely via UI.",
+        "testID": "walkin-save-btn",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Phone medium-duplicate full completion (Use Existing -> submit -> linked second walk-in)",
+        "issue": "Medium duplicate resolution sheet opens and `Use Existing Customer` shows inline confirmation, but end-to-end submit completion could not be validated because phone submit action on New Walk-in did not complete creation in this run.",
+        "affected_testIDs": [
+          "walkin-review-matches",
+          "walkin-use-existing-*",
+          "walkin-linked-customer-confirmation",
+          "walkin-save-btn"
+        ]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "/walkins/new (phone 390x844)",
+        "issues": [
+          "Bottom action area is too close to persistent bottom nav/FAB region; submit CTA is visually cramped/partially occluded in some states, increasing tap reliability risk."
+        ]
+      }
+    ],
+    "react_native_issues": [
+      {
+        "component": "Web runtime warnings",
+        "issue": "Repeated console warnings observed: `shadow*` deprecated to `boxShadow`, `props.pointerEvents` deprecated, and `Animated useNativeDriver` fallback warning."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/integration/test_walkins_crm_foundation.py",
+    "/app/backend/tests/integration/test_walkins_duplicate_rules_phase4.py",
+    "/app/test_reports/pytest/pytest_walkins_crm_foundation.xml",
+    "/app/test_reports/pytest/pytest_walkins_duplicate_rules_phase4.xml",
+    "/app/test_reports/phase4_walkins_ui_iteration15_boot/initial_load_phone.jpeg",
+    "/app/test_reports/phase4_walkins_ui_iteration15_nonblocked/",
+    "/app/test_reports/phase4_walkins_ui_iteration15_probe_floor/floor_probe.jpeg",
+    "/root/.emergent/automation_output/20260731_000221/console_20260731_000221.log",
+    "/root/.emergent/automation_output/20260731_000118/console_20260731_000118.log",
+    "/root/.emergent/automation_output/20260731_000057/console_20260731_000057.log"
+  ],
+  "action_items": [
+    "Fix phone New Walk-in submit reliability at `walkin-save-btn` (verify tap target/stacking/scroll offset near bottom nav + FAB and confirm submit dispatches POST /api/walkins).",
+    "After fix, rerun the exact phone flow: create seed -> medium duplicate -> Use Existing -> submit -> verify second walk-in links to original customer.",
+    "Keep current fixes validated here: View Customer route transition, salesperson sheet selection, and lead-source config persistence."
+  ],
+  "critical_code_review_comments": [
+    "`frontend/app/(admin)/walkins/new.tsx`: ScrollView content container lacks explicit bottom-safe padding despite persistent bottom nav/FAB; this likely contributes to submit CTA accessibility/tap reliability issues on phone.",
+    "`Sheet` layering changes appear effective for Assign Salesperson in this run (sheet visible, selectable rows, non-current assignment possible)."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_15.json"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 targeted tests passed)",
+    "frontend": "Targeted checks mostly passed; 1 critical blocker in phone submit flow"
+  },
+  "seed_data_creation": "Created TEST_UI_SEED_33fe4a (walk-in id: 161e9f99-0785-4c3e-bd61-d55795b8888f) and additional TEST_ records during automated verification.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend is stable for this scope. Reuse seed TEST_UI_SEED_33fe4a/TESTCITY_45d0d3 or create fresh seed. Priority retest is only the phone submit completion path from /walkins/new; do not broaden regression.",
+  "rca_of_issue": "Reproduction: on phone viewport 390x844, fill New Walk-in fields, choose department, then tap `Log Walk-in`. In 3 attempts, URL remained /walkins/new and backend logs did not show POST /api/walkins for those submit attempts. Meanwhile duplicate-check GETs did occur, proving API reachability/session were active. Likely root cause is mobile interaction/layout around bottom CTA zone (bottom nav/FAB overlap or tap interception), not backend create logic (which is green in pytest)."
+}
