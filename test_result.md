@@ -14964,3 +14964,6 @@ agent_communication:
   - agent: "testing"
     message: |
       Iteration 20 passed all backend Tile Orders workflow tests and responsive desktop/tablet/mobile UX checks, but found two remaining frontend quality defects: an aborted background follow-up reconciliation POST during rapid navigation, and a Customer table Delivered column that duplicated Dispatched. Main agent removed fire-and-forget reconciliation during dashboard/follow-up bootstrap (explicit reconciliation endpoint remains) and made Delivered render only when the existing workflow records Delivered location; otherwise it displays an honest em dash with explanatory note. Targeted lint and TypeScript checks pass. Focused retest is required.
+  - agent: "main"
+    message: |
+      Iteration 21 verified the two reported fixes cleanly but recorded optional aborted dashboard GET requests under extremely rapid dashboard-to-Tile-Orders switching. To remove that navigation noise, dashboard bootstrap reads now begin after a 350ms settling window and are cancelled if the user leaves immediately. Static lint and TypeScript checks pass. Run one final focused rapid-navigation browser retest; no user-facing console/network errors should remain.

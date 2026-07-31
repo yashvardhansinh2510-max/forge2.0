@@ -145,7 +145,13 @@ export default function Today() {
     setRefreshing(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // Let an immediate post-login navigation settle before issuing the six
+    // dashboard reads. This keeps rapid dashboard → operations navigation
+    // free of browser-cancelled background requests.
+    const timer = setTimeout(() => { void load(); }, 350);
+    return () => clearTimeout(timer);
+  }, [load]);
 
   const name = mission?.greeting_name || staff?.full_name?.split(" ")[0] || "there";
   const due = mission?.due_count ?? 0;
