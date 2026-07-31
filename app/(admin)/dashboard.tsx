@@ -7,7 +7,7 @@
 import { Feather } from "@expo/vector-icons";
 import dayjs from "dayjs";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { Linking, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { api } from "@/src/api/client";
@@ -119,22 +119,23 @@ export default function Today() {
   const [recent, setRecent] = useState<RecentQ[] | null>(null);
   const [shortages, setShortages] = useState<Shortage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const dashboardRequestVersion = useRef(0);
 
-  const load = useCallback(async (isRefresh = false, signal?: AbortSignal) => {
+  const load = useCallback(async (isRefresh = false, requestVersion?: number) => {
     if (isRefresh) setRefreshing(true);
     // Fire-and-forget: this reconcile pass can take several seconds under
     // load and is best-effort housekeeping, not something the user should
     // ever sit on a skeleton for. Same "soft" semantics as before — we just
     // no longer block the critical render path on it.
     const [m, fus, st, ps, rq, sh] = await Promise.allSettled([
-      api.get<Mission>("/followups/mission", { signal }),
-      api.get<Fu[]>("/followups?limit=12", { signal }),
-      api.get<DashStats>("/dashboard/stats", { signal }),
-      api.get<PayStats>("/payments/stats", { signal }),
-      api.get<RecentQ[]>("/quotations/recent?limit=5", { signal }),
-      api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder", { signal }),
+      api.get<Mission>("/followups/mission"),
+      api.get<Fu[]>("/followups?limit=12"),
+      api.get<DashStats>("/dashboard/stats"),
+      api.get<PayStats>("/payments/stats"),
+      api.get<RecentQ[]>("/quotations/recent?limit=5"),
+      api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder"),
     ]);
-    if (signal?.aborted) return;
+    if (requestVersion !== undefined && requestVersion !== dashboardRequestVersion.current) return;
     if (m.status === "fulfilled") setMission(m.value);
     if (fus.status === "fulfilled") setQueue((Array.isArray(fus.value) ? fus.value : []).filter((f) => f.status === "open").slice(0, 6));
     else setQueue([]);
@@ -147,13 +148,15 @@ export default function Today() {
   }, []);
 
   useFocusEffect(useCallback(() => {
-    const controller = new AbortController();
+    const requestVersion = ++dashboardRequestVersion.current;
     // Avoid starting noncritical dashboard reads if the user immediately
-    // navigates into an operations workspace after login.
-    const timer = setTimeout(() => { void load(false, controller.signal); }, 350);
+    // navigates into an operations workspace after login. When reads have
+    // already started, let them complete and ignore their stale response;
+    // explicit browser aborts appear as noisy network failures.
+    const timer = setTimeout(() => { void load(false, requestVersion); }, 350);
     return () => {
       clearTimeout(timer);
-      controller.abort();
+      dashboardRequestVersion.current += 1;
     };
   }, [load]));
 
