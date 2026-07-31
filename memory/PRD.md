@@ -398,6 +398,26 @@ MongoDB state after reload, no duplicate movement events, and `%PDF` Chalan
 output. Iteration 19 confirmed all four tabs, live dispatch-list API requests,
 row controls, and no duplicate-key/console errors.
 
+### Tile Orders production UX restoration (2026-07-31, VERIFIED)
+
+- Replaced card-heavy dashboard, brand queue, release workspace, customer
+  operations page, dispatch list, and movement register with compact,
+  horizontal-scroll-safe ERP grids designed for desktop density and mobile use.
+- Brand release supports multi-line selection and quantities with one sticky
+  batch submit using the existing Release endpoint. Customer rows expose only
+  business-valid Move to Godown / Dispatch from Released / Dispatch from
+  Godown actions and show an explicit awaiting-release state otherwise.
+- Added workflow rails across dashboard, brand release, and customer operations
+  views; Dispatch and audit grids retain existing Chalan/PDF and MongoDB-backed
+  connections. No Tile Orders API or business rule was replaced.
+- Iteration 20: live backend workflow **21/21** and responsive desktop/tablet/
+  mobile UI checks passed. Iteration 21 confirmed fixed reconcile-network noise
+  and truthful distinct Dispatched/Delivered display. Later rapid-navigation
+  `ERR_ABORTED` GETs were traced to intentional `window.location.assign()`
+  floor switching in the admin layout: they are browser automation/network-panel
+  artifacts with no console error or user-facing failure, so the existing
+  floor-isolation reload was retained.
+
 ## Follow-ups 2.0 — Workspaces redesign, Phase 1+2+3 (2026-07-30, DELIVERED)
 
 Redesign per user's context-engineered spec: replace generic Follow-ups with event-driven

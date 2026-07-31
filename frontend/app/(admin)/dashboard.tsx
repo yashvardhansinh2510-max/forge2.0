@@ -6,8 +6,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Feather } from "@expo/vector-icons";
 import dayjs from "dayjs";
-import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import { useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Linking, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { api } from "@/src/api/client";
@@ -119,9 +119,8 @@ export default function Today() {
   const [recent, setRecent] = useState<RecentQ[] | null>(null);
   const [shortages, setShortages] = useState<Shortage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const dashboardRequestVersion = useRef(0);
 
-  const load = useCallback(async (isRefresh = false, requestVersion?: number) => {
+  const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     // Fire-and-forget: this reconcile pass can take several seconds under
     // load and is best-effort housekeeping, not something the user should
@@ -135,7 +134,6 @@ export default function Today() {
       api.get<RecentQ[]>("/quotations/recent?limit=5"),
       api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder"),
     ]);
-    if (requestVersion !== undefined && requestVersion !== dashboardRequestVersion.current) return;
     if (m.status === "fulfilled") setMission(m.value);
     if (fus.status === "fulfilled") setQueue((Array.isArray(fus.value) ? fus.value : []).filter((f) => f.status === "open").slice(0, 6));
     else setQueue([]);
@@ -147,18 +145,7 @@ export default function Today() {
     setRefreshing(false);
   }, []);
 
-  useFocusEffect(useCallback(() => {
-    const requestVersion = ++dashboardRequestVersion.current;
-    // Avoid starting noncritical dashboard reads if the user immediately
-    // navigates into an operations workspace after login. When reads have
-    // already started, let them complete and ignore their stale response;
-    // explicit browser aborts appear as noisy network failures.
-    const timer = setTimeout(() => { void load(false, requestVersion); }, 350);
-    return () => {
-      clearTimeout(timer);
-      dashboardRequestVersion.current += 1;
-    };
-  }, [load]));
+  useEffect(() => { void load(); }, [load]);
 
   const name = mission?.greeting_name || staff?.full_name?.split(" ")[0] || "there";
   const due = mission?.due_count ?? 0;

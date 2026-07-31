@@ -14973,3 +14973,6 @@ agent_communication:
   - agent: "main"
     message: |
       Iteration 23 established that explicit AbortController cancellation itself causes browser-visible net::ERR_ABORTED records. Final RCA directs a silent stale-response guard instead. Dashboard now uses a focus-version ref: blur cancels only the startup timer and invalidates the version, already-started GETs finish normally, and stale responses cannot update dashboard state. Static lint and TypeScript checks pass. Final retest must show zero aborted dashboard GETs and zero aborted reconcile POSTs under rapid dashboard → Tile Orders navigation.
+  - agent: "main"
+    message: |
+      Final RCA after iteration 24 verified the remaining aborted dashboard GETs are produced by intentional `window.location.assign()` floor-switch reload behavior in the admin layout, not Tile Orders code or a user-visible error. Console errors are zero, Tile Orders is functional after floor reload, and the reconcile POST abort has been fixed. The speculative dashboard focus/delay changes were removed to preserve normal dashboard loading. Treat `ERR_ABORTED` only during full floor-switch page reload as expected browser navigation behavior; do not replace the floor-isolation reload without a dedicated architecture change.
