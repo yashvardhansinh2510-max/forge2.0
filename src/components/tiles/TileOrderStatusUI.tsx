@@ -70,7 +70,7 @@ export function AgeingBadge({ days, band }: { days: number; band: AgeingBand }) 
 function Cell({ label, value, emphasis }: { label: string; value: number; emphasis?: boolean }) {
   return (
     <View style={{ alignItems: "center", flex: 1 }}>
-      <Text style={[type.numeric, emphasis ? { color: colors.brand } : null]}>{value}</Text>
+      <Text style={[type.numeric as any, emphasis ? { color: colors.brand } : null]}>{value}</Text>
       <Text style={[type.bodyMuted, { fontSize: 11 }]}>{label}</Text>
     </View>
   );
@@ -104,6 +104,37 @@ export function CustomerBoxCounterRow({ ordered, released, godown, delivered }: 
   );
 }
 
+type WorkflowStage = "quotation" | "release" | "released" | "godown" | "dispatch" | "register" | "chalan" | "delivered";
+const WORKFLOW_STEPS: { key: WorkflowStage; label: string }[] = [
+  { key: "quotation", label: "Quotation" },
+  { key: "release", label: "Brand release" },
+  { key: "released", label: "Released" },
+  { key: "godown", label: "Godown / direct" },
+  { key: "dispatch", label: "Dispatch" },
+  { key: "register", label: "Register" },
+  { key: "chalan", label: "Chalan" },
+  { key: "delivered", label: "Delivered" },
+];
+
+export function WorkflowRail({ active, testID }: { active: WorkflowStage; testID?: string }) {
+  const current = Math.max(0, WORKFLOW_STEPS.findIndex((step) => step.key === active));
+  return (
+    <View testID={testID} style={workflowStyles.rail}>
+      {WORKFLOW_STEPS.map((step, index) => {
+        const isActive = index === current;
+        const isComplete = index < current;
+        return (
+          <View key={step.key} style={workflowStyles.step}>
+            <View style={[workflowStyles.dot, isActive || isComplete ? workflowStyles.dotActive : null]} />
+            <Text style={[workflowStyles.label, isActive ? workflowStyles.labelActive : null]}>{step.label}</Text>
+            {index < WORKFLOW_STEPS.length - 1 ? <View style={[workflowStyles.line, isComplete ? workflowStyles.lineActive : null]} /> : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 export function BrandStatusChips({ brands }: { brands: CustomerOrderBrand[] }) {
   return (
     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }}>
@@ -119,3 +150,18 @@ export function BrandStatusChips({ brands }: { brands: CustomerOrderBrand[] }) {
     </View>
   );
 }
+
+const workflowStyles = {
+  rail: {
+    flexDirection: "row" as const, alignItems: "center" as const, flexWrap: "wrap" as const,
+    backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border,
+    paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, gap: 4,
+  },
+  step: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
+  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.onSurfaceSubtle },
+  dotActive: { backgroundColor: colors.brand },
+  label: { ...type.caption, fontSize: 10, color: colors.onSurfaceMuted },
+  labelActive: { color: colors.brand, fontWeight: "700" as const },
+  line: { width: 10, height: 1, backgroundColor: colors.border, marginHorizontal: 1 },
+  lineActive: { backgroundColor: colors.brand },
+};
