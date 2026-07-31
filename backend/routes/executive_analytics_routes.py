@@ -116,7 +116,16 @@ async def dashboard(
         walks, selections, quotes, followups = (m.get(sid, {}) for m in activity_maps)
         row.update({"walkins": walks.get("walkins", 0), "selections": selections.get("selections", 0), "quotations": quotes.get("quotations", 0), "conversion_rate": round(row.get("orders", 0) / walks.get("walkins", 1) * 100, 1) if walks.get("walkins") else 0, "followup_completion_rate": round(followups.get("completed", 0) / followups.get("total", 1) * 100, 1) if followups.get("total") else 0})
     totals = kpi[0] if kpi else {"revenue": 0, "orders": 0, "customers": [], "gross_sales": 0}
-    return {"meta": {"revenue_definition": "Confirmed and completed orders only"}, "kpis": {"revenue": round(totals["revenue"], 2), "orders": totals["orders"], "aov": round(totals["revenue"] / totals["orders"], 2) if totals["orders"] else 0, "gross_sales": round(totals["gross_sales"], 2), "customers": len(totals["customers"])}, "trend": trend, "floors": floors, "brands": brands, "products": products, "customers": customers, "salespeople": salespeople, "referrals": referrals}
+    start, end = _date_range(preset, date_from, date_to)
+    previous_revenue = 0
+    if start and end:
+        start_dt, end_dt = datetime.fromisoformat(start), datetime.fromisoformat(end)
+        span = end_dt - start_dt
+        previous_match = {**match, "updated_at": {"$gte": (start_dt - span).isoformat(), "$lt": start}}
+        previous = await _rows("quotations", [{"$match": previous_match}, {"$group": {"_id": None, "revenue": {"$sum": "$grand_total"}}}])
+        previous_revenue = previous[0]["revenue"] if previous else 0
+    growth = round((totals["revenue"] - previous_revenue) / previous_revenue * 100, 1) if previous_revenue else (100 if totals["revenue"] else 0)
+    return {"meta": {"revenue_definition": "Confirmed and completed orders only", "previous_period_revenue": round(previous_revenue, 2)}, "kpis": {"revenue": round(totals["revenue"], 2), "orders": totals["orders"], "aov": round(totals["revenue"] / totals["orders"], 2) if totals["orders"] else 0, "gross_sales": round(totals["gross_sales"], 2), "customers": len(totals["customers"]), "revenue_growth_pct": growth}, "trend": trend, "floors": floors, "brands": brands, "products": products, "customers": customers, "salespeople": salespeople, "referrals": referrals}
 
 
 @router.get("/funnel")
