@@ -21,6 +21,7 @@ if (!__DEV__ && BASE && !BASE.startsWith("https://")) {
 }
 const TOKEN_KEY = "forge.jwt";
 const TOKEN_KIND_KEY = "forge.jwt.kind"; // "staff" | "customer"
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export type TokenKind = "staff" | "customer";
 
@@ -56,19 +57,36 @@ async function request<T>(method: string, path: string, body?: any, opts?: { flo
   const floorId = opts?.floorId ?? (await storage.getItem<string>(SELECTED_FLOOR_KEY, ""));
   if (floorId) headers["X-Floor-Id"] = floorId;
 
-  const res = await fetch(`${BASE}/api${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
 
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!res.ok) {
-    const detail = data?.detail || `HTTP ${res.status}`;
-    throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+  try {
+    const res = await fetch(`${BASE}/api${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) {
+      const detail = data?.detail || `HTTP ${res.status}`;
+      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    return data as T;
+  } catch (error) {
+    if (timedOut) {
+      throw new ApiError(408, "Request timed out. Please try again.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return data as T;
 }
 
 export const api = {

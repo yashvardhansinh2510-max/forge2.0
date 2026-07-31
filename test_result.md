@@ -14906,3 +14906,6 @@ agent_communication:
   - agent: "main"
     message: |
       User reported a critical Tile Orders regression. Root cause is confirmed: commit ca61890 removed the Dispatch List tab entry while preserving the UI/API implementation. The tab has been restored exactly and an automated frontend route-contract check is now part of CI. Run the complete live workflow against the current preview with owner credentials from memory/test_credentials.md. Do not mark as working unless all actions persist after refresh, Dispatch List is visible/populated, Material Movement Register records each event, and Chalan PDFs are valid. Report every failure, including low priority UI/API issues.
+  - agent: "main"
+    message: |
+      During pre-test browser verification, one login request stalled before reaching the backend. RCA found the shared Expo fetch wrapper had no timeout. Added a 30-second AbortController safeguard in frontend/src/api/client.ts that preserves all JWT tokens, endpoints, and normal error behavior while returning the existing ApiError shape on timeout. After Expo restart, owner login and the restored Dispatch List route loaded successfully in the live phone preview. Include a login-to-Tile-Orders smoke check in this run.
