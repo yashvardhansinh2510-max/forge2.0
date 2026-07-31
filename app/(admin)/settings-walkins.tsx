@@ -52,8 +52,8 @@ export default function WalkInSettings() {
   };
 
   return (
-    <AdminPage title="Walk-in setup" subtitle="Lead sources shown when your team logs a walk-in" back={() => router.back()}>
-      <ScrollView contentContainerStyle={{ gap: spacing.lg }} keyboardShouldPersistTaps="handled">
+    <AdminPage title="Walk-in setup" subtitle="Lead sources shown when your team logs a walk-in" back={() => router.back()} scroll={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: spacing.lg, paddingBottom: spacing.xxxl }} keyboardShouldPersistTaps="handled">
         <Card style={{ gap: spacing.md }} testID="walkin-sources-settings-card">
           <View style={{ gap: 4 }}>
             <Text style={type.overline}>Lead sources</Text>
@@ -72,7 +72,7 @@ export default function WalkInSettings() {
               </View>
             ))}
           </View>
-          {canManage ? <>
+          {canManage && !loading ? <>
             <TextField label="Add lead source" value={draft} onChangeText={setDraft} placeholder="e.g. Trade fair" testID="walkin-source-draft" />
             <Button label="Add source" variant="secondary" onPress={addSource} disabled={!draft.trim()} testID="walkin-source-add" />
             <Button label="Save lead sources" onPress={save} loading={saving} testID="walkin-sources-save" />
