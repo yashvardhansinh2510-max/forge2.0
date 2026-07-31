@@ -3204,6 +3204,24 @@ metadata:
 
 test_plan:
   current_focus:
+    - "Full Walk-in lifecycle: customer reuse → selection → quotation → confirmed order → configured operational follow-up → timeline"
+    - "Verify processing/release reconciliation resolves the one-time operational follow-up"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        The duplicate integrity, source-management, responsive UI, and phone submit blocker have
+        been addressed and tested. The remaining Phase 4 P0 is a focused real lifecycle proof:
+        use an isolated customer/walk-in, advance through the existing selection and quotation
+        workflows, confirm the order, verify the configured DB-backed order_confirmed operational
+        Follow-up and unified timeline, then exercise the existing processing/release condition
+        that resolves it. Report exact environmental blockers instead of assuming any stage.
+
+test_plan:
+  current_focus:
     - "Phone viewport UI/UX audit complete - /dashboard, /customers, /customers/new, /customers/[id], /customers/[id]/edit"
   stuck_tasks: []
   test_all: false
@@ -14812,3 +14830,31 @@ agent_communication:
         > Walk-in setup, and the saved source appears in New Walk-in. Run the two Walk-ins pytest
         suites with credentials supplied through TEST_STAFF_EMAIL/TEST_STAFF_PASSWORD environment
         variables and EXPO_PUBLIC_BACKEND_URL; credentials must never be embedded in test code.
+
+
+frontend:
+  - task: "Phone New Walk-in submit after medium duplicate resolution"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/walkins/new.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: false
+          agent: "testing"
+          comment: "Iteration 15 reproduced a critical 390px submit obstruction: Log Walk-in was in the ScrollView end near persistent phone navigation, and no POST was dispatched in three runs."
+        - working: true
+          agent: "main"
+          comment: |
+            Moved the Log Walk-in action and its validation feedback into a fixed footer inside the
+            screen, directly above the persistent navigation; the scroll content now has explicit
+            bottom space. A live 390x844 browser flow verified: create seed → create name/city
+            medium match → Use Existing Customer → submit → detail screen/timeline confirms the
+            second linked Walk-in. The user-facing toast reported Walk-in logged.
+
+metadata:
+  created_by: "main_agent"
+  version: "1.4"
+  test_sequence: 5
+  run_ui: true

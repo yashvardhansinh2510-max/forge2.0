@@ -1,0 +1,72 @@
+{
+  "summary": "Executed focused Phase-4 lifecycle validation using isolated TEST_ data on public preview URL. Backend lifecycle API test passed end-to-end (walk-in -> selection -> quotation -> ordered -> release -> operational follow-up auto-resolved) with idempotency and timeline checks. Mobile frontend smoke across Walk-ins/Customers/Quotations/Tile Orders/Follow-ups/Payments loaded successfully; one tile-orders tab regression observed.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "Lifecycle criterion: Selection follow-up begin immediately after new Selection",
+        "issue": "Not provable in same-session TEST_ run because active automation cadence is DB-configured to start at day 2 for category `selection` (`reminder_offsets_days`: [2,4,7,10]). Newly created selection was advanced quickly to quotation/order before day-2 threshold, so no `selection_waiting` follow-up was generated in this run.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/followups/reconcile",
+        "issue": "Observed delayed appearance of new automated cards during heavy reconcile churn; repeated reconcile + wait was needed before querying source_key in tests (likely due reconcile lock/skip behavior under concurrent triggers)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Tile Orders tabs (mobile)",
+        "issue": "`Dispatch List` tab is visible again in UI screenshot. Prior redesign notes indicated old Dispatch List label/entry should be removed in favor of Customer/Brands/Material Movement Register flow.",
+        "testID": "N/A",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Lifecycle follow-up timing visibility",
+        "issue": "Operational follow-up lifecycle was verified via API assertions, but selection-stage reminder visibility depends on configured day offsets and elapsed time; immediate UI evidence is not available without waiting past offset or using pre-aged data.",
+        "affected_testIDs": []
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "Web runtime console",
+        "issue": "Repeated warnings: `shadow*` deprecated to `boxShadow`, and `Animated useNativeDriver` fallback warning."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/integration/test_walkins_lifecycle_phase4_journey.py",
+    "/app/test_reports/pytest/pytest_walkins_lifecycle_phase4_journey.xml",
+    "/app/test_reports/iteration16_ui/walkins_mobile.jpeg",
+    "/app/test_reports/iteration16_ui/tile_orders_mobile.jpeg",
+    "/root/.emergent/automation_output/20260731_002118/console_20260731_002118.log"
+  ],
+  "action_items": [
+    "Decide expected behavior for Selection follow-up criterion: if it must begin immediately on selection creation, update automation rule semantics (currently day-2 minimum) or add a separate immediate handoff rule.",
+    "Re-check Tile Orders tab set in frontend and remove/rename `Dispatch List` if it is an unintended regression versus approved redesign.",
+    "Optionally review reconcile UX/telemetry for delayed card visibility under concurrent background reconcile triggers."
+  ],
+  "critical_code_review_comments": [
+    "`workflow_transitions` path is correctly DB-configured and template-driven (no hardcoded operational message in follow-up creation path).",
+    "`followup_engine._operational_followup_producer` correctly ties auto-close to first release-material condition (`boxes_ready > 0` on resulting PO items).",
+    "Lifecycle test revealed that proving `selection_waiting` on fresh data is cadence-gated by `automation_rules.selection.reminder_offsets_days` and not an immediate event."
+  ],
+  "updated_files": [
+    "/app/backend/tests/integration/test_walkins_lifecycle_phase4_journey.py",
+    "/app/test_reports/iteration_16.json"
+  ],
+  "success_rate": {
+    "backend": "100% (2/2 targeted lifecycle+regression tests passed)",
+    "frontend": "Route/module smoke pass on mobile; 1 tab-label regression issue observed"
+  },
+  "seed_data_creation": "Created multiple isolated records prefixed TEST_LC4_*; latest validated chain includes customer TEST_LC4_ebff477c, quotation FQ-2026-0107 (id f9552cd6-e3e5-4aeb-8366-cb7f5bf2234b), and walk-in WI-2026-0112.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Primary lifecycle proof is in pytest file above. For latest chain, verify followups by source_key: walk_in_new:079d1f08-d180-4ba3-a82e-994d36a8d642 (done/auto_resolved) and order_confirmed_ops:f9552cd6-e3e5-4aeb-8366-cb7f5bf2234b (done/auto_resolved after release). Selection reminder may remain absent until day-2 offset elapses.",
+  "rca_of_issue": "RCA (selection-follow-up criterion gap): The follow-up engine intentionally gates `selection_waiting` by configurable day offsets from selection creation (`automation_rules.selection` default [2,4,7,10]). In a same-session E2E where selection is moved onward quickly, walk-in auto-resolves correctly but selection reminder does not yet exist. Mitigation: either accept delayed reminder semantics or introduce an immediate-on-selection operational nudge rule if business now requires instant start."
+}
