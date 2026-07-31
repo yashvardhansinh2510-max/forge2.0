@@ -414,7 +414,38 @@ workspaces (Walk-ins, Tile Selections, Tile Quotations, Payments). Architecture 
 generic inbox confirmed unaffected.
 
 **NOT built yet (explicitly deferred, confirm before starting):**
-- Phase 4 — Walk-ins module (new entity + UI + auto-convert-on-Selection-created).
 - Phase 5 — Payments workspace + Payment Terms model (milestones, event-based due dates).
 - Dashboard "Revenue At Risk" / analytics funnel / global search-across-everything / morning
   notification digest — mentioned in the original spec, not started.
+
+## Phase 4 — Walk-ins CRM (DELIVERED & VERIFIED, 2026-07-31)
+
+**Customer identity and Walk-ins:** Dedicated top-level Walk-ins workspace with reusable Customer
+records, full contact/address fields, salesperson assignment/reassignment, separate lead source /
+reference contact / architect / builder fields, timeline events, and automatic Walk-in follow-ups.
+Duplicate matching is confidence-tiered: phone/alternate phone automatically reuses the existing
+Customer, while email/name+city/name+address matches require explicit resolution without 500s or
+duplicate email writes.
+
+**Configuration and responsive UX:** Managers can manage live DB-backed Walk-in lead sources from
+Settings → Walk-in setup. New Walk-in supports high/medium match resolution, View Customer,
+salesperson picker, and a fixed mobile submit footer above the phone navigation. The linked-customer
+create flow, source persistence/readback, phone/tablet/desktop layouts, and Tile Orders mobile tab
+cleanup were browser-verified.
+
+**Lifecycle automation:** New Walk-in → Selection → Quotation → confirmed order → release was
+verified with the same Customer identity and unified timeline. Selection creation resolves the
+Walk-in Follow-up and now begins a Selection Follow-up immediately; the initial handoff is a
+mandatory DB-configured `0`-day cadence while later escalation days remain configurable. Confirmed
+orders create one idempotent DB-template-backed operational Follow-up, which auto-resolves when
+material release begins.
+
+**Verification:** CRM duplicate suites: 19/19 passed. Full lifecycle suite: 2/2 passed after the
+immediate Selection handoff update. Live phone E2E created a seed Walk-in, resolved a medium match,
+and created the linked second Walk-in. No mocked CRM APIs.
+
+**Remaining backlog:**
+- P1: Verify workflow-transition permissions with an approved non-owner staff credential.
+- P1: Rotate the documented demo credential only through the approved secure procedure.
+- P2: Address inherited React Native Web deprecation warnings (`shadow*`, `useNativeDriver`) during
+  design-system modernization.
