@@ -415,7 +415,11 @@ class QuotationLineItem(BaseModel):
     # cascade and denormalized at write time. Analytics sums THIS field, so
     # product/brand/category revenue reconciles to grand_total by construction
     # instead of re-deriving discounts per report and drifting.
-    net_amount: Optional[float] = Field(default=None, ge=0)
+    # No ge=0: room/category discount configs are unbounded, so an
+    # out-of-range discount can produce a negative net. Rejecting it here
+    # would make an already-persisted item un-reparseable — the invalid input
+    # is the discount config, not this derived value.
+    net_amount: Optional[float] = None
     # BACKEND_AUDIT_2026-07-17.md Medium #36: unbounded before this — a
     # negative discount_pct silently acts as a MARKUP (net price goes up),
     # and anything over 100 makes net go negative (the business pays the

@@ -14,7 +14,9 @@ def _line(line_id: str, qty: float, price: float, **kw) -> QuotationLineItem:
 def _reconciles(items, **cfg) -> None:
     nets = net_amounts(items, **cfg)
     totals = recalc_quotation_totals(items, **cfg)
-    assert abs(sum(nets.values()) - totals["grand_total"]) <= 0.01 * len(items)
+    # Half a paisa per line (independent rounding) plus half a paisa on the
+    # total. 0.01 * N would let a systematic one-paisa-per-line error pass.
+    assert abs(sum(nets.values()) - totals["grand_total"]) <= 0.005 * (len(items) + 1)
 
 
 def test_no_discount_net_equals_gross():
@@ -95,3 +97,35 @@ def test_stamp_net_amounts_writes_onto_item_dicts():
 def test_stamp_net_amounts_overwrites_a_stale_value():
     raw = [{"id": "a", "product_id": "p1", "sku": "S1", "name": "A", "qty": 1, "unit_price": 100.0, "net_amount": 999.0}]
     assert stamp_net_amounts(raw)[0]["net_amount"] == 100.0
+
+
+def test_stamp_handles_an_item_dict_with_no_id():
+    raw = [{"product_id": "p1", "sku": "S1", "name": "A", "qty": 1, "unit_price": 100.0}]
+    assert stamp_net_amounts(raw)[0]["net_amount"] == 100.0
+
+
+def test_stamp_handles_duplicate_line_ids_independently():
+    raw = [
+        {"id": "dup", "product_id": "p1", "sku": "S1", "name": "A", "qty": 1, "unit_price": 100.0},
+        {"id": "dup", "product_id": "p2", "sku": "S2", "name": "B", "qty": 1, "unit_price": 300.0},
+    ]
+    assert [r["net_amount"] for r in stamp_net_amounts(raw)] == [100.0, 300.0]
+
+
+def test_grand_total_matches_the_historical_accumulator_on_a_boundary_case():
+    """Pins a case where compensated summation and a plain fold disagree.
+
+    sum() would return 275638.09 here. The value below is what this codebase
+    has always produced and what is already persisted for real quotations.
+    """
+    items = [
+        _line("a", 2, 4490.38), _line("b", 14, 7102.56), _line("c", 20, 3162.31),
+        _line("d", 14, 6524.09), _line("e", 12, 5106.67),
+    ]
+    assert recalc_quotation_totals(items, project_discount_pct=15)["grand_total"] == 275638.08
+
+
+def test_grand_total_boundary_case_with_fractional_quantities():
+    """Same class of bug, no discounts involved at all."""
+    items = [_line("a", 0.5, 2285.89), _line("b", 0.5, 1445.30), _line("c", 2.75, 2024.64)]
+    assert recalc_quotation_totals(items)["grand_total"] == 7433.35

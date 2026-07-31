@@ -55,8 +55,8 @@ def _resolve_line_rows(
     pro-rata allocation.
 
     This loop used to exist twice — once in recalc_quotation_totals and once
-    in per_line_net_amounts — which is exactly how per-line revenue drifted
-    from grand_total. Both now build on this.
+    in per_line_net_amounts — which was a standing invitation for per-line
+    revenue to drift from grand_total. Both now build on this.
     """
     rows = []
     for it in items:
@@ -88,8 +88,16 @@ def recalc_quotation_totals(
     room_discounts: dict[str, RoomDiscountCfg] | None = None,
 ) -> dict:
     rows = _resolve_line_rows(items, project_discount_pct, category_discounts or {}, room_discounts or {})
-    subtotal = sum(row["gross"] for row in rows)
-    discount_total = sum(row["disc"] for row in rows)
+    # Explicit fold, NOT sum(): CPython >= 3.12 gives sum() a Neumaier
+    # compensated-summation fast path, which shifts grand_total by ₹0.01 on
+    # roughly 1 in 300 real quotations versus the accumulator this code has
+    # always used. grand_total values are already persisted and are
+    # re-written on every quotation edit, so they must not move.
+    subtotal = 0.0
+    discount_total = 0.0
+    for row in rows:
+        subtotal += row["gross"]
+        discount_total += row["disc"]
     return {
         "subtotal": round(subtotal, 2),
         "discount_total": round(discount_total, 2),
@@ -139,13 +147,18 @@ def stamp_net_amounts(
     Mutates in place and returns the same list, so it can be dropped into a
     persistence path without re-binding. Always overwrites: a discount change
     re-prices every line even when no line itself was edited.
+
+    Matches rows to dicts POSITIONALLY rather than by line id. Matching by id
+    silently stamped 0.0 on any dict without an "id" (the model fills one from
+    a default_factory, so the resolved key never matched), and collapsed two
+    lines sharing an id onto one value.
     """
-    resolved = net_amounts(
+    rows = _resolve_line_rows(
         [QuotationLineItem(**raw) for raw in item_dicts],
         project_discount_pct,
-        category_discounts,
-        room_discounts,
+        category_discounts or {},
+        room_discounts or {},
     )
-    for raw in item_dicts:
-        raw["net_amount"] = resolved.get(raw.get("id"), 0.0)
+    for raw, row in zip(item_dicts, rows, strict=True):
+        raw["net_amount"] = round(row["gross"] - row["disc"], 2)
     return item_dicts
