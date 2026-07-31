@@ -4,7 +4,7 @@ import { Linking, ScrollView, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
-import { Button, Card, EmptyState, ErrorState, KpiCard, LoadingState, PillTabs, SegmentedControl, Table, TableCell, TableHeader, TableRow, TextField } from "@/src/components/ui";
+import { Button, Card, EmptyState, ErrorState, KpiCard, ListRow, LoadingState, PillTabs, SearchField, SegmentedControl, Sheet, Table, TableCell, TableHeader, TableRow, TextField } from "@/src/components/ui";
 import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
@@ -22,11 +22,18 @@ function RevenueBars({ points }: { points: Dashboard["trend"] }) {
   </View>;
 }
 
+function FilterPicker({ label, value, items, onChange, testID }: { label: string; value: string; items: { id: string; name: string }[]; onChange: (id: string) => void; testID: string }) {
+  const [open, setOpen] = useState(false); const [search, setSearch] = useState("");
+  const selected = items.find((item) => item.id === value)?.name || `All ${label}`;
+  const shown = items.filter((item) => item.name.toLowerCase().includes(search.toLowerCase()));
+  return <><Button label={selected} size="sm" variant="secondary" onPress={() => setOpen(true)} testID={`${testID}-open`} /><Sheet visible={open} onClose={() => setOpen(false)} title={`Filter by ${label}`} variant="bottom" minHeight="55%" testID={`${testID}-sheet`}><View style={{ gap: spacing.sm, flex: 1 }}><SearchField value={search} onChangeText={setSearch} onClear={() => setSearch("")} placeholder={`Search ${label.toLowerCase()}…`} testID={`${testID}-search`} /><ListRow title={`All ${label}`} onPress={() => { onChange(""); setOpen(false); }} testID={`${testID}-all`} />{shown.map((item) => <ListRow key={item.id} title={item.name} onPress={() => { onChange(item.id); setOpen(false); }} testID={`${testID}-${item.id}`} />)}</View></Sheet></>;
+}
+
 export default function ExecutiveAnalytics() {
   const { staff } = useAuth(); const router = useRouter();
   const [filters, setFilters] = useState<Filters | null>(null); const [data, setData] = useState<Dashboard | null>(null); const [funnel, setFunnel] = useState<Funnel | null>(null); const [error, setError] = useState<string | null>(null);
-  const [floor, setFloor] = useState("all"); const [preset, setPreset] = useState("this_month"); const [granularity, setGranularity] = useState("month"); const [dateFrom, setDateFrom] = useState(""); const [dateTo, setDateTo] = useState("");
-  const query = useMemo(() => new URLSearchParams({ floor_id: floor, preset, granularity, ...(preset === "custom" ? { date_from: dateFrom, date_to: dateTo } : {}) }).toString(), [floor, preset, granularity, dateFrom, dateTo]);
+  const [floor, setFloor] = useState("all"); const [brand, setBrand] = useState(""); const [salesperson, setSalesperson] = useState(""); const [referral, setReferral] = useState("all"); const [preset, setPreset] = useState("this_month"); const [granularity, setGranularity] = useState("month"); const [dateFrom, setDateFrom] = useState(""); const [dateTo, setDateTo] = useState("");
+  const query = useMemo(() => new URLSearchParams({ floor_id: floor, preset, granularity, ...(brand ? { brand_id: brand } : {}), ...(salesperson ? { salesperson_id: salesperson } : {}), ...(referral !== "all" ? { referrer_type: referral } : {}), ...(preset === "custom" ? { date_from: dateFrom, date_to: dateTo } : {}) }).toString(), [floor, brand, salesperson, referral, preset, granularity, dateFrom, dateTo]);
   const exportData = async (format: "csv" | "xlsx" | "pdf") => { const url = await api.authenticatedUrl(`/executive-analytics/export?format=${format}&floor_id=${floor}&preset=${preset}`); await Linking.openURL(url); };
   const load = useCallback(() => { setError(null); setData(null); setFunnel(null); Promise.all([api.get<Dashboard>(`/executive-analytics/dashboard?${query}`), api.get<Funnel>(`/executive-analytics/funnel?${query}`)]).then(([dashboard, stages]) => { setData(dashboard); setFunnel(stages); }).catch((e: any) => setError(e.detail || "Could not load executive analytics")); }, [query]);
   useEffect(() => { api.get<Filters>("/executive-analytics/filters").then(setFilters).catch(() => setFilters({ floors: [], brands: [], salespeople: [] })); }, []);
@@ -35,6 +42,7 @@ export default function ExecutiveAnalytics() {
   return <AdminPage title="Executive Analytics" subtitle="Confirmed and completed orders only · live business books" actions={<PillTabs testID="executive-granularity" value={granularity} onChange={setGranularity} options={[{ value: "day", label: "D" }, { value: "month", label: "M" }, { value: "quarter", label: "Q" }, { value: "year", label: "Y" }]} />}>
     <ScrollView contentContainerStyle={{ gap: spacing.lg, paddingBottom: spacing.xxxl }}>
       <View style={{ gap: spacing.sm }} testID="executive-global-filters"><SegmentedControl testID="executive-floor-filter" value={floor} onChange={setFloor} options={[{ value: "all", label: "All Floors" }, ...(filters?.floors || []).map((f) => ({ value: f.id, label: f.name }))]} /><PillTabs testID="executive-date-filter" value={preset} onChange={setPreset} options={PRESETS} /></View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="executive-entity-filters"><FilterPicker label="Brands" value={brand} items={filters?.brands || []} onChange={setBrand} testID="executive-brand-filter" /><FilterPicker label="Salespeople" value={salesperson} items={(filters?.salespeople || []).map((s) => ({ id: s.id, name: s.full_name }))} onChange={setSalesperson} testID="executive-salesperson-filter" /><PillTabs testID="executive-referral-filter" value={referral} onChange={setReferral} options={[{ value: "all", label: "All referrals" }, { value: "architect", label: "Architect" }, { value: "interior_designer", label: "Interior Designer" }]} /></View>
       {preset === "custom" ? <View style={{ flexDirection: "row", gap: spacing.sm }} testID="executive-custom-date-range"><TextField label="From" value={dateFrom} onChangeText={setDateFrom} placeholder="2026-01-01" containerStyle={{ flex: 1 }} testID="executive-date-from" /><TextField label="To" value={dateTo} onChangeText={setDateTo} placeholder="2026-01-31" containerStyle={{ flex: 1 }} testID="executive-date-to" /></View> : null}
       <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }} testID="executive-export-actions"><Button label="CSV" size="sm" variant="secondary" onPress={() => exportData("csv")} testID="executive-export-csv" /><Button label="Excel" size="sm" variant="secondary" onPress={() => exportData("xlsx")} testID="executive-export-xlsx" /><Button label="PDF" size="sm" variant="secondary" onPress={() => exportData("pdf")} testID="executive-export-pdf" /></View>
       {error ? <ErrorState subtitle={error} onRetry={load} /> : null}
