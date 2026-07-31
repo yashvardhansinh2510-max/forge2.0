@@ -143,6 +143,15 @@ async def ensure_all() -> None:
     await _safe_create_index(db.quotations, "number", unique=True, name="quotations_number_unique")
     await _safe_create_index(db.purchase_orders, "number", unique=True, name="purchase_orders_number_unique")
 
+    # Executive Analytics: every dashboard aggregation starts with confirmed
+    # order status plus floor/date, then commonly drills by owner/customer or
+    # unwinds line items. These compound indexes preserve that leading match
+    # at scale instead of scanning draft/pending documents.
+    await _safe_create_index(db.quotations, [("status", 1), ("floor_id", 1), ("updated_at", -1)], name="analytics_orders_floor_date")
+    await _safe_create_index(db.quotations, [("status", 1), ("created_by", 1), ("updated_at", -1)], name="analytics_orders_salesperson_date")
+    await _safe_create_index(db.quotations, [("status", 1), ("customer_id", 1), ("updated_at", -1)], name="analytics_orders_customer_date")
+    await _safe_create_index(db.payments, [("floor_id", 1), ("status", 1), ("paid_at", -1)], name="analytics_payments_floor_date")
+
     # Production readiness audit (2026-07-23), Low: the embedded
     # purchase_orders.chalans[] array (Ground Floor Tiles) shipped with no
     # index entry, consistent with this collection's pre-existing gap on
