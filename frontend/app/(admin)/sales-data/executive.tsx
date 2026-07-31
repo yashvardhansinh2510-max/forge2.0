@@ -1,17 +1,17 @@
 import { Redirect, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Linking, ScrollView, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
-import { Card, EmptyState, ErrorState, KpiCard, LoadingState, PillTabs, SegmentedControl, Table, TableCell, TableHeader, TableRow } from "@/src/components/ui";
+import { Button, Card, EmptyState, ErrorState, KpiCard, LoadingState, PillTabs, SegmentedControl, Table, TableCell, TableHeader, TableRow, TextField } from "@/src/components/ui";
 import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 type Filters = { floors: { id: string; name: string }[]; brands: { id: string; name: string }[]; salespeople: { id: string; full_name: string }[] };
 type Dashboard = { kpis: { revenue: number; orders: number; aov: number; gross_sales: number; customers: number }; trend: { bucket: string; revenue: number }[]; floors: any[]; brands: any[]; products: any[]; customers: any[]; salespeople: any[]; referrals: any[] };
 type Funnel = { stages: { key: string; label: string; count: number; conversion_pct: number; dropoff_pct: number; revenue: number }[] };
-const PRESETS = [{ value: "today", label: "Today" }, { value: "last_7_days", label: "7D" }, { value: "last_30_days", label: "30D" }, { value: "this_month", label: "Month" }, { value: "quarter", label: "Quarter" }, { value: "year", label: "Year" }];
+const PRESETS = [{ value: "today", label: "Today" }, { value: "yesterday", label: "Yesterday" }, { value: "last_7_days", label: "7D" }, { value: "last_15_days", label: "15D" }, { value: "last_30_days", label: "30D" }, { value: "this_month", label: "This month" }, { value: "last_month", label: "Last month" }, { value: "quarter", label: "Quarter" }, { value: "year", label: "Year" }, { value: "custom", label: "Custom" }];
 const money = (n = 0) => `₹${Math.round(n).toLocaleString("en-IN")}`;
 
 function RevenueBars({ points }: { points: Dashboard["trend"] }) {
@@ -25,8 +25,9 @@ function RevenueBars({ points }: { points: Dashboard["trend"] }) {
 export default function ExecutiveAnalytics() {
   const { staff } = useAuth(); const router = useRouter();
   const [filters, setFilters] = useState<Filters | null>(null); const [data, setData] = useState<Dashboard | null>(null); const [funnel, setFunnel] = useState<Funnel | null>(null); const [error, setError] = useState<string | null>(null);
-  const [floor, setFloor] = useState("all"); const [preset, setPreset] = useState("this_month"); const [granularity, setGranularity] = useState("month");
-  const query = useMemo(() => new URLSearchParams({ floor_id: floor, preset, granularity }).toString(), [floor, preset, granularity]);
+  const [floor, setFloor] = useState("all"); const [preset, setPreset] = useState("this_month"); const [granularity, setGranularity] = useState("month"); const [dateFrom, setDateFrom] = useState(""); const [dateTo, setDateTo] = useState("");
+  const query = useMemo(() => new URLSearchParams({ floor_id: floor, preset, granularity, ...(preset === "custom" ? { date_from: dateFrom, date_to: dateTo } : {}) }).toString(), [floor, preset, granularity, dateFrom, dateTo]);
+  const exportData = async (format: "csv" | "xlsx" | "pdf") => { const url = await api.authenticatedUrl(`/executive-analytics/export?format=${format}&floor_id=${floor}&preset=${preset}`); await Linking.openURL(url); };
   const load = useCallback(() => { setError(null); setData(null); setFunnel(null); Promise.all([api.get<Dashboard>(`/executive-analytics/dashboard?${query}`), api.get<Funnel>(`/executive-analytics/funnel?${query}`)]).then(([dashboard, stages]) => { setData(dashboard); setFunnel(stages); }).catch((e: any) => setError(e.detail || "Could not load executive analytics")); }, [query]);
   useEffect(() => { api.get<Filters>("/executive-analytics/filters").then(setFilters).catch(() => setFilters({ floors: [], brands: [], salespeople: [] })); }, []);
   useEffect(() => { load(); }, [load]);
@@ -34,6 +35,8 @@ export default function ExecutiveAnalytics() {
   return <AdminPage title="Executive Analytics" subtitle="Confirmed and completed orders only · live business books" actions={<PillTabs testID="executive-granularity" value={granularity} onChange={setGranularity} options={[{ value: "day", label: "D" }, { value: "month", label: "M" }, { value: "quarter", label: "Q" }, { value: "year", label: "Y" }]} />}>
     <ScrollView contentContainerStyle={{ gap: spacing.lg, paddingBottom: spacing.xxxl }}>
       <View style={{ gap: spacing.sm }} testID="executive-global-filters"><SegmentedControl testID="executive-floor-filter" value={floor} onChange={setFloor} options={[{ value: "all", label: "All Floors" }, ...(filters?.floors || []).map((f) => ({ value: f.id, label: f.name }))]} /><PillTabs testID="executive-date-filter" value={preset} onChange={setPreset} options={PRESETS} /></View>
+      {preset === "custom" ? <View style={{ flexDirection: "row", gap: spacing.sm }} testID="executive-custom-date-range"><TextField label="From" value={dateFrom} onChangeText={setDateFrom} placeholder="2026-01-01" containerStyle={{ flex: 1 }} testID="executive-date-from" /><TextField label="To" value={dateTo} onChangeText={setDateTo} placeholder="2026-01-31" containerStyle={{ flex: 1 }} testID="executive-date-to" /></View> : null}
+      <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }} testID="executive-export-actions"><Button label="CSV" size="sm" variant="secondary" onPress={() => exportData("csv")} testID="executive-export-csv" /><Button label="Excel" size="sm" variant="secondary" onPress={() => exportData("xlsx")} testID="executive-export-xlsx" /><Button label="PDF" size="sm" variant="secondary" onPress={() => exportData("pdf")} testID="executive-export-pdf" /></View>
       {error ? <ErrorState subtitle={error} onRetry={load} /> : null}
       {!error && !data ? <LoadingState label="Building live executive view…" /> : null}
       {data ? <>

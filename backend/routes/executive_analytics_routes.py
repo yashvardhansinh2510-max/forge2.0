@@ -6,10 +6,13 @@ match so cards, tables and exports cannot drift from the books.
 """
 from __future__ import annotations
 
+import csv
 from datetime import datetime, timedelta, timezone
+from io import BytesIO, StringIO
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from auth import accessible_floor_ids, require_roles
 from db import db
@@ -134,3 +137,35 @@ async def products(
     match = await _match(user, floor_id, preset, date_from, date_to, None, None, None)
     pipeline = [{"$match": match}, {"$unwind": "$items"}, {"$group": {"_id": {"id": "$items.product_id", "name": "$items.name"}, "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}, "quantity": {"$sum": "$items.qty"}, "customers": {"$addToSet": "$customer_id"}, "average_price": {"$avg": "$items.unit_price"}}}, {"$sort": {"revenue": -1}}, {"$skip": (page - 1) * limit}, {"$limit": limit}, {"$project": {"_id": 0, "product_id": "$_id.id", "name": "$_id.name", "revenue": 1, "quantity": 1, "average_price": 1, "customers": {"$size": "$customers"}}}]
     return {"page": page, "items": await _rows("quotations", pipeline)}
+
+
+@router.get("/export")
+async def export_orders(
+    format: Literal["csv", "xlsx", "pdf"] = "csv", floor_id: Optional[str] = None, preset: str = "this_month",
+    date_from: Optional[str] = None, date_to: Optional[str] = None, user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
+):
+    match = await _match(user, floor_id, preset, date_from, date_to, None, None, None)
+    orders = await db.quotations.find(match, {"_id": 0, "number": 1, "updated_at": 1, "floor_id": 1, "customer_name": 1, "created_by_name": 1, "grand_total": 1, "status": 1}).sort("updated_at", -1).to_list(100000)
+    rows = [[o.get("number"), o.get("updated_at"), o.get("floor_id"), o.get("customer_name"), o.get("created_by_name"), o.get("grand_total"), o.get("status")] for o in orders]
+    headers = ["Order", "Confirmed at", "Floor", "Customer", "Salesperson", "Revenue", "Status"]
+    filename = f"buildcon-executive-sales-{preset}"
+    if format == "csv":
+        output = StringIO(); writer = csv.writer(output); writer.writerow(headers); writer.writerows(rows)
+        return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}.csv"'})
+    if format == "xlsx":
+        from openpyxl import Workbook
+        book = Workbook(); sheet = book.active; sheet.title = "Confirmed Orders"; sheet.append(headers)
+        for row in rows: sheet.append(row)
+        blob = BytesIO(); book.save(blob); blob.seek(0)
+        return StreamingResponse(blob, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{filename}.xlsx"'})
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen.canvas import Canvas
+    blob = BytesIO(); pdf = Canvas(blob, pagesize=A4); pdf.setTitle("BuildCon House Executive Sales")
+    pdf.setFont("Helvetica-Bold", 14); pdf.drawString(40, 805, "BuildCon House — Confirmed Orders")
+    pdf.setFont("Helvetica", 9); y = 780
+    for row in rows[:500]:
+        pdf.drawString(40, y, f"{row[0]}  |  {row[3]}  |  ₹{row[5]:,.2f}")
+        y -= 14
+        if y < 40: pdf.showPage(); y = 800; pdf.setFont("Helvetica", 9)
+    pdf.save(); blob.seek(0)
+    return StreamingResponse(blob, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}.pdf"'})
