@@ -14912,3 +14912,22 @@ agent_communication:
   - agent: "main"
     message: |
       Iteration 18 found a HIGH priority Dispatch List console warning: the React key only used dispatch_id/chalan_id/tile_name, which collides when one Chalan repeats a product name. Fixed index.tsx by using a dedicated dispatchRowKey(row, index) and suffixed all row-level action testIDs with that same index to guarantee unique rendered identities. Lint and the CI route-contract guard pass. Retest Dispatch List with duplicate product-line data and confirm zero React key/console errors.
+  - agent: "testing"
+    message: |
+      Iteration 19 focused live mobile frontend retest PASS: four Tile Orders tabs rendered, Dispatch List called the live API and displayed 19 rows, View Chalan/Print Chalan/View Dispatch/View Customer controls worked, and no duplicate React key warning or console error occurred. The route-contract check passed. This Tile Orders regression is verified fixed; no retest is required.
+
+frontend:
+  - task: "Tile Orders Dispatch List visibility and connected workflow controls"
+    implemented: true
+    working: true
+    file: "frontend/app/(admin)/tiles/orders/index.tsx, frontend/src/api/tileOrders.ts, frontend/scripts/verify-tile-orders-contract.mjs, .github/workflows/ci.yml"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "User reported the Tile Orders workflow had regressed: Dispatch List was missing and previously working movement/PDF controls needed restoration."
+      - working: true
+        agent: "testing"
+        comment: "Iteration 18 verified the complete live backend workflow and iteration 19 verified console-clean Dispatch List UI after the key-collision correction. All required restoration paths passed."

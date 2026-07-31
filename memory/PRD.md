@@ -361,6 +361,43 @@ gap found + fixed: "At Godown"/"Delivered" status filter chips were unreachable 
 - P2: Expo `54.0.35` vs `~54.0.36` compatibility warning (non-blocking).
 - P2: pre-existing unrelated ESLint warning in `TilesDocBuilder.tsx` (unescaped apostrophe).
 
+### Tile Orders regression restoration (2026-07-31, VERIFIED)
+
+**Root cause (verified from Git history):** commit
+`ca61890bcdda36d5e7c5a318db353b4ac832492d` removed the
+`["dispatch-list", "Dispatch List"]` entry from
+`frontend/app/(admin)/tiles/orders/index.tsx::TABS`. The Dispatch List
+render branch, typed client, and existing backend endpoints were not deleted;
+they became unreachable. This was a frontend component/tab replacement error,
+not a backend regression, route replacement, merge conflict, or preview
+deployment mismatch.
+
+**Restored without rebuilding:**
+- Reinstated the exact Dispatch List tab and existing live
+  `GET /api/tile-orders/dispatches` connection.
+- Kept the established Brand-only Release action and Customer-side Move to
+  Godown / Dispatch from Released / Dispatch from Godown endpoints unchanged.
+- Reconnected Dispatch List controls to existing authenticated Chalan-PDF and
+  dispatch-list APIs: View Chalan, Print Chalan, View Dispatch, View Customer.
+- Preserved the existing Material Movement Register and no replacement
+  backend endpoints were created.
+
+**Safeguards:**
+- `frontend/scripts/verify-tile-orders-contract.mjs` now fails CI if any of
+  the four required tabs or workflow API bindings disappear.
+- `backend/tests/test_tile_orders_restore_workflow_regression.py` verifies
+  live Release → Godown → both dispatch routes, unique Dispatch/Chalan output,
+  valid PDFs, persistence, and one material-movement row per action.
+- A Dispatch List duplicate React-key defect found during verification was
+  fixed with `dispatchRowKey(row, index)` and unique per-row control test IDs;
+  focused live retest reported zero console errors.
+
+**Verification evidence:** iteration 18 backend/full workflow and iteration
+19 live mobile UI retest passed. The backend workflow regression validated
+MongoDB state after reload, no duplicate movement events, and `%PDF` Chalan
+output. Iteration 19 confirmed all four tabs, live dispatch-list API requests,
+row controls, and no duplicate-key/console errors.
+
 ## Follow-ups 2.0 — Workspaces redesign, Phase 1+2+3 (2026-07-30, DELIVERED)
 
 Redesign per user's context-engineered spec: replace generic Follow-ups with event-driven
