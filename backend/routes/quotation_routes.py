@@ -30,7 +30,7 @@ from services.domain_outbox import (
 )
 from services.followup_engine import reconcile_followups
 from services.pricing import effective_discount_pct as _effective_discount_pct
-from services.pricing import net_amounts, per_line_net_amounts, stamp_net_amounts
+from services.pricing import net_amount_list, per_line_net_amounts, stamp_net_amounts
 from services.pricing import recalc_quotation_totals as _recalc
 from services.sequence import next_number
 from services.tiles_stage import can_move_to_quotation, can_place_order
@@ -206,9 +206,10 @@ async def create_quotation(
     totals = _recalc(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {})
     # Denormalize each line's post-discount total so analytics can sum one
     # field instead of re-deriving the discount cascade per report.
-    _line_nets = net_amounts(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {})
-    for _it in items:
-        _it.net_amount = _line_nets.get(_it.id, 0.0)
+    # Positional, not id-keyed: line ids are client-supplied and a duplicate
+    # would silently collapse two lines onto one value.
+    for _it, _net in zip(items, net_amount_list(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {}), strict=True):
+        _it.net_amount = _net
     quot = Quotation(
         number=await _next_number(),
         customer_id=customer["id"],
@@ -264,24 +265,23 @@ async def get_quotation(quotation_id: str, user: UserPublic = Depends(get_curren
     return Quotation(**doc)
 
 
-def _stamped_items_for_update(update: dict, doc: dict) -> list[dict]:
-    """Re-stamp net_amount on the items that are about to be persisted.
+def _stamped_items_for_update(
+    update: dict,
+    doc: dict,
+    project_discount_pct: float,
+    category_discounts: dict,
+    room_discounts: dict,
+) -> list[dict]:
+    """Re-stamp net_amount on the items about to be persisted.
 
-    Reads each pricing input from the update when present and the stored doc
-    otherwise. A discount-only edit carries no items in the body but still
-    re-prices every line, so the stored items are re-stamped too — skipping
-    that is how a stale net_amount would silently under- or over-report
-    product and brand revenue.
+    Takes the SAME resolved pricing inputs the caller passed to _recalc, so
+    grand_total and the per-line net_amounts cannot be computed from
+    different values. A discount-only edit carries no items in the body but
+    still re-prices every line, so the stored items are re-stamped too.
     """
     items = update.get("items", doc.get("items", []) or [])
     return stamp_net_amounts(
-        [dict(raw) for raw in items],
-        update.get("project_discount_pct", doc.get("project_discount_pct", 0) or 0),
-        update.get("category_discounts", doc.get("category_discounts", {}) or {}),
-        {
-            k: RoomDiscountCfg(**v)
-            for k, v in (update.get("room_discounts", doc.get("room_discounts", {}) or {})).items()
-        },
+        [dict(raw) for raw in items], project_discount_pct, category_discounts, room_discounts,
     )
 
 
@@ -374,17 +374,22 @@ async def update_quotation(
         items_for_calc = [
             QuotationLineItem(**i) for i in update.get("items", doc.get("items", []))
         ]
+        project_discount_pct_for_calc = update.get("project_discount_pct", doc.get("project_discount_pct", 0))
+        category_discounts_for_calc = update.get("category_discounts", doc.get("category_discounts", {}))
         room_discounts_for_calc = {
             k: RoomDiscountCfg(**v) for k, v in update.get("room_discounts", doc.get("room_discounts", {}) or {}).items()
         }
         totals = _recalc(
             items_for_calc,
-            update.get("project_discount_pct", doc.get("project_discount_pct", 0)),
-            update.get("category_discounts", doc.get("category_discounts", {})),
+            project_discount_pct_for_calc,
+            category_discounts_for_calc,
             room_discounts_for_calc,
         )
         update.update(totals)
-        update["items"] = _stamped_items_for_update(update, doc)
+        update["items"] = _stamped_items_for_update(
+            update, doc,
+            project_discount_pct_for_calc, category_discounts_for_calc, room_discounts_for_calc,
+        )
 
     if not update:
         return Quotation(**doc)

@@ -139,6 +139,22 @@ def per_line_net_amounts(doc: dict[str, Any]) -> dict[str, float]:
     )
 
 
+def net_amount_list(
+    items: list[QuotationLineItem],
+    project_discount_pct: float = 0.0,
+    category_discounts: dict[str, float] | None = None,
+    room_discounts: dict[str, RoomDiscountCfg] | None = None,
+) -> list[float]:
+    """Per-line post-discount totals in INPUT ORDER.
+
+    Order-preserving rather than id-keyed: line ids are client-supplied and
+    nothing enforces uniqueness, so a dict keyed by id silently collapses
+    duplicates onto one value. Every stamping path uses this.
+    """
+    rows = _resolve_line_rows(items, project_discount_pct, category_discounts or {}, room_discounts or {})
+    return [round(row["gross"] - row["disc"], 2) for row in rows]
+
+
 def stamp_net_amounts(
     item_dicts: list[dict[str, Any]],
     project_discount_pct: float = 0.0,
@@ -156,12 +172,10 @@ def stamp_net_amounts(
     a default_factory, so the resolved key never matched), and collapsed two
     lines sharing an id onto one value.
     """
-    rows = _resolve_line_rows(
+    nets = net_amount_list(
         [QuotationLineItem(**raw) for raw in item_dicts],
-        project_discount_pct,
-        category_discounts or {},
-        room_discounts or {},
+        project_discount_pct, category_discounts, room_discounts,
     )
-    for raw, row in zip(item_dicts, rows, strict=True):
-        raw["net_amount"] = round(row["gross"] - row["disc"], 2)
+    for raw, net in zip(item_dicts, nets, strict=True):
+        raw["net_amount"] = net
     return item_dicts
