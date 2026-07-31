@@ -3,7 +3,7 @@
 // typography allowed anywhere else. Feels closer to Linear / Stripe / Notion.
 
 import { Feather } from "@expo/vector-icons";
-import { useMemo, useRef } from "react";
+import { isValidElement, useMemo, useRef } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -1361,6 +1361,7 @@ export function TableHeader({ columns }: { columns: { label: string; flex?: numb
             type.overline,
             {
               flex: c.width ? undefined : (c.flex ?? 1),
+              minWidth: 0,
               width: c.width,
               textAlign: c.align || "left",
             },
@@ -1420,6 +1421,7 @@ export function TableCell({
       testID={testID}
       style={{
         flex: width ? undefined : (flex ?? 1),
+        minWidth: 0,
         width,
         flexDirection: align === "right" ? "row-reverse" : "row",
         justifyContent: align === "center" ? "center" : "flex-start",
@@ -1427,7 +1429,16 @@ export function TableCell({
         gap: spacing.sm,
       }}
     >
-      {typeof children === "string" || typeof children === "number" ? <Text style={type.bodySm} numberOfLines={1}>{children}</Text> : children}
+      {/* Callers pass plain text (a name, or a "₹{amount}" template that JSX
+          splits into a ["₹", amount] children array) far more often than a
+          real element — wrap anything that isn't an element in one `Text`
+          so it can truncate/shrink instead of forcing the row wider than
+          its column. */}
+      {isValidElement(children) || (Array.isArray(children) && children.some((c) => isValidElement(c))) ? (
+        children
+      ) : (
+        <Text numberOfLines={1} style={[type.bodySm, { flexShrink: 1 }]}>{children}</Text>
+      )}
     </View>
   );
 }

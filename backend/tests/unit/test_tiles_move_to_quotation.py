@@ -16,6 +16,7 @@ import pytest
 from fastapi import HTTPException
 from models import UserPublic
 import routes.quotation_routes as quotation_routes
+import services.walkin_service as walkin_service
 
 
 def _user() -> UserPublic:
@@ -42,10 +43,21 @@ class _Recorder:
         if "$set" in update:
             self._doc.update(update["$set"])
 
+    async def update_many(self, _query, update, **_kwargs):
+        self.updates.append(update)
+        return type("_Res", (), {"modified_count": 0})()
+
 
 class _FakeDb:
     def __init__(self, doc: dict | None):
         self.quotations = _Recorder(doc)
+        # services/walkin_service.on_moved_to_quotation touches these.
+        self.walkins = _Recorder(None)
+        self.activity_events = _Recorder(None)
+
+
+async def _noop_reconcile(*_a, **_kw):
+    return None
 
 
 def _selection_doc(status: str = "approved") -> dict:
@@ -59,6 +71,11 @@ def _selection_doc(status: str = "approved") -> dict:
 def test_move_to_quotation_flips_doc_type_and_resets_status(monkeypatch):
     fake_db = _FakeDb(_selection_doc("approved"))
     monkeypatch.setattr(quotation_routes, "db", fake_db)
+    # walkin_service holds its own module-level `db`, so the success path
+    # reached the real motor client (bound to an already-closed loop under
+    # `asyncio.run`). Same gotcha as services/sequence.py elsewhere.
+    monkeypatch.setattr(walkin_service, "db", fake_db)
+    monkeypatch.setattr(quotation_routes, "reconcile_followups", _noop_reconcile)
 
     result = asyncio.run(quotation_routes.move_to_quotation("q-1", user=_user()))
 

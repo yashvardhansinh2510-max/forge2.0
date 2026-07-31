@@ -101,12 +101,20 @@ def _customer_order():
     }
 
 
+async def _noop_record_movement(**_kwargs):
+    return {}
+
+
 def test_mark_ready_creates_batch_and_updates_counters(monkeypatch):
     fake_db = _FakeDb(_po(), _customer_order())
     monkeypatch.setattr(router_module, "db", fake_db)
     monkeypatch.setattr(router_module, "client", _FakeClient())
     monkeypatch.setattr(router_module, "next_number", _fake_next_number)
     monkeypatch.setattr(router_module, "log_event", _noop_log_event)
+    # Material Movement Register rows are written through the module-level
+    # motor client, which is bound to an already-closed event loop under
+    # `asyncio.run` — stub it, the register has its own tests.
+    monkeypatch.setattr(router_module, "record_movement", _noop_record_movement)
 
     body = router_module.BulkReadyBody(items=[router_module.ReadyItemInput(po_item_id="item-1", qty=8)])
     result = asyncio.run(router_module.mark_items_ready("po-1", body, user=_user()))

@@ -40,7 +40,7 @@ async def mint_download_token(user: UserPublic = Depends(get_current_user)):
     """Call this (normal Authorization-header request) right before opening a
     browser-download URL (PDF/xlsx export). Returns a token good for one
     download within 60 seconds — see services/download_tokens.py."""
-    token = await create_download_token(user.id)
+    token = await create_download_token(user.id, user.session_id)
     return {"token": token, "expires_in": 60}
 
 

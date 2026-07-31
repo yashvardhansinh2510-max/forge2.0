@@ -13,6 +13,7 @@ import pytest
 
 import services.domain_outbox as outbox
 import services.sequence as sequence
+import services.tile_movement_log as tile_movement_log
 
 
 class _FakeFind:
@@ -92,6 +93,9 @@ class _FakeDb:
         self.payments = _FakeCollection()
         self.activity_events = _FakeCollection()
         self.followups = _FakeCollection()
+        # services/tile_movement_log.py has its own module-level `db` too —
+        # same gotcha as `sequence` below.
+        self.material_movements = _FakeCollection()
         self.counters = _FakeCounters()
         # `next_number()` (services/sequence.py) imports its own module-level
         # `db` independently of domain_outbox's — monkeypatching outbox.db
@@ -130,6 +134,7 @@ def test_tiles_quotation_creates_one_customer_order_linking_both_pos(monkeypatch
     fake_db = _FakeDb(_tiles_quotation())
     monkeypatch.setattr(outbox, "db", fake_db)
     monkeypatch.setattr(sequence, "db", fake_db)
+    monkeypatch.setattr(tile_movement_log, "db", fake_db)
 
     result = asyncio.run(outbox._handle_order_placed(_event("q-1"), session=None))
 
@@ -149,6 +154,7 @@ def test_standard_quotation_never_creates_customer_order(monkeypatch):
     fake_db = _FakeDb(_tiles_quotation(doc_type="standard"))
     monkeypatch.setattr(outbox, "db", fake_db)
     monkeypatch.setattr(sequence, "db", fake_db)
+    monkeypatch.setattr(tile_movement_log, "db", fake_db)
 
     asyncio.run(outbox._handle_order_placed(_event("q-1"), session=None))
 
@@ -161,6 +167,7 @@ def test_retry_is_idempotent_and_does_not_duplicate_customer_order(monkeypatch):
     fake_db = _FakeDb(_tiles_quotation())
     monkeypatch.setattr(outbox, "db", fake_db)
     monkeypatch.setattr(sequence, "db", fake_db)
+    monkeypatch.setattr(tile_movement_log, "db", fake_db)
 
     event = _event("q-1")
     asyncio.run(outbox._handle_order_placed(event, session=None))

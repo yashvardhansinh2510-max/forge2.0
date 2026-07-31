@@ -45,9 +45,12 @@ export function useFloorAccess() {
     Promise.all([loadAccess(), getSelectedFloorId()]).then(([value, saved]) => {
       if (!alive) return;
       setAccess(value);
-      // All-floor staff default to the unscoped view (""); restricted staff
-      // default to their first assigned floor. A saved choice wins if still valid.
-      const fallback = value.all_floors ? "" : value.floors[0]?.id || "";
+      // Everyone — including all-floor owners/managers — always has exactly
+      // one concrete floor active. The old unscoped ("") default sent no
+      // X-Floor-Id header, so every scoped query ran unfiltered and mixed
+      // both business units' records together. A saved choice wins if it is
+      // still a floor this account can access.
+      const fallback = value.floors[0]?.id || "";
       const valid = saved && value.floor_ids.includes(saved) ? saved : fallback;
       setSelectedFloorIdState(valid);
       if (valid !== saved) void setSelectedFloorId(valid);
@@ -56,8 +59,9 @@ export function useFloorAccess() {
   }, []);
 
   const selectFloor = useCallback(async (id: string) => {
-    const allFloors = id === "" && access?.all_floors;
-    if (!allFloors && !access?.floor_ids.includes(id)) return;
+    // Only a real, accessible floor can become active — never "" (see the
+    // unscoped-default note above).
+    if (!access?.floor_ids.includes(id)) return;
     await setSelectedFloorId(id);
     setSelectedFloorIdState(id);
   }, [access]);
@@ -65,6 +69,13 @@ export function useFloorAccess() {
   return { access, floors: access?.floors || [], selectedFloorId, selectFloor };
 }
 
+/** Gate a floor-specific screen, and make that floor the active one.
+ *
+ * Persisting the active floor matters as much as the access check: a
+ * screen reached by direct URL, refresh or bookmark never went through the
+ * sidebar link that switches floors, so the sticky selection could still
+ * point at another business unit while its records were being written
+ * (that is how tile documents ended up stamped `first-floor`). */
 export function useRequireFloorAccess(floorId: string) {
   const { access } = useFloorAccess();
   const router = useRouter();
@@ -74,6 +85,10 @@ export function useRequireFloorAccess(floorId: string) {
     if (!allowed) {
       toast.error("You don't have access to that floor");
       router.replace("/(admin)/dashboard" as any);
+      return;
     }
+    void getSelectedFloorId().then((current) => {
+      if (current !== floorId) void setSelectedFloorId(floorId);
+    });
   }, [access, floorId, router]);
 }

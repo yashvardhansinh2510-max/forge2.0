@@ -40,6 +40,7 @@ type BrandCard = {
 type Preview = {
   quotation_id: string;
   quotation_number: string;
+  doc_type: "standard" | "tiles_selection" | "tiles_quotation";
   customer_id: string;
   customer_name: string;
   brands: BrandCard[];
@@ -105,7 +106,8 @@ export default function PlaceOrderReview() {
         },
       );
       toast.success(`Order placed · ${res.count} Purchase Orders created`);
-      router.replace("/(admin)/purchases" as any);
+      const isTilesDoc = preview.doc_type === "tiles_selection" || preview.doc_type === "tiles_quotation";
+      router.replace((isTilesDoc ? "/(admin)/tiles/orders" : "/(admin)/purchases") as any);
     } catch (e: any) {
       toast.error(e?.detail || "Could not place order");
     } finally {

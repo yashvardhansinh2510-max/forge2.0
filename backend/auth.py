@@ -209,7 +209,16 @@ async def get_current_user(
         record = await consume_download_token(dl)
         if not record:
             raise HTTPException(status_code=401, detail="Download link expired or already used — reopen it from the app.")
-        doc = await _load_active_principal({"sub": record["user_id"]}, kind="staff", collection="users")
+        # The session_id recorded at mint time is replayed here. Without it
+        # `_load_active_principal` sees a session-less payload and rejects it
+        # outright (that check was tightened after download tokens shipped),
+        # which 401'd every browser download — PDFs, chalans and exports
+        # alike. Carrying it through also keeps download links revocable
+        # along with the session that created them.
+        doc = await _load_active_principal(
+            {"sub": record["user_id"], "session_id": record.get("session_id")},
+            kind="staff", collection="users",
+        )
         user = UserPublic(**doc)
         if x_floor_id:
             allowed = accessible_floor_ids(user)
@@ -224,6 +233,7 @@ async def get_current_user(
         raise HTTPException(status_code=403, detail="Not a staff token")
     doc = await _load_active_principal(payload, kind="staff", collection="users")
     user = UserPublic(**doc)
+    user.session_id = payload.get("session_id")
     if x_floor_id:
         allowed = accessible_floor_ids(user)
         if allowed is not None and x_floor_id not in allowed:
@@ -336,6 +346,30 @@ def require_floor_access(floor_id: str, user: UserPublic) -> UserPublic:
     if allowed is not None and floor_id not in allowed:
         raise HTTPException(status_code=403, detail="You do not have access to this floor")
     return user
+
+
+# The Tiles domain — tile quotations/selections, tile orders, brand
+# releases, godown moves, dispatches, chalans and the material movement
+# register — exists on Ground Floor and nowhere else.
+TILES_FLOOR_ID = "ground-floor"
+
+
+def tiles_floor_query(user: UserPublic, base: dict | None = None) -> dict:
+    """Scope a Tiles-domain query to Ground Floor unconditionally.
+
+    Deliberately does NOT go through `floor_query()`: that resolves the
+    caller's ambient `X-Floor-Id` selection, which is exactly the wrong
+    input here. An all-floors owner/manager sends no header at all while
+    on the "All floors" view (yielding an unscoped query that returns
+    every floor's records), and a stale/sticky selection can leave the
+    header pointing at another floor entirely — both routes leaked
+    Sanitary-Bathroom records into Tile Orders screens. Floor for this
+    domain is a constant, so it is filtered in the database on every
+    query rather than inherited from request state.
+    """
+    require_floor_access(TILES_FLOOR_ID, user)
+    scope = {"floor_id": TILES_FLOOR_ID}
+    return {"$and": [scope, base]} if base else scope
 
 
 async def get_floor_scoped_or_404(

@@ -66,6 +66,7 @@ def test_product_history_returns_most_recent_match(monkeypatch):
     assert result == {
         "found": True, "quotation_number": "FQ-2026-0050", "doc_date": "01-Jun-26",
         "size": "1200X1800", "rate_sqft": 135, "rate_box": 220, "pcs_per_box": "BOX",
+        "box_sqft": None,
     }
 
 

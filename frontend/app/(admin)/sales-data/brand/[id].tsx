@@ -22,7 +22,7 @@ type BrandDetailResponse = {
 };
 
 export default function BrandDetail() {
-  const { id, preset: presetParam } = useLocalSearchParams<{ id: string; preset?: string }>();
+  const { id, preset: presetParam, floorId } = useLocalSearchParams<{ id: string; preset?: string; floorId?: string }>();
   const preset: DatePreset = presetParam && presetParam in DATE_PRESET_LABEL ? (presetParam as DatePreset) : "this_month";
   const [granularity, setGranularity] = useState<Granularity>("month");
   const [data, setData] = useState<BrandDetailResponse | null>(null);
@@ -35,12 +35,13 @@ export default function BrandDetail() {
     setData(null);
     const params = new URLSearchParams();
     params.set("granularity", granularity);
+    if (floorId && floorId !== "both") params.set("floor_id", floorId);
     if (date_from) params.set("date_from", date_from);
     if (date_to) params.set("date_to", date_to);
     api.get<BrandDetailResponse>(`/sales-data/brands/${id}?${params.toString()}`)
       .then(setData)
       .catch((e: any) => setError(e?.detail || "Could not load brand"));
-  }, [id, granularity, date_from, date_to]);
+  }, [id, granularity, date_from, date_to, floorId]);
 
   useEffect(() => { load(); }, [load]);
 

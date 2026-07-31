@@ -34,6 +34,25 @@ PDF_DIR = Path(__file__).resolve().parent
 LOGO_PATH = PDF_DIR / "buildcon_logo.png"
 LOGO_RATIO = 1414 / 412  # native W/H of buildcon_logo.png — size by one edge only
 
+# Shared across every quotation-family PDF (generic + tiles Selection/Quotation).
+BRAND_PARTNERS = [
+    [("GROHE", "Pure Freude an Wasser"), ("hansgrohe", "Life is Waterful"), ("AXOR", "Form Follows Perfection"), ("VitrA", "Design Meets Life"), ("NEXION", "The Surface Experience"), ("QUTONE", "Let's Build Together")],
+    [("DIMORE", "Reflection of Your Style"), ("Oyster", "Indulge in Luxury"), ("GEBERIT", "Engineered for Hygiene"), ("MCM ITTIMI", "Innovation into Inspiration"), ("VERANTES LIVING", "Kitchens &amp; Wardrobes"), ("IMPORTED<br/>FURNITURE", "Crafted Beyond Borders")],
+]
+
+
+def brand_partners_table(base_cell_style: ParagraphStyle, col_width_mm: float = 28.3, grid_color=None) -> Table:
+    """The 2x6 'OUR BRAND PARTNERS' grid shared by every quotation-family PDF."""
+    partner_style = ParagraphStyle("partner", parent=base_cell_style, fontSize=6.6, leading=8, alignment=1)
+    rows = [[Paragraph(f"<b>{name}</b><br/><font size='5.4'><i>{tagline}</i></font>", partner_style) for name, tagline in row] for row in BRAND_PARTNERS]
+    table = Table(rows, colWidths=[col_width_mm * mm] * 6, rowHeights=[12 * mm, 12 * mm])
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.35, grid_color or GRID),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    return table
+
 # --- Dynamic pagination geometry (item/product table, pages 2+) -----------
 # Page size + margins are unchanged (preserving the exact print template),
 # but rows now render only for real content — no fixed 16-row block padded
@@ -75,6 +94,30 @@ def _remote_image_bytes(url: str) -> bytes | None:
         return None
 
 
+def _landscape_bytes(data: bytes) -> bytes:
+    """Rotate a portrait product photo 90° so it prints landscape.
+
+    Every image cell in the quotation grids is a wide rectangle; a portrait
+    source photo (the common case for a phone-shot tile swatch) would
+    otherwise render as a narrow sliver in the middle of that cell instead of
+    filling it. Rotation happens once per cached image, not per placement."""
+    from PIL import Image as PILImage
+    try:
+        img = PILImage.open(BytesIO(data))
+        img.load()
+        if img.height <= img.width:
+            return data
+        fmt = img.format or "PNG"
+        rotated = img.rotate(-90, expand=True)
+        if fmt.upper() in ("JPEG", "JPG") and rotated.mode in ("RGBA", "P"):
+            rotated = rotated.convert("RGB")
+        out = BytesIO()
+        rotated.save(out, format=fmt)
+        return out.getvalue()
+    except Exception:
+        return data
+
+
 def _img(url: str | None, width_mm: float = 13, height_mm: float = 13) -> Flowable:
     """Render the supplied product image inside the official narrow image cell.
 
@@ -86,7 +129,7 @@ def _img(url: str | None, width_mm: float = 13, height_mm: float = 13) -> Flowab
         data = _remote_image_bytes(str(url))
         if data:
             try:
-                image = Image(BytesIO(data), width=width_mm * mm, height=height_mm * mm, kind="proportional")
+                image = Image(BytesIO(_landscape_bytes(data)), width=width_mm * mm, height=height_mm * mm, kind="proportional")
                 image.hAlign = "CENTER"
                 return image
             except Exception:
@@ -305,13 +348,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     summary.setStyle(TableStyle(summary_style_cmds))
     story.extend([summary, Spacer(1, 3 * mm), Paragraph("OUR BRAND PARTNERS", styles["section"]), Spacer(1, 1 * mm)])
 
-    partners = [
-        [("GROHE", "Pure Freude an Wasser"), ("hansgrohe", "Life is Waterful"), ("AXOR", "Form Follows Perfection"), ("VitrA", "Design Meets Life"), ("NEXION", "The Surface Experience"), ("QUTONE", "Let's Build Together")],
-        [("DIMORE", "Reflection of Your Style"), ("Oyster", "Indulge in Luxury"), ("GEBERIT", "Engineered for Hygiene"), ("MCM ITTIMI", "Innovation into Inspiration"), ("VERANTES LIVING", "Kitchens &amp; Wardrobes"), ("IMPORTED<br/>FURNITURE", "Crafted Beyond Borders")],
-    ]
-    partner_rows = [[Paragraph(f"<b>{name}</b><br/><font size='5.4'><i>{tagline}</i></font>", ParagraphStyle("partner", parent=styles["cell"], fontSize=6.6, leading=8, alignment=1)) for name, tagline in row] for row in partners]
-    partner_table = Table(partner_rows, colWidths=[28.3 * mm] * 6, rowHeights=[12 * mm, 12 * mm])
-    partner_table.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.35, GRID), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
+    partner_table = brand_partners_table(styles["cell"])
     story.extend([partner_table, Spacer(1, 2 * mm), Paragraph("TERMS &amp; CONDITIONS", styles["section"]), Spacer(1, 0.6 * mm)])
 
     terms = [

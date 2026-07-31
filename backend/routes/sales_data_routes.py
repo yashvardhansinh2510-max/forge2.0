@@ -38,14 +38,26 @@ def _bucket_label(iso_ts: str, granularity: Granularity) -> str:
 
 def _resolve_floor_ids(user: UserPublic, floor_id: Optional[str]) -> Optional[list[str]]:
     """Combines the caller's own floor access with the Floor filter the
-    frontend sent. None means "no floor restriction" (query every floor
-    the caller can see)."""
-    allowed = accessible_floor_ids(user)
+    frontend sent. None means "no floor restriction" (query every floor).
+
+    Every route in this file is already gated to owner/admin via
+    `require_roles` — company-wide sales reporting, not day-to-day
+    floor-scoped ops — so an explicit single-floor filter is still honored
+    and still checked against the caller's own assignment (an admin
+    restricted to Ground Floor can't peek at First Floor numbers by typing
+    a different floor_id), but the "Both"/unset case returns every floor
+    unconditionally instead of silently narrowing to `accessible_floor_ids`.
+    That narrowing is correct for operational screens (Quotations,
+    Purchases) but was wrong here: an `admin` (not `owner`/`manager`) has
+    `has_all_floor_access() == False`, so "Both floors" would silently
+    shrink to just that admin's own `floor_ids` even though this endpoint
+    already requires an elevated role to reach at all."""
     if floor_id and floor_id != "both":
+        allowed = accessible_floor_ids(user)
         if allowed is not None and floor_id not in allowed:
             raise HTTPException(status_code=403, detail="You do not have access to this floor")
         return [floor_id]
-    return allowed
+    return None
 
 
 async def _won_quotations(
@@ -121,18 +133,29 @@ async def sales_overview(
 @router.get("/referrers/{referrer_id}")
 async def referrer_detail(
     referrer_id: str,
+    floor_id: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     granularity: Granularity = Query("month"),
     user: UserPublic = Depends(require_roles("owner", "admin")),
 ):
-    referrer = await db.referrers.find_one({"id": referrer_id}, {"_id": 0})
-    if not referrer:
-        raise HTTPException(status_code=404, detail="Referrer not found")
-
-    floor_ids = _resolve_floor_ids(user, None)
+    floor_ids = _resolve_floor_ids(user, floor_id)
     quotations = await _won_quotations(floor_ids, date_from, date_to)
     quotations = [q for q in quotations if q.get("referrer_id") == referrer_id]
+
+    referrer = await db.referrers.find_one({"id": referrer_id}, {"_id": 0})
+    if not referrer:
+        if not quotations:
+            raise HTTPException(status_code=404, detail="Referrer not found")
+        # The referrer record was renamed/deleted after being credited on a
+        # won quotation — a real revenue history shouldn't dead-end into a
+        # 404 just because the lookup doc is gone; fall back to whatever
+        # was already denormalized onto the quotation at the time.
+        sample = quotations[0]
+        referrer = {
+            "id": referrer_id, "name": sample.get("referrer_name") or "Unknown",
+            "type": sample.get("referrer_type"), "phone": None, "company": None,
+        }
 
     trend_map: dict[str, float] = defaultdict(float)
     for q in quotations:
@@ -171,11 +194,12 @@ async def _product_brand_map(product_ids: set[str]) -> dict[str, str]:
 
 @router.get("/brands")
 async def brands_ranked(
+    floor_id: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     user: UserPublic = Depends(require_roles("owner", "admin")),
 ):
-    floor_ids = _resolve_floor_ids(user, None)
+    floor_ids = _resolve_floor_ids(user, floor_id)
     quotations = await _won_quotations(floor_ids, date_from, date_to)
 
     product_ids = {it["product_id"] for q in quotations for it in q.get("items", [])}
@@ -208,21 +232,28 @@ async def brands_ranked(
 @router.get("/brands/{brand_id}")
 async def brand_detail(
     brand_id: str,
+    floor_id: Optional[str] = Query(None),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     granularity: Granularity = Query("month"),
     user: UserPublic = Depends(require_roles("owner", "admin")),
 ):
-    brand = await db.brands.find_one({"id": brand_id}, {"_id": 0})
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found")
-
-    floor_ids = _resolve_floor_ids(user, None)
+    floor_ids = _resolve_floor_ids(user, floor_id)
     quotations = await _won_quotations(floor_ids, date_from, date_to)
 
     product_ids = {it["product_id"] for q in quotations for it in q.get("items", [])}
     product_brand = await _product_brand_map(product_ids)
     ids_for_brand = {pid for pid, bid in product_brand.items() if bid == brand_id}
+
+    brand = await db.brands.find_one({"id": brand_id}, {"_id": 0})
+    if not brand:
+        if not ids_for_brand:
+            raise HTTPException(status_code=404, detail="Brand not found")
+        # `/brands` can rank a brand_id that a product still references but
+        # whose own `brands` doc was since merged/deleted — the "By Brand"
+        # row (labelled "Unknown" there) has real revenue behind it, so
+        # clicking through shouldn't dead-end into a 404.
+        brand = {"id": brand_id, "name": "Unknown"}
 
     trend_map: dict[str, float] = defaultdict(float)
     product_revenue: dict[str, dict] = {}

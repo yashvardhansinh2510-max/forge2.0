@@ -5,17 +5,19 @@
 // see services/domain_outbox.py, PurchaseOrder.brand_id/brand_name is set
 // once per-brand at order-placement time). Ordered/Released/Remaining are
 // the only columns here; tapping a row opens the order for Release only.
-import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import { tileOrdersApi, type BrandOrderRow, type BrandOrdersKpi } from "@/src/api/tileOrders";
 import { toast } from "@/src/components/Toast";
+import {
+  BackLink, Button, CenteredState, PageHeader, PageShell, Section, Stat, StatRow,
+} from "@/src/components/tiles/TileLayout";
 import { AgeingBadge, StatusPill, WorkflowRail } from "@/src/components/tiles/TileOrderStatusUI";
+import { CellLink, CellMono, CellNumber, CellTitle, DataTable, type Column } from "@/src/components/tiles/TileTable";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
-import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, spacing, type } from "@/src/theme/tokens";
 
 export default function BrandDashboardScreen() {
   useRequireFloorAccess("ground-floor");
@@ -47,74 +49,108 @@ export default function BrandDashboardScreen() {
 
   const openOrder = (poId: string) => router.push(`/(admin)/tiles/orders/po/${poId}` as any);
 
+  const columns = useMemo<Column<BrandOrderRow>[]>(() => [
+    // Sized so the whole queue fits the content area beside the app sidebar on
+    // a 1512px window — this is a triage screen, and an operator triaging a
+    // release queue should not have to scroll sideways to see the status.
+    {
+      key: "customer", label: "CUSTOMER", grow: 1, minWidth: 200,
+      render: (order) => <CellTitle>{order.customer_name}</CellTitle>,
+    },
+    {
+      key: "number", label: "ORDER NO.", width: 150,
+      render: (order) => <CellMono>{order.po_number}</CellMono>,
+    },
+    { key: "products", label: "PRODUCTS", width: 108, align: "right", render: (o) => <CellNumber value={o.total_products} /> },
+    { key: "ordered", label: "ORDERED", width: 104, align: "right", render: (o) => <CellNumber value={o.total_boxes} /> },
+    { key: "released", label: "RELEASED", width: 108, align: "right", render: (o) => <CellNumber value={o.boxes_released} /> },
+    {
+      key: "remaining", label: "REMAINING", width: 114, align: "right",
+      render: (o) => <CellNumber value={o.boxes_remaining} dim={o.boxes_remaining === 0} />,
+    },
+    {
+      key: "waiting", label: "WAITING", width: 108, align: "center",
+      render: (order) => <AgeingBadge days={order.waiting_days} band={order.ageing_band} compact />,
+    },
+    {
+      // 180px is the floor for the longest pill, "Partially Dispatched".
+      key: "status", label: "STATUS", width: 180, align: "center",
+      render: (order) => <StatusPill status={order.overall_status} />,
+    },
+    {
+      key: "action", label: "", width: 120, align: "right",
+      render: () => <CellLink>Release →</CellLink>,
+    },
+  ], []);
+
   if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface, justifyContent: "center" }}>
+      <CenteredState>
         <ActivityIndicator color={colors.brand} />
-      </SafeAreaView>
+      </CenteredState>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <Pressable testID="tile-brand-queue-back" onPress={() => router.back()} style={styles.backRow}>
-          <Feather name="arrow-left" size={16} color={colors.onSurfaceMuted} />
-          <Text style={type.bodyMuted}>Back to Brands</Text>
-        </Pressable>
-        <Text style={type.displayMd}>Brand release queue</Text>
+    <PageShell testID="tile-brand-queue-screen">
+      <BackLink label="Back to Brands" testID="tile-brand-queue-back" onPress={() => router.back()} />
+
+      {/* The brand's display name is not on this endpoint's rows
+          (BrandOrderRow carries po/customer fields only), so the page keeps
+          the generic queue title rather than inventing one from the route id. */}
+      <PageHeader
+        eyebrow="GROUND FLOOR · TILES"
+        title="Brand release queue"
+        subtitle="Every customer order this brand still owes material against."
+      />
+
+      <Section>
         <WorkflowRail active="release" testID="tile-brand-queue-workflow-rail" />
+      </Section>
 
-        {loadError ? (
-          <View style={{ marginTop: spacing.xl, gap: spacing.md, alignItems: "flex-start" }}>
-            <Text style={type.bodyStrong}>{loadError}</Text>
-            <Pressable testID="tile-brand-queue-retry" style={styles.retryButton} onPress={() => load()}>
-              <Text style={[type.bodyStrong, { color: colors.onBrand }]}>Retry</Text>
-            </Pressable>
+      {loadError ? (
+        <Section>
+          <View style={styles.errorBlock}>
+            <Text style={type.titleSm}>{loadError}</Text>
+            <Button label="Retry" variant="primary" testID="tile-brand-queue-retry" onPress={() => load()} />
           </View>
-        ) : (
-          <>
-            {kpi ? (
-              <View style={styles.kpiBar}>
-                {([
-                  ["Orders", kpi.orders], ["Pending", kpi.pending], ["Released", kpi.ready],
-                  ["Partial", kpi.partially_dispatched], ["Completed", kpi.completed],
-                  ["Boxes Remaining", kpi.boxes_remaining], ["Boxes Released", kpi.boxes_released],
-                  ["Oldest Waiting", `${kpi.oldest_pending_days}d`],
-                ] as [string, number | string][]).map(([label, value]) => (
-                  <View key={label} style={styles.kpiCell}>
-                    <Text style={[type.bodyStrong, styles.kpiNumber]}>{value}</Text>
-                    <Text style={type.bodyMuted}>{label}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
+        </Section>
+      ) : (
+        <>
+          {kpi ? (
+            <Section>
+              <StatRow testID="tile-brand-queue-kpis">
+                <Stat label="Orders" value={kpi.orders} />
+                <Stat label="Pending" value={kpi.pending} tone={kpi.pending > 0 ? "warn" : "default"} />
+                <Stat label="Released" value={kpi.ready} tone="brand" />
+                <Stat label="Partial" value={kpi.partially_dispatched} />
+                <Stat label="Completed" value={kpi.completed} />
+                <Stat label="Boxes remaining" value={kpi.boxes_remaining} />
+                <Stat label="Boxes released" value={kpi.boxes_released} />
+                <Stat label="Oldest waiting" value={`${kpi.oldest_pending_days}d`} tone={kpi.oldest_pending_days > 7 ? "warn" : "default"} />
+              </StatRow>
+            </Section>
+          ) : null}
 
-            {orders.length === 0 ? (
-              <Text style={[type.bodyMuted, { marginTop: spacing.lg }]}>No orders for this brand yet.</Text>
-            ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tableShell}><View style={styles.queueTable}><View style={styles.tableHeader}><Text style={[styles.customerCol, styles.tableLabel]}>CUSTOMER</Text><Text style={[styles.poCol, styles.tableLabel]}>ORDER NO.</Text><Text style={[styles.qtyCol, styles.tableLabel]}>PRODUCTS</Text><Text style={[styles.qtyCol, styles.tableLabel]}>ORDERED</Text><Text style={[styles.qtyCol, styles.tableLabel]}>RELEASED</Text><Text style={[styles.qtyCol, styles.tableLabel]}>REMAINING</Text><Text style={[styles.waitCol, styles.tableLabel]}>WAITING</Text><Text style={[styles.statusCol, styles.tableLabel]}>STATUS</Text><Text style={[styles.actionCol, styles.tableLabel]}>ACTION</Text></View>{orders.map((order) => <Pressable testID={`tile-brand-order-${order.po_id}`} key={order.po_id} onPress={() => openOrder(order.po_id)} style={styles.tableRow}><Text numberOfLines={1} style={[styles.customerCol, type.bodyStrong]}>{order.customer_name}</Text><Text style={[styles.poCol, styles.mono]}>{order.po_number}</Text><Text style={[styles.qtyCol, styles.mono]}>{order.total_products}</Text><Text style={[styles.qtyCol, styles.mono]}>{order.total_boxes}</Text><Text style={[styles.qtyCol, styles.mono]}>{order.boxes_released}</Text><Text style={[styles.qtyCol, styles.mono]}>{order.boxes_remaining}</Text><View style={styles.waitCol}><AgeingBadge days={order.waiting_days} band={order.ageing_band} /></View><View style={styles.statusCol}><StatusPill status={order.overall_status} /></View><Text style={[styles.actionCol, styles.openAction]}>Release →</Text></Pressable>)}</View></ScrollView>
-            )}
-          </>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+          <Section>
+            <DataTable
+              testID="tile-brand-queue-table"
+              fillViewport
+              columns={columns}
+              data={orders}
+              rowMinHeight={60}
+              keyExtractor={(order) => order.po_id}
+              rowTestID={(order) => `tile-brand-order-${order.po_id}`}
+              onRowPress={(order) => openOrder(order.po_id)}
+              emptyMessage="No orders for this brand yet."
+            />
+          </Section>
+        </>
+      )}
+    </PageShell>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { padding: spacing.md, width: "100%", alignSelf: "stretch" },
-  backRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, marginBottom: spacing.md },
-  retryButton: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.xl },
-  kpiBar: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, padding: spacing.md, marginVertical: spacing.sm },
-  kpiCell: { minWidth: 76 },
-  kpiNumber: { fontVariant: ["tabular-nums"] },
-  tableShell: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-  queueTable: { minWidth: 1080, width: "100%" },
-  tableHeader: { flexDirection: "row", alignItems: "center", minHeight: 32, paddingHorizontal: spacing.sm, backgroundColor: colors.surfaceTertiary, borderBottomWidth: 1, borderColor: colors.border },
-  tableRow: { flexDirection: "row", alignItems: "center", minHeight: 40, paddingHorizontal: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.divider, gap: spacing.xs },
-  tableLabel: { ...type.overline, fontSize: 10, color: colors.onSurfaceMuted },
-  customerCol: { width: 190 }, poCol: { width: 125 }, qtyCol: { width: 82, textAlign: "right" }, waitCol: { width: 100 }, statusCol: { width: 140 }, actionCol: { width: 94 },
-  mono: { ...type.bodySm, fontFamily: type.numeric.fontFamily, fontVariant: ["tabular-nums"] },
-  openAction: { ...type.captionStrong, color: colors.brand },
+  errorBlock: { alignItems: "flex-start", gap: spacing.lg },
 });

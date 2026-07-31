@@ -27,12 +27,15 @@ async def ensure_download_token_indexes() -> None:
     await db.download_tokens.create_index("expires_at", expireAfterSeconds=0, name="download_token_ttl")
 
 
-async def create_download_token(user_id: str) -> str:
+async def create_download_token(user_id: str, session_id: str | None = None) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     await db.download_tokens.insert_one({
         "token": token,
         "user_id": user_id,
+        # Bound to the minting request's session so the download inherits the
+        # same revocation semantics as a normal API call.
+        "session_id": session_id,
         "used": False,
         "created_at": now.isoformat(),
         "expires_at": now + timedelta(seconds=_TTL_SECONDS),

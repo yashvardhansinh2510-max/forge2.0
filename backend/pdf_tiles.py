@@ -1,19 +1,23 @@
 """Ground Floor → Tiles document PDFs — faithful replicas of the two official
-printed formats:
+printed forms supplied by the business (Selection / Tile Quotation):
 
-* Tiles SELECTION  — the grey selection sheet (logo centered, customer header
-  with underlined fields, grey product grid, Terms & Conditions, contact strip).
-* Tiles QUOTATION  — the light-blue bordered quotation sheet (logo + big
-  "Quotation" title, serif-italic column headers, white product grid, right-
-  aligned totals stack, centred terms, blue address footer).
+* Page 1 — logo + title, a 4x2 CUSTOMER NAME/CONTACT NO./.../ADDRESS form
+  grid, an intro line, (Quotation only) a PRICE SUMMARY box, the OUR BRAND
+  PARTNERS grid, 12 Terms & Conditions, a contact line and a customer
+  signature box.
+* Page 2+ — PRODUCT DETAILS: a single flowing product grid (SR NO / PRODUCT
+  IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT [+ OFFER RATE / RATE-BOX /
+  TOTAL BOX / PCS-BOX / TOTAL for the Quotation]) that paginates on its own
+  via reportlab's normal Table-splitting (repeatRows repeats the column
+  header on every continuation page) — no manual per-page chunking, so any
+  number of products just flows across as many pages as it needs.
 
-Both templates paginate automatically once product rows exceed a page,
-repeating their headers on continuation pages. Both reuse the shared image
-fetch/placeholder + escaping helpers from pdf_generator so there is exactly
-one implementation of those in the codebase.
+Both reuse the shared image fetch/placeholder/escaping/footer helpers from
+pdf_generator so there is exactly one implementation of those in the codebase.
 """
 from __future__ import annotations
 
+import functools
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -25,18 +29,20 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
-    Flowable, HRFlowable, Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+    Flowable, HRFlowable, Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
-from pdf_generator import LOGO_PATH, LOGO_RATIO, _escape, _img, _money
+from pdf_generator import (
+    LOGO_PATH, LOGO_RATIO, _draw_footer, _draw_room_watermark, _escape, _img, _money, brand_partners_table,
+)
 
 INK = colors.HexColor("#111111")
 RED = colors.HexColor("#FF0000")
-BLUE_TEXT = colors.HexColor("#2E75B6")
-GRID_BLACK = colors.HexColor("#000000")
-HEADER_GREY = colors.HexColor("#D3D3D3")
-CELL_GREY = colors.HexColor("#BFBFBF")
-SHEET_BLUE = colors.HexColor("#CBE7F5")
+GREEN = colors.HexColor("#1D7A3C")
+GRID = colors.HexColor("#8A8A8A")
+HEADER_GREY = colors.HexColor("#C8C8C8")
+ZEBRA = colors.HexColor("#F0F0F0")
+PAGE_W_MM = 194.0  # A4 width minus 8mm left/right margins — every colWidths list below sums to this
 
 # ---------------------------------------------------------------------------
 # Optional unicode fonts — needed only for the ₹ / ☺ / ☎ glyphs the reference
@@ -79,9 +85,24 @@ def _rupee(value: float) -> str:
     return f"{symbol}{_money(value)}"
 
 
-DEFAULT_ADDRESS = "Nr. Gujarat Housing Board, Kataria Motors, 2nd 150 Ring Road, Rajkot-360005"
-DEFAULT_EMAIL = "buildconhouse@gmail.com"
+DEFAULT_ADDRESS = "Nr. Gujarat Housing Board, Kataria Motors, 2nd 150ft Ring Road, Rajkot-360005"
+DEFAULT_EMAIL = "buildconhouse10@gmail.com"
 DEFAULT_MOBILE = "+91 99099 06652"
+
+TILES_TERMS = [
+    "Prices quoted are based on the current NET prices at the time of selection.",
+    "Prices are subject to revision by any brand without prior notice.",
+    "100% advance payment is required to confirm orders.",
+    "Freight and unloading charges will be applicable as per actuals.",
+    "Delivery timelines are subject to the manufacturer&rsquo;s schedule.",
+    "Rates are valid for 5 days, unless stated otherwise in writing.",
+    "Above rates are inclusive of GST @18%, unless stated otherwise.",
+    "All orders and deliveries are subject to material availability.",
+    "Prices are subject to change in case of changes in government levy.",
+    "Cheques should be written in favour of Buildcon House.",
+    "On confirmation of purchase order, material will be delivered within 15 days.",
+    "Labour cost is extra and not included in this quotation.",
+]
 
 
 def _parse_doc_date(doc: dict) -> datetime:
@@ -132,348 +153,318 @@ def _fmt_rate_sqft(value, suffix: str = "") -> str:
     return f"{text}{suffix}"
 
 
+def _tiles_styles() -> dict:
+    """Style set shared by both Selection and Quotation — one dict of
+    consistently-named keys so the shared page-1 building blocks below
+    (_header_block / _meta_grid / _brand_terms_signature_block) work
+    identically for either document."""
+    base = getSampleStyleSheet()["Normal"]
+    return {
+        "titleMain": ParagraphStyle("titleMain", parent=base, fontName="Helvetica-Bold", fontSize=17, leading=19, textColor=INK, alignment=2),
+        "titleSub": ParagraphStyle("titleSub", parent=base, fontName="Helvetica", fontSize=8.6, leading=11, textColor=colors.HexColor("#444444"), alignment=2),
+        "metaLabel": ParagraphStyle("metaLabel", parent=base, fontName="Helvetica-Bold", fontSize=7.4, leading=9, textColor=INK, alignment=1),
+        "metaValue": ParagraphStyle("metaValue", parent=base, fontName="Helvetica", fontSize=9.4, leading=11.5, textColor=INK, alignment=1),
+        "intro": ParagraphStyle("intro", parent=base, fontName="Helvetica", fontSize=8.8, leading=12.5, textColor=INK, alignment=1),
+        "sectionTitle": ParagraphStyle("sectionTitle", parent=base, fontName="Helvetica-Bold", fontSize=10.4, leading=13, textColor=INK, alignment=1),
+        "term": ParagraphStyle("term", parent=base, fontName="Helvetica", fontSize=7.8, leading=11.5, textColor=colors.HexColor("#3A3A3A"), alignment=1),
+        "contact": ParagraphStyle("contact", parent=base, fontName="Helvetica", fontSize=8.4, leading=10.5, textColor=INK, alignment=1),
+        "sigNote": ParagraphStyle("sigNote", parent=base, fontName="Helvetica", fontSize=7.8, leading=10.5, textColor=INK, alignment=1),
+        "sigLabel": ParagraphStyle("sigLabel", parent=base, fontName="Helvetica-Bold", fontSize=7.8, leading=10, textColor=INK, alignment=2),
+        "sumLabel": ParagraphStyle("sumLabel", parent=base, fontName="Helvetica-Bold", fontSize=8.6, leading=10.5, textColor=INK, alignment=1),
+        "sumValue": ParagraphStyle("sumValue", parent=base, fontName="Helvetica", fontSize=8.6, leading=10.5, textColor=INK, alignment=1),
+        "sumRed": ParagraphStyle("sumRed", parent=base, fontName="Helvetica-Bold", fontSize=9.2, leading=11, textColor=RED, alignment=1),
+        "colHead": ParagraphStyle("colHead", parent=base, fontName="Helvetica-Bold", fontSize=7.8, leading=9.2, textColor=INK, alignment=1),
+        "colHeadRed": ParagraphStyle("colHeadRed", parent=base, fontName="Helvetica-Bold", fontSize=7.8, leading=9.2, textColor=RED, alignment=1),
+        "cell": ParagraphStyle("cell", parent=base, fontName="Helvetica", fontSize=8.2, leading=10, textColor=INK, alignment=1),
+        "cellBold": ParagraphStyle("cellBold", parent=base, fontName="Helvetica-Bold", fontSize=8.2, leading=10, textColor=INK, alignment=1),
+        "cellRed": ParagraphStyle("cellRed", parent=base, fontName="Helvetica-Bold", fontSize=8.2, leading=10, textColor=RED, alignment=1),
+        "cellOffer": ParagraphStyle("cellOffer", parent=base, fontName="Helvetica-Bold", fontSize=8.2, leading=10, textColor=GREEN, alignment=1),
+        "sqftCaption": ParagraphStyle("sqftCaption", parent=base, fontName="Helvetica", fontSize=6, leading=7.2, textColor=colors.HexColor("#666666"), alignment=1),
+    }
+
+
+def _header_block(main_title: str, subtitle: str, styles: dict) -> Table:
+    """Logo (left) + title/subtitle (right), used identically for the page 1
+    masthead and the page 2+ "PRODUCT DETAILS" section header."""
+    table = Table(
+        [["", _logo_flowable(46), [Paragraph(main_title, styles["titleMain"]), Paragraph(subtitle, styles["titleSub"])]]],
+        colWidths=[10 * mm, 90 * mm, 94 * mm],
+    )
+    table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return table
+
+
+def _meta_grid(quotation: dict, customer: dict, styles: dict) -> Table:
+    """The 4x2 CUSTOMER NAME / CONTACT NO. / SELECTION-QUOTATION DATE /
+    QUOTATION NO. + REFERENCE / ATTENDED BY / PREPARED BY / ADDRESS form
+    grid — identical on both documents' page 1."""
+    created = _parse_doc_date(quotation).strftime("%d-%b-%y")
+    row1_labels = ["CUSTOMER NAME", "CONTACT NO.", "SELECTION / QUOTATION DATE", "QUOTATION NO."]
+    row1_values = [
+        quotation.get("customer_name") or customer.get("name") or "",
+        quotation.get("phone_snapshot") or customer.get("phone") or "",
+        quotation.get("doc_date") or created,
+        quotation.get("doc_number") or quotation.get("number") or "",
+    ]
+    row2_labels = ["REFERENCE", "ATTENDED BY", "PREPARED BY", "ADDRESS"]
+    row2_values = [
+        quotation.get("reference_source") or "",
+        quotation.get("attended_by") or "",
+        quotation.get("prepared_by") or "",
+        quotation.get("address_snapshot") or "",
+    ]
+    data = [
+        [Paragraph(label, styles["metaLabel"]) for label in row1_labels],
+        [Paragraph(_escape(value) or "&nbsp;", styles["metaValue"]) for value in row1_values],
+        [Paragraph(label, styles["metaLabel"]) for label in row2_labels],
+        [Paragraph(_escape(value) or "&nbsp;", styles["metaValue"]) for value in row2_values],
+    ]
+    table = Table(data, colWidths=[PAGE_W_MM / 4 * mm] * 4, rowHeights=[6 * mm, 8.5 * mm, 6 * mm, 8.5 * mm])
+    table.setStyle(TableStyle([
+        ("LINEBELOW", (0, 1), (-1, 1), 0.7, INK),
+        ("LINEBELOW", (0, 3), (-1, 3), 0.7, INK),
+        ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
+    ]))
+    return table
+
+
+def _brand_terms_signature_block(styles: dict, branding: dict) -> list:
+    """OUR BRAND PARTNERS grid + 12 Terms & Conditions + contact line +
+    customer signature box — identical tail section on both documents."""
+    email = branding.get("footer_email") or DEFAULT_EMAIL
+    mobile = branding.get("footer_phone") or DEFAULT_MOBILE
+    flow: list = [
+        Paragraph("OUR BRAND PARTNERS", styles["sectionTitle"]),
+        Spacer(1, 1.5 * mm),
+        brand_partners_table(styles["cell"], col_width_mm=PAGE_W_MM / 6),
+        Spacer(1, 3 * mm),
+        Paragraph("TERMS &amp; CONDITIONS", styles["sectionTitle"]),
+        Spacer(1, 1 * mm),
+    ]
+    flow.extend(Paragraph(f"{i}. {term}", styles["term"]) for i, term in enumerate(TILES_TERMS, 1))
+    flow.append(Spacer(1, 2.5 * mm))
+    flow.append(Paragraph(
+        f"For general enquiries: <b>M: {_escape(mobile)}</b> &nbsp;|&nbsp; <b>Email: {_escape(email)}</b>",
+        styles["contact"],
+    ))
+    flow.append(Spacer(1, 2 * mm))
+    signature = Table(
+        [[
+            Paragraph("I/We have reviewed and agree to the terms and conditions mentioned in this quotation.", styles["sigNote"]),
+            Paragraph("CUSTOMER SIGNATURE &amp; DATE", styles["sigLabel"]),
+        ]],
+        colWidths=[124 * mm, 70 * mm], rowHeights=[13 * mm],
+    )
+    signature.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.6, GRID),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    flow.append(signature)
+    return flow
+
+
+def _price_summary_table(total_boxes: float, subtotal: float, styles: dict) -> Table:
+    """Quotation-only PRICE SUMMARY box on page 1 — TOTAL BOX / SUBTOTAL /
+    TRANSPORTATION / TOTAL QUOTE."""
+    rows = [
+        [Paragraph("TOTAL BOX", styles["sumLabel"]), Paragraph(f"{total_boxes:g}" if total_boxes else "", styles["sumValue"])],
+        [Paragraph("SUBTOTAL (Rs.)", styles["sumLabel"]), Paragraph(_rupee(subtotal), styles["sumValue"])],
+        [Paragraph("TRANSPORTATION", styles["sumLabel"]), Paragraph("EXTRA", styles["sumValue"])],
+        [Paragraph("TOTAL QUOTE (Rs.)", styles["sumRed"]), Paragraph(_rupee(subtotal), styles["sumRed"])],
+    ]
+    table = Table(rows, colWidths=[130 * mm, 64 * mm], rowHeights=[7.5 * mm] * 4, hAlign="CENTER")
+    table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.6, GRID),
+        ("BACKGROUND", (0, 0), (-1, -2), HEADER_GREY),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#DADADA")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return table
+
+
 # ===========================================================================
-# TILES SELECTION — grey sheet
+# TILES SELECTION
 # ===========================================================================
+_SEL_COLS = [10 * mm, 46 * mm, 28 * mm, 52 * mm, 24 * mm, 34 * mm]  # SR/IMAGE/AREA/DETAIL/SIZE/RATE-SQFT
+
+
 def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
     b = branding or {}
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4, leftMargin=8 * mm, rightMargin=8 * mm,
-        topMargin=9 * mm, bottomMargin=10 * mm,
+        topMargin=10 * mm, bottomMargin=16 * mm,
         title=f"Selection — {quotation.get('customer_name') or ''}",
         author=b.get("footer_company_name") or "Buildcon House",
     )
-    base = getSampleStyleSheet()
-    address_line = b.get("company_address") or DEFAULT_ADDRESS
-    styles = {
-        "address": ParagraphStyle("address", parent=base["Normal"], fontName="Helvetica", fontSize=8.6, leading=10.5, textColor=colors.HexColor("#3B3B3B"), alignment=1),
-        "label": ParagraphStyle("label", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=9.4, leading=12, textColor=INK),
-        "value": ParagraphStyle("value", parent=base["Normal"], fontName="Helvetica", fontSize=9.2, leading=12, textColor=INK),
-        "valueCenter": ParagraphStyle("valueCenter", parent=base["Normal"], fontName="Helvetica", fontSize=9.2, leading=12, textColor=INK, alignment=1),
-        "tableHead": ParagraphStyle("tableHead", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=9.2, leading=11, textColor=INK, alignment=1),
-        "tableHeadRed": ParagraphStyle("tableHeadRed", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=9.2, leading=11, textColor=RED, alignment=1),
-        "cell": ParagraphStyle("cell", parent=base["Normal"], fontName="Helvetica", fontSize=8.6, leading=10.5, textColor=INK, alignment=1),
-        "cellRed": ParagraphStyle("cellRed", parent=base["Normal"], fontName="Helvetica", fontSize=8.6, leading=10.5, textColor=RED, alignment=1),
-        "termsTitle": ParagraphStyle("termsTitle", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=11.5, leading=14, textColor=colors.HexColor("#2B2B2B")),
-        "term": ParagraphStyle("term", parent=base["Normal"], fontName="Helvetica", fontSize=8.2, leading=13, textColor=colors.HexColor("#4A4A4A"), leftIndent=6 * mm),
-        "contact": ParagraphStyle("contact", parent=base["Normal"], fontName="Helvetica", fontSize=8.4, leading=10, textColor=INK, alignment=1),
-    }
+    styles = _tiles_styles()
+    items = quotation.get("items") or []
 
-    story: list[Flowable] = []
-    # --- Brand block: centered logo + address + double rule -----------------
-    story.append(_logo_flowable(74))
-    story.extend([Spacer(1, 2 * mm), Paragraph(_escape(address_line), styles["address"]), Spacer(1, 2 * mm)])
-    story.append(HRFlowable(width="100%", thickness=1.6, color=INK, spaceAfter=1.1 * mm))
-    story.append(HRFlowable(width="100%", thickness=0.9, color=INK, spaceAfter=4 * mm))
-
-    # --- Customer header: left NAME/MOB/REF, right SELECTION DT/ATTENDED/PREPARED
-    created = _parse_doc_date(quotation).strftime("%d-%b-%y")
-    phone_label = f"{_ding('☎')} :" if _DINGS_FONT else "MOB :"
-    left_rows = [
-        [Paragraph("NAME:", styles["label"]), Paragraph(_escape(quotation.get("customer_name") or customer.get("name")), styles["value"])],
-        [Paragraph(phone_label, styles["label"]), Paragraph(_escape(quotation.get("phone_snapshot") or customer.get("phone") or ""), styles["value"])],
-        [Paragraph("REF:", styles["label"]), Paragraph(_escape(quotation.get("reference_source") or ""), styles["value"])],
+    story: list = [
+        _header_block("PRODUCT SELECTION", "Tiles &amp; Sanitaryware Solutions", styles),
+        Spacer(1, 2.5 * mm),
+        HRFlowable(width="100%", thickness=1.1, color=INK, spaceAfter=3 * mm),
+        _meta_grid(quotation, customer, styles),
+        Spacer(1, 4 * mm),
+        Paragraph(
+            "Dear Sir/Madam, thank you for your interest in our products. Please find below the products shortlisted "
+            "as per your selection, for your review and confirmation.",
+            styles["intro"],
+        ),
+        Spacer(1, 4 * mm),
     ]
-    left = Table(left_rows, colWidths=[15 * mm, 99 * mm], rowHeights=[7 * mm] * 3)
-    left.setStyle(TableStyle([
-        ("LINEBELOW", (1, 0), (1, -1), 0.7, INK),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN", (0, 0), (0, -1), "RIGHT"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-        ("TOPPADDING", (0, 0), (-1, -1), 0.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
-    ]))
-    right_rows = [
-        [Paragraph("SELECTION DT:", styles["label"]), Paragraph(_escape(quotation.get("doc_date") or created), styles["valueCenter"])],
-        [Paragraph("ATTENDED BY:", styles["label"]), Paragraph(_escape(quotation.get("attended_by") or ""), styles["valueCenter"])],
-        [Paragraph("PREPARED BY:", styles["label"]), Paragraph(_escape(quotation.get("prepared_by") or ""), styles["valueCenter"])],
-    ]
-    right = Table(right_rows, colWidths=[30 * mm, 44 * mm], rowHeights=[7 * mm] * 3)
-    right.setStyle(TableStyle([
-        ("LINEBELOW", (1, 0), (1, -1), 0.7, INK),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1), ("RIGHTPADDING", (0, 0), (-1, -1), 1),
-        ("TOPPADDING", (0, 0), (-1, -1), 0.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
-    ]))
-    header = Table([[left, "", right]], colWidths=[114 * mm, 6 * mm, 74 * mm])
-    header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    story.extend([header, Spacer(1, 7 * mm)])
+    story.extend(_brand_terms_signature_block(styles, b))
 
-    # --- Product grid -------------------------------------------------------
+    # --- PRODUCT DETAILS (page 2+) — one flowing table, auto-paginates ------
+    story.append(PageBreak())
+    story.append(_header_block("PRODUCT DETAILS", f"Items 1&ndash;{len(items)}" if items else "No items yet", styles))
+    story.extend([Spacer(1, 2.5 * mm), HRFlowable(width="100%", thickness=1.1, color=INK, spaceAfter=3 * mm)])
+
     head = [
-        Paragraph("NO.", styles["tableHead"]), Paragraph("AREA", styles["tableHead"]),
-        Paragraph("PRODUCT DETAIL", styles["tableHead"]), Paragraph("IMAGE", styles["tableHead"]),
-        Paragraph("SIZE", styles["tableHead"]), Paragraph("RATE/SQ.FT", styles["tableHeadRed"]),
+        Paragraph("SR.<br/>NO.", styles["colHead"]), Paragraph("PRODUCT IMAGE", styles["colHead"]),
+        Paragraph("AREA", styles["colHead"]), Paragraph("PRODUCT DETAIL", styles["colHead"]),
+        Paragraph("SIZE", styles["colHead"]), Paragraph("RATE/<br/>SQ.FT", styles["colHeadRed"]),
     ]
     rows: list[list[object]] = [head]
-    for index, item in enumerate(quotation.get("items") or [], 1):
+    for index, item in enumerate(items, 1):
         rows.append([
             Paragraph(str(index), styles["cell"]),
+            _img(item.get("image"), width_mm=42, height_mm=24),
             Paragraph(_escape(item.get("room") or ""), styles["cell"]),
-            Paragraph(_escape(item.get("name") or ""), styles["cell"]),
-            _img(item.get("image"), width_mm=41, height_mm=24),
+            Paragraph(_escape(item.get("name") or ""), styles["cellBold"]),
             Paragraph(_escape(item.get("size") or ""), styles["cell"]),
             Paragraph(_fmt_rate_sqft(item.get("rate_sqft"), " PER SQFT"), styles["cellRed"]),
         ])
-    n_rows = len(rows) - 1
-    table = Table(
-        rows,
-        colWidths=[13 * mm, 37 * mm, 52 * mm, 44 * mm, 23 * mm, 25 * mm],
-        rowHeights=[8.5 * mm] + [27 * mm] * n_rows,
-        repeatRows=1,
-    )
-    table.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.9, GRID_BLACK),
+    style_cmds = [
+        ("GRID", (0, 0), (-1, -1), 0.7, GRID),
         ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
-        ("BACKGROUND", (0, 1), (2, -1), CELL_GREY),
-        ("BACKGROUND", (4, 1), (-1, -1), CELL_GREY),
-        ("BACKGROUND", (3, 1), (3, -1), CELL_GREY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5),
-    ]))
-    story.extend([table, Spacer(1, 4 * mm)])
-
-    # --- Terms & Conditions -------------------------------------------------
-    terms = [
-        "1. <b>Prices</b> quoted are based on the current <b>NET Prices</b> at the time of selection.",
-        "2. <b>Prices revisions</b> by <b>any brands</b> may occur without prior notice.",
-        "3. <b>100% advance payment</b> is required to confirm orders.",
-        "4. <b>Freight &amp; Unloading charges</b> will be applicable as per actuals.",
-        "5. <b>Delivery timelines</b> are subject to the <b>manufacturer's schedule</b>.",
-        "6. <b>Rates are valid for 5 Days</b>, unless stated otherwise in writing.",
+        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
     ]
-    story.append(Paragraph("Terms &amp; Conditions", styles["termsTitle"]))
-    story.append(Spacer(1, 1.2 * mm))
-    story.extend([Paragraph(term, styles["term"]) for term in terms])
-    story.append(Spacer(1, 5 * mm))
+    for r in range(2, len(rows), 2):  # zebra every 2nd item row
+        style_cmds.append(("BACKGROUND", (0, r), (-1, r), ZEBRA))
+    table = Table(rows, colWidths=_SEL_COLS, rowHeights=[9 * mm] + [30 * mm] * (len(rows) - 1), repeatRows=1)
+    table.setStyle(TableStyle(style_cmds))
+    story.append(table)
 
-    # --- Contact strip ------------------------------------------------------
-    email = b.get("footer_email") or DEFAULT_EMAIL
-    mobile = b.get("footer_phone") or DEFAULT_MOBILE
-    story.append(HRFlowable(width="100%", thickness=0.9, color=INK, spaceAfter=0))
-    contact = Table(
-        [[
-            Paragraph(f"<b>E-MAIL:</b> {_escape(email)}", styles["contact"]),
-            "",
-            Paragraph(f"<b>MOBILE:</b> {_escape(mobile)}", styles["contact"]),
-        ]],
-        colWidths=[92 * mm, 10 * mm, 92 * mm], rowHeights=[7 * mm],
+    doc.build(
+        story,
+        onFirstPage=functools.partial(_draw_footer, branding=b),
+        onLaterPages=functools.partial(_draw_room_watermark, branding=b),
     )
-    contact.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, 0), HEADER_GREY),
-        ("BACKGROUND", (2, 0), (2, 0), HEADER_GREY),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]))
-    story.append(contact)
-    story.append(HRFlowable(width="100%", thickness=0.9, color=INK, spaceBefore=0))
-
-    doc.build(story)
     return buf.getvalue()
 
 
 # ===========================================================================
-# TILES QUOTATION — light-blue bordered sheet
+# TILES QUOTATION
 # ===========================================================================
-# Column widths for the 10-column product grid (sums to the 180mm inner width
-# of the bordered box). Shared by the header row and every product row so the
-# per-row inner tables always line up into one continuous grid.
-_Q_COLS = [12 * mm, 33 * mm, 26 * mm, 24 * mm, 15 * mm, 14.5 * mm, 14.5 * mm, 12.5 * mm, 12.5 * mm, 16 * mm]
+# SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
+# RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — sums to PAGE_W_MM (194mm).
+_QUO_COLS = [9 * mm, 26 * mm, 16 * mm, 32 * mm, 16 * mm, 18 * mm, 16 * mm, 16 * mm, 14 * mm, 13 * mm, 18 * mm]
 
 
 def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
     b = branding or {}
     buf = BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4, leftMargin=10 * mm, rightMargin=10 * mm,
-        topMargin=10 * mm, bottomMargin=12 * mm,
+        buf, pagesize=A4, leftMargin=8 * mm, rightMargin=8 * mm,
+        topMargin=10 * mm, bottomMargin=16 * mm,
         title=f"Quotation — {quotation.get('customer_name') or ''}",
         author=b.get("footer_company_name") or "Buildcon House",
     )
-    base = getSampleStyleSheet()
-    styles = {
-        "qTitle": ParagraphStyle("qTitle", parent=base["Normal"], fontName="Times-Bold", fontSize=21, leading=23, textColor=INK, alignment=2),
-        "hLabel": ParagraphStyle("hLabel", parent=base["Normal"], fontName="Times-Bold", fontSize=8, leading=11.5, textColor=INK, alignment=2),
-        "hValue": ParagraphStyle("hValue", parent=base["Normal"], fontName="Times-Bold", fontSize=8, leading=11.5, textColor=INK),
-        "colHead": ParagraphStyle("colHead", parent=base["Normal"], fontName="Times-BoldItalic", fontSize=7.4, leading=8.6, textColor=INK, alignment=1),
-        "colHeadRed": ParagraphStyle("colHeadRed", parent=base["Normal"], fontName="Times-BoldItalic", fontSize=7.4, leading=8.6, textColor=RED, alignment=1),
-        "cell": ParagraphStyle("cell", parent=base["Normal"], fontName="Helvetica", fontSize=7.6, leading=9.4, textColor=INK, alignment=1),
-        "cellBold": ParagraphStyle("cellBold", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=7.6, leading=9.4, textColor=INK, alignment=1),
-        "cellRed": ParagraphStyle("cellRed", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=7.6, leading=9.4, textColor=RED, alignment=1),
-        "sumLabel": ParagraphStyle("sumLabel", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=7.6, leading=9.4, textColor=INK, alignment=1),
-        "sumRed": ParagraphStyle("sumRed", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=7.6, leading=9.4, textColor=RED, alignment=1),
-        "noteRed": ParagraphStyle("noteRed", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=7.4, leading=10, textColor=RED, alignment=1),
-        "noteHead": ParagraphStyle("noteHead", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=7.4, leading=10, textColor=INK, alignment=1),
-        "term": ParagraphStyle("qTerm", parent=base["Normal"], fontName="Times-Roman", fontSize=6.6, leading=8.6, textColor=INK, alignment=1),
-        "blue": ParagraphStyle("blue", parent=base["Normal"], fontName="Times-Bold", fontSize=6.8, leading=9, textColor=BLUE_TEXT, alignment=1),
-    }
+    styles = _tiles_styles()
+    items = quotation.get("items") or []
 
-    smiley = _ding("☺")
+    total_boxes = sum(float(item.get("qty") or 0) for item in items)
+    subtotal = sum(float(item.get("qty") or 0) * float(item.get("unit_price") or 0) for item in items)
 
-    # --- Outer row 0: brand + title + customer block ------------------------
-    brand_row = Table([["", _logo_flowable(50), Paragraph("Quotation", styles["qTitle"])]], colWidths=[45 * mm, 90 * mm, 45 * mm])
-    brand_row.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    date_text = _escape(quotation.get("doc_date") or _parse_doc_date(quotation).strftime("%d-%m-%Y"))
-    left_pairs = [
-        ("NAME", quotation.get("customer_name") or customer.get("name") or ""),
-        ("MO", quotation.get("phone_snapshot") or customer.get("phone") or ""),
-        ("REF", quotation.get("reference_source") or ""),
-        ("ATTENDED BY", quotation.get("attended_by") or ""),
-        ("ADDRESS", quotation.get("address_snapshot") or ""),
+    story: list = [
+        _header_block("PRODUCT QUOTATION", "Tiles &amp; Sanitaryware Solutions", styles),
+        Spacer(1, 2.5 * mm),
+        HRFlowable(width="100%", thickness=1.1, color=INK, spaceAfter=3 * mm),
+        _meta_grid(quotation, customer, styles),
+        Spacer(1, 4 * mm),
+        Paragraph(
+            "Dear Sir/Madam, thank you for your interest in our products. We are pleased to offer our most competitive "
+            "rates for premium tiles and sanitaryware, prepared as per your selection.",
+            styles["intro"],
+        ),
+        Spacer(1, 4 * mm),
+        Paragraph("PRICE SUMMARY", styles["sectionTitle"]),
+        Spacer(1, 1.5 * mm),
+        _price_summary_table(total_boxes, subtotal, styles),
+        Spacer(1, 4 * mm),
     ]
-    left_rows = [
-        [Paragraph(f"{label}&nbsp;&nbsp;:", styles["hLabel"]), Paragraph(_escape(value), styles["hValue"])]
-        for label, value in left_pairs
-    ]
-    left = Table(left_rows, colWidths=[26 * mm, 94 * mm])
-    left.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    right_lines = [
-        Paragraph(f"<b>QUOTATION NO:</b> {_escape(quotation.get('doc_number') or quotation.get('number') or '')}", styles["hValue"]),
-        Paragraph(f"<b>DATE:</b> {date_text}", styles["hValue"]),
-    ]
-    if quotation.get("prepared_by"):
-        right_lines.append(Paragraph(f"<b>PREPARED BY:</b> {_escape(quotation.get('prepared_by'))}", styles["hValue"]))
-    right = Table([[line] for line in right_lines], colWidths=[60 * mm])
-    right.setStyle(TableStyle([
-        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
-    ]))
-    customer_block = Table([[left, right]], colWidths=[120 * mm, 60 * mm])
-    customer_block.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-    header_cell = [brand_row, Spacer(1, 2 * mm), customer_block, Spacer(1, 2.5 * mm)]
+    story.extend(_brand_terms_signature_block(styles, b))
 
-    # --- Column header row ---------------------------------------------------
-    col_heads = Table([[
-        Paragraph("SR.", styles["colHead"]), Paragraph("PRODUCT NAME", styles["colHead"]),
-        Paragraph("PHOTO", styles["colHead"]), Paragraph("Area", styles["colHead"]),
-        Paragraph("Size", styles["colHead"]), Paragraph("RATE PER<br/>SQFT", styles["colHeadRed"]),
-        Paragraph("RATE PER<br/>BOX", styles["colHead"]), Paragraph("TOTAL BOX", styles["colHead"]),
-        Paragraph("PCS|BOX", styles["colHead"]), Paragraph("TOTAL", styles["colHead"]),
-    ]], colWidths=_Q_COLS, rowHeights=[8.5 * mm])
-    col_heads.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.8, GRID_BLACK),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1), ("RIGHTPADDING", (0, 0), (-1, -1), 1),
-        ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-    ]))
+    # --- PRODUCT DETAILS (page 2+) — one flowing table, auto-paginates ------
+    story.append(PageBreak())
+    story.append(_header_block("PRODUCT DETAILS", f"Items 1&ndash;{len(items)}" if items else "No items yet", styles))
+    story.extend([Spacer(1, 2.5 * mm), HRFlowable(width="100%", thickness=1.1, color=INK, spaceAfter=3 * mm)])
 
-    # --- Product rows (one outer row each so the sheet can paginate) --------
-    product_tables: list[Table] = []
-    total_boxes = 0.0
-    subtotal = 0.0
-    for index, item in enumerate(quotation.get("items") or [], 1):
+    head = [
+        Paragraph("SR.<br/>NO.", styles["colHead"]), Paragraph("PRODUCT IMAGE", styles["colHead"]),
+        Paragraph("AREA", styles["colHead"]), Paragraph("PRODUCT DETAIL", styles["colHead"]),
+        Paragraph("SIZE", styles["colHead"]), Paragraph("RATE/<br/>SQ.FT", styles["colHeadRed"]),
+        Paragraph("OFFER<br/>RATE", styles["colHead"]), Paragraph("RATE/<br/>BOX", styles["colHead"]),
+        Paragraph("TOTAL<br/>BOX", styles["colHead"]), Paragraph("PCS/<br/>BOX", styles["colHead"]),
+        Paragraph("TOTAL<br/>(Rs.)", styles["colHead"]),
+    ]
+    rows: list[list[object]] = [head]
+    for index, item in enumerate(items, 1):
         qty = float(item.get("qty") or 0)
         rate_box = float(item.get("unit_price") or 0)
+        offer_rate = float(item.get("offer_rate") or 0)
+        box_sqft = item.get("box_sqft")
         line_total = qty * rate_box
-        total_boxes += qty
-        subtotal += line_total
-        row = Table([[
+        rate_sqft_text = _fmt_rate_sqft(item.get("rate_sqft"))
+        if box_sqft:
+            rate_sqft_text += f"<br/><font name='Helvetica' size='5.6' color='#666666'>&#215; {box_sqft:g} sqft/box</font>"
+        rows.append([
             Paragraph(str(index), styles["cell"]),
-            Paragraph(_escape(item.get("name") or ""), styles["cellBold"]),
-            _img(item.get("image"), width_mm=24, height_mm=16),
+            _img(item.get("image"), width_mm=24, height_mm=15),
             Paragraph(_escape(item.get("room") or ""), styles["cell"]),
-            Paragraph(_escape(item.get("size") or ""), styles["cellBold"]),
-            Paragraph(_fmt_rate_sqft(item.get("rate_sqft")), styles["cellRed"]),
+            Paragraph(_escape(item.get("name") or ""), styles["cellBold"]),
+            Paragraph(_escape(item.get("size") or ""), styles["cell"]),
+            Paragraph(rate_sqft_text, styles["cellRed"]),
+            Paragraph(_money(offer_rate) if offer_rate else "", styles["cellOffer"]),
             Paragraph(_money(rate_box) if rate_box else "", styles["cell"]),
             Paragraph(f"{qty:g}" if qty else "", styles["cellBold"]),
-            Paragraph(_escape(item.get("pcs_per_box") or "BOX"), styles["cellBold"]),
+            Paragraph(_escape(item.get("pcs_per_box") or ""), styles["cellBold"]),
             Paragraph(_money(line_total) if line_total else "", styles["cell"]),
-        ]], colWidths=_Q_COLS, rowHeights=[20 * mm])
-        row.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.8, GRID_BLACK),
-            ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 1), ("RIGHTPADDING", (0, 0), (-1, -1), 1),
-            ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
-        ]))
-        product_tables.append(row)
+        ])
+    total_row = ["" for _ in head]
+    total_row[3] = Paragraph("<b>TOTAL</b>", styles["cell"])
+    total_row[-1] = Paragraph(f"<b>{_money(subtotal)}</b>", styles["cell"])
+    rows.append(total_row)
 
-    # --- Totals stack (right-aligned under the TOTAL columns) ---------------
-    summary = Table(
-        [
-            [Paragraph(f"TOTAL BOX : {total_boxes:g}", styles["sumLabel"]), ""],
-            [Paragraph("SUBTOTAL", styles["sumLabel"]), Paragraph(_rupee(subtotal), styles["sumLabel"])],
-            [Paragraph("TRANSPORTATION", styles["sumLabel"]), Paragraph("EXTRA", styles["sumLabel"])],
-            [Paragraph("TOTAL QUOTE", styles["sumRed"]), Paragraph(_rupee(subtotal), styles["sumRed"])],
-        ],
-        colWidths=[34 * mm, 25 * mm], rowHeights=[6 * mm] * 4,
-    )
-    summary.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), colors.white),
-        ("BACKGROUND", (1, 1), (1, -1), colors.white),
-        ("BOX", (0, 0), (0, 0), 0.8, GRID_BLACK),
-        ("GRID", (0, 1), (-1, -1), 0.8, GRID_BLACK),
+    style_cmds = [
+        ("GRID", (0, 0), (-1, -1), 0.7, GRID),
+        ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
+        ("BACKGROUND", (0, -1), (-1, -1), HEADER_GREY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1), ("RIGHTPADDING", (0, 0), (-1, -1), 1),
-    ]))
-    # Right-align by wrapping in a borderless full-width row — a nested
-    # table's own hAlign is ignored inside an outer table cell.
-    summary_row = Table([["", summary]], colWidths=[121 * mm, 59 * mm])
-    summary_row.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
-
-    # --- Centered notes / terms / blue address footer -----------------------
-    terms = [
-        "•Above given rate are including GST @18%.",
-        "•Freight &amp; unloading charges will be extra as applicable.",
-        "•Payment - 100% Advance.",
-        "•All orders / Deliveries are subject to material availability.",
-        "•price tends to change in case of changes in govt. levy.",
-        "•cheque should be written in favour of BUILDCON HOUSE.",
-        "•After confirmation of P.O. material will be delivered within 15 days.",
-        "•RATE VALID FOR 5 DAYS.",
+        ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
     ]
-    address_line = b.get("company_address") or "Before Gujarat housing, Nr.katariya motors, 2nd 150ft ring road, Rajkot-360005"
-    email = b.get("footer_email") or DEFAULT_EMAIL
-    mobile = b.get("footer_phone") or DEFAULT_MOBILE
-    notes_cell: list[Flowable] = [
-        Spacer(1, 3 * mm),
-        Paragraph(f"{smiley}LABOUR COST EXTRA", styles["noteRed"]),
-        Spacer(1, 1.5 * mm),
-        Paragraph(f"{smiley}TERMS&amp;CONDITION&nbsp;&nbsp;:", styles["noteHead"]),
-        Spacer(1, 1 * mm),
-        *[Paragraph(term, styles["term"]) for term in terms],
-        Spacer(1, 2.5 * mm),
-        Paragraph(f"ADDRESS&nbsp;&nbsp;:- {_escape(address_line)}", styles["blue"]),
-        Paragraph(f"Mail :{_escape(email)}", styles["blue"]),
-        Paragraph(f"Mo:{_escape(mobile)}", styles["blue"]),
-    ]
+    for r in range(2, len(rows) - 1, 2):  # zebra every 2nd item row (not the trailing TOTAL row)
+        style_cmds.append(("BACKGROUND", (0, r), (-1, r), ZEBRA))
+    row_heights = [9.5 * mm] + [22 * mm] * (len(rows) - 2) + [7 * mm]
+    table = Table(rows, colWidths=_QUO_COLS, rowHeights=row_heights, repeatRows=1)
+    table.setStyle(TableStyle(style_cmds))
+    story.append(table)
 
-    # --- Assemble: one outer table = the bordered light-blue sheet ----------
-    outer_rows: list[list[object]] = [[header_cell], [col_heads]]
-    outer_rows.extend([[row] for row in product_tables])
-    outer_rows.append([[Spacer(1, 1.5 * mm), summary_row]])
-    outer_rows.append([notes_cell])
-    outer = Table(outer_rows, colWidths=[190 * mm], repeatRows=2)
-    outer.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), SHEET_BLUE),
-        ("BOX", (0, 0), (-1, -1), 1.1, GRID_BLACK),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5 * mm), ("RIGHTPADDING", (0, 0), (-1, -1), 5 * mm),
-        ("TOPPADDING", (0, 0), (0, 0), 4 * mm),
-        ("TOPPADDING", (0, 1), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -2), 0),
-        ("BOTTOMPADDING", (0, -1), (-1, -1), 4 * mm),
-    ]))
-
-    doc.build([outer])
+    doc.build(
+        story,
+        onFirstPage=functools.partial(_draw_footer, branding=b),
+        onLaterPages=functools.partial(_draw_room_watermark, branding=b),
+    )
     return buf.getvalue()

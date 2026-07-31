@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Linking, ScrollView, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
+import { getSelectedFloorId } from "@/src/hooks/use-floor-access";
 import { AdminPage } from "@/src/components/AdminPage";
 import { Button, Card, EmptyState, ErrorState, KpiCard, ListRow, LoadingState, PillTabs, SearchField, SegmentedControl, Sheet, Table, TableCell, TableHeader, TableRow, TextField } from "@/src/components/ui";
 import { useAuth } from "@/src/state/auth";
@@ -32,14 +33,17 @@ function FilterPicker({ label, value, items, onChange, testID }: { label: string
 export default function ExecutiveAnalytics() {
   const { staff } = useAuth(); const router = useRouter();
   const [filters, setFilters] = useState<Filters | null>(null); const [data, setData] = useState<Dashboard | null>(null); const [funnel, setFunnel] = useState<Funnel | null>(null); const [error, setError] = useState<string | null>(null);
-  const [floor, setFloor] = useState("all"); const [brand, setBrand] = useState(""); const [salesperson, setSalesperson] = useState(""); const [referral, setReferral] = useState("all"); const [preset, setPreset] = useState("this_month"); const [granularity, setGranularity] = useState("month"); const [dateFrom, setDateFrom] = useState(""); const [dateTo, setDateTo] = useState("");
+  // Starts on the business unit currently active in the shell rather than
+  // "All Floors": an unscoped default mixed both units' revenue together.
+  const [floor, setFloor] = useState("");
+  useEffect(() => { void getSelectedFloorId().then((id) => setFloor(id || "all")); }, []); const [brand, setBrand] = useState(""); const [salesperson, setSalesperson] = useState(""); const [referral, setReferral] = useState("all"); const [preset, setPreset] = useState("this_month"); const [granularity, setGranularity] = useState("month"); const [dateFrom, setDateFrom] = useState(""); const [dateTo, setDateTo] = useState("");
   const query = useMemo(() => new URLSearchParams({ floor_id: floor, preset, granularity, ...(brand ? { brand_id: brand } : {}), ...(salesperson ? { salesperson_id: salesperson } : {}), ...(referral !== "all" ? { referrer_type: referral } : {}), ...(preset === "custom" ? { date_from: dateFrom, date_to: dateTo } : {}) }).toString(), [floor, brand, salesperson, referral, preset, granularity, dateFrom, dateTo]);
   const exportData = async (format: "csv" | "xlsx" | "pdf") => { const url = await api.authenticatedUrl(`/executive-analytics/export?format=${format}&floor_id=${floor}&preset=${preset}`); await Linking.openURL(url); };
-  const load = useCallback(() => { setError(null); setData(null); setFunnel(null); Promise.all([api.get<Dashboard>(`/executive-analytics/dashboard?${query}`), api.get<Funnel>(`/executive-analytics/funnel?${query}`)]).then(([dashboard, stages]) => { setData(dashboard); setFunnel(stages); }).catch((e: any) => setError(e.detail || "Could not load executive analytics")); }, [query]);
-  useEffect(() => { api.get<Filters>("/executive-analytics/filters").then(setFilters).catch(() => setFilters({ floors: [], brands: [], salespeople: [] })); }, []);
+  const load = useCallback(() => { if (!floor) return; setError(null); setData(null); setFunnel(null); Promise.all([api.get<Dashboard>(`/executive-analytics/dashboard?${query}`), api.get<Funnel>(`/executive-analytics/funnel?${query}`)]).then(([dashboard, stages]) => { setData(dashboard); setFunnel(stages); }).catch((e: any) => setError(e.detail || "Could not load executive analytics")); }, [query, floor]);
+  useEffect(() => { if (!floor) return; api.get<Filters>(`/executive-analytics/filters?floor_id=${floor}`).then(setFilters).catch(() => setFilters({ floors: [], brands: [], salespeople: [] })); }, [floor]);
   useEffect(() => { load(); }, [load]);
   if (staff && !["owner", "admin", "manager"].includes(staff.role)) return <Redirect href="/(admin)/dashboard" />;
-  return <AdminPage title="Executive Analytics" subtitle="Confirmed and completed orders only · live business books" actions={<PillTabs testID="executive-granularity" value={granularity} onChange={setGranularity} options={[{ value: "day", label: "D" }, { value: "month", label: "M" }, { value: "quarter", label: "Q" }, { value: "year", label: "Y" }]} />}>
+  return <AdminPage title="Executive Analytics" subtitle="Confirmed and completed orders only · live business books" right={<PillTabs testID="executive-granularity" value={granularity} onChange={setGranularity} options={[{ value: "day", label: "D" }, { value: "month", label: "M" }, { value: "quarter", label: "Q" }, { value: "year", label: "Y" }]} />}>
     <ScrollView contentContainerStyle={{ gap: spacing.lg, paddingBottom: spacing.xxxl }}>
       <View style={{ gap: spacing.sm }} testID="executive-global-filters"><SegmentedControl testID="executive-floor-filter" value={floor} onChange={setFloor} options={[{ value: "all", label: "All Floors" }, ...(filters?.floors || []).map((f) => ({ value: f.id, label: f.name }))]} /><PillTabs testID="executive-date-filter" value={preset} onChange={setPreset} options={PRESETS} /></View>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="executive-entity-filters"><FilterPicker label="Brands" value={brand} items={filters?.brands || []} onChange={setBrand} testID="executive-brand-filter" /><FilterPicker label="Salespeople" value={salesperson} items={(filters?.salespeople || []).map((s) => ({ id: s.id, name: s.full_name }))} onChange={setSalesperson} testID="executive-salesperson-filter" /><PillTabs testID="executive-referral-filter" value={referral} onChange={setReferral} options={[{ value: "all", label: "All referrals" }, { value: "architect", label: "Architect" }, { value: "interior_designer", label: "Interior Designer" }]} /></View>

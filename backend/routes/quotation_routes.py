@@ -8,8 +8,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from auth import (
-    accessible_floor_ids, floor_for_write, floor_query, get_current_customer, get_current_user,
-    get_floor_scoped_or_404, require_min_role,
+    TILES_FLOOR_ID, accessible_floor_ids, floor_for_write, floor_query, get_current_customer,
+    get_current_user, get_floor_scoped_or_404, require_floor_access, require_min_role,
+    tiles_floor_query,
 )
 from db import db
 from models import (
@@ -40,6 +41,30 @@ router = APIRouter(prefix="/quotations", tags=["quotations"])
 async def _next_number() -> str:
     year = datetime.now(timezone.utc).year
     return await next_number("quotation", f"FQ-{year}-", collection="quotations")
+
+
+TILES_DOC_TYPES = ("tiles_selection", "tiles_quotation")
+
+
+def _floor_for_tiles_document(user: UserPublic, item_floor_ids: set[str]) -> str:
+    """Tile documents belong to Ground Floor, always.
+
+    Deriving their floor from the line items (see
+    `_floor_id_for_new_quotation`) is right for standard quotations but
+    wrong here: a Tiles builder opened against Sanitary-Bathroom products
+    used to save a tiles_quotation stamped `first-floor`, which then
+    produced a first-floor TileCustomerOrder and made Sanitary Bathroom
+    grow a Tile Orders workflow it must never have. Reject the mixed case
+    outright instead of silently restamping the products' own floor.
+    """
+    require_floor_access(TILES_FLOOR_ID, user)
+    foreign = item_floor_ids - {TILES_FLOOR_ID}
+    if foreign:
+        raise HTTPException(
+            status_code=400,
+            detail="Tile documents can only contain Ground Floor tile products.",
+        )
+    return TILES_FLOOR_ID
 
 
 def _floor_id_for_new_quotation(user: UserPublic, item_floor_ids: set[str]) -> str:
@@ -94,9 +119,20 @@ async def list_quotations(
     user: UserPublic = Depends(get_current_user),
 ):
     query: dict = {}
-    if doc_type:
+    if doc_type == "standard":
+        # `doc_type` was added with the Tiles module; every quotation created
+        # before that has no such field at all. `{"doc_type": "standard"}`
+        # does not match a missing key, so filtering on it hid every legacy
+        # quotation from the Quotations list (6 of 49 visible on the live
+        # database). Null matches missing in Mongo, which is what makes this
+        # cover both shapes.
+        query["doc_type"] = {"$in": ["standard", None]}
+    elif doc_type:
         query["doc_type"] = doc_type
-    docs = await db.quotations.find(floor_query(user, query), {"_id": 0}).sort("created_at", -1).to_list(500)
+    # Asking for a tile document type is a Ground Floor request by
+    # definition — never scope those by the caller's ambient floor.
+    scoped = tiles_floor_query(user, query) if doc_type in TILES_DOC_TYPES else floor_query(user, query)
+    docs = await db.quotations.find(scoped, {"_id": 0}).sort("created_at", -1).to_list(500)
     return docs
 
 
@@ -111,8 +147,11 @@ async def recent_quotations(
     project, amount, updated_at, status, revision count. Ordered by
     updated_at DESC so the most-recently-touched quote sits on top.
     """
+    # Standard quotations only — this list feeds the Quotation Builder's
+    # left rail and the dashboard, neither of which can open a tile
+    # document. Tile documents have their own Ground Floor screens.
     docs = await db.quotations.find(
-        floor_query(user),
+        floor_query(user, {"doc_type": {"$nin": list(TILES_DOC_TYPES)}}),
         {
             "_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
             "project_name": 1, "phone_snapshot": 1, "grand_total": 1, "status": 1,
@@ -188,7 +227,11 @@ async def create_quotation(
         doc_number=body.doc_number,
         created_by=user.id,
         created_by_name=user.full_name,
-        floor_id=_floor_id_for_new_quotation(user, item_floor_ids),
+        floor_id=(
+            _floor_for_tiles_document(user, item_floor_ids)
+            if body.doc_type in TILES_DOC_TYPES
+            else _floor_id_for_new_quotation(user, item_floor_ids)
+        ),
         **totals,
     )
     await db.quotations.insert_one(quot.dict())
@@ -486,6 +529,9 @@ async def move_to_quotation(
     doc = await get_floor_scoped_or_404(
         db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0},
     )
+    require_floor_access(TILES_FLOOR_ID, user)
+    if doc.get("floor_id") != TILES_FLOOR_ID:
+        raise HTTPException(status_code=400, detail="Tile documents live on Ground Floor only")
     if not can_move_to_quotation(doc.get("doc_type", ""), doc.get("status", "")):
         raise HTTPException(
             status_code=400,
@@ -511,9 +557,9 @@ async def tiles_product_history(
     product, across any Selection/Quotation (any stage) — powers the
     product picker's "used last time" hint."""
     docs = await db.quotations.find(
-        floor_query(user, {
+        tiles_floor_query(user, {
             "customer_id": customer_id,
-            "doc_type": {"$in": ["tiles_selection", "tiles_quotation"]},
+            "doc_type": {"$in": list(TILES_DOC_TYPES)},
             "items.product_id": product_id,
         }),
         {"_id": 0, "number": 1, "doc_date": 1, "created_at": 1, "items": 1},
@@ -529,6 +575,7 @@ async def tiles_product_history(
                     "rate_sqft": item.get("rate_sqft"),
                     "rate_box": item.get("unit_price"),
                     "pcs_per_box": item.get("pcs_per_box"),
+                    "box_sqft": item.get("box_sqft"),
                 }
     return {"found": False}
 
@@ -814,7 +861,7 @@ async def _brand_grouped_preview(doc: dict) -> dict:
         group["items"].append({**item, "unit_cost": unit_cost})
         group["subtotal"] += qty * unit_cost
     cards = [{**group, "subtotal": round(group["subtotal"], 2), "item_count": len(group["items"])} for group in grouped.values()]
-    return {"quotation_id": doc["id"], "quotation_number": doc.get("number"), "customer_id": doc.get("customer_id"), "customer_name": doc.get("customer_name"), "brands": sorted(cards, key=lambda card: card["brand_name"]), "total_value": round(sum(card["subtotal"] for card in cards), 2)}
+    return {"quotation_id": doc["id"], "quotation_number": doc.get("number"), "doc_type": doc.get("doc_type", "standard"), "customer_id": doc.get("customer_id"), "customer_name": doc.get("customer_name"), "brands": sorted(cards, key=lambda card: card["brand_name"]), "total_value": round(sum(card["subtotal"] for card in cards), 2)}
 
 
 @router.get("/{quotation_id}/place-order/preview")

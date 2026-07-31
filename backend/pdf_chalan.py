@@ -171,13 +171,27 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
     ))
     flow.append(Spacer(1, 5 * mm))
 
+    # Text columns must be Paragraphs, not bare strings: ReportLab does not
+    # wrap a plain string inside a Table cell, it lets it run straight over
+    # the neighbouring column. Real tile names and SKUs are long enough that
+    # every generated Chalan had "Tile Name" overprinting "Series" and the
+    # SKU overprinting Boxes/Pcs/Qty.
+    cell = ParagraphStyle("tcCell", parent=styles["Normal"], fontSize=8, leading=9.5)
+    cell_right = ParagraphStyle("tcCellRight", parent=cell, alignment=2)
+
     header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "SKU", "Boxes", "Pcs/Box", "Qty"]
     table_data = [header_row]
     for i, item in enumerate(chalan.get("items", []), start=1):
         table_data.append([
-            str(i), _escape(item.get("tile_name", "")), _escape(item.get("series") or "—"),
-            _escape(item.get("finish") or "—"), _escape(item.get("size") or "—"), _escape(item.get("sku") or "—"),
-            f"{item.get('boxes', 0):g}", _escape(item.get("pieces_per_box") or "—"), f"{item.get('quantity', 0):g}",
+            str(i),
+            Paragraph(_escape(item.get("tile_name", "")), cell),
+            Paragraph(_escape(item.get("series") or "—"), cell),
+            Paragraph(_escape(item.get("finish") or "—"), cell),
+            Paragraph(_escape(item.get("size") or "—"), cell),
+            Paragraph(_escape(item.get("sku") or "—"), cell),
+            Paragraph(f"{item.get('boxes', 0):g}", cell_right),
+            Paragraph(_escape(item.get("pieces_per_box") or "—"), cell_right),
+            Paragraph(f"{item.get('quantity', 0):g}", cell_right),
         ])
     product_table = Table(table_data, colWidths=[8 * mm, 40 * mm, 22 * mm, 18 * mm, 20 * mm, 20 * mm, 14 * mm, 16 * mm, 14 * mm])
     product_table.setStyle(TableStyle([

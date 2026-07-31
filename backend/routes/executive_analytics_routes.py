@@ -68,12 +68,24 @@ async def _rows(collection: str, pipeline: list[dict]) -> list[dict]:
 
 
 @router.get("/filters")
-async def filters(user: UserPublic = Depends(require_roles("owner", "admin", "manager"))):
+async def filters(
+    floor_id: Optional[str] = None,
+    user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
+):
     allowed = accessible_floor_ids(user)
     floor_query = {"id": {"$in": allowed}} if allowed is not None else {}
+    # The Brand filter must only offer brands belonging to the floor being
+    # reported on. Listing every floor's brands put The Sanitary Bathroom's
+    # brands in Ground Floor's filter (and vice versa).
+    if floor_id and floor_id != "all":
+        brand_scope: dict = {"floor_id": floor_id}
+    elif allowed is not None:
+        brand_scope = {"floor_id": {"$in": allowed}}
+    else:
+        brand_scope = {}
     floors, brands, people, refs = await __import__("asyncio").gather(
         db.floors.find({**floor_query, "active": True}, {"_id": 0, "id": 1, "name": 1}).sort("name", 1).to_list(200),
-        db.brands.find({}, {"_id": 0, "id": 1, "name": 1, "floor_id": 1}).sort("name", 1).to_list(5000),
+        db.brands.find(brand_scope, {"_id": 0, "id": 1, "name": 1, "floor_id": 1}).sort("name", 1).to_list(5000),
         db.users.find({"active": True}, {"_id": 0, "id": 1, "full_name": 1, "role": 1}).sort("full_name", 1).to_list(500),
         db.referrers.find({}, {"_id": 0, "id": 1, "name": 1, "type": 1}).sort("name", 1).to_list(5000),
     )

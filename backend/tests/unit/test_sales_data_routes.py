@@ -94,15 +94,37 @@ def test_won_quotations_query_always_filters_status_won(monkeypatch):
 
 
 def test_won_quotations_query_includes_floor_scoping(monkeypatch):
+    """An explicit floor filter is always pushed into the Mongo query.
+
+    The Sales Data screens now default that filter to the business unit
+    currently active in the shell rather than to the company-wide "Both"
+    roll-up, so this — not the unset case — is the everyday path. The
+    unset/"both" case stays unrestricted on purpose (see
+    `_resolve_floor_ids`): it is an explicit owner/admin choice, and
+    narrowing it by `accessible_floor_ids` silently shrank an admin's
+    company-wide report to their own assignment.
+    """
     fake_db = _FakeDb([])
     monkeypatch.setattr(sd, "db", fake_db)
 
     asyncio.run(sd.sales_overview(
-        floor_id=None, referrer_type=None, date_from=None, date_to=None,
+        floor_id="ground-floor", referrer_type=None, date_from=None, date_to=None,
         granularity="month", user=_admin_ground_only(),
     ))
 
     assert fake_db.quotations.last_query["floor_id"] == {"$in": ["ground-floor"]}
+
+
+def test_won_quotations_query_unrestricted_only_when_no_floor_filter(monkeypatch):
+    fake_db = _FakeDb([])
+    monkeypatch.setattr(sd, "db", fake_db)
+
+    asyncio.run(sd.sales_overview(
+        floor_id="both", referrer_type=None, date_from=None, date_to=None,
+        granularity="month", user=_admin_ground_only(),
+    ))
+
+    assert "floor_id" not in fake_db.quotations.last_query
 
 
 def test_won_quotations_query_includes_date_range(monkeypatch):

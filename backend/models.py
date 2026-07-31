@@ -64,6 +64,10 @@ class UserPublic(UserBase, TimestampedModel):
     temp_password_expires_at: Optional[str] = None
     # Request-scoped selection; never persisted to the users collection.
     active_floor_id: Optional[str] = None
+    # Request-scoped too: the id of the user_sessions row the calling token
+    # belongs to. Needed so a minted download token can stay bound to the
+    # same revocable session (see services/download_tokens.py).
+    session_id: Optional[str] = None
 
 
 class UserInDB(UserPublic):

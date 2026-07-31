@@ -42,13 +42,21 @@ class _FakeDb:
         self.quotations = _Recorder()
 
 
+def _flatten(query):
+    """Floor scoping wraps the caller's filter as {"$and": [scope, filter]}."""
+    flat = {}
+    for clause in query.get("$and", [query]):
+        flat.update(clause)
+    return flat
+
+
 def test_list_quotations_with_no_filter_unchanged(monkeypatch):
     fake_db = _FakeDb()
     monkeypatch.setattr(quotation_routes, "db", fake_db)
 
     asyncio.run(quotation_routes.list_quotations(user=_user()))
 
-    assert "doc_type" not in fake_db.quotations.last_query
+    assert "doc_type" not in _flatten(fake_db.quotations.last_query)
 
 
 def test_list_quotations_filters_by_doc_type(monkeypatch):
@@ -57,4 +65,31 @@ def test_list_quotations_filters_by_doc_type(monkeypatch):
 
     asyncio.run(quotation_routes.list_quotations(doc_type="tiles_selection", user=_user()))
 
-    assert fake_db.quotations.last_query["doc_type"] == "tiles_selection"
+    assert _flatten(fake_db.quotations.last_query)["doc_type"] == "tiles_selection"
+
+
+def test_tile_document_listing_is_pinned_to_ground_floor(monkeypatch):
+    """A tile doc_type is a Ground Floor request by definition — it must not
+    inherit the caller's ambient active floor (that is what surfaced tile
+    documents inside The Sanitary Bathroom)."""
+    fake_db = _FakeDb()
+    monkeypatch.setattr(quotation_routes, "db", fake_db)
+
+    sanitary_user = UserPublic(
+        email="owner@forge.app", full_name="Owner", role="owner",
+        floor_ids=["ground-floor", "first-floor"], active_floor_id="first-floor",
+    )
+    asyncio.run(quotation_routes.list_quotations(doc_type="tiles_quotation", user=sanitary_user))
+
+    assert _flatten(fake_db.quotations.last_query)["floor_id"] == "ground-floor"
+
+
+def test_standard_filter_includes_legacy_quotations_without_doc_type(monkeypatch):
+    """`doc_type` postdates the Tiles module: pre-existing quotations have no
+    such field, and `{"doc_type": "standard"}` never matches a missing key."""
+    fake_db = _FakeDb()
+    monkeypatch.setattr(quotation_routes, "db", fake_db)
+
+    asyncio.run(quotation_routes.list_quotations(doc_type="standard", user=_user()))
+
+    assert _flatten(fake_db.quotations.last_query)["doc_type"] == {"$in": ["standard", None]}

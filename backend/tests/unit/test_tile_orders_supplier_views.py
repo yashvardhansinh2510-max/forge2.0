@@ -103,7 +103,7 @@ def test_purchase_order_detail_includes_customer_order_delivery_snapshot(monkeyp
     fake_db = _FakeDb(
         [_po(customer_order_id="co-1")],
         [{
-            "id": "co-1", "is_deleted": False,
+            "id": "co-1", "is_deleted": False, "floor_id": "ground-floor",
             "delivery_name": "Nileshbhai Pokiya", "delivery_phone": "9909900000",
             "delivery_address": "123 Ring Road", "delivery_city": "Rajkot",
         }],

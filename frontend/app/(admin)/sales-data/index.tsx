@@ -8,9 +8,10 @@ import {
   EmptyState, ErrorState, KpiCard, LoadingState, PillTabs, SegmentedControl, Table, TableCell,
   TableHeader, TableRow, Tabs,
 } from "@/src/components/ui";
-import { fmtMoney } from "@/src/design/tokens";
+import { fmtMoney, fmtMoneyCompact } from "@/src/design/tokens";
 import { spacing } from "@/src/theme/tokens";
 import { useAuth } from "@/src/state/auth";
+import { getSelectedFloorId } from "@/src/hooks/use-floor-access";
 import { TrendChart } from "@/src/components/salesData/TrendChart";
 import {
   DATE_PRESET_LABEL, DatePreset, Granularity, OverviewResponse, ReferredByFilter, presetToRange,
@@ -32,7 +33,12 @@ export default function SalesData() {
   // fewer hooks than expected" the next time it re-renders with a
   // different hook count.
   const [floors, setFloors] = useState<Floor[]>([]);
-  const [floorId, setFloorId] = useState<string>("both");
+  // Defaults to the business unit currently active in the shell, not to the
+  // company-wide "Both" roll-up: Sales Data is a per-floor screen for the
+  // floor you are working in. "Both" stays available as an explicit,
+  // deliberate choice for owner/admin company-wide reporting.
+  const [floorId, setFloorId] = useState<string>("");
+  useEffect(() => { void getSelectedFloorId().then((id) => setFloorId(id || "both")); }, []);
   const [referredBy, setReferredBy] = useState<ReferredByFilter>("all");
   const [preset, setPreset] = useState<DatePreset>("this_month");
   const [granularity, setGranularity] = useState<Granularity>("month");
@@ -47,6 +53,7 @@ export default function SalesData() {
   useEffect(() => { api.get<Floor[]>("/settings/floors").then(setFloors).catch(() => setFloors([])); }, []);
 
   const load = useCallback(() => {
+    if (!floorId) return; // active floor not resolved yet — never query unscoped
     setError(null);
     setOverview(null);
     const { date_from, date_to } = presetToRange(preset);
@@ -64,16 +71,18 @@ export default function SalesData() {
   useEffect(() => { load(); }, [load]);
 
   const loadBrands = useCallback(() => {
+    if (!floorId) return; // see load()
     setBrandsError(null);
     setBrands(null);
     const { date_from, date_to } = presetToRange(preset);
     const params = new URLSearchParams();
+    if (floorId !== "both") params.set("floor_id", floorId);
     if (date_from) params.set("date_from", date_from);
     if (date_to) params.set("date_to", date_to);
     api.get<{ brands: BrandRow[] }>(`/sales-data/brands?${params.toString()}`)
       .then((res) => setBrands(res.brands))
       .catch((e: any) => setBrandsError(e?.detail || "Could not load brand revenue"));
-  }, [preset]);
+  }, [preset, floorId]);
 
   useEffect(() => {
     if (tab !== "brand") return;
@@ -140,14 +149,14 @@ export default function SalesData() {
           <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
             {referredBy === "all" ? (
               <>
-                <KpiCard label="Total Revenue" value={`₹${fmtMoney(overview.total_revenue)}`} style={{ flex: 1, minWidth: 160 }} />
+                <KpiCard label="Total Revenue" value={`₹${fmtMoneyCompact(overview.total_revenue)}`} style={{ flex: 1, minWidth: 160 }} />
                 {overview.revenue_by_floor.map((f) => {
                   const floor = floors.find((fl) => fl.id === f.floor_id);
                   return (
                     <KpiCard
                       key={f.floor_id}
                       label={floor?.name || f.floor_id}
-                      value={`₹${fmtMoney(f.revenue)}`}
+                      value={`₹${fmtMoneyCompact(f.revenue)}`}
                       style={{ flex: 1, minWidth: 160 }}
                     />
                   );
@@ -161,7 +170,7 @@ export default function SalesData() {
               <>
                 <KpiCard
                   label={referredBy === "architect" ? "Architect Revenue" : "Interior Designer Revenue"}
-                  value={`₹${fmtMoney(overview.total_revenue)}`}
+                  value={`₹${fmtMoneyCompact(overview.total_revenue)}`}
                   style={{ flex: 1, minWidth: 160 }}
                 />
                 <KpiCard
@@ -171,7 +180,7 @@ export default function SalesData() {
                 />
                 <KpiCard
                   label="Avg Deal Size"
-                  value={`₹${fmtMoney(overview.quotation_count ? overview.total_revenue / overview.quotation_count : 0)}`}
+                  value={`₹${fmtMoneyCompact(overview.quotation_count ? overview.total_revenue / overview.quotation_count : 0)}`}
                   style={{ flex: 1, minWidth: 160 }}
                 />
               </>
@@ -185,7 +194,7 @@ export default function SalesData() {
                 <TableRow
                   key={r.referrer_id}
                   isLast={i === overview.referrers!.length - 1}
-                  onPress={() => router.push(`/(admin)/sales-data/referrer/${r.referrer_id}?preset=${preset}` as any)}
+                  onPress={() => router.push(`/(admin)/sales-data/referrer/${r.referrer_id}?preset=${preset}&floorId=${floorId}` as any)}
                   testID={`referrer-rank-row-${r.referrer_id}`}
                 >
                   <TableCell flex={2}>{r.name}</TableCell>
@@ -209,7 +218,7 @@ export default function SalesData() {
                 <TableRow
                   key={b.brand_id}
                   isLast={i === brands.length - 1}
-                  onPress={() => router.push(`/(admin)/sales-data/brand/${b.brand_id}?preset=${preset}` as any)}
+                  onPress={() => router.push(`/(admin)/sales-data/brand/${b.brand_id}?preset=${preset}&floorId=${floorId}` as any)}
                   testID={`brand-rank-row-${b.brand_id}`}
                 >
                   <TableCell flex={2}>{b.brand_name}</TableCell>
