@@ -49,6 +49,13 @@ const MOVEMENT_LABEL: Record<string, string> = {
   dispatch_from_released: "Dispatch from Released", dispatch_from_godown: "Dispatch from Godown", delivered: "Delivered",
 };
 
+function dispatchRowKey(row: DispatchListRow, index: number) {
+  // A Dispatch/Chalan may legitimately contain multiple lines with the
+  // same product name, so the render index is required as a final stable
+  // per-response discriminator.
+  return `${row.dispatch_id}-${row.chalan_id}-${row.tile_name}-${index}`;
+}
+
 export default function TileOrdersScreen() {
   useRequireFloorAccess("ground-floor");
   const router = useRouter();
@@ -216,8 +223,8 @@ export default function TileOrdersScreen() {
             {dispatchRows.length === 0 ? (
               <Text style={[type.bodyMuted, { marginTop: spacing.lg }]}>No dispatches recorded yet.</Text>
             ) : (
-              dispatchRows.map((row) => (
-                <View key={`${row.dispatch_id}-${row.chalan_id}-${row.tile_name}`} style={styles.dispatchRow}>
+              dispatchRows.map((row, index) => (
+                <View key={dispatchRowKey(row, index)} style={styles.dispatchRow}>
                   <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
                     <Text style={type.bodyStrong}>{row.dispatch_number}</Text>
                     <View style={styles.dispatchStatusBadge}><Text style={type.captionStrong}>{row.status}</Text></View>
@@ -227,17 +234,17 @@ export default function TileOrdersScreen() {
                   <Text style={type.bodyMuted}>{row.tile_name}{row.tile_size ? ` · ${row.tile_size}` : ""} · {row.boxes} boxes · from {row.source}</Text>
                   <Text style={type.captionStrong}>Chalan {row.chalan_number} · {row.performed_by_name}</Text>
                   <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.sm }}>
-                    <Pressable testID={`tile-orders-view-chalan-${row.chalan_id}`} onPress={() => viewChalanPdf(row.chalan_id)} style={styles.smallButtonSolid}>
+                    <Pressable testID={`tile-orders-view-chalan-${row.chalan_id}-${index}`} onPress={() => viewChalanPdf(row.chalan_id)} style={styles.smallButtonSolid}>
                       <Text style={[type.captionStrong, { color: colors.onBrand }]}>View Chalan</Text>
                     </Pressable>
-                    <Pressable testID={`tile-orders-print-chalan-${row.chalan_id}`} onPress={() => printChalan(row.chalan_id)} style={styles.smallButton}>
+                    <Pressable testID={`tile-orders-print-chalan-${row.chalan_id}-${index}`} onPress={() => printChalan(row.chalan_id)} style={styles.smallButton}>
                       <Text style={[type.captionStrong, { color: colors.brandHover }]}>Print Chalan</Text>
                     </Pressable>
-                    <Pressable testID={`tile-orders-view-dispatch-${row.dispatch_id}`} onPress={() => viewDispatch(row)} style={styles.smallButton}>
+                    <Pressable testID={`tile-orders-view-dispatch-${row.dispatch_id}-${index}`} onPress={() => viewDispatch(row)} style={styles.smallButton}>
                       <Text style={[type.captionStrong, { color: colors.brandHover }]}>View Dispatch</Text>
                     </Pressable>
                     {row.customer_order_id ? (
-                      <Pressable testID={`tile-orders-view-customer-${row.customer_order_id}`} onPress={() => openCustomerOrder(row.customer_order_id!)} style={styles.smallButton}>
+                      <Pressable testID={`tile-orders-view-customer-${row.customer_order_id}-${index}`} onPress={() => openCustomerOrder(row.customer_order_id!)} style={styles.smallButton}>
                         <Text style={[type.captionStrong, { color: colors.brandHover }]}>View Customer</Text>
                       </Pressable>
                     ) : null}
