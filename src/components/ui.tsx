@@ -1427,7 +1427,7 @@ export function TableCell({
         gap: spacing.sm,
       }}
     >
-      {children}
+      {typeof children === "string" || typeof children === "number" ? <Text style={type.bodySm} numberOfLines={1}>{children}</Text> : children}
     </View>
   );
 }
