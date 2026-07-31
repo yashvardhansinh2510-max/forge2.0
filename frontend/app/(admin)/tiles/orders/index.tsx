@@ -12,7 +12,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { tileOrdersApi, type BrandLandingCard, type CustomerOrderCard, type DispatchListRow, type MaterialMovementRow } from "@/src/api/tileOrders";
@@ -25,6 +25,7 @@ import { colors, radius, spacing, type } from "@/src/theme/tokens";
 type TabKey = "customer" | "brands" | "dispatch-list" | "material-register";
 const TABS: [TabKey, string][] = [
   ["customer", "Customer"], ["brands", "Brands"],
+  ["dispatch-list", "Dispatch List"],
   ["material-register", "Material Movement Register"],
 ];
 
@@ -64,6 +65,7 @@ export default function TileOrdersScreen() {
   const [dispatchRows, setDispatchRows] = useState<DispatchListRow[]>([]);
   const [dispatchSearch, setDispatchSearch] = useState("");
   const [dispatchStatus, setDispatchStatus] = useState<typeof DISPATCH_STATUS_FILTERS[number]>("All");
+  const [selectedDispatch, setSelectedDispatch] = useState<DispatchListRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -102,6 +104,31 @@ export default function TileOrdersScreen() {
       toast.error(e?.detail || "Could not open Chalan PDF");
     }
   };
+  const printChalan = async (chalanId: string) => {
+    try {
+      const url = await tileOrdersApi.chalanPdfUrl(chalanId);
+      if (Platform.OS === "web") {
+        // The browser's PDF viewer provides the native print command after
+        // opening the authenticated, server-generated Chalan.
+        // @ts-ignore — web only
+        const printWindow = window.open(url, "_blank");
+        if (!printWindow) throw new Error("Popup blocked");
+      } else {
+        await Linking.openURL(url);
+      }
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not open Chalan for printing");
+    }
+  };
+  const viewDispatch = async (row: DispatchListRow) => {
+    try {
+      const result = await tileOrdersApi.listDispatchList({ dispatch_number: row.dispatch_number });
+      const detail = result.rows.find((item) => item.dispatch_id === row.dispatch_id) || row;
+      setSelectedDispatch(detail);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not load dispatch details");
+    }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -112,7 +139,7 @@ export default function TileOrdersScreen() {
 
         <View style={styles.tabRow}>
           {TABS.map(([key, label]) => (
-            <Pressable key={key} onPress={() => setTab(key)} style={[styles.tab, tab === key ? styles.tabActive : null]}>
+            <Pressable testID={`tile-orders-tab-${key}`} key={key} onPress={() => setTab(key)} style={[styles.tab, tab === key ? styles.tabActive : null]}>
               <Text style={[type.bodyStrong, tab === key ? { color: colors.brandHover } : null]}>{label}</Text>
             </Pressable>
           ))}
@@ -134,7 +161,7 @@ export default function TileOrdersScreen() {
             <View style={styles.cardGrid}>
               {customerOrders.map((order) => (
                 <View key={order.id} style={cardSlotStyle}>
-                  <Pressable onPress={() => openCustomerOrder(order.id)} style={styles.customerCard}>
+                  <Pressable testID={`tile-orders-customer-${order.id}`} onPress={() => openCustomerOrder(order.id)} style={styles.customerCard}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text numberOfLines={1} style={type.titleSm}>{order.customer_name}</Text>
@@ -160,7 +187,7 @@ export default function TileOrdersScreen() {
             <View style={styles.cardGrid}>
               {brands.map((brand) => (
                 <View key={brand.brand_id || "unassigned"} style={cardSlotStyle}>
-                  <Pressable onPress={() => openBrand(brand.brand_id)} style={styles.brandCard}>
+                  <Pressable testID={`tile-orders-brand-${brand.brand_id || "unassigned"}`} onPress={() => openBrand(brand.brand_id)} style={styles.brandCard}>
                     <Feather name="tag" size={18} color={colors.onSurfaceMuted} />
                     <Text style={type.titleMd}>{brand.brand_name}</Text>
                     <Text style={type.bodyMuted}>{brand.active_orders} active order{brand.active_orders === 1 ? "" : "s"}</Text>
@@ -175,12 +202,13 @@ export default function TileOrdersScreen() {
         ) : tab === "dispatch-list" ? (
           <View style={{ marginTop: spacing.md }}>
             <TextInput
+              testID="tile-orders-dispatch-search"
               placeholder="Search customer, brand, product, dispatch, chalan…" value={dispatchSearch}
               onChangeText={setDispatchSearch} onSubmitEditing={() => load()} style={styles.searchInput}
             />
             <View style={styles.filterRow}>
               {DISPATCH_STATUS_FILTERS.map((s) => (
-                <Pressable key={s} onPress={() => setDispatchStatus(s)} style={[styles.filterChip, dispatchStatus === s ? styles.filterChipActive : null]}>
+                <Pressable testID={`tile-orders-dispatch-status-${s.toLowerCase().replaceAll(" ", "-")}`} key={s} onPress={() => setDispatchStatus(s)} style={[styles.filterChip, dispatchStatus === s ? styles.filterChipActive : null]}>
                   <Text style={[type.captionStrong, dispatchStatus === s ? { color: colors.brandHover } : null]}>{s}</Text>
                 </Pressable>
               ))}
@@ -199,14 +227,17 @@ export default function TileOrdersScreen() {
                   <Text style={type.bodyMuted}>{row.tile_name}{row.tile_size ? ` · ${row.tile_size}` : ""} · {row.boxes} boxes · from {row.source}</Text>
                   <Text style={type.captionStrong}>Chalan {row.chalan_number} · {row.performed_by_name}</Text>
                   <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.sm }}>
-                    <Pressable onPress={() => viewChalanPdf(row.chalan_id)} style={styles.smallButtonSolid}>
+                    <Pressable testID={`tile-orders-view-chalan-${row.chalan_id}`} onPress={() => viewChalanPdf(row.chalan_id)} style={styles.smallButtonSolid}>
                       <Text style={[type.captionStrong, { color: colors.onBrand }]}>View Chalan</Text>
                     </Pressable>
-                    <Pressable onPress={() => viewChalanPdf(row.chalan_id)} style={styles.smallButton}>
-                      <Text style={[type.captionStrong, { color: colors.brandHover }]}>Download PDF</Text>
+                    <Pressable testID={`tile-orders-print-chalan-${row.chalan_id}`} onPress={() => printChalan(row.chalan_id)} style={styles.smallButton}>
+                      <Text style={[type.captionStrong, { color: colors.brandHover }]}>Print Chalan</Text>
+                    </Pressable>
+                    <Pressable testID={`tile-orders-view-dispatch-${row.dispatch_id}`} onPress={() => viewDispatch(row)} style={styles.smallButton}>
+                      <Text style={[type.captionStrong, { color: colors.brandHover }]}>View Dispatch</Text>
                     </Pressable>
                     {row.customer_order_id ? (
-                      <Pressable onPress={() => openCustomerOrder(row.customer_order_id!)} style={styles.smallButton}>
+                      <Pressable testID={`tile-orders-view-customer-${row.customer_order_id}`} onPress={() => openCustomerOrder(row.customer_order_id!)} style={styles.smallButton}>
                         <Text style={[type.captionStrong, { color: colors.brandHover }]}>View Customer</Text>
                       </Pressable>
                     ) : null}
@@ -218,6 +249,7 @@ export default function TileOrdersScreen() {
         ) : (
           <View style={{ marginTop: spacing.md }}>
             <TextInput
+              testID="tile-orders-movement-search"
               placeholder="Search customer, brand, tile, chalan, dispatch…" value={movementSearch}
               onChangeText={setMovementSearch} onSubmitEditing={() => load()} style={styles.searchInput}
             />
@@ -245,6 +277,32 @@ export default function TileOrdersScreen() {
           </View>
         )}
       </ScrollView>
+      <Modal transparent visible={Boolean(selectedDispatch)} animationType="slide" onRequestClose={() => setSelectedDispatch(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.dispatchDetailSheet}>
+            {selectedDispatch ? (
+              <>
+                <Text testID="tile-orders-dispatch-detail-number" style={type.titleMd}>{selectedDispatch.dispatch_number}</Text>
+                <Text style={type.bodyMuted}>{selectedDispatch.dispatch_date} · {selectedDispatch.status}</Text>
+                <Text style={type.bodyStrong}>{selectedDispatch.customer_name} · {selectedDispatch.brand_name}</Text>
+                <Text style={type.bodyMuted}>{selectedDispatch.tile_name} · {selectedDispatch.boxes} boxes · {selectedDispatch.source}</Text>
+                <Text style={type.bodyMuted}>Chalan {selectedDispatch.chalan_number}</Text>
+                <View style={styles.detailActions}>
+                  <Pressable testID="tile-orders-dispatch-detail-view-pdf" onPress={() => viewChalanPdf(selectedDispatch.chalan_id)} style={styles.smallButtonSolid}>
+                    <Text style={[type.captionStrong, { color: colors.onBrand }]}>View PDF</Text>
+                  </Pressable>
+                  <Pressable testID="tile-orders-dispatch-detail-print" onPress={() => printChalan(selectedDispatch.chalan_id)} style={styles.smallButton}>
+                    <Text style={[type.captionStrong, { color: colors.brandHover }]}>Print</Text>
+                  </Pressable>
+                  <Pressable testID="tile-orders-dispatch-detail-close" onPress={() => setSelectedDispatch(null)} style={styles.smallButton}>
+                    <Text style={[type.captionStrong, { color: colors.brandHover }]}>Close</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -268,4 +326,7 @@ const styles = StyleSheet.create({
   dispatchStatusBadge: { paddingVertical: 3, paddingHorizontal: spacing.sm, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border, alignSelf: "flex-start" },
   smallButton: { borderWidth: 1, borderColor: colors.brandBorder, borderRadius: radius.md, paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
   smallButtonSolid: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
+  modalOverlay: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.overlay },
+  dispatchDetailSheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl, gap: spacing.sm },
+  detailActions: { flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", marginTop: spacing.sm },
 });

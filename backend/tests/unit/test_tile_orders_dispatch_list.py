@@ -69,20 +69,27 @@ def test_dispatch_list_flattens_chalan_lines(monkeypatch):
     assert row["status"] == "Dispatched"
 
 
-def test_dispatch_list_filters_by_supplier(monkeypatch):
+def test_dispatch_list_filters_by_brand(monkeypatch):
     fake_db = _FakeDb(
-        dispatches=[_dispatch(id="d-1", supplier_id="s-1"), _dispatch(id="d-2", supplier_id="s-2", chalan_id="ch-2")],
+        dispatches=[
+            _dispatch(id="d-1", purchase_order_id="po-1"),
+            _dispatch(id="d-2", purchase_order_id="po-2", chalan_id="ch-2"),
+        ],
         chalans=[_chalan(id="ch-1", dispatch_id="d-1"), _chalan(id="ch-2", dispatch_id="d-2")],
+        purchase_orders=[
+            {"id": "po-1", "brand_id": "brand-a", "brand_name": "Brand A"},
+            {"id": "po-2", "brand_id": "brand-b", "brand_name": "Brand B"},
+        ],
     )
     monkeypatch.setattr(router_module, "db", fake_db)
 
-    result = asyncio.run(router_module.list_dispatches(supplier="s-1", user=_user()))
+    result = asyncio.run(router_module.list_dispatches(brand_id="brand-a", user=_user()))
 
     assert result["total"] == 1
-    assert result["rows"][0]["supplier_name"] == "Qutone Rajkot"
+    assert result["rows"][0]["brand_name"] == "Brand A"
 
 
-def test_dispatch_list_filters_by_brand(monkeypatch):
+def test_dispatch_list_returns_no_rows_for_unknown_brand(monkeypatch):
     # TileDispatch has no brand_id field — brand lives on the PurchaseOrder
     # (PurchaseOrder.brand_id), reached via dispatch["purchase_order_id"].
     # Two dispatches on two different purchase orders with different
@@ -100,10 +107,10 @@ def test_dispatch_list_filters_by_brand(monkeypatch):
     )
     monkeypatch.setattr(router_module, "db", fake_db)
 
-    result = asyncio.run(router_module.list_dispatches(brand="brand-a", user=_user()))
+    result = asyncio.run(router_module.list_dispatches(brand_id="unknown-brand", user=_user()))
 
-    assert result["total"] == 1
-    assert result["rows"][0]["dispatch_number"] == "DSP-2026-0001"
+    assert result["total"] == 0
+    assert result["rows"] == []
 
 
 def test_item_history_merges_ready_and_dispatch_events(monkeypatch):

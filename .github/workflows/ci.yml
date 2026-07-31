@@ -70,5 +70,7 @@ jobs:
         run: npm audit --audit-level=high
       - name: TypeScript check
         run: npx tsc --noEmit
+      - name: Tile Orders workflow route contract
+        run: node scripts/verify-tile-orders-contract.mjs
       - name: Lint
         run: npx expo lint -- --max-warnings 200

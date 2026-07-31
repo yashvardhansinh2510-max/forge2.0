@@ -14877,3 +14877,32 @@ agent_communication:
       response safety, CSV/XLSX/PDF responses, and mobile /sales-data/executive
       rendering/filter interaction. Report missing future-scope metrics separately
       from actual regressions; do not mark unimplemented P1/P2 as defects.
+
+user_problem_statement: "Critical Tile Orders regression — restore the previously completed Brand release, Customer movement/dispatch, Dispatch List, Material Movement Register, and Chalan/PDF workflow without rebuilding the backend. Identify the exact regression commit and add prevention."
+frontend:
+  - task: "Tile Orders Dispatch List visibility and connected workflow controls"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/(admin)/tiles/orders/index.tsx, frontend/src/api/tileOrders.ts, frontend/scripts/verify-tile-orders-contract.mjs, .github/workflows/ci.yml"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "User reported the Tile Orders workflow had regressed: Dispatch List was missing and previously working movement/PDF controls needed restoration."
+      - working: "NA"
+        agent: "main"
+        comment: "Root cause verified in Git: ca61890bcdda36d5e7c5a318db353b4ac832492d removed only the Dispatch List tab entry from TABS in index.tsx. Its UI branch, typed API client, and backend endpoints remained present but unreachable. Restored the exact tab, retained existing backend actions, added View Dispatch and Print Chalan controls backed by existing authenticated PDF/list APIs, and added a CI route-contract guard. Live phone preview confirmed the Dispatch List tab renders after owner login."
+test_plan:
+  current_focus:
+    - "Full Tile Orders workflow: Brand Release, Customer Move to Godown, Dispatch from Released, Dispatch from Godown, refresh persistence"
+    - "Dispatch List visibility, populated fields, View Chalan/Print/View Dispatch controls, valid Chalan PDF"
+    - "Material Movement Register event audit, MongoDB state invariant, no duplicate records, console/API errors"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+agent_communication:
+  - agent: "main"
+    message: |
+      User reported a critical Tile Orders regression. Root cause is confirmed: commit ca61890 removed the Dispatch List tab entry while preserving the UI/API implementation. The tab has been restored exactly and an automated frontend route-contract check is now part of CI. Run the complete live workflow against the current preview with owner credentials from memory/test_credentials.md. Do not mark as working unless all actions persist after refresh, Dispatch List is visible/populated, Material Movement Register records each event, and Chalan PDFs are valid. Report every failure, including low priority UI/API issues.
