@@ -14970,3 +14970,6 @@ agent_communication:
   - agent: "main"
     message: |
       Iteration 22 proved delay-only cleanup was insufficient because Expo Router keeps the dashboard mounted while blurred. RCA confirms useEffect cleanup did not run on blur. Dashboard now uses useFocusEffect plus an AbortController passed through the shared API client; bootstrap reads are focus-scoped, prevent state updates after blur, and never start when immediate navigation wins. Static lint and TypeScript checks pass. Final retest must confirm rapid dashboard → Tile Orders navigation has no aborted dashboard/followup requests and Tile Orders still loads.
+  - agent: "main"
+    message: |
+      Iteration 23 established that explicit AbortController cancellation itself causes browser-visible net::ERR_ABORTED records. Final RCA directs a silent stale-response guard instead. Dashboard now uses a focus-version ref: blur cancels only the startup timer and invalidates the version, already-started GETs finish normally, and stale responses cannot update dashboard state. Static lint and TypeScript checks pass. Final retest must show zero aborted dashboard GETs and zero aborted reconcile POSTs under rapid dashboard → Tile Orders navigation.
