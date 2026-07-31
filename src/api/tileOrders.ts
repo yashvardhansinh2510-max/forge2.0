@@ -12,6 +12,7 @@
 // operational unit everywhere — the underlying `qty`/`boxes_*` field names
 // are unchanged for backend compatibility, this file just labels them.
 import { api } from "@/src/api/client";
+import { TILES_FLOOR_ID } from "@/src/constants/floors";
 
 export type TileOverallStatus = "Pending" | "Ready" | "Partially Dispatched" | "Dispatched" | "Delivered";
 export type TileLocation = "Pending" | "Ready" | "Dispatched" | "Godown" | "Delivered";
@@ -81,7 +82,8 @@ export type MaterialMovementType =
 
 export type MaterialMovementRow = {
   id: string; movement_type: MaterialMovementType; created_at: string;
-  purchase_order_id: string; po_item_id: string | null; customer_id: string | null; customer_name: string;
+  purchase_order_id: string; po_item_id: string | null; customer_order_id: string | null;
+  customer_id: string | null; customer_name: string;
   brand_id: string | null; brand_name: string; tile_name: string; series: string | null; finish: string | null;
   size: string | null; sku: string | null; boxes: number; source: string | null; destination: string | null;
   dispatch_id: string | null; dispatch_number: string | null; chalan_id: string | null; chalan_number: string | null;
@@ -109,60 +111,114 @@ export type MovementItemInput = { po_item_id: string; qty: number };
 export type DispatchDestinationOverride = {
   destination_name?: string; destination_address?: string; destination_city?: string;
   reference_number?: string; receiver_name?: string; sender_name?: string;
+  vehicle_number?: string; driver_name?: string;
 };
 
-// No hardcoded floorId here — `api.get/post` already falls back to whatever
-// floor is currently selected in the app's global floor switcher (see
-// src/api/client.ts). Hardcoding "ground-floor" would silently break the
-// module the moment someone switches floors.
+export type ChalanItem = {
+  po_item_id: string; tile_name: string; series: string | null; finish: string | null;
+  size: string | null; sku: string | null; boxes: number; pieces_per_box: string | null; quantity: number;
+};
+
+export type ChalanDetail = {
+  id: string; number: string; generated_at: string; generated_by_name: string;
+  delivery_address: string; delivery_city: string; reference_number: string | null;
+  receiver_name: string | null; sender_name: string | null;
+  vehicle_number: string | null; driver_name: string | null;
+  supplier_name: string; customer_name: string; customer_phone: string | null;
+  items: ChalanItem[];
+};
+
+export type DispatchDetail = {
+  dispatch: {
+    id: string; dispatch_number: string; dispatch_date: string; dispatch_time: string;
+    source: "released" | "godown"; destination_type: "Customer" | "Godown";
+    destination_name: string; destination_address: string; destination_city: string;
+    customer_id: string | null; customer_name: string; customer_order_id: string | null;
+    purchase_order_id: string; supplier_name: string; created_by_name: string;
+    godown_received_at: string | null; godown_received_by_name: string | null;
+    delivered_at: string | null; delivered_by_name: string | null;
+    status: "Dispatched" | "At Godown" | "Delivered";
+  };
+  chalan: ChalanDetail;
+  brand: { id: string | null; name: string | null };
+  purchase_order: { id: string | null; number: string | null };
+};
+
+export type DispatchTransportInput = {
+  vehicle_number?: string; driver_name?: string;
+  receiver_name?: string; sender_name?: string; reference_number?: string;
+};
+
+// Every Tiles request is explicitly Ground Floor. Falling back to the
+// global floor switcher (src/api/client.ts) was the leak: an all-floors
+// owner on the "All floors" view sends no X-Floor-Id at all, and a sticky
+// selection can point at The Sanitary Bathroom — both made Tile Orders
+// screens show another floor's orders. The backend enforces this floor
+// independently (auth.tiles_floor_query); this is the matching client half.
+const GROUND_FLOOR = { floorId: TILES_FLOOR_ID } as const;
+
 export const tileOrdersApi = {
   // ---- Customer tab ----
   listCustomerOrders: (params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string }) =>
     api.get<{ orders: CustomerOrderCard[]; page: number; page_size: number; total: number }>(
-      `/tile-orders/customer-orders${toQuery(params)}`,
+      `/tile-orders/customer-orders${toQuery(params)}`, GROUND_FLOOR,
     ),
-  customerOrderDetail: (id: string) => api.get<CustomerOrderDetail>(`/tile-orders/customer-orders/${id}`),
-  customerOrderTimeline: (id: string) => api.get<{ events: Record<string, any>[] }>(`/tile-orders/customer-orders/${id}/timeline`),
+  customerOrderDetail: (id: string) => api.get<CustomerOrderDetail>(`/tile-orders/customer-orders/${id}`, GROUND_FLOOR),
+  customerOrderTimeline: (id: string) => api.get<{ events: Record<string, any>[] }>(`/tile-orders/customer-orders/${id}/timeline`, GROUND_FLOOR),
 
   // ---- Brands tab ----
-  listBrands: () => api.get<{ brands: BrandLandingCard[] }>("/tile-orders/brands"),
+  listBrands: () => api.get<{ brands: BrandLandingCard[] }>("/tile-orders/brands", GROUND_FLOOR),
   brandOrders: (brandId: string, params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string }) =>
     api.get<{ kpi: BrandOrdersKpi; orders: BrandOrderRow[]; page: number; page_size: number; total: number }>(
-      `/tile-orders/brands/${brandId}/orders${toQuery(params)}`,
+      `/tile-orders/brands/${brandId}/orders${toQuery(params)}`, GROUND_FLOOR,
     ),
-  purchaseOrderDetail: (poId: string) => api.get<PurchaseOrderDetail>(`/tile-orders/purchase-orders/${poId}`),
+  purchaseOrderDetail: (poId: string) => api.get<PurchaseOrderDetail>(`/tile-orders/purchase-orders/${poId}`, GROUND_FLOOR),
 
   // ---- Brand page's ONLY action ----
   releaseMaterial: (poId: string, items: MovementItemInput[]) =>
     api.post<{ po_id: string; ready_batches: Record<string, any>[]; overall_status: TileOverallStatus }>(
-      `/tile-orders/purchase-orders/${poId}/ready`, { items },
+      `/tile-orders/purchase-orders/${poId}/ready`, { items }, GROUND_FLOOR,
     ),
 
   // ---- Customer page actions (BuildCon decides Godown vs. Dispatch) ----
   moveToGodown: (poId: string, items: MovementItemInput[]) =>
     api.post<{ po_id: string; moved: Record<string, any>[] }>(
-      `/tile-orders/purchase-orders/${poId}/items/move-to-godown`, { items },
+      `/tile-orders/purchase-orders/${poId}/items/move-to-godown`, { items }, GROUND_FLOOR,
     ),
   dispatchFromReleased: (poId: string, items: MovementItemInput[], destination?: DispatchDestinationOverride) =>
-    api.post<{ po_id: string; dispatch: Record<string, any>; chalan: Record<string, any>; overall_status: TileOverallStatus }>(
-      `/tile-orders/purchase-orders/${poId}/dispatch-from-released`, { items, ...destination },
+    api.post<{ po_id: string; dispatch: Record<string, any>; chalan: { id: string; [key: string]: any }; overall_status: TileOverallStatus }>(
+      `/tile-orders/purchase-orders/${poId}/dispatch-from-released`, { items, ...destination }, GROUND_FLOOR,
     ),
   dispatchFromGodown: (poId: string, items: MovementItemInput[], destination?: DispatchDestinationOverride) =>
-    api.post<{ po_id: string; dispatch: Record<string, any>; chalan: Record<string, any>; overall_status: TileOverallStatus }>(
-      `/tile-orders/purchase-orders/${poId}/dispatch-from-godown`, { items, ...destination },
+    api.post<{ po_id: string; dispatch: Record<string, any>; chalan: { id: string; [key: string]: any }; overall_status: TileOverallStatus }>(
+      `/tile-orders/purchase-orders/${poId}/dispatch-from-godown`, { items, ...destination }, GROUND_FLOOR,
     ),
   chalanPdfUrl: (chalanId: string) => api.authenticatedUrl(`/tile-orders/chalans/${chalanId}/pdf`),
+  chalanDetail: (chalanId: string) => api.get<ChalanDetail>(`/tile-orders/chalans/${chalanId}`, GROUND_FLOOR),
+
+  // ---- Dispatch record: open / edit / close out ----
+  dispatchDetail: (dispatchId: string) => api.get<DispatchDetail>(`/tile-orders/dispatches/${dispatchId}`, GROUND_FLOOR),
+  updateDispatchTransport: (dispatchId: string, body: DispatchTransportInput) =>
+    api.patch<Record<string, any>>(`/tile-orders/dispatches/${dispatchId}/transport`, body, GROUND_FLOOR),
+  markGodownReceived: (dispatchId: string, note?: string) =>
+    api.post<{ dispatch_id: string; godown_received_at: string }>(
+      `/tile-orders/dispatches/${dispatchId}/godown-received`, { note }, GROUND_FLOOR,
+    ),
+  markDelivered: (dispatchId: string, body: { received_by?: string; note?: string }) =>
+    api.post<{ dispatch_id: string; delivered_at: string; overall_status: TileOverallStatus | null }>(
+      `/tile-orders/dispatches/${dispatchId}/delivered`, body, GROUND_FLOOR,
+    ),
 
   // ---- Material Movement Register ----
   listMovements: (params?: {
     customer_id?: string; brand_id?: string; movement_type?: string; date_from?: string; date_to?: string;
     chalan_number?: string; dispatch_number?: string; search?: string; page?: number; page_size?: number;
   }) => api.get<{ rows: MaterialMovementRow[]; page: number; page_size: number; total: number }>(
-    `/tile-orders/movements${toQuery(params)}`,
+    `/tile-orders/movements${toQuery(params)}`, GROUND_FLOOR,
   ),
 
-  itemHistory: (itemId: string) => api.get<{ item_id: string; events: Record<string, any>[] }>(`/tile-orders/items/${itemId}/history`),
-  dashboard: () => api.get<TileOrdersDashboard>("/tile-orders/dashboard"),
+  itemHistory: (itemId: string) => api.get<{ item_id: string; events: Record<string, any>[] }>(`/tile-orders/items/${itemId}/history`, GROUND_FLOOR),
+  dashboard: () => api.get<TileOrdersDashboard>("/tile-orders/dashboard", GROUND_FLOOR),
 
   // ---- Dispatch List (operational, dispatch-only) ----
   listDispatchList: (params?: {
@@ -170,7 +226,7 @@ export const tileOrdersApi = {
     chalan_number?: string; status?: string; date_from?: string; date_to?: string;
     search?: string; page?: number; page_size?: number;
   }) => api.get<{ rows: DispatchListRow[]; page: number; page_size: number; total: number }>(
-    `/tile-orders/dispatches${toQuery(params)}`,
+    `/tile-orders/dispatches${toQuery(params)}`, GROUND_FLOOR,
   ),
 };
 

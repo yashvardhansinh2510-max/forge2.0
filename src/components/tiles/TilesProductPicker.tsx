@@ -19,7 +19,7 @@ export function TilesProductPicker({
 }: {
   open: boolean;
   onClose: () => void;
-  onPick: (product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null }) => void;
+  onPick: (product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null; box_sqft: number | null }) => void;
   customerId?: string | null;
 }) {
   const [query, setQuery] = useState("");
@@ -61,13 +61,14 @@ export function TilesProductPicker({
     if (!product) return;
     if (customerId) {
       try {
-        const history = await api.get<{ found: boolean; size?: string; rate_sqft?: number; rate_box?: number; pcs_per_box?: string }>(
+        const history = await api.get<{ found: boolean; size?: string; rate_sqft?: number; rate_box?: number; pcs_per_box?: string; box_sqft?: number }>(
           `/quotations/tiles/product-history?customer_id=${customerId}&product_id=${product.id}`,
         );
         if (history.found) {
           onPick(product, {
             size: history.size ?? null, rate_sqft: history.rate_sqft ?? null,
             rate_box: history.rate_box ?? null, pcs_per_box: history.pcs_per_box ?? null,
+            box_sqft: history.box_sqft ?? null,
           });
           onClose();
           return;

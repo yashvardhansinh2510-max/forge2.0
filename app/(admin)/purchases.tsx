@@ -111,6 +111,10 @@ function fmtDate(iso?: string | null): string {
 // Screen
 // -----------------------------------------------------------------------------
 export default function PurchasesScreen() {
+  // Scoped to whichever business unit is currently active (the X-Floor-Id
+  // header set by src/api/client.ts) — NOT pinned to one floor. Pinning
+  // this screen to "first-floor" is what made Ground Floor show The
+  // Sanitary Bathroom's records.
   const router = useRouter();
   const { isDesktop } = useBp();
 

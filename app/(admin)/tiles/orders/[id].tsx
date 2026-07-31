@@ -6,25 +6,70 @@
 // Brand/Company page never makes this decision and never generates a
 // Chalan — only the two Dispatch actions on this page do. Products are
 // grouped by BRAND (never by dealer/supplier company).
-import { Feather } from "@expo/vector-icons";
+//
+// This is the screen an operator sits on all day, so it leads with the order
+// summary, then the workflow position, then one section per brand whose every
+// product line is immediately actionable.
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { tileOrdersApi, type CustomerOrderDetail, type CustomerOrderItem } from "@/src/api/tileOrders";
 import { toast } from "@/src/components/Toast";
+import { DispatchRecordSheet, openChalanPdf } from "@/src/components/tiles/DispatchRecordSheet";
 import { DispatchFromGodownSheet, DispatchFromReleasedSheet, MoveToGodownSheet } from "@/src/components/tiles/TileMovementSheets";
+import {
+  BackLink, Button, ButtonGroup, Card, CenteredState, PageHeader, PageShell,
+  Section, SectionHeader, Stat,
+} from "@/src/components/tiles/TileLayout";
 import { AgeingBadge, StatusPill, WorkflowRail } from "@/src/components/tiles/TileOrderStatusUI";
+import { CellNumber, CellStack, DataTable, type Column } from "@/src/components/tiles/TileTable";
 import { Sheet } from "@/src/components/ui";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
-import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, spacing, type } from "@/src/theme/tokens";
 
 type ActiveSheet = { kind: "godown" | "dispatch-released" | "dispatch-godown"; poId: string; item: CustomerOrderItem } | null;
 
+// Every action stays on screen for every line, disabled with the reason it
+// is unavailable rather than removed. Previously an item with nothing
+// released rendered the words "Awaiting brand release" and no controls at
+// all, so most rows of a real order showed zero buttons and the page read
+// as a report rather than a workspace.
+function ItemActions({
+  item, poId, onOpen,
+}: { item: CustomerOrderItem; poId: string; onOpen: (sheet: ActiveSheet) => void }) {
+  const actions: { key: string; label: string; kind: NonNullable<ActiveSheet>["kind"]; enabled: boolean; primary?: boolean }[] = [
+    { key: "move-godown", label: "Move to Godown", kind: "godown", enabled: item.boxes_ready > 0 },
+    { key: "dispatch-released", label: "Dispatch from Released", kind: "dispatch-released", enabled: item.boxes_ready > 0, primary: true },
+    { key: "dispatch-godown", label: "Dispatch from Godown", kind: "dispatch-godown", enabled: item.boxes_godown > 0, primary: true },
+  ];
+  const hint = item.boxes_ready <= 0 && item.boxes_godown <= 0
+    ? (item.boxes_pending > 0 ? `Awaiting brand release · ${item.boxes_pending} boxes still owed` : "Fully dispatched")
+    : null;
+
+  return (
+    <View style={styles.actionCell}>
+      <ButtonGroup>
+        {actions.map((action) => (
+          <Button
+            key={action.key}
+            label={action.label}
+            size="sm"
+            variant={action.primary ? "primary" : "secondary"}
+            disabled={!action.enabled}
+            testID={`tile-order-${action.key}-${item.po_item_id}`}
+            onPress={() => onOpen({ kind: action.kind, poId, item })}
+          />
+        ))}
+      </ButtonGroup>
+      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+    </View>
+  );
+}
+
 export default function CustomerOrderDetailScreen() {
   useRequireFloorAccess("ground-floor");
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, timeline: timelineParam } = useLocalSearchParams<{ id: string; timeline?: string }>();
   const router = useRouter();
   const [order, setOrder] = useState<CustomerOrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,6 +77,7 @@ export default function CustomerOrderDetailScreen() {
   const [sheet, setSheet] = useState<ActiveSheet>(null);
   const [timeline, setTimeline] = useState<Record<string, any>[] | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
+  const [openDispatchId, setOpenDispatchId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -50,7 +96,7 @@ export default function CustomerOrderDetailScreen() {
 
   useEffect(() => { load(); }, [load]);
 
-  const openTimeline = async () => {
+  const openTimeline = useCallback(async () => {
     if (!id) return;
     setTimelineLoading(true);
     try {
@@ -61,71 +107,217 @@ export default function CustomerOrderDetailScreen() {
     } finally {
       setTimelineLoading(false);
     }
+  }, [id]);
+
+  // Register rows link here with ?timeline=1 ("Open timeline"), so the
+  // sheet has to open itself on arrival rather than waiting for a tap.
+  useEffect(() => { if (timelineParam) openTimeline(); }, [timelineParam, openTimeline]);
+
+  // Every timeline event carries the ids of whatever it created
+  // (services/activity_log payloads) — a chalan.generated event knows its
+  // chalan, a dispatch.* event knows its dispatch. Those are what make a
+  // timeline row worth clicking.
+  const timelineTarget = (event: Record<string, any>): { kind: "chalan" | "dispatch"; id: string } | null => {
+    const payload = event.payload || {};
+    if (payload.chalan_id && event.event_type === "chalan.generated") return { kind: "chalan", id: payload.chalan_id };
+    if (payload.dispatch_id) return { kind: "dispatch", id: payload.dispatch_id };
+    if (payload.chalan_id) return { kind: "chalan", id: payload.chalan_id };
+    return null;
   };
+
+  const openTimelineTarget = (event: Record<string, any>) => {
+    const target = timelineTarget(event);
+    if (!target) return;
+    if (target.kind === "chalan") {
+      openChalanPdf(target.id);
+    } else {
+      setTimeline(null);
+      setOpenDispatchId(target.id);
+    }
+  };
+
+  // Counters are fixed-width and right-aligned so a operator can compare the
+  // same figure straight down the column; the product name absorbs the rest.
+  const columns = useMemo<Column<CustomerOrderItem & { __poId: string }>[]>(() => [
+    {
+      key: "product", label: "PRODUCT", grow: 3, minWidth: 240,
+      render: (item) => (
+        <CellStack
+          title={item.tile_name}
+          subtitle={[item.series, item.finish, item.size].filter(Boolean).join(" · ") || "—"}
+        />
+      ),
+    },
+    { key: "ordered", label: "ORDERED", width: 104, align: "right", render: (i) => <CellNumber value={i.boxes_ordered} /> },
+    { key: "released", label: "RELEASED", width: 108, align: "right", render: (i) => <CellNumber value={i.boxes_ready} /> },
+    { key: "godown", label: "GODOWN", width: 104, align: "right", render: (i) => <CellNumber value={i.boxes_godown} /> },
+    { key: "dispatched", label: "DISPATCHED", width: 124, align: "right", render: (i) => <CellNumber value={i.boxes_dispatched} /> },
+    {
+      key: "delivered", label: "DELIVERED", width: 118, align: "right",
+      render: (i) => <CellNumber value={i.current_location === "Delivered" ? i.boxes_dispatched : "—"} dim={i.current_location !== "Delivered"} />,
+    },
+    { key: "remaining", label: "REMAINING", width: 118, align: "right", render: (i) => <CellNumber value={i.boxes_pending} dim={i.boxes_pending === 0} /> },
+    {
+      // Pinned: the three movement verbs are the reason this screen exists, so
+      // they stay on screen even when the counters scroll under them.
+      key: "actions", label: "ACTIONS", width: 524, sticky: true,
+      render: (item) => <ItemActions item={item} poId={item.__poId} onOpen={setSheet} />,
+    },
+  ], []);
 
   if (loading) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface, justifyContent: "center" }}>
+      <CenteredState>
         <ActivityIndicator color={colors.brand} />
-      </SafeAreaView>
+      </CenteredState>
     );
   }
 
   if (loadError || !order) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface, justifyContent: "center", alignItems: "center", gap: spacing.md, padding: spacing.xl }}>
-        <Text style={type.bodyStrong}>{loadError || "Order not found"}</Text>
-        <Pressable testID="tile-order-retry" style={styles.primaryButton} onPress={() => load()}>
-          <Text style={[type.bodyStrong, { color: colors.onBrand }]}>Retry</Text>
-        </Pressable>
-        <Pressable testID="tile-order-back" onPress={() => router.back()} style={styles.backRow}>
-          <Feather name="arrow-left" size={16} color={colors.onSurfaceMuted} />
-          <Text style={type.bodyMuted}>Back to Tile Orders</Text>
-        </Pressable>
-      </SafeAreaView>
+      <CenteredState>
+        <Text style={type.titleMd}>{loadError || "Order not found"}</Text>
+        <Button label="Retry" variant="primary" testID="tile-order-retry" onPress={() => load()} />
+        <BackLink label="Back to Tile Orders" testID="tile-order-back" onPress={() => router.back()} />
+      </CenteredState>
     );
   }
 
   const { summary, suppliers: brandGroups } = order;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <Pressable testID="tile-order-back" onPress={() => router.back()} style={styles.backRow}>
-          <Feather name="arrow-left" size={16} color={colors.onSurfaceMuted} />
-          <Text style={type.bodyMuted}>Back to Tile Orders</Text>
-        </Pressable>
+    <>
+      <PageShell testID="tile-order-detail-screen">
+        <BackLink label="Back to Tile Orders" testID="tile-order-back" onPress={() => router.back()} />
 
-        <View style={styles.summaryBar}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-            <Text style={type.overline}>{summary.number}</Text>
-            <StatusPill status={summary.overall_status} />
-          </View>
-          <Text style={type.displayMd}>{summary.customer_name}</Text>
-          <Text style={type.bodyMuted}>{summary.order_date.slice(0, 10)} · {summary.brand_count} brand{summary.brand_count === 1 ? "" : "s"}</Text>
-          <View style={styles.summaryMetrics}>
-            <Text style={styles.summaryMetric}>{summary.total_products} products</Text><Text style={styles.summaryMetric}>{summary.total_boxes} boxes</Text><Text style={styles.summaryMetric}>{summary.completion_percentage}% complete</Text>
-          </View>
-          <AgeingBadge days={summary.waiting_days} band={summary.ageing_band} />
-        </View>
-        <WorkflowRail active={summary.completion_percentage >= 100 ? "delivered" : summary.overall_status === "Ready" ? "released" : "release"} testID="tile-customer-workflow-rail" />
+        <PageHeader
+          eyebrow={summary.number}
+          title={summary.customer_name}
+          subtitle={`Ordered ${summary.order_date.slice(0, 10)} · ${summary.brand_count} brand${summary.brand_count === 1 ? "" : "s"}`}
+          actions={
+            // The whole workflow is reachable from the order it belongs to.
+            // Without these, Register/Dispatches/Timeline were three separate
+            // screens an operator had to find and re-filter by hand, which is
+            // what made this page read as a report.
+            <ButtonGroup>
+              <Button
+                label={timelineLoading ? "Loading timeline…" : "View Timeline"}
+                testID="tile-order-view-timeline"
+                onPress={openTimeline}
+              />
+              <Button
+                label="View Register"
+                testID="tile-order-view-register"
+                onPress={() => router.push(`/(admin)/tiles/orders?tab=material-register&search=${encodeURIComponent(summary.customer_name)}` as any)}
+              />
+              <Button
+                label="View Dispatches"
+                testID="tile-order-view-dispatches"
+                onPress={() => router.push(`/(admin)/tiles/orders?tab=dispatch-list&search=${encodeURIComponent(summary.customer_name)}` as any)}
+              />
+            </ButtonGroup>
+          }
+        />
+
+        <Section testID="tile-order-summary">
+          <Card>
+            <View style={styles.summaryBadges}>
+              <StatusPill status={summary.overall_status} />
+              <AgeingBadge days={summary.waiting_days} band={summary.ageing_band} />
+            </View>
+            <View style={styles.summaryStats}>
+              <Stat label="Products" value={summary.total_products} />
+              <Stat label="Boxes ordered" value={summary.total_boxes} />
+              <Stat label="Complete" value={`${summary.completion_percentage}%`} tone="brand" />
+              <Stat label="Brands" value={summary.brand_count} />
+              <Stat label="Waiting" value={`${summary.waiting_days}d`} tone={summary.ageing_band === "green" ? "default" : "warn"} />
+            </View>
+          </Card>
+        </Section>
+
+        <Section>
+          <WorkflowRail
+            active={summary.completion_percentage >= 100 ? "delivered" : summary.overall_status === "Ready" ? "released" : "release"}
+            testID="tile-customer-workflow-rail"
+          />
+        </Section>
 
         {brandGroups.map((group) => (
-          <View key={group.purchase_order_id} style={{ marginTop: spacing.md }}>
-            <View style={styles.brandHeader}>
-              <Text style={type.titleMd}>{group.brand_name}</Text>
-              <StatusPill status={group.overall_status} />
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tableShell}><View style={styles.operationTable}><View style={styles.tableHeader}><Text style={[styles.productCol, styles.tableLabel]}>PRODUCT</Text><Text style={[styles.qtyCol, styles.tableLabel]}>ORDERED</Text><Text style={[styles.qtyCol, styles.tableLabel]}>RELEASED</Text><Text style={[styles.qtyCol, styles.tableLabel]}>GODOWN</Text><Text style={[styles.qtyCol, styles.tableLabel]}>DISPATCHED</Text><Text style={[styles.qtyCol, styles.tableLabel]}>DELIVERED</Text><Text style={[styles.qtyCol, styles.tableLabel]}>REMAINING</Text><Text style={[styles.actionsCol, styles.tableLabel]}>ACTIONS</Text></View>{group.items.map((item) => <View key={item.po_item_id} style={styles.tableRow}><View style={styles.productCol}><Text numberOfLines={1} style={type.bodyStrong}>{item.tile_name}</Text><Text numberOfLines={1} style={type.caption}>{[item.series, item.finish, item.size].filter(Boolean).join(" · ") || "—"}</Text></View><Text style={[styles.qtyCol, styles.mono]}>{item.boxes_ordered}</Text><Text style={[styles.qtyCol, styles.mono]}>{item.boxes_ready}</Text><Text style={[styles.qtyCol, styles.mono]}>{item.boxes_godown}</Text><Text style={[styles.qtyCol, styles.mono]}>{item.boxes_dispatched}</Text><Text style={[styles.qtyCol, styles.mono]}>{item.current_location === "Delivered" ? item.boxes_dispatched : "—"}</Text><Text style={[styles.qtyCol, styles.mono]}>{item.boxes_pending}</Text><View style={styles.actionsCol}><View style={styles.inlineActions}>{item.boxes_ready > 0 ? <><Pressable testID={`tile-order-move-godown-${item.po_item_id}`} onPress={() => setSheet({ kind: "godown", poId: group.purchase_order_id, item })} style={styles.actionOutline}><Text style={styles.actionOutlineText}>Move to Godown</Text></Pressable><Pressable testID={`tile-order-dispatch-released-${item.po_item_id}`} onPress={() => setSheet({ kind: "dispatch-released", poId: group.purchase_order_id, item })} style={styles.actionPrimary}><Text style={styles.actionPrimaryText}>Dispatch from Released</Text></Pressable></> : null}{item.boxes_godown > 0 ? <Pressable testID={`tile-order-dispatch-godown-${item.po_item_id}`} onPress={() => setSheet({ kind: "dispatch-godown", poId: group.purchase_order_id, item })} style={styles.actionPrimary}><Text style={styles.actionPrimaryText}>Dispatch from Godown</Text></Pressable> : null}{item.boxes_ready <= 0 && item.boxes_godown <= 0 ? <Text style={styles.awaitingText}>Awaiting brand release</Text> : null}</View></View></View>)}</View></ScrollView>
-            <Text testID={`tile-order-delivery-note-${group.purchase_order_id}`} style={styles.deliveryNote}>Delivered is populated only when the existing workflow records a delivery confirmation.</Text>
-          </View>
+          <Section key={group.purchase_order_id} testID={`tile-order-brand-${group.purchase_order_id}`}>
+            <SectionHeader
+              title={group.brand_name}
+              meta={<StatusPill status={group.overall_status} />}
+              actions={
+                // Releasing is the brand's step, but this is where an operator
+                // notices it is owed — so the release queue has to be one tap
+                // from here, not a separate hunt through the Brands tab.
+                <Button
+                  label="Open Release Queue →"
+                  testID={`tile-order-open-release-queue-${group.purchase_order_id}`}
+                  onPress={() => router.push(`/(admin)/tiles/orders/po/${group.purchase_order_id}` as any)}
+                />
+              }
+            />
+            <DataTable
+              columns={columns}
+              data={group.items.map((item) => ({ ...item, __poId: group.purchase_order_id }))}
+              keyExtractor={(item) => item.po_item_id}
+              rowMinHeight={76}
+              emptyMessage="No product lines on this brand order."
+            />
+            <Text testID={`tile-order-delivery-note-${group.purchase_order_id}`} style={styles.note}>
+              Delivered is populated only when the existing workflow records a delivery confirmation.
+            </Text>
+          </Section>
         ))}
-        <Pressable testID="tile-order-view-timeline" onPress={openTimeline} style={styles.timelineButton}><Text style={styles.actionOutlineText}>{timelineLoading ? "Loading timeline…" : "View Timeline"}</Text></Pressable>
-      </ScrollView>
+      </PageShell>
 
-      <Sheet visible={timeline !== null} onClose={() => setTimeline(null)} title="Order timeline" subtitle="Immutable material movement history" testID="tile-order-timeline-sheet">
-        <ScrollView contentContainerStyle={styles.timelineList}>{timeline?.length ? timeline.map((event, index) => <View key={`${event.id || event.created_at || "event"}-${index}`} style={styles.timelineRow}><Text style={type.bodyStrong}>{event.title || event.type || "Workflow event"}</Text><Text style={type.bodyMuted}>{event.created_at || event.timestamp || "—"}</Text></View>) : <Text style={type.bodyMuted}>No timeline events yet.</Text>}</ScrollView>
+      <Sheet
+        visible={timeline !== null}
+        onClose={() => setTimeline(null)}
+        title="Order timeline"
+        subtitle="Immutable material movement history"
+        testID="tile-order-timeline-sheet"
+      >
+        {/* Fields must match what GET /tile-orders/customer-orders/{id}/timeline
+            actually returns — activity_events documents, whose human text is
+            `summary` and whose kind is `event_type` (services/activity_log.py).
+            Reading `title`/`type` made every row render "Workflow event". */}
+        <ScrollView contentContainerStyle={styles.timelineList}>
+          {timeline?.length ? timeline.map((event, index) => {
+            const target = timelineTarget(event);
+            return (
+              <View
+                key={`${event.id || event.created_at || "event"}-${index}`}
+                testID={`tile-order-timeline-event-${index}`}
+                style={styles.timelineRow}
+              >
+                <Text style={type.bodyStrong}>{event.summary || event.event_type || "Workflow event"}</Text>
+                <Text style={type.bodyMuted}>
+                  {[(event.created_at || "").slice(0, 16).replace("T", " ") || "—", event.actor_name].filter(Boolean).join(" · ")}
+                </Text>
+                {target ? (
+                  <View style={styles.timelineAction}>
+                    <Button
+                      label={target.kind === "chalan" ? "Open Chalan PDF" : "Open dispatch"}
+                      size="sm"
+                      onPress={() => openTimelineTarget(event)}
+                    />
+                  </View>
+                ) : null}
+              </View>
+            );
+          }) : <Text style={type.bodyMuted}>No timeline events yet.</Text>}
+        </ScrollView>
       </Sheet>
+
+      {openDispatchId ? (
+        <DispatchRecordSheet
+          dispatchId={openDispatchId}
+          onClose={() => setOpenDispatchId(null)}
+          onChanged={async () => { await load(); }}
+        />
+      ) : null}
 
       {sheet?.kind === "godown" ? (
         <MoveToGodownSheet
@@ -145,33 +337,22 @@ export default function CustomerOrderDetailScreen() {
           onDone={async () => { setSheet(null); await load(); }}
         />
       ) : null}
-    </SafeAreaView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { padding: spacing.md, width: "100%", alignSelf: "stretch" },
-  backRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, marginBottom: spacing.md },
-  primaryButton: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.xl },
-  summaryBar: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: spacing.xs },
-  summaryMetrics: { flexDirection: "row", gap: spacing.md, flexWrap: "wrap" },
-  summaryMetric: { ...type.captionStrong, color: colors.onSurfaceSecondary },
-  brandHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.sm },
-  tableShell: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-  operationTable: { minWidth: 1160, width: "100%" },
-  tableHeader: { flexDirection: "row", alignItems: "center", minHeight: 32, paddingHorizontal: spacing.sm, backgroundColor: colors.surfaceTertiary, borderBottomWidth: 1, borderColor: colors.border },
-  tableRow: { flexDirection: "row", alignItems: "center", minHeight: 46, paddingHorizontal: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.divider, gap: spacing.xs },
-  tableLabel: { ...type.overline, fontSize: 10, color: colors.onSurfaceMuted },
-  productCol: { width: 270 }, qtyCol: { width: 82, textAlign: "right" }, actionsCol: { width: 390 },
-  mono: { ...type.bodySm, fontFamily: type.numeric.fontFamily, fontVariant: ["tabular-nums"] },
-  inlineActions: { flexDirection: "row", gap: 5, flexWrap: "wrap" },
-  actionOutline: { minHeight: 28, justifyContent: "center", paddingHorizontal: 8, paddingVertical: 5, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.brandBorder },
-  actionPrimary: { minHeight: 28, justifyContent: "center", paddingHorizontal: 8, paddingVertical: 5, borderRadius: radius.sm, backgroundColor: colors.brand },
-  actionOutlineText: { ...type.captionStrong, fontSize: 10, color: colors.brandHover },
-  actionPrimaryText: { ...type.captionStrong, fontSize: 10, color: colors.onBrand },
-  awaitingText: { ...type.caption, color: colors.onSurfaceMuted },
-  deliveryNote: { ...type.caption, color: colors.onSurfaceMuted, marginTop: 4 },
-  timelineButton: { alignSelf: "flex-start", marginTop: spacing.md, borderWidth: 1, borderColor: colors.brandBorder, borderRadius: radius.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.xs },
-  timelineList: { padding: spacing.lg, gap: spacing.xs },
-  timelineRow: { paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.divider, gap: 2 },
+  summaryBadges: { flexDirection: "row", alignItems: "center", gap: spacing.s12, marginBottom: spacing.s20 },
+  summaryStats: { flexDirection: "row", flexWrap: "wrap", columnGap: spacing.s40, rowGap: spacing.s24 },
+  actionCell: { gap: spacing.s8, width: "100%" },
+  hint: { ...type.caption, color: colors.onSurfaceMuted },
+  note: { ...type.caption, color: colors.onSurfaceMuted, marginTop: spacing.s12 },
+  timelineList: { padding: spacing.s24, gap: spacing.lg },
+  timelineRow: {
+    paddingBottom: spacing.lg,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.divider,
+    gap: spacing.s4,
+  },
+  timelineAction: { marginTop: spacing.s8, alignSelf: "flex-start" },
 });

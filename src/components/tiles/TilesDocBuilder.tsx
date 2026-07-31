@@ -41,12 +41,43 @@ import { canPlaceOrder, nextTilesAction, tilesStage } from "./tilesStage";
 
 export type TilesDocType = "tiles_selection" | "tiles_quotation";
 
-const MAX_ROWS = 11;
+const MAX_ROWS = 300; // soft cap only — the PDF auto-paginates, so this just guards against runaway input
 const PAPER_W = 820;
-const SHEET_BLUE = "#CBE7F5";
-const CELL_GREY = "#BFBFBF";
 const HEAD_GREY = "#D3D3D3";
+const ZEBRA = "#F0F0F0";
+const GRID = "#8A8A8A";
 const SERIF = Platform.select({ ios: "Times New Roman", android: "serif", default: "Georgia, 'Times New Roman', serif" }) as string;
+
+// Product photo cell for the SELECTION/QUOTATION grids — every image slot on
+// these printed formats is a wide rectangle, but source photos (a phone-shot
+// tile swatch, most commonly) are just as often portrait. A portrait photo
+// dropped into a landscape box with resizeMode="contain" just sits centered
+// and narrow — still reads as "vertical" even though its frame is wide.
+// Mirrors backend/pdf_generator.py's `_landscape_bytes`: detect a taller-
+// than-wide source and rotate it 90° so it actually fills the frame
+// horizontally, instead of only widening the box around it.
+function TileImageCell({ uri }: { uri: string }) {
+  const [portrait, setPortrait] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    Image.getSize(
+      uri,
+      (w, h) => { if (alive) setPortrait(h > w); },
+      () => { if (alive) setPortrait(false); },
+    );
+    return () => { alive = false; };
+  }, [uri]);
+
+  return (
+    <View style={{ width: "100%", aspectRatio: 16 / 10, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
+      <Image
+        source={{ uri }}
+        resizeMode={portrait ? "cover" : "contain"}
+        style={portrait ? { width: "62.5%", height: "160%", transform: [{ rotate: "90deg" }] } : { width: "100%", height: "100%" }}
+      />
+    </View>
+  );
+}
 
 type TileRow = {
   key: string;
@@ -60,7 +91,10 @@ type TileRow = {
   area: string;
   size: string;
   rateSqft: string;
+  boxSqft: string;
+  offerRate: string;
   rateBox: string;
+  rateBoxEdited: boolean;
   totalBox: string;
   pcsBox: string;
   total: string;
@@ -116,7 +150,8 @@ function emptyRow(): TileRow {
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     lineId: null, productId: null, sku: "", categoryId: null,
     name: "", image: null, mrp: null,
-    area: "", size: "", rateSqft: "", rateBox: "", totalBox: "", pcsBox: "BOX", total: "",
+    area: "", size: "", rateSqft: "", boxSqft: "", offerRate: "", rateBox: "", rateBoxEdited: false,
+    totalBox: "", pcsBox: "", total: "",
     totalEdited: false,
   };
 }
@@ -193,9 +228,12 @@ function useTilesDoc(docType: TilesDocType) {
           area: it.room || "",
           size: it.size || "",
           rateSqft: it.rate_sqft != null ? String(it.rate_sqft) : "",
+          boxSqft: it.box_sqft != null ? String(it.box_sqft) : "",
+          offerRate: it.offer_rate != null ? String(it.offer_rate) : "",
           rateBox: it.unit_price ? String(it.unit_price) : "",
+          rateBoxEdited: false,
           totalBox: it.qty ? String(it.qty) : "",
-          pcsBox: it.pcs_per_box || "BOX",
+          pcsBox: it.pcs_per_box || "",
           total: it.qty && it.unit_price ? String(Math.round(it.qty * it.unit_price * 100) / 100) : "",
           totalEdited: false,
         }));
@@ -220,9 +258,24 @@ function useTilesDoc(docType: TilesDocType) {
     setRows((cur) => cur.map((row) => {
       if (row.key !== key) return row;
       const next = { ...row, ...patch };
+      let rateBoxChanged = "rateBox" in patch;
+      if (rateBoxChanged) {
+        next.rateBoxEdited = true;
+      } else if (("rateSqft" in patch || "boxSqft" in patch) && !next.rateBoxEdited) {
+        // Auto-derive rate/box = rate/sqft x box sqft-coverage whenever either
+        // input changes, unless the preparer has manually typed into
+        // rate/box directly (rateBoxEdited) — mirrors the totalEdited
+        // override pattern used for the TOTAL column below.
+        const sqft = num(next.boxSqft);
+        const rateSqftNum = num(next.rateSqft);
+        if (sqft > 0 && rateSqftNum > 0) {
+          next.rateBox = String(Math.round(rateSqftNum * sqft * 100) / 100);
+          rateBoxChanged = true;
+        }
+      }
       if ("total" in patch) {
         next.totalEdited = true;
-      } else if ("rateBox" in patch || "totalBox" in patch) {
+      } else if (rateBoxChanged || "totalBox" in patch) {
         next.totalEdited = false;
         next.total = computedTotal(next);
       }
@@ -244,7 +297,7 @@ function useTilesDoc(docType: TilesDocType) {
     markDirty();
   }, [markDirty]);
 
-  const applyProduct = useCallback((key: string, product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null }) => {
+  const applyProduct = useCallback((key: string, product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null; box_sqft?: number | null }) => {
     const image = productImageList(product)[0] || null;
     const specs = product.specs || {};
     const specNum = (...keys: string[]): string => {
@@ -263,6 +316,11 @@ function useTilesDoc(docType: TilesDocType) {
     };
     setRows((cur) => cur.map((row) => {
       if (row.key !== key) return row;
+      const boxSqft = history?.box_sqft != null ? String(history.box_sqft) : (specNum("sqft_per_box", "box_sqft") || row.boxSqft);
+      const rateSqft = history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft);
+      const sqftNum = num(boxSqft);
+      const rateSqftNum = num(rateSqft);
+      const autoRateBox = sqftNum > 0 && rateSqftNum > 0 ? String(Math.round(rateSqftNum * sqftNum * 100) / 100) : "";
       const next: TileRow = {
         ...row,
         productId: product.id,
@@ -272,8 +330,10 @@ function useTilesDoc(docType: TilesDocType) {
         image,
         mrp: product.mrp ?? null,
         size: history?.size || product.size || product.dimensions || row.size,
-        rateSqft: history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft),
-        rateBox: history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox),
+        rateSqft,
+        boxSqft,
+        rateBox: history?.rate_box != null ? String(history.rate_box) : (autoRateBox || specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox),
+        rateBoxEdited: false,
         pcsBox: history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox,
         totalEdited: false,
       };
@@ -302,6 +362,8 @@ function useTilesDoc(docType: TilesDocType) {
           mrp: row.mrp,
           size: row.size.trim() || null,
           rate_sqft: row.rateSqft.trim() ? num(row.rateSqft) : null,
+          box_sqft: row.boxSqft.trim() ? num(row.boxSqft) : null,
+          offer_rate: row.offerRate.trim() ? num(row.offerRate) : null,
           pcs_per_box: row.pcsBox.trim() || null,
           sort_order: index,
         };
@@ -668,103 +730,258 @@ const sideStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
-// SELECTION paper — replica of the grey selection sheet
+// Shared page-1 building blocks — identical on Selection & Quotation, and
+// mirror backend/pdf_tiles.py's _meta_grid / _brand_terms_signature_block /
+// _price_summary_table so the on-screen replica and the generated PDF never
+// drift apart. Both papers now render the SAME layout the business supplied
+// (logo+title header, 4x2 form grid, brand partners, 12 terms, signature),
+// then a PRODUCT DETAILS grid that grows without a row cap — the PDF
+// auto-paginates once it overflows a page.
 // ---------------------------------------------------------------------------
-const SEL_COLS = [13, 37, 52, 44, 23, 25]; // proportional to the printed mm widths
+const BRAND_PARTNERS: [string, string][][] = [
+  [["GROHE", "Pure Freude an Wasser"], ["hansgrohe", "Life is Waterful"], ["AXOR", "Form Follows Perfection"], ["VitrA", "Design Meets Life"], ["NEXION", "The Surface Experience"], ["QUTONE", "Let's Build Together"]],
+  [["DIMORE", "Reflection of Your Style"], ["Oyster", "Indulge in Luxury"], ["GEBERIT", "Engineered for Hygiene"], ["MCM ITTIMI", "Innovation into Inspiration"], ["VERANTES LIVING", "Kitchens & Wardrobes"], ["IMPORTED FURNITURE", "Crafted Beyond Borders"]],
+];
+
+const TILES_TERMS = [
+  "Prices quoted are based on the current NET prices at the time of selection.",
+  "Prices are subject to revision by any brand without prior notice.",
+  "100% advance payment is required to confirm orders.",
+  "Freight and unloading charges will be applicable as per actuals.",
+  "Delivery timelines are subject to the manufacturer's schedule.",
+  "Rates are valid for 5 days, unless stated otherwise in writing.",
+  "Above rates are inclusive of GST @18%, unless stated otherwise.",
+  "All orders and deliveries are subject to material availability.",
+  "Prices are subject to change in case of changes in government levy.",
+  "Cheques should be written in favour of Buildcon House.",
+  "On confirmation of purchase order, material will be delivered within 15 days.",
+  "Labour cost is extra and not included in this quotation.",
+];
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginTop: 22 }}>
+      <BuildConLogo height={40} />
+      <View style={{ alignItems: "flex-end" }}>
+        <Text style={sectionStyles.headerTitle}>{title}</Text>
+        <Text style={sectionStyles.headerSub}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
+function MetaGrid({ doc }: { doc: ReturnType<typeof useTilesDoc> }) {
+  const row2 = [
+    { label: "REFERENCE", value: doc.header.reference, onChange: (t: string) => doc.setHeaderField("reference", t) },
+    { label: "ATTENDED BY", value: doc.header.attendedBy, onChange: (t: string) => doc.setHeaderField("attendedBy", t) },
+    { label: "PREPARED BY", value: doc.header.preparedBy, onChange: (t: string) => doc.setHeaderField("preparedBy", t) },
+    { label: "ADDRESS", value: doc.header.address, onChange: (t: string) => doc.setHeaderField("address", t) },
+  ];
+  return (
+    <View style={metaStyles.grid}>
+      <View style={metaStyles.row}>
+        <View style={metaStyles.cell}>
+          <Text style={metaStyles.label}>CUSTOMER NAME</Text>
+          <CustomerNameField
+            value={doc.header.customerName}
+            onChangeText={(t) => doc.setHeaderField("customerName", t)}
+            customers={doc.customers}
+            customerId={doc.customerId}
+            onPickCustomer={doc.pickCustomer}
+            inputStyle={metaStyles.value}
+            testID="tiles-customer-name"
+          />
+        </View>
+        <View style={metaStyles.cell}>
+          <Text style={metaStyles.label}>CONTACT NO.</Text>
+          <CellInput value={doc.header.phone} onChangeText={(t) => doc.setHeaderField("phone", t)} style={metaStyles.value} testID="tiles-phone" />
+        </View>
+        <View style={metaStyles.cell}>
+          <Text style={metaStyles.label}>SELECTION / QUOTATION DATE</Text>
+          <CellInput value={doc.header.docDate} onChangeText={(t) => doc.setHeaderField("docDate", t)} style={metaStyles.value} testID="tiles-date" />
+        </View>
+        <View style={metaStyles.cell}>
+          <Text style={metaStyles.label}>QUOTATION NO.</Text>
+          <CellInput value={doc.header.docNumber} onChangeText={(t) => doc.setHeaderField("docNumber", t)} style={metaStyles.value} testID="tiles-doc-number" />
+        </View>
+      </View>
+      <View style={[metaStyles.row, metaStyles.rowSpacing]}>
+        {row2.map((f) => (
+          <View key={f.label} style={metaStyles.cell}>
+            <Text style={metaStyles.label}>{f.label}</Text>
+            <CellInput value={f.value} onChangeText={f.onChange} style={metaStyles.value} testID={`tiles-meta-${f.label}`} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function BrandPartnersGrid() {
+  return (
+    <View style={{ marginTop: 4 }}>
+      {BRAND_PARTNERS.map((row, ri) => (
+        <View key={ri} style={{ flexDirection: "row" }}>
+          {row.map(([name, tagline]) => (
+            <View key={name} style={brandStyles.cell}>
+              <Text style={brandStyles.name}>{name}</Text>
+              <Text style={brandStyles.tagline}>{tagline}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function TermsAndSignatureBlock() {
+  return (
+    <View style={{ marginTop: 14 }}>
+      <Text style={sectionStyles.title}>OUR BRAND PARTNERS</Text>
+      <BrandPartnersGrid />
+      <Text style={[sectionStyles.title, { marginTop: 14 }]}>TERMS &amp; CONDITIONS</Text>
+      <View style={{ marginTop: 4, gap: 2 }}>
+        {TILES_TERMS.map((term, i) => (
+          <Text key={i} style={sectionStyles.term}>{i + 1}. {term}</Text>
+        ))}
+      </View>
+      <Text style={sectionStyles.contact}>
+        For general enquiries: <Text style={{ fontWeight: "700" }}>M: +91 99099 06652</Text>  |  <Text style={{ fontWeight: "700" }}>Email: buildconhouse10@gmail.com</Text>
+      </Text>
+      <View style={sectionStyles.signature}>
+        <Text style={sectionStyles.sigNote}>I/We have reviewed and agree to the terms and conditions mentioned in this quotation.</Text>
+        <Text style={sectionStyles.sigLabel}>CUSTOMER SIGNATURE &amp; DATE</Text>
+      </View>
+    </View>
+  );
+}
+
+function PriceSummary({ totals }: { totals: { boxes: number; subtotal: number } }) {
+  return (
+    <View style={{ marginTop: 14 }}>
+      <Text style={sectionStyles.title}>PRICE SUMMARY</Text>
+      <View style={priceStyles.table}>
+        <View style={priceStyles.row}>
+          <Text style={priceStyles.label}>TOTAL BOX</Text>
+          <Text style={priceStyles.value}>{totals.boxes ? `${Math.round(totals.boxes * 100) / 100}` : ""}</Text>
+        </View>
+        <View style={priceStyles.row}>
+          <Text style={priceStyles.label}>SUBTOTAL (Rs.)</Text>
+          <Text style={priceStyles.value}>{money(totals.subtotal)}</Text>
+        </View>
+        <View style={priceStyles.row}>
+          <Text style={priceStyles.label}>TRANSPORTATION</Text>
+          <Text style={priceStyles.value}>EXTRA</Text>
+        </View>
+        <View style={[priceStyles.row, priceStyles.totalRow]}>
+          <Text style={[priceStyles.label, priceStyles.totalText]}>TOTAL QUOTE (Rs.)</Text>
+          <Text style={[priceStyles.value, priceStyles.totalText]}>{money(totals.subtotal)}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const sectionStyles = StyleSheet.create({
+  headerTitle: { fontSize: 19, fontWeight: "700", color: "#111" },
+  headerSub: { fontSize: 11, color: "#444" },
+  title: { fontSize: 13, fontWeight: "700", color: "#111", textAlign: "center", marginBottom: 6 },
+  term: { fontSize: 10.5, color: "#3A3A3A", textAlign: "center", lineHeight: 15 },
+  contact: { fontSize: 11, color: "#111", textAlign: "center", marginTop: 12 },
+  signature: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    borderWidth: 1, borderColor: GRID, marginTop: 10, padding: 10, gap: 16,
+  },
+  sigNote: { fontSize: 10.5, color: "#111", flex: 1 },
+  sigLabel: { fontSize: 10.5, fontWeight: "700", color: "#111" },
+});
+
+const metaStyles = StyleSheet.create({
+  grid: { marginTop: 16 },
+  row: { flexDirection: "row" },
+  rowSpacing: { marginTop: 10 },
+  cell: { flex: 1, paddingHorizontal: 6 },
+  label: { fontSize: 10, fontWeight: "700", color: "#111", textAlign: "center", marginBottom: 4 },
+  value: { fontSize: 13, color: "#111", textAlign: "center", borderBottomWidth: 1, borderColor: "#333", paddingBottom: 4 },
+});
+
+const brandStyles = StyleSheet.create({
+  cell: {
+    flex: 1, borderWidth: 1, borderColor: GRID, alignItems: "center", justifyContent: "center",
+    paddingVertical: 8, paddingHorizontal: 4,
+  },
+  name: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center" },
+  tagline: { fontSize: 9, fontStyle: "italic", color: "#111", textAlign: "center", marginTop: 1 },
+});
+
+const priceStyles = StyleSheet.create({
+  table: { borderWidth: 1, borderColor: GRID, marginTop: 4, alignSelf: "center", width: "70%" },
+  row: { flexDirection: "row", borderTopWidth: 1, borderColor: GRID, backgroundColor: HEAD_GREY },
+  totalRow: { backgroundColor: "#DADADA" },
+  label: { flex: 1.7, fontSize: 11.5, fontWeight: "700", color: "#111", textAlign: "center", paddingVertical: 6 },
+  value: { flex: 1, fontSize: 11.5, color: "#111", textAlign: "center", paddingVertical: 6, borderLeftWidth: 1, borderColor: GRID },
+  totalText: { color: "#E00000" },
+});
+
+const paperStyles = StyleSheet.create({
+  paper: {
+    width: PAPER_W, backgroundColor: "#fff", paddingHorizontal: 30, paddingVertical: 26,
+    borderRadius: 2,
+    ...(Platform.OS === "web" ? { boxShadow: "0 10px 34px rgba(20,20,20,0.16)" } as any : {}),
+  },
+  ruleThick: { height: 2, backgroundColor: "#111", marginTop: 8, marginBottom: 2 },
+  intro: { fontSize: 12, color: "#111", textAlign: "center", marginTop: 12, lineHeight: 17 },
+});
+
+// ---------------------------------------------------------------------------
+// SELECTION paper
+// ---------------------------------------------------------------------------
+const SEL_COLS = [10, 46, 28, 52, 24, 34]; // SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT
 
 function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
   const flex = (index: number) => ({ flex: SEL_COLS[index] });
+  const itemCount = doc.rows.filter((r) => r.productId).length;
   return (
-    <View style={selStyles.paper}>
-      <View style={{ alignItems: "center" }}>
-        <BuildConLogo height={64} />
-        <Text style={selStyles.address}>
-          Nr. Gujarat Housing Board, Kataria Motors, 2nd 150 Ring Road, Rajkot-360005
-        </Text>
-      </View>
-      <View style={selStyles.ruleThick} />
-      <View style={selStyles.ruleThin} />
+    <View style={paperStyles.paper}>
+      <SectionHeader title="PRODUCT SELECTION" subtitle="Tiles & Sanitaryware Solutions" />
+      <View style={paperStyles.ruleThick} />
+      <MetaGrid doc={doc} />
+      <Text style={paperStyles.intro}>
+        Dear Sir/Madam, thank you for your interest in our products. Please find below the products shortlisted as
+        per your selection, for your review and confirmation.
+      </Text>
+      <TermsAndSignatureBlock />
 
-      {/* Header fields */}
-      <View style={selStyles.headerRow}>
-        <View style={{ flex: 1.55, gap: 6 }}>
-          <View style={[selStyles.fieldRow, { zIndex: 400 }]}>
-            <Text style={selStyles.fieldLabel}>NAME:</Text>
-            <View style={[selStyles.fieldValueWrap, { zIndex: 400 }]}>
-              <CustomerNameField
-                value={doc.header.customerName}
-                onChangeText={(t) => doc.setHeaderField("customerName", t)}
-                customers={doc.customers}
-                customerId={doc.customerId}
-                onPickCustomer={doc.pickCustomer}
-                testID="tiles-customer-name"
-              />
-            </View>
-          </View>
-          <View style={selStyles.fieldRow}>
-            <Text style={selStyles.fieldLabel}>MOB:</Text>
-            <View style={selStyles.fieldValueWrap}>
-              <CellInput value={doc.header.phone} onChangeText={(t) => doc.setHeaderField("phone", t)} align="left" testID="tiles-phone" />
-            </View>
-          </View>
-          <View style={selStyles.fieldRow}>
-            <Text style={selStyles.fieldLabel}>REF:</Text>
-            <View style={selStyles.fieldValueWrap}>
-              <CellInput value={doc.header.reference} onChangeText={(t) => doc.setHeaderField("reference", t)} align="left" testID="tiles-reference" />
-            </View>
-          </View>
-        </View>
-        <View style={{ flex: 1, gap: 6 }}>
-          <View style={selStyles.fieldRow}>
-            <Text style={[selStyles.fieldLabel, { width: 110 }]}>SELECTION DT:</Text>
-            <View style={selStyles.fieldValueWrap}>
-              <CellInput value={doc.header.docDate} onChangeText={(t) => doc.setHeaderField("docDate", t)} testID="tiles-date" />
-            </View>
-          </View>
-          <View style={selStyles.fieldRow}>
-            <Text style={[selStyles.fieldLabel, { width: 110 }]}>ATTENDED BY:</Text>
-            <View style={selStyles.fieldValueWrap}>
-              <CellInput value={doc.header.attendedBy} onChangeText={(t) => doc.setHeaderField("attendedBy", t)} testID="tiles-attended" />
-            </View>
-          </View>
-          <View style={selStyles.fieldRow}>
-            <Text style={[selStyles.fieldLabel, { width: 110 }]}>PREPARED BY:</Text>
-            <View style={selStyles.fieldValueWrap}>
-              <CellInput value={doc.header.preparedBy} onChangeText={(t) => doc.setHeaderField("preparedBy", t)} testID="tiles-prepared" />
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Product grid */}
+      <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
+      <View style={paperStyles.ruleThick} />
       <View style={selStyles.table}>
         <View style={[selStyles.tr, { backgroundColor: HEAD_GREY, minHeight: 34 }]}>
-          {["NO.", "AREA", "PRODUCT DETAIL", "IMAGE", "SIZE"].map((h, i) => (
-            <View key={h} style={[selStyles.td, flex(i)]}><Text style={selStyles.th}>{h}</Text></View>
-          ))}
+          <View style={[selStyles.td, flex(0)]}><Text style={selStyles.th}>{"SR.\nNO."}</Text></View>
+          <View style={[selStyles.td, flex(1)]}><Text style={selStyles.th}>PRODUCT IMAGE</Text></View>
+          <View style={[selStyles.td, flex(2)]}><Text style={selStyles.th}>AREA</Text></View>
+          <View style={[selStyles.td, flex(3)]}><Text style={selStyles.th}>PRODUCT DETAIL</Text></View>
+          <View style={[selStyles.td, flex(4)]}><Text style={selStyles.th}>SIZE</Text></View>
           <View style={[selStyles.td, flex(5), { borderRightWidth: 0 }]}>
-            <Text style={[selStyles.th, { color: "#E00000" }]}>RATE/SQ.FT</Text>
+            <Text style={[selStyles.th, { color: "#E00000" }]}>{"RATE/\nSQ.FT"}</Text>
           </View>
         </View>
         {doc.rows.map((row, index) => (
-          <View key={row.key} style={[selStyles.tr, { minHeight: 96, backgroundColor: CELL_GREY }]}>
+          <View key={row.key} style={[selStyles.tr, { minHeight: 92 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
             <View style={[selStyles.td, flex(0)]}><Text style={selStyles.cellText}>{index + 1}</Text></View>
-            <View style={[selStyles.td, flex(1)]}>
-              <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
+            <View style={[selStyles.td, flex(1), { padding: 2 }]}>
+              {row.image ? <TileImageCell uri={row.image} /> : null}
             </View>
             <View style={[selStyles.td, flex(2)]}>
+              <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
+            </View>
+            <View style={[selStyles.td, flex(3)]}>
               <ProductCell
                 row={row}
                 onOpenPicker={() => setPickerRow(row.key)}
                 onChangeName={(t) => doc.updateRow(row.key, { name: t })}
                 testID={`tiles-product-${index}`}
               />
-            </View>
-            <View style={[selStyles.td, flex(3), { padding: 2 }]}>
-              {row.image ? (
-                <Image source={{ uri: row.image }} resizeMode="contain" style={{ width: "100%", aspectRatio: 16 / 10 }} />
-              ) : null}
             </View>
             <View style={[selStyles.td, flex(4)]}>
               <CellInput value={row.size} onChangeText={(t) => doc.updateRow(row.key, { size: t })} testID={`tiles-size-${index}`} />
@@ -784,31 +1001,6 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
         ))}
       </View>
 
-      {/* Terms & Conditions */}
-      <Text style={selStyles.termsTitle}>Terms &amp; Conditions</Text>
-      <View style={{ gap: 3, paddingLeft: 18 }}>
-        <Text style={selStyles.term}>1. <Text style={selStyles.termBold}>Prices</Text> quoted are based on the current <Text style={selStyles.termBold}>NET Prices</Text> at the time of selection.</Text>
-        <Text style={selStyles.term}>2. <Text style={selStyles.termBold}>Prices revisions</Text> by <Text style={selStyles.termBold}>any brands</Text> may occur without prior notice.</Text>
-        <Text style={selStyles.term}>3. <Text style={selStyles.termBold}>100% advance payment</Text> is required to confirm orders.</Text>
-        <Text style={selStyles.term}>4. <Text style={selStyles.termBold}>Freight &amp; Unloading charges</Text> will be applicable as per actuals.</Text>
-        <Text style={selStyles.term}>5. <Text style={selStyles.termBold}>Delivery timelines</Text> are subject to the <Text style={selStyles.termBold}>manufacturer's schedule</Text>.</Text>
-        <Text style={selStyles.term}>6. <Text style={selStyles.termBold}>Rates are valid for 5 Days</Text>, unless stated otherwise in writing.</Text>
-      </View>
-
-      {/* Contact strip */}
-      <View style={{ marginTop: 18 }}>
-        <View style={selStyles.ruleThin} />
-        <View style={{ flexDirection: "row", gap: 12, marginVertical: 2 }}>
-          <View style={selStyles.contactCell}>
-            <Text style={selStyles.contactText}><Text style={{ fontWeight: "700" }}>E-MAIL:</Text> buildconhouse@gmail.com</Text>
-          </View>
-          <View style={selStyles.contactCell}>
-            <Text style={selStyles.contactText}><Text style={{ fontWeight: "700" }}>MOBILE:</Text> +91 99099 06652</Text>
-          </View>
-        </View>
-        <View style={selStyles.ruleThin} />
-      </View>
-
       <TilesProductPicker
         open={pickerRow !== null}
         onClose={() => setPickerRow(null)}
@@ -820,40 +1012,23 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
 }
 
 const selStyles = StyleSheet.create({
-  paper: {
-    width: PAPER_W, backgroundColor: "#fff", paddingHorizontal: 30, paddingVertical: 26,
-    borderRadius: 2,
-    ...(Platform.OS === "web" ? { boxShadow: "0 10px 34px rgba(20,20,20,0.16)" } as any : {}),
-  },
-  address: { fontSize: 11.5, color: "#3B3B3B", marginTop: 6 },
-  ruleThick: { height: 2.5, backgroundColor: "#111", marginTop: 8 },
-  ruleThin: { height: 1.2, backgroundColor: "#111", marginTop: 3 },
-  headerRow: { flexDirection: "row", gap: 28, marginTop: 16, zIndex: 60 },
-  fieldRow: { flexDirection: "row", alignItems: "flex-end", gap: 6 },
-  fieldLabel: { fontSize: 12.5, fontWeight: "700", color: "#111", paddingBottom: 3 },
-  fieldValueWrap: { flex: 1, borderBottomWidth: 1, borderColor: "#333", zIndex: 60 },
-  table: { marginTop: 20, borderWidth: 1.4, borderColor: "#111" },
+  table: { marginTop: 14, borderWidth: 1.4, borderColor: "#111" },
   tr: { flexDirection: "row", borderTopWidth: 1, borderColor: "#111", alignItems: "stretch" },
   td: {
     borderRightWidth: 1, borderColor: "#111",
-    alignItems: "center", justifyContent: "center", paddingHorizontal: 4, paddingVertical: 4,
+    alignItems: "center", justifyContent: "center", paddingHorizontal: 4, paddingVertical: 5,
   },
-  th: { fontSize: 12, fontWeight: "700", color: "#111", textAlign: "center" },
+  th: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center" },
   cellText: { fontSize: 12.5, color: "#111" },
-  rateSuffix: { fontSize: 9.5, fontWeight: "700", color: "#E00000", marginTop: 2 },
-  termsTitle: { fontSize: 15, fontWeight: "700", color: "#2B2B2B", marginTop: 18, marginBottom: 7 },
-  term: { fontSize: 11, color: "#4A4A4A", lineHeight: 17 },
-  termBold: { fontWeight: "700", color: "#333" },
-  contactCell: {
-    flex: 1, backgroundColor: HEAD_GREY, paddingVertical: 6, alignItems: "center", justifyContent: "center",
-  },
-  contactText: { fontSize: 11.5, color: "#111" },
+  rateSuffix: { fontSize: 9, fontWeight: "700", color: "#E00000", marginTop: 2, textAlign: "center" },
 });
 
 // ---------------------------------------------------------------------------
-// QUOTATION paper — replica of the light-blue bordered sheet
+// QUOTATION paper
 // ---------------------------------------------------------------------------
-const QUO_COLS = [12, 33, 26, 24, 15, 14.5, 14.5, 12.5, 12.5, 16];
+// SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
+// RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — mirrors pdf_tiles.py's _QUO_COLS.
+const QUO_COLS = [9, 26, 16, 32, 16, 18, 16, 16, 14, 13, 18];
 
 function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
@@ -868,84 +1043,28 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
     }
     return { boxes, subtotal };
   }, [doc.rows]);
+  const itemCount = doc.rows.filter((r) => r.productId).length;
 
-  const headLabels = ["SR.", "PRODUCT NAME", "PHOTO", "Area", "Size", "RATE PER\nSQFT", "RATE PER\nBOX", "TOTAL\nBOX", "PCS|BOX", "TOTAL"];
+  const headLabels = [
+    "SR.\nNO.", "PRODUCT IMAGE", "AREA", "PRODUCT DETAIL", "SIZE",
+    "RATE/\nSQ.FT", "OFFER\nRATE", "RATE/\nBOX", "TOTAL\nBOX", "PCS/\nBOX", "TOTAL\n(Rs.)",
+  ];
   return (
-    <View style={quoStyles.paper}>
-      {/* Brand + title */}
-      <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
-        <View style={{ flex: 1 }} />
-        <BuildConLogo height={52} />
-        <View style={{ flex: 1, alignItems: "flex-end" }}>
-          <Text style={quoStyles.title}>Quotation</Text>
-        </View>
-      </View>
+    <View style={paperStyles.paper}>
+      <SectionHeader title="PRODUCT QUOTATION" subtitle="Tiles & Sanitaryware Solutions" />
+      <View style={paperStyles.ruleThick} />
+      <MetaGrid doc={doc} />
+      <Text style={paperStyles.intro}>
+        Dear Sir/Madam, thank you for your interest in our products. We are pleased to offer our most competitive
+        rates for premium tiles and sanitaryware, prepared as per your selection.
+      </Text>
+      <PriceSummary totals={totals} />
+      <TermsAndSignatureBlock />
 
-      {/* Customer block */}
-      <View style={{ flexDirection: "row", marginTop: 10, zIndex: 60 }}>
-        <View style={{ flex: 1.7, gap: 2 }}>
-          <View style={[quoStyles.hRow, { zIndex: 400 }]}>
-            <Text style={quoStyles.hLabel}>NAME :</Text>
-            <CustomerNameField
-              value={doc.header.customerName}
-              onChangeText={(t) => doc.setHeaderField("customerName", t)}
-              customers={doc.customers}
-              customerId={doc.customerId}
-              onPickCustomer={doc.pickCustomer}
-              inputStyle={quoStyles.hInput}
-              testID="tiles-customer-name"
-            />
-          </View>
-          <View style={quoStyles.hRow}>
-            <Text style={quoStyles.hLabel}>MO :</Text>
-            <View style={{ flex: 1 }}>
-              <CellInput value={doc.header.phone} onChangeText={(t) => doc.setHeaderField("phone", t)} align="left" serif bold style={quoStyles.hInput} testID="tiles-phone" />
-            </View>
-          </View>
-          <View style={quoStyles.hRow}>
-            <Text style={quoStyles.hLabel}>REF :</Text>
-            <View style={{ flex: 1 }}>
-              <CellInput value={doc.header.reference} onChangeText={(t) => doc.setHeaderField("reference", t)} align="left" serif bold style={quoStyles.hInput} testID="tiles-reference" />
-            </View>
-          </View>
-          <View style={quoStyles.hRow}>
-            <Text style={quoStyles.hLabel}>ATTENDED BY :</Text>
-            <View style={{ flex: 1 }}>
-              <CellInput value={doc.header.attendedBy} onChangeText={(t) => doc.setHeaderField("attendedBy", t)} align="left" serif bold style={quoStyles.hInput} testID="tiles-attended" />
-            </View>
-          </View>
-          <View style={quoStyles.hRow}>
-            <Text style={quoStyles.hLabel}>ADDRESS :</Text>
-            <View style={{ flex: 1 }}>
-              <CellInput value={doc.header.address} onChangeText={(t) => doc.setHeaderField("address", t)} align="left" serif bold style={quoStyles.hInput} testID="tiles-address" />
-            </View>
-          </View>
-        </View>
-        <View style={{ flex: 1, gap: 2, paddingLeft: 24 }}>
-          <View style={quoStyles.hRow}>
-            <Text style={[quoStyles.hLabel, { width: 108, textAlign: "left" }]}>QUOTATION NO:</Text>
-            <View style={{ flex: 1 }}>
-              <CellInput value={doc.header.docNumber} onChangeText={(t) => doc.setHeaderField("docNumber", t)} align="left" serif bold style={quoStyles.hInput} testID="tiles-doc-number" />
-            </View>
-          </View>
-          <View style={quoStyles.hRow}>
-            <Text style={[quoStyles.hLabel, { width: 108, textAlign: "left" }]}>DATE:</Text>
-            <View style={{ flex: 1 }}>
-              <CellInput value={doc.header.docDate} onChangeText={(t) => doc.setHeaderField("docDate", t)} align="left" serif bold style={quoStyles.hInput} testID="tiles-date" />
-            </View>
-          </View>
-          <View style={quoStyles.hRow}>
-            <Text style={[quoStyles.hLabel, { width: 108, textAlign: "left" }]}>PREPARED BY:</Text>
-            <View style={{ flex: 1 }}>
-              <CellInput value={doc.header.preparedBy} onChangeText={(t) => doc.setHeaderField("preparedBy", t)} align="left" serif bold style={quoStyles.hInput} testID="tiles-prepared" />
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Product grid */}
+      <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
+      <View style={paperStyles.ruleThick} />
       <View style={quoStyles.table}>
-        <View style={[quoStyles.tr, { minHeight: 34 }]}>
+        <View style={[quoStyles.tr, { backgroundColor: HEAD_GREY, minHeight: 34 }]}>
           {headLabels.map((h, i) => (
             <View key={h} style={[quoStyles.td, flex(i), i === headLabels.length - 1 && { borderRightWidth: 0 }]}>
               <Text style={[quoStyles.th, i === 5 && { color: "#E00000" }]}>{h}</Text>
@@ -953,9 +1072,15 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
           ))}
         </View>
         {doc.rows.map((row, index) => (
-          <View key={row.key} style={[quoStyles.tr, { minHeight: 76 }]}>
+          <View key={row.key} style={[quoStyles.tr, { minHeight: 68 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
             <View style={[quoStyles.td, flex(0)]}><Text style={quoStyles.cellText}>{index + 1}</Text></View>
-            <View style={[quoStyles.td, flex(1)]}>
+            <View style={[quoStyles.td, flex(1), { padding: 2 }]}>
+              {row.image ? <TileImageCell uri={row.image} /> : null}
+            </View>
+            <View style={[quoStyles.td, flex(2)]}>
+              <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(3)]}>
               <ProductCell
                 row={row}
                 bold
@@ -964,28 +1089,29 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
                 testID={`tiles-product-${index}`}
               />
             </View>
-            <View style={[quoStyles.td, flex(2), { padding: 2 }]}>
-              {row.image ? <Image source={{ uri: row.image }} resizeMode="contain" style={{ width: "100%", aspectRatio: 16 / 10 }} /> : null}
-            </View>
-            <View style={[quoStyles.td, flex(3)]}>
-              <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
-            </View>
             <View style={[quoStyles.td, flex(4)]}>
               <CellInput value={row.size} onChangeText={(t) => doc.updateRow(row.key, { size: t })} bold testID={`tiles-size-${index}`} />
             </View>
             <View style={[quoStyles.td, flex(5)]}>
               <CellInput value={row.rateSqft} onChangeText={(t) => doc.updateRow(row.key, { rateSqft: t })} red bold testID={`tiles-rate-sqft-${index}`} />
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 2, marginTop: 1 }}>
+                <Text style={quoStyles.sqftLabel}>/box</Text>
+                <CellInput value={row.boxSqft} onChangeText={(t) => doc.updateRow(row.key, { boxSqft: t })} style={quoStyles.sqftInput} testID={`tiles-box-sqft-${index}`} />
+              </View>
             </View>
             <View style={[quoStyles.td, flex(6)]}>
-              <CellInput value={row.rateBox} onChangeText={(t) => doc.updateRow(row.key, { rateBox: t })} testID={`tiles-rate-box-${index}`} />
+              <CellInput value={row.offerRate} onChangeText={(t) => doc.updateRow(row.key, { offerRate: t })} bold testID={`tiles-offer-rate-${index}`} />
             </View>
             <View style={[quoStyles.td, flex(7)]}>
-              <CellInput value={row.totalBox} onChangeText={(t) => doc.updateRow(row.key, { totalBox: t })} bold testID={`tiles-total-box-${index}`} />
+              <CellInput value={row.rateBox} onChangeText={(t) => doc.updateRow(row.key, { rateBox: t })} testID={`tiles-rate-box-${index}`} />
             </View>
             <View style={[quoStyles.td, flex(8)]}>
-              <CellInput value={row.pcsBox} onChangeText={(t) => doc.updateRow(row.key, { pcsBox: t })} bold testID={`tiles-pcs-box-${index}`} />
+              <CellInput value={row.totalBox} onChangeText={(t) => doc.updateRow(row.key, { totalBox: t })} bold testID={`tiles-total-box-${index}`} />
             </View>
-            <View style={[quoStyles.td, flex(9), { borderRightWidth: 0 }]}>
+            <View style={[quoStyles.td, flex(9)]}>
+              <CellInput value={row.pcsBox} onChangeText={(t) => doc.updateRow(row.key, { pcsBox: t })} bold placeholder="Box/Pcs" testID={`tiles-pcs-box-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
               <CellInput value={row.total} onChangeText={(t) => doc.updateRow(row.key, { total: t })} testID={`tiles-total-${index}`} />
             </View>
             <RowSideControls
@@ -997,49 +1123,20 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
             />
           </View>
         ))}
-      </View>
-
-      {/* Totals stack */}
-      <View style={{ alignItems: "flex-end", marginTop: 8 }}>
-        <View style={{ width: 250 }}>
-          <View style={[quoStyles.sumRow, { alignSelf: "flex-start", borderWidth: 1, width: 150 }]}>
-            <Text style={quoStyles.sumText}>TOTAL BOX : {totals.boxes ? `${Math.round(totals.boxes * 100) / 100}` : "0"}</Text>
+        <View style={[quoStyles.tr, { backgroundColor: HEAD_GREY, minHeight: 30 }]}>
+          <View style={[quoStyles.td, flex(0)]} />
+          <View style={[quoStyles.td, flex(1)]} />
+          <View style={[quoStyles.td, flex(2)]} />
+          <View style={[quoStyles.td, flex(3)]}><Text style={[quoStyles.cellText, { fontWeight: "700" }]}>TOTAL</Text></View>
+          <View style={[quoStyles.td, flex(4)]} />
+          <View style={[quoStyles.td, flex(5)]} />
+          <View style={[quoStyles.td, flex(6)]} />
+          <View style={[quoStyles.td, flex(7)]} />
+          <View style={[quoStyles.td, flex(8)]} />
+          <View style={[quoStyles.td, flex(9)]} />
+          <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
+            <Text style={[quoStyles.cellText, { fontWeight: "700" }]}>{money(totals.subtotal)}</Text>
           </View>
-          <View style={{ flexDirection: "row", borderWidth: 1, borderColor: "#111", marginTop: -1 }}>
-            <View style={[quoStyles.sumCell, { flex: 1.5 }]}><Text style={quoStyles.sumText}>SUBTOTAL</Text></View>
-            <View style={[quoStyles.sumCell, { flex: 1, borderRightWidth: 0 }]}><Text style={quoStyles.sumText}>{money(totals.subtotal)}</Text></View>
-          </View>
-          <View style={{ flexDirection: "row", borderWidth: 1, borderColor: "#111", marginTop: -1 }}>
-            <View style={[quoStyles.sumCell, { flex: 1.5 }]}><Text style={quoStyles.sumText}>TRANSPORTATION</Text></View>
-            <View style={[quoStyles.sumCell, { flex: 1, borderRightWidth: 0 }]}><Text style={quoStyles.sumText}>EXTRA</Text></View>
-          </View>
-          <View style={{ flexDirection: "row", borderWidth: 1, borderColor: "#111", marginTop: -1 }}>
-            <View style={[quoStyles.sumCell, { flex: 1.5 }]}><Text style={[quoStyles.sumText, { color: "#E00000" }]}>TOTAL QUOTE</Text></View>
-            <View style={[quoStyles.sumCell, { flex: 1, borderRightWidth: 0 }]}><Text style={[quoStyles.sumText, { color: "#E00000" }]}>{money(totals.subtotal)}</Text></View>
-          </View>
-        </View>
-      </View>
-
-      {/* Notes + terms + blue footer */}
-      <View style={{ alignItems: "center", marginTop: 14, gap: 2 }}>
-        <Text style={quoStyles.noteRed}>☺ LABOUR COST EXTRA</Text>
-        <Text style={quoStyles.noteHead}>☺ TERMS&amp;CONDITION :</Text>
-        <View style={{ gap: 1, marginTop: 3 }}>
-          {[
-            "•Above given rate are including GST @18%.",
-            "•Freight & unloading charges will be extra as applicable.",
-            "•Payment - 100% Advance.",
-            "•All orders / Deliveries are subject to material availability.",
-            "•price tends to change in case of changes in govt. levy.",
-            "•cheque should be written in favour of BUILDCON HOUSE.",
-            "•After confirmation of P.O. material will be delivered within 15 days.",
-            "•RATE VALID FOR 5 DAYS.",
-          ].map((line) => <Text key={line} style={quoStyles.termLine}>{line}</Text>)}
-        </View>
-        <View style={{ marginTop: 10, gap: 1, alignItems: "center" }}>
-          <Text style={quoStyles.blueLine}>ADDRESS :- Before Gujarat housing, Nr.katariya motors, 2nd 150ft ring road, Rajkot-360005</Text>
-          <Text style={quoStyles.blueLine}>Mail :buildconhouse@gmail.com</Text>
-          <Text style={quoStyles.blueLine}>Mo:+91 99099 06652</Text>
         </View>
       </View>
 
@@ -1054,33 +1151,16 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
 }
 
 const quoStyles = StyleSheet.create({
-  paper: {
-    width: PAPER_W, backgroundColor: SHEET_BLUE, borderWidth: 2, borderColor: "#111",
-    paddingHorizontal: 26, paddingVertical: 20,
-    ...(Platform.OS === "web" ? { boxShadow: "0 10px 34px rgba(20,20,20,0.16)" } as any : {}),
-  },
-  title: { fontFamily: SERIF, fontSize: 30, fontWeight: "700", color: "#111" },
-  hRow: { flexDirection: "row", alignItems: "center", gap: 6, zIndex: 60 },
-  hLabel: { fontFamily: SERIF, fontSize: 12, fontWeight: "700", color: "#111", width: 116, textAlign: "right" },
-  hInput: { fontFamily: SERIF, fontSize: 12, fontWeight: "700", paddingVertical: 1 },
-  table: { marginTop: 12, borderWidth: 1.4, borderColor: "#111" },
+  table: { marginTop: 14, borderWidth: 1.4, borderColor: "#111" },
   tr: { flexDirection: "row", borderTopWidth: 1, borderColor: "#111", alignItems: "stretch", backgroundColor: "#fff" },
   td: {
     borderRightWidth: 1, borderColor: "#111",
-    alignItems: "center", justifyContent: "center", paddingHorizontal: 3, paddingVertical: 3,
+    alignItems: "center", justifyContent: "center", paddingHorizontal: 3, paddingVertical: 4,
   },
-  th: { fontFamily: SERIF, fontSize: 11, fontWeight: "700", fontStyle: "italic", color: "#111", textAlign: "center" },
+  th: { fontSize: 10.2, fontWeight: "700", color: "#111", textAlign: "center" },
   cellText: { fontSize: 12, color: "#111" },
-  sumRow: { borderColor: "#111", backgroundColor: "#fff", paddingVertical: 4, alignItems: "center" },
-  sumCell: {
-    borderRightWidth: 1, borderColor: "#111", backgroundColor: "#fff",
-    paddingVertical: 4, alignItems: "center", justifyContent: "center",
-  },
-  sumText: { fontSize: 11.5, fontWeight: "700", color: "#111", fontVariant: ["tabular-nums"] },
-  noteRed: { fontSize: 11.5, fontWeight: "700", color: "#E00000" },
-  noteHead: { fontSize: 11.5, fontWeight: "700", color: "#111", marginTop: 2 },
-  termLine: { fontFamily: SERIF, fontSize: 10.5, color: "#111", textAlign: "center" },
-  blueLine: { fontFamily: SERIF, fontSize: 10.5, fontWeight: "700", color: "#2E75B6", textAlign: "center" },
+  sqftLabel: { fontSize: 8.5, color: "#666" },
+  sqftInput: { fontSize: 9.5, width: 34, paddingVertical: 0 },
 });
 
 // ---------------------------------------------------------------------------

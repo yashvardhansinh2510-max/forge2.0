@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { api, clearToken, getToken, getTokenKind, setToken, TokenKind } from "@/src/api/client";
+import { getSelectedFloorId, setSelectedFloorId } from "@/src/hooks/use-floor-access";
 
 export type StaffUser = {
   id: string;
@@ -75,6 +76,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginStaff = useCallback(async (email: string, password: string) => {
     const res = await api.post<{ access_token: string; user: StaffUser }>("/auth/login", { email, password });
     await setToken(res.access_token, "staff");
+    // Pin an active floor BEFORE any screen mounts. `useFloorAccess` also
+    // resolves one, but it does so asynchronously — until it lands, every
+    // request goes out with no X-Floor-Id and the backend answers unscoped,
+    // so the first dashboard/list paint after a fresh login showed both
+    // business units' data merged together.
+    if (!(await getSelectedFloorId())) {
+      const first = res.user.floor_ids?.[0];
+      if (first) await setSelectedFloorId(first);
+    }
     setKind("staff"); setStaff(res.user); setCustomer(null);
   }, []);
 

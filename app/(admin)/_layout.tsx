@@ -19,6 +19,7 @@ import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
+import { TILES_FLOOR_ID } from "@/src/constants/floors";
 
 type NavItem = { href: string; label: string; icon: FeatherName; match: string; roles?: string[] };
 
@@ -116,22 +117,23 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
     if (id === selectedFloorId) return;
     await selectFloor(id);
     // Data on every mounted screen is scoped by the request header, so a
-    // floor change requires a clean reload to refetch everything.
-    if (Platform.OS === "web" && typeof window !== "undefined") window.location.reload();
+    // floor change requires a clean reload to refetch everything. Land on
+    // the dashboard rather than reloading in place: a floor-specific screen
+    // (any Tiles page) re-pins its own floor on mount, so reloading there
+    // would silently undo the switch the user just made.
+    if (Platform.OS === "web" && typeof window !== "undefined") window.location.assign("/dashboard");
   };
-  const items = [
-    ...(access.all_floors ? [{
-      label: `All floors${selectedFloorId === "" ? " · Active" : ""}`,
-      icon: (selectedFloorId === "" ? "check" : "layers") as FeatherName,
-      onPress: () => { void pick(""); },
-    }] : []),
-    ...floors.map((floor) => ({
-      label: `${floor.name}${floor.id === selectedFloorId ? " · Active" : ""}`,
-      icon: (floor.id === selectedFloorId ? "check" : "layers") as FeatherName,
-      onPress: () => { void pick(floor.id); },
-    })),
-  ];
-  const currentLabel = selectedFloorId === "" ? "All floors" : selected?.name || "Select floor";
+  // No "All floors" entry: an unscoped selection sends no X-Floor-Id at
+  // all, which made every business module (Quotations, Purchases, Tile
+  // Orders, Payments, Follow-ups…) return both business units' records at
+  // once. One concrete floor is always active — company-wide reporting
+  // lives in Sales Data's own explicit floor filter, not in the shell.
+  const items = floors.map((floor) => ({
+    label: `${floor.name}${floor.id === selectedFloorId ? " · Active" : ""}`,
+    icon: (floor.id === selectedFloorId ? "check" : "layers") as FeatherName,
+    onPress: () => { void pick(floor.id); },
+  }));
+  const currentLabel = selected?.name || "Select floor";
   return (
     <Menu align={compact ? "right" : "left"} items={items}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, height: 40, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: layout.hairline, borderColor: color.line }}>
@@ -157,11 +159,15 @@ const TILES_ITEMS: NavItem[] = [
 function useTilesNav() {
   const router = useRouter();
   const { access, selectedFloorId, selectFloor } = useFloorAccess();
-  const groundAccessible = Boolean(access && (access.all_floors || access.floor_ids.includes("ground-floor")));
-  const items = groundAccessible ? TILES_ITEMS : [];
+  const groundAccessible = Boolean(access && (access.all_floors || access.floor_ids.includes(TILES_FLOOR_ID)));
+  // Ground Floor's Tiles module is not merely *reachable* from Ground
+  // Floor — it must be invisible from every other business unit. Showing
+  // these while "The Sanitary Bathroom" is the active floor is what put
+  // Tile Orders and Quotation Tiles in Sanitary's navigation.
+  const items = groundAccessible && selectedFloorId === TILES_FLOOR_ID ? TILES_ITEMS : [];
   const open = async (item: NavItem) => {
-    if (selectedFloorId !== "ground-floor") {
-      await selectFloor("ground-floor");
+    if (selectedFloorId !== TILES_FLOOR_ID) {
+      await selectFloor(TILES_FLOOR_ID);
       if (Platform.OS === "web" && typeof window !== "undefined") {
         // Full reload so every mounted screen refetches under the new floor
         // scope — mirrors FloorSwitcher.pick().
