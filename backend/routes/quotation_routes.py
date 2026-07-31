@@ -30,7 +30,7 @@ from services.domain_outbox import (
 )
 from services.followup_engine import reconcile_followups
 from services.pricing import effective_discount_pct as _effective_discount_pct
-from services.pricing import per_line_net_amounts
+from services.pricing import net_amounts, per_line_net_amounts, stamp_net_amounts
 from services.pricing import recalc_quotation_totals as _recalc
 from services.sequence import next_number
 from services.tiles_stage import can_move_to_quotation, can_place_order
@@ -204,6 +204,11 @@ async def create_quotation(
             raise HTTPException(status_code=404, detail="Referrer not found")
 
     totals = _recalc(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {})
+    # Denormalize each line's post-discount total so analytics can sum one
+    # field instead of re-deriving the discount cascade per report.
+    _line_nets = net_amounts(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {})
+    for _it in items:
+        _it.net_amount = _line_nets.get(_it.id, 0.0)
     quot = Quotation(
         number=await _next_number(),
         customer_id=customer["id"],
@@ -257,6 +262,27 @@ async def create_quotation(
 async def get_quotation(quotation_id: str, user: UserPublic = Depends(get_current_user)):
     doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
     return Quotation(**doc)
+
+
+def _stamped_items_for_update(update: dict, doc: dict) -> list[dict]:
+    """Re-stamp net_amount on the items that are about to be persisted.
+
+    Reads each pricing input from the update when present and the stored doc
+    otherwise. A discount-only edit carries no items in the body but still
+    re-prices every line, so the stored items are re-stamped too — skipping
+    that is how a stale net_amount would silently under- or over-report
+    product and brand revenue.
+    """
+    items = update.get("items", doc.get("items", []) or [])
+    return stamp_net_amounts(
+        [dict(raw) for raw in items],
+        update.get("project_discount_pct", doc.get("project_discount_pct", 0) or 0),
+        update.get("category_discounts", doc.get("category_discounts", {}) or {}),
+        {
+            k: RoomDiscountCfg(**v)
+            for k, v in (update.get("room_discounts", doc.get("room_discounts", {}) or {})).items()
+        },
+    )
 
 
 @router.patch("/{quotation_id}", response_model=Quotation)
@@ -358,6 +384,7 @@ async def update_quotation(
             room_discounts_for_calc,
         )
         update.update(totals)
+        update["items"] = _stamped_items_for_update(update, doc)
 
     if not update:
         return Quotation(**doc)
