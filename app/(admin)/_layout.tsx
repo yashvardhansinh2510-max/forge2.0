@@ -35,7 +35,7 @@ const PRIMARY: NavItem[] = [
 
 const SECONDARY: NavItem[] = [
   { href: "/(admin)/notifications", label: "Notifications", icon: "bell", match: "notifications" },
-  { href: "/(admin)/sales-data", label: "Sales Data", icon: "trending-up", match: "sales-data" },
+  { href: "/(admin)/sales-data/executive", label: "Sales Data", icon: "trending-up", match: "sales-data" },
   { href: "/(admin)/team", label: "Team", icon: "user-check", match: "team", roles: ["owner", "admin", "manager"] },
   { href: "/(admin)/settings", label: "Settings", icon: "settings", match: "settings" },
 ];
@@ -333,7 +333,7 @@ const MORE_ITEMS: NavItem[] = [
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
   { href: "/(admin)/notifications", label: "Notifications", icon: "bell", match: "notifications" },
-  { href: "/(admin)/sales-data", label: "Sales Data", icon: "trending-up", match: "sales-data" },
+  { href: "/(admin)/sales-data/executive", label: "Sales Data", icon: "trending-up", match: "sales-data" },
   { href: "/(admin)/team", label: "Team", icon: "user-check", match: "team", roles: ["owner", "admin", "manager"] },
   { href: "/(admin)/settings", label: "Settings", icon: "settings", match: "settings" },
 ];
