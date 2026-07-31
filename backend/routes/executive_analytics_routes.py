@@ -139,6 +139,18 @@ async def products(
     return {"page": page, "items": await _rows("quotations", pipeline)}
 
 
+@router.get("/brands/{brand_id}")
+async def brand_detail(
+    brand_id: str, floor_id: Optional[str] = None, preset: str = "this_month", date_from: Optional[str] = None,
+    date_to: Optional[str] = None, granularity: Granularity = "month", user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
+):
+    brand = await db.brands.find_one({"id": brand_id}, {"_id": 0, "id": 1, "name": 1, "floor_id": 1})
+    if not brand:
+        raise HTTPException(status_code=404, detail="Brand not found")
+    analytics = await dashboard(floor_id, preset, date_from, date_to, brand_id, None, None, granularity, user)
+    return {"brand": brand, **analytics}
+
+
 @router.get("/export")
 async def export_orders(
     format: Literal["csv", "xlsx", "pdf"] = "csv", floor_id: Optional[str] = None, preset: str = "this_month",
