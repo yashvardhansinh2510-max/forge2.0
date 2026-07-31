@@ -126,7 +126,6 @@ export default function Today() {
     // load and is best-effort housekeeping, not something the user should
     // ever sit on a skeleton for. Same "soft" semantics as before — we just
     // no longer block the critical render path on it.
-    api.post("/followups/reconcile").catch(() => {});
     const [m, fus, st, ps, rq, sh] = await Promise.allSettled([
       api.get<Mission>("/followups/mission"),
       api.get<Fu[]>("/followups?limit=12"),
