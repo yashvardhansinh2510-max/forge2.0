@@ -12,6 +12,7 @@ const requiredScreenTokens = [
   "View Chalan",
   "Print Chalan",
   "View Dispatch",
+  "dispatchRowKey",
 ];
 const requiredClientTokens = [
   "releaseMaterial:",

@@ -14909,3 +14909,6 @@ agent_communication:
   - agent: "main"
     message: |
       During pre-test browser verification, one login request stalled before reaching the backend. RCA found the shared Expo fetch wrapper had no timeout. Added a 30-second AbortController safeguard in frontend/src/api/client.ts that preserves all JWT tokens, endpoints, and normal error behavior while returning the existing ApiError shape on timeout. After Expo restart, owner login and the restored Dispatch List route loaded successfully in the live phone preview. Include a login-to-Tile-Orders smoke check in this run.
+  - agent: "main"
+    message: |
+      Iteration 18 found a HIGH priority Dispatch List console warning: the React key only used dispatch_id/chalan_id/tile_name, which collides when one Chalan repeats a product name. Fixed index.tsx by using a dedicated dispatchRowKey(row, index) and suffixed all row-level action testIDs with that same index to guarantee unique rendered identities. Lint and the CI route-contract guard pass. Retest Dispatch List with duplicate product-line data and confirm zero React key/console errors.
