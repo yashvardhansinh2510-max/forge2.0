@@ -411,6 +411,11 @@ class QuotationLineItem(BaseModel):
     qty: float = Field(default=1, gt=0)
     unit_price: float = Field(default=0, ge=0)  # final selling price per unit ("offer rate")
     mrp: Optional[float] = Field(default=None, ge=0)  # catalog MRP at the time this line was added; None → PDF falls back to unit_price
+    # Post-discount total for this line, resolved through services/pricing.py's
+    # cascade and denormalized at write time. Analytics sums THIS field, so
+    # product/brand/category revenue reconciles to grand_total by construction
+    # instead of re-deriving discounts per report and drifting.
+    net_amount: Optional[float] = Field(default=None, ge=0)
     # BACKEND_AUDIT_2026-07-17.md Medium #36: unbounded before this — a
     # negative discount_pct silently acts as a MARKUP (net price goes up),
     # and anything over 100 makes net go negative (the business pays the
