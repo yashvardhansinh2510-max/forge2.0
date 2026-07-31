@@ -42,7 +42,7 @@ def _date_range(preset: str, custom_from: Optional[str], custom_to: Optional[str
 
 async def _match(
     user: UserPublic, floor_id: Optional[str], preset: str, date_from: Optional[str], date_to: Optional[str],
-    brand_id: Optional[str], salesperson_id: Optional[str], referrer_type: Optional[str],
+    brand_id: Optional[str], salesperson_id: Optional[str], referrer_type: Optional[str], customer_id: Optional[str] = None, referrer_id: Optional[str] = None,
 ) -> dict:
     allowed = accessible_floor_ids(user)
     floors = [floor_id] if floor_id and floor_id != "all" else allowed
@@ -53,6 +53,8 @@ async def _match(
     if floors is not None: query["floor_id"] = {"$in": floors}
     if salesperson_id: query["created_by"] = salesperson_id
     if referrer_type: query["referrer_type"] = referrer_type
+    if customer_id: query["customer_id"] = customer_id
+    if referrer_id: query["referrer_id"] = referrer_id
     if start or end:
         query["updated_at"] = {k: v for k, v in (("$gte", start), ("$lte", end)) if v}
     if brand_id:
@@ -82,10 +84,10 @@ async def filters(user: UserPublic = Depends(require_roles("owner", "admin", "ma
 async def dashboard(
     floor_id: Optional[str] = None, preset: str = "this_month", date_from: Optional[str] = None,
     date_to: Optional[str] = None, brand_id: Optional[str] = None, salesperson_id: Optional[str] = None,
-    referrer_type: Optional[str] = None, granularity: Granularity = "month",
+    referrer_type: Optional[str] = None, granularity: Granularity = "month", customer_id: Optional[str] = None, referrer_id: Optional[str] = None,
     user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
 ):
-    match = await _match(user, floor_id, preset, date_from, date_to, brand_id, salesperson_id, referrer_type)
+    match = await _match(user, floor_id, preset, date_from, date_to, brand_id, salesperson_id, referrer_type, customer_id, referrer_id)
     dt = {"$dateFromString": {"dateString": "$updated_at"}}
     fmt = {"day": "%Y-%m-%d", "week": "%G-W%V", "month": "%Y-%m", "year": "%Y"}.get(granularity, "%Y-Q")
     bucket = {"$dateToString": {"format": fmt, "date": dt}}
@@ -100,6 +102,19 @@ async def dashboard(
         _rows("quotations", [{"$match": match}, {"$group": {"_id": {"id": "$created_by", "name": "$created_by_name"}, "revenue": {"$sum": "$grand_total"}, "orders": {"$sum": 1}, "aov": {"$avg": "$grand_total"}}}, {"$sort": {"revenue": -1}}, {"$limit": 25}, {"$project": {"_id": 0, "salesperson_id": "$_id.id", "name": "$_id.name", "revenue": 1, "orders": 1, "aov": 1}}]),
         _rows("quotations", [{"$match": {**match, "referrer_id": {"$ne": None}}}, {"$group": {"_id": {"id": "$referrer_id", "name": "$referrer_name", "type": "$referrer_type"}, "revenue": {"$sum": "$grand_total"}, "orders": {"$sum": 1}, "aov": {"$avg": "$grand_total"}}}, {"$sort": {"revenue": -1}}, {"$limit": 25}, {"$project": {"_id": 0, "referrer_id": "$_id.id", "name": "$_id.name", "type": "$_id.type", "revenue": 1, "orders": 1, "aov": 1}}]),
     )
+    floor_scope = {"floor_id": match["floor_id"]} if "floor_id" in match else {}
+    activity_dates = {"created_at": match["updated_at"]} if "updated_at" in match else {}
+    walkin_counts, selection_counts, quotation_counts, followup_counts = await __import__("asyncio").gather(
+        _rows("walkins", [{"$match": {**floor_scope, **activity_dates, "is_deleted": False}}, {"$group": {"_id": "$salesperson_id", "walkins": {"$sum": 1}}}]),
+        _rows("quotations", [{"$match": {**floor_scope, **activity_dates, "doc_type": "tiles_selection"}}, {"$group": {"_id": "$created_by", "selections": {"$sum": 1}}}]),
+        _rows("quotations", [{"$match": {**floor_scope, **activity_dates, "doc_type": {"$in": ["tiles_quotation", "standard"]}}}, {"$group": {"_id": "$created_by", "quotations": {"$sum": 1}}}]),
+        _rows("followups", [{"$match": {**floor_scope}}, {"$group": {"_id": "$assigned_to", "total": {"$sum": 1}, "completed": {"$sum": {"$cond": [{"$eq": ["$status", "done"]}, 1, 0]}}}}]),
+    )
+    activity_maps = [{row.get("_id"): row for row in rows} for rows in (walkin_counts, selection_counts, quotation_counts, followup_counts)]
+    for row in salespeople:
+        sid = row.get("salesperson_id")
+        walks, selections, quotes, followups = (m.get(sid, {}) for m in activity_maps)
+        row.update({"walkins": walks.get("walkins", 0), "selections": selections.get("selections", 0), "quotations": quotes.get("quotations", 0), "conversion_rate": round(row.get("orders", 0) / walks.get("walkins", 1) * 100, 1) if walks.get("walkins") else 0, "followup_completion_rate": round(followups.get("completed", 0) / followups.get("total", 1) * 100, 1) if followups.get("total") else 0})
     totals = kpi[0] if kpi else {"revenue": 0, "orders": 0, "customers": [], "gross_sales": 0}
     return {"meta": {"revenue_definition": "Confirmed and completed orders only"}, "kpis": {"revenue": round(totals["revenue"], 2), "orders": totals["orders"], "aov": round(totals["revenue"] / totals["orders"], 2) if totals["orders"] else 0, "gross_sales": round(totals["gross_sales"], 2), "customers": len(totals["customers"])}, "trend": trend, "floors": floors, "brands": brands, "products": products, "customers": customers, "salespeople": salespeople, "referrals": referrals}
 
@@ -149,6 +164,39 @@ async def brand_detail(
         raise HTTPException(status_code=404, detail="Brand not found")
     analytics = await dashboard(floor_id, preset, date_from, date_to, brand_id, None, None, granularity, user)
     return {"brand": brand, **analytics}
+
+
+@router.get("/customers/{customer_id}")
+async def customer_lifetime(
+    customer_id: str, floor_id: Optional[str] = None, user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
+):
+    customer = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    analytics = await dashboard(floor_id=floor_id, preset="all", customer_id=customer_id, user=user)
+    return {"customer": customer, "lifetime": analytics}
+
+
+@router.get("/salespeople/{salesperson_id}")
+async def salesperson_detail(
+    salesperson_id: str, floor_id: Optional[str] = None, preset: str = "this_month", user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
+):
+    salesperson = await db.users.find_one({"id": salesperson_id}, {"_id": 0, "id": 1, "full_name": 1, "role": 1})
+    if not salesperson:
+        raise HTTPException(status_code=404, detail="Salesperson not found")
+    analytics = await dashboard(floor_id=floor_id, preset=preset, salesperson_id=salesperson_id, user=user)
+    return {"salesperson": salesperson, **analytics}
+
+
+@router.get("/referrers/{referrer_id}")
+async def referrer_detail(
+    referrer_id: str, floor_id: Optional[str] = None, preset: str = "this_month", user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
+):
+    referrer = await db.referrers.find_one({"id": referrer_id}, {"_id": 0})
+    if not referrer:
+        raise HTTPException(status_code=404, detail="Referrer not found")
+    analytics = await dashboard(floor_id=floor_id, preset=preset, referrer_id=referrer_id, user=user)
+    return {"referrer": referrer, **analytics}
 
 
 @router.get("/export")
