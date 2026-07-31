@@ -137,6 +137,11 @@ with key `analytics_targets`:
 Edited in Settings. Unset targets are **excluded from the score**, which then
 reports how many signals it is based on. No invented benchmarks, ever.
 
+**This is the interim entry point, not the final one.** The Goals & Targets
+workspace (§16, Phase 8) becomes the real home for declaring targets and measuring
+progress against them. It reads and writes this same `settings.analytics_targets`
+document — so targets are stored once, and nothing is built twice.
+
 ---
 
 ## 4. Backend architecture — `backend/services/analytics/`
@@ -317,6 +322,7 @@ Customer → Orders → Products → Brands
 Health Score → component → the workspace that resolves it
 Attention / Opportunity row → the screen that acts on it
 Operations row → the screen that unblocks the money
+Activity Feed entry → the record the event happened to
 ```
 
 **Terminal nodes are existing operational screens** — the executive system hands
@@ -350,6 +356,22 @@ documentation — it ships on the card, in small type, under the value.
 
 ### Workspace 1 — Executive Overview (`/sales-data`, `/sales-data/executive`)
 
+**Above-the-fold contract.** The first screen contains exactly six things, in this
+order, and nothing else:
+
+1. Business Health
+2. Morning Brief
+3. Revenue KPIs
+4. Money Blocked
+5. Attention Center
+6. Opportunity Center
+
+Within five seconds of opening Sales Data the owner knows how healthy the business
+is, what happened yesterday, how much money came in, how much is blocked, what needs
+attention now, and where the biggest opportunities are. Everything else on this
+workspace lives below the fold. **Adding a seventh element above the fold requires
+amending this contract** — the discipline is the feature.
+
 | Card | Source | Aggregation | Drill-down | Owner question (shown on card) |
 |---|---|---|---|---|
 | **Business Health Score** | §8 | weighted component score, 0-100 | expands to every component | "How healthy is the business right now?" |
@@ -366,6 +388,9 @@ documentation — it ships on the card, in small type, under the value.
 | Revenue trend | `ORD` | bucket by day/week/month/quarter/year | Sales Performance | "Where is the business heading?" |
 | Revenue by Floor | `ORD` | group `floor_id` | floor-filtered overview | "Which floor is winning?" |
 | Top 5 movers | brands, products, referrers, salespeople | rank + rank movement vs prior | respective workspace | "Who and what is driving the month?" |
+| **Activity Feed** | §13.1 | live executive event stream | each entry to its record | "What is happening in the business right now?" |
+
+Rows below the Activity Feed line are below-the-fold content.
 
 ### Workspace 2 — Performance (`/sales-data/sales`)
 
@@ -692,6 +717,62 @@ Sources: `walkins`, `quotations` (both doc types), `customer_orders`, `dispatche
 `quotation_id`, `entity_type`, `event_type`, `summary`) for the fine-grained
 interaction history between stages.
 
+### 13.1 Executive Activity Feed
+
+BuildCon House is a relationship-driven business, and the owner should be able to
+see it moving without navigating into a workspace. The feed is the live,
+company-wide view of the same event stream that powers the per-relationship
+timelines above — same collection, same floor derivation, same drill-down targets.
+
+```
+Today
+  09:15   Rahul closed Order #234                    ₹4.8L
+  10:02   Architect ABC created new quotation        ₹12.4L
+  10:30   Payment received                            ₹2.3L
+  11:40   Dispatch completed
+  12:15   Customer follow-up overdue
+```
+
+Grouped by Today / Yesterday / This Week. Every entry links to its record.
+
+**Executive allowlist, not a noise filter.** `activity_events` is 63% operational
+noise — `product.image_uploaded` (890 rows) and `user.login` (497) are 1,387 of
+2,413. The feed renders only events that carry executive meaning:
+
+| Event | Feed line |
+|---|---|
+| `quotation.order_placed` | order closed, with value |
+| `quotation.created` | new quotation, with value and referrer if set |
+| `quotation.status_changed` | approved / rejected transitions only |
+| `payment.recorded` | payment received, with amount |
+| `ready_batch.created` | material released |
+| `purchase.chalan_dispatched` | dispatch completed |
+| `purchase.chalan_godown_received` | godown receipt |
+| `walkin.created` | new walk-in |
+| `walkin.selection_completed` | selection done |
+| `followup.call_logged` | customer contacted |
+| `supplier.assigned` | supplier assigned to an order |
+
+New event types are opt-in: an event not on this list never reaches the feed, so
+adding instrumentation elsewhere in the app can never flood the owner's view.
+
+**Two constraints this collection imposes, both handled by joining rather than by
+changing the write path:**
+
+- **No `floor_id` on `activity_events`.** Per the 2026-07-17 finding, stamping it
+  per event needs `services/activity_log.log_event` updated at 30+ call sites and
+  was deliberately deferred. The feed therefore derives floor by joining the
+  referenced entity (`quotation_id` → quotation's `floor_id`, `customer_id` →
+  customer, `purchase_id` → PO). Events whose entity no longer resolves are omitted
+  rather than shown unscoped — a floor leak here would be the same class of bug the
+  2026-07-31 floor-isolation work closed.
+- **No money in `payload`.** It carries small diffs like `{from: "draft", to:
+  "approved"}`. Values shown in the feed are joined from the referenced quotation,
+  payment, or order at read time — never stored twice, never drifting from the books.
+
+The feed reuses the standard cache versioning (§4.4) so it invalidates on the same
+writes as everything else.
+
 ---
 
 ## 14. Global search
@@ -733,32 +814,59 @@ produce results that dead-end, violating §6.
 /sales-data/referrals/interior-designers
 /sales-data/products
 /sales-data/brands
+/sales-data/suppliers
 /sales-data/customers
+/sales-data/relationships
+/sales-data/collections
 /sales-data/operations
 /sales-data/forecasting
+/sales-data/goals
 ```
 
 Sidebar keeps the single entry **Sales Data**. Existing `/sales-data/*` deep links
 keep working; legacy screens and `sales_data_routes.py` are removed only after the
 replacing phase is verified feature-for-feature.
 
-### 15.2 Workspace navigation — five visible, rest under More
+### 15.2 Workspace navigation — grouped by business question
 
-The owner spends most of their time in a handful of places. The switcher shows:
+Engineering-shaped navigation (Referrals, Brands, Forecasting as peers) is not how
+an owner thinks. Navigation groups by the question being asked; **the backend and
+the route table do not change at all.**
 
 ```
-Executive · Performance · Customers · Products · Operations · More ▾
+Sales Data
+  Overview
+  Money      ▸ Revenue · Performance · Collections · Revenue Trends · Forecasting
+  Customers  ▸ Customers · Architects · Interior Designers · Relationships
+  Products   ▸ Products · Brands · Suppliers
+  Operations
+  More       ▸ Goals & Targets · Exports · Settings
 ```
 
-`More` expands to **Brands · Architects · Interior Designers · Forecasting**. The
-active workspace is always visible even when it lives under More. On tablet and
-phone the switcher collapses to a single dropdown.
+Five top-level destinations plus More. Each group opens to its most-used member
+(Money → Revenue, Customers → Customers, Products → Products) so a single click is
+never wasted on a menu. The active group and member are both always visible,
+including when the member lives under More. On tablet and phone the whole switcher
+collapses to one dropdown.
+
+Three group members are views over services that already exist rather than new
+analytics:
+
+| Member | What it is | Source |
+|---|---|---|
+| **Collections** | The payments-focused view of Outstanding — collected vs outstanding vs overdue, by customer and by age | `metrics.py` Outstanding, no new definition |
+| **Suppliers** | Supplier strength promoted from a card in Brands to its own view — fulfilment rate, median lead time, delays, value on order | `brands.py` supplier aggregations |
+| **Relationships** | Cross-customer pipeline view: every active relationship by stage, ranked by where it is stuck. The list-level counterpart to the per-customer timeline in §13 | `timeline.py` |
+
+`Revenue Trends` and `Forecasting` are the same Workspace 8 surface, entered at
+different default tabs — not two implementations.
 
 ### 15.3 Shared shell — `src/components/analytics/`
 
 | Component | Role |
 |---|---|
-| `WorkspaceSwitcher` | five primary + More, active state, keyboard navigable |
+| `WorkspaceSwitcher` | five groups + More, group and member both shown, keyboard navigable |
+| `ActivityFeed` | §13.1, grouped Today / Yesterday / This Week, each entry linked |
 | `GlobalSearch` | §14, in the shell header |
 | `FilterBar` | sticky. Floor · Date (incl. Yesterday/Today/This Week) · Brand · Category · Supplier · Salesperson · Architect · Interior Designer · Customer · Status. One implementation, every workspace |
 | `KpiRow` | sticky KPI strip |
@@ -812,14 +920,15 @@ Each phase is fully functional and verified before the next begins.
 
 | Phase | Contents |
 |---|---|
-| **0** | Correctness fixes: `ordered_at`, `items.net_amount`, index migration, owner targets in Settings, `services/analytics/` skeleton (`filters`, `periods`, `metrics`, `cache`), chart kit foundation |
-| **1** | Executive Overview · Business Health Score · Attention Center · Opportunity Center · Morning Brief |
-| **2** | Performance · Referral Analytics · shared `ReferredByField` in both builders · partner CRM profiles |
-| **3** | Products · Brands (full brand intelligence set) |
-| **4** | Customers · Heat Score · Relationship timeline |
+| **0** | Correctness fixes: `ordered_at`, `items.net_amount`, index migration, owner targets in Settings, `services/analytics/` skeleton (`filters`, `periods`, `metrics`, `cache`), chart kit foundation, grouped workspace shell |
+| **1** | Executive Overview · Business Health Score · Attention Center · Opportunity Center · Morning Brief · Activity Feed |
+| **2** | Performance · Collections · Referral Analytics · shared `ReferredByField` in both builders · partner CRM profiles |
+| **3** | Products · Brands (full brand intelligence set) · Suppliers |
+| **4** | Customers · Heat Score · Relationship timeline · Relationships view |
 | **5** | Operations (money-first) · Global search |
 | **6** | Forecasting & Historical Trends · legacy `sales_data_routes.py` and old screens removed |
 | **7** | Alerts: notify-me subscriptions (revenue drop, collections overdue, architect inactive, brand collapse, large quotation expiring) delivered through the existing `notifications` collection and `services/notifications.py` |
+| **8** | **Goals & Targets workspace**: monthly revenue, collection, orders, conversion, architect acquisition, and customer retention targets — declared in one place, with every workspace measuring progress against them instead of showing isolated numbers. Reads and writes the same `settings.analytics_targets` document created in Phase 0, so nothing is stored or built twice. |
 
 Phase 0 is not optional and not deferrable — Phase 1's numbers are wrong without it.
 
@@ -861,5 +970,13 @@ first.
   customer, that field should be added and will take precedence.
 - **`customer_orders` uses `overall_status`**, not `status` — a naive `status`
   query returns `None` for all 13 documents.
+- **`activity_events` carries no `floor_id`.** The Activity Feed derives floor by
+  joining the referenced entity (§13.1). If per-event floor stamping is ever added
+  to `services/activity_log.log_event`, the feed should switch to reading it
+  directly — the join is a workaround for a deliberate deferral, not the intended
+  end state.
+- **Goals & Targets is Phase 8, but the Health Score needs two of its targets in
+  Phase 0.** Those two live in Settings until the workspace exists. The storage
+  document is the same, so the migration is a UI move, not a data move.
 - The shared backend on `:8010` does not auto-reload and may be in use by another
   session; confirm before restarting.
