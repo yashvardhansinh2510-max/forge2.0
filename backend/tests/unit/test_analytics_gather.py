@@ -176,3 +176,10 @@ def test_the_payment_filter_is_genuinely_load_bearing():
     assert asyncio.run(gather.collected_by_quotation(db, ["q1"])) == {"q1": 100.0}
     unfiltered = [d for d in db.payments.docs]
     assert len(unfiltered) == 2, "fixture must contain a pending payment to have power"
+
+
+def test_the_feed_candidate_window_is_wide_enough_to_survive_dead_events():
+    """A run of unresolvable events at the head of the stream must not empty
+    the feed. The live database has exactly that: the newest allowlisted
+    events are test follow-ups pointing at a customer id that never existed."""
+    assert gather.FEED_CANDIDATE_CAP >= 500

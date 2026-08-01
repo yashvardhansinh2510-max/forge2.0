@@ -36,6 +36,11 @@ THRESHOLDS: dict[str, float] = {
     "DISPATCH_WAITING_DAYS": 3,
     "RELEASE_STUCK_DAYS": 5,
     "SALESPERSON_INACTIVE_DAYS": 5,
+    # A follow-up two hours late IS overdue (health measures it that way), but
+    # raising an alarm that fast would bury the owner. The alarm waits a full
+    # day; the health signal does not. The difference is deliberate and lives
+    # here rather than being an accident of day-granularity arithmetic.
+    "FOLLOWUP_ALARM_GRACE_DAYS": 1,
     "SUPPLIER_DELAY_DAYS": 0,
     "BRAND_DECLINE_PCT": 25,
     "REFERRER_QUIET_DAYS": 60,
@@ -66,6 +71,26 @@ def age_days(stamp: str | None, now: datetime) -> int | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=now.tzinfo)
     return max(0, (now - parsed).days)
+
+
+def is_overdue(stamp: str | None, now: datetime) -> bool:
+    """True the moment the deadline passes.
+
+    Deliberately NOT day-granularity: `age_days` floors to whole days, so a
+    follow-up due at 09:00 read at 15:00 has an age of 0 and would count as
+    on time. Live verification found 115 of 246 open follow-ups in exactly
+    that state, inflating the Health Score's follow-up signal to 46.7% when
+    the honest figure was 0%.
+    """
+    if not stamp:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(stamp))
+    except (TypeError, ValueError):
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=now.tzinfo)
+    return parsed < now
 
 
 def _money(value) -> float:
@@ -224,7 +249,9 @@ def followup_overdue(followups: list[dict], now: datetime, thresholds: dict) -> 
         if value <= 0:
             continue
         age = age_days(f.get("due_at"), now)
-        if age is None or age <= 0:
+        # The alarm waits out the grace period; the Health Score's follow-up
+        # signal uses is_overdue() and does not. See FOLLOWUP_ALARM_GRACE_DAYS.
+        if age is None or age < thresholds["FOLLOWUP_ALARM_GRACE_DAYS"]:
             continue
         rows.append(ActionRow(
             rule="followup_overdue",

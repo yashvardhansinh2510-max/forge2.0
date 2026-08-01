@@ -216,3 +216,32 @@ def test_every_row_carries_at_least_one_action():
     )
     rows = attention.attention_rows(data, now=NOW)
     assert rows and all(r.actions for r in rows)
+
+
+def test_overdue_is_strict_not_day_floored():
+    """A follow-up due at 09:00, read at 15:00, is overdue. age_days floors to
+    whole days and would call it on time — live verification found 115 of 246
+    open follow-ups in exactly that state, inflating the Health Score."""
+    from datetime import timedelta
+    due_this_morning = (NOW - timedelta(hours=6)).isoformat()
+    assert attention.is_overdue(due_this_morning, NOW) is True
+    assert attention.age_days(due_this_morning, NOW) == 0
+    assert attention.is_overdue((NOW + timedelta(hours=6)).isoformat(), NOW) is False
+    assert attention.is_overdue(None, NOW) is False
+
+
+def test_the_alarm_waits_out_its_grace_period_but_health_does_not():
+    """Two different questions, one explicit constant — not an accident of
+    rounding. The alarm holds off for a day; is_overdue fires immediately."""
+    from datetime import timedelta
+    due_hours_ago = (NOW - timedelta(hours=6)).isoformat()
+    followups = [{"id": "f1", "status": "open", "due_at": due_hours_ago, "value": 120000.0}]
+    assert attention.followup_overdue(followups, now=NOW, thresholds=attention.THRESHOLDS) == []
+    assert attention.is_overdue(due_hours_ago, NOW) is True
+
+    due_two_days_ago = (NOW - timedelta(days=2)).isoformat()
+    fired = attention.followup_overdue(
+        [{"id": "f2", "status": "open", "due_at": due_two_days_ago, "value": 120000.0}],
+        now=NOW, thresholds=attention.THRESHOLDS,
+    )
+    assert len(fired) == 1

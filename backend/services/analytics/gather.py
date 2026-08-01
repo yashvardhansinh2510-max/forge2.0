@@ -21,6 +21,7 @@ from services.analytics.attention import (
     SETTLED_PURCHASE_STATUSES,
     THRESHOLDS,
     age_days,
+    is_overdue,
 )
 from services.analytics.attention import AttentionInput
 from services.analytics.feed import feed_rows
@@ -28,6 +29,9 @@ from services.analytics.filters import AnalyticsFilter, build_match
 from services.analytics.opportunity import OpportunityInput
 
 _MAX_ROWS = 500
+
+# How many recent allowlisted events the feed considers before filtering.
+FEED_CANDIDATE_CAP = 1000
 
 
 def _fold(values) -> float:
@@ -281,7 +285,9 @@ async def gather_health_signals(db, f: AnalyticsFilter, accessible_floors, windo
     followups = await db.followups.find(
         {**followup_match, "status": "open"}, {"_id": 0, "due_at": 1},
     ).to_list(_MAX_ROWS)
-    not_overdue = [f_ for f_ in followups if (age_days(f_.get("due_at"), now) or 0) <= 0]
+    # Strict, not day-floored: a follow-up due this morning is overdue this
+    # afternoon. See is_overdue() for what day-granularity cost here.
+    not_overdue = [f_ for f_ in followups if not is_overdue(f_.get("due_at"), now)]
 
     ready = await _ready_items(db, accessible_floors)
     dispatched_in_time = [
@@ -314,11 +320,16 @@ async def gather_feed(db, f: AnalyticsFilter, accessible_floors, limit: int = 40
     from services.analytics.feed import EXECUTIVE_EVENTS
 
     now = datetime.now(timezone.utc)
+    # Read a wide candidate window rather than limit*5: events whose entity no
+    # longer resolves are dropped (they cannot be floor-derived), and a run of
+    # them at the head of the stream would otherwise empty the feed. The live
+    # database has exactly that — the newest allowlisted events are test
+    # follow-ups pointing at a customer id that does not exist.
     events = await db.activity_events.find(
         {"event_type": {"$in": list(EXECUTIVE_EVENTS)}},
         {"_id": 0, "id": 1, "event_type": 1, "created_at": 1, "actor_name": 1, "summary": 1,
          "payload": 1, "quotation_id": 1, "customer_id": 1, "purchase_id": 1},
-    ).sort("created_at", -1).to_list(limit * 5)
+    ).sort("created_at", -1).to_list(FEED_CANDIDATE_CAP)
     if not events:
         return []
 
