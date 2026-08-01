@@ -34,6 +34,7 @@ from routes.permissions_routes import router as permissions_router  # noqa: E402
 from routes.referrer_routes import router as referrer_router  # noqa: E402
 from routes.sales_data_routes import router as sales_data_router  # noqa: E402
 from routes.executive_analytics_routes import router as executive_analytics_router  # noqa: E402
+from routes.analytics_settings_routes import router as analytics_settings_router  # noqa: E402
 from routes.tile_orders import router as tile_orders_router  # noqa: E402
 from routes.walkin_routes import router as walkin_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
@@ -118,6 +119,7 @@ api.include_router(permissions_router)
 api.include_router(referrer_router)
 api.include_router(sales_data_router)
 api.include_router(executive_analytics_router)
+api.include_router(analytics_settings_router)
 api.include_router(tile_orders_router)
 api.include_router(walkin_router)
 

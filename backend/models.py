@@ -1148,3 +1148,17 @@ class ProductMediaCreate(BaseModel):
     sort_order: int = 100
     notes: Optional[str] = None
     # file is uploaded via multipart, not JSON
+
+
+class AnalyticsTargets(BaseModel):
+    """Owner-declared targets the Business Health Score measures against.
+
+    monthly_revenue_target and target_conversion_pct deliberately default to
+    None: without a declared target there is no honest way to score revenue
+    or conversion, so those components are excluded and the score reports how
+    many signals it used. Never default them to an invented benchmark.
+    """
+    monthly_revenue_target: Optional[float] = Field(default=None, ge=0)
+    target_conversion_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    target_collection_pct: float = Field(default=90, ge=0, le=100)
+    payment_terms_days: int = Field(default=30, ge=0)
