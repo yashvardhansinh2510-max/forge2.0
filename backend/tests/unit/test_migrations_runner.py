@@ -43,6 +43,12 @@ class _GenericFakeCollection:
     only cares that the runner discovers/orders/tracks them correctly, not
     that each migration's own index-creation logic is re-verified here."""
 
+    def find(self, *_args, **_kwargs):
+        # motor's find() is a sync call returning an async-iterable cursor, not
+        # a coroutine — a data-backfill migration that iterates one would blow
+        # up against a coroutine-returning no-op.
+        return _FakeCursor([])
+
     def __getattr__(self, _name):
         async def _noop(*_args, **_kwargs):
             return None
