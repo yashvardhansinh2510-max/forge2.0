@@ -690,7 +690,7 @@ export function SearchField(props: TextInputProps & { onClear?: () => void }) {
 // KPI card — dashboard number tile
 // ──────────────────────────────────────────────────────────────────────────
 export function KpiCard({
-  label, value, sub, icon, tone = "neutral", trend, onPress, style,
+  label, value, sub, icon, tone = "neutral", trend, onPress, style, question, footer, testID,
 }: {
   label: string;
   value: string;
@@ -700,6 +700,13 @@ export function KpiCard({
   trend?: { value: string; direction: "up" | "down" };
   onPress?: () => void;
   style?: ViewStyle;
+  /** The owner question this card answers. It ships on the card, in small
+   *  type under the value — spec 7 is explicit that this is not documentation.
+   *  Optional so every existing call site is unaffected. */
+  question?: string;
+  /** Comparison line, sparkline, or any honest substitute for a delta. */
+  footer?: React.ReactNode;
+  testID?: string;
 }) {
   const toneMap = {
     neutral: { bg: colors.surfaceSecondary, iconBg: colors.surfaceTertiary, iconFg: colors.onSurfaceMuted },
@@ -711,7 +718,9 @@ export function KpiCard({
   const Container: any = onPress ? Pressable : View;
   return (
     <Container
+      testID={testID}
       onPress={onPress}
+      accessibilityLabel={onPress ? `${label}: ${value}` : undefined}
       style={[{
         backgroundColor: toneMap.bg,
         borderRadius: radius.lg,
@@ -719,6 +728,7 @@ export function KpiCard({
         borderColor: colors.border,
         padding: spacing.lg,
         gap: 10,
+        minHeight: question ? 148 : undefined,
       }, style]}
     >
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -768,6 +778,12 @@ export function KpiCard({
           ) : null}
           {sub ? <Text style={type.caption}>{sub}</Text> : null}
         </View>
+      ) : null}
+      {footer}
+      {question ? (
+        <Text style={[type.caption, { color: colors.onSurfaceMuted, marginTop: "auto" }]} numberOfLines={2}>
+          {question}
+        </Text>
       ) : null}
     </Container>
   );
