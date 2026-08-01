@@ -60,3 +60,56 @@ def salesperson_rows(
 
 def row_dict(row: SalespersonRow) -> dict:
     return asdict(row)
+
+
+from statistics import median
+
+STAGE_ORDER: tuple[str, ...] = (
+    "walkins", "selections", "quotations", "approved",
+    "confirmed_orders", "release", "dispatch", "payments",
+)
+STAGE_LABELS: dict[str, str] = {
+    "walkins": "Walk-ins", "selections": "Selections", "quotations": "Quotations",
+    "approved": "Approved", "confirmed_orders": "Confirmed Orders",
+    "release": "Release", "dispatch": "Dispatch", "payments": "Payments",
+}
+
+
+@dataclass(frozen=True)
+class FunnelStage:
+    key: str
+    label: str
+    count: int
+    conversion_from_start_pct: float | None
+    dropoff_from_previous_pct: float | None
+    median_days_in_stage: float | None
+    revenue_lost_at_drop: float
+
+
+def funnel_stages(
+    counts: dict[str, int],
+    stage_durations: dict[str, list[float] | None],
+    avg_order_value: float,
+) -> list[FunnelStage]:
+    start_count = counts.get(STAGE_ORDER[0], 0)
+    result: list[FunnelStage] = []
+    previous_count: int | None = None
+    for key in STAGE_ORDER:
+        count = counts.get(key, 0)
+        conversion = round(count / start_count * 100, 1) if start_count else None
+        if previous_count is None:
+            dropoff = None
+            lost = 0.0
+        else:
+            dropped = max(previous_count - count, 0)
+            dropoff = round(dropped / previous_count * 100, 1) if previous_count else None
+            lost = round(dropped * avg_order_value, 2)
+        durations = stage_durations.get(key)
+        median_days = round(median(durations), 2) if durations else None
+        result.append(FunnelStage(
+            key=key, label=STAGE_LABELS[key], count=count,
+            conversion_from_start_pct=conversion, dropoff_from_previous_pct=dropoff,
+            median_days_in_stage=median_days, revenue_lost_at_drop=lost,
+        ))
+        previous_count = count
+    return result
