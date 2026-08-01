@@ -113,3 +113,20 @@ def funnel_stages(
         ))
         previous_count = count
     return result
+
+
+@dataclass(frozen=True)
+class CategoryRow:
+    category_id: str
+    name: str
+    revenue: float
+    qty: float
+
+
+def category_rows(raw: list[dict], category_names: dict[str, str]) -> list[CategoryRow]:
+    rows = []
+    for entry in raw:
+        cid = entry.get("category_id") or "uncategorized"
+        name = category_names.get(cid, "Uncategorized") if cid != "uncategorized" else "Uncategorized"
+        rows.append(CategoryRow(category_id=cid, name=name, revenue=round(float(entry.get("revenue") or 0), 2), qty=float(entry.get("qty") or 0)))
+    return sorted(rows, key=lambda r: -r.revenue)

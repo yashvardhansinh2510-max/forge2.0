@@ -135,3 +135,32 @@ def test_revenue_lost_at_drop_is_the_dropped_count_times_average_order_value():
     result = funnel_stages(counts, {k: [] for k in STAGE_ORDER}, avg_order_value=50000.0)
     by_key = {s.key: s for s in result}
     assert by_key["selections"].revenue_lost_at_drop == 40 * 50000.0   # 100 -> 60, dropped 40
+
+
+from services.analytics.performance import category_rows
+
+
+def test_categories_ranked_by_revenue_descending():
+    raw = [{"category_id": "c1", "revenue": 100.0, "qty": 5}, {"category_id": "c2", "revenue": 900.0, "qty": 2}]
+    rows = category_rows(raw, {"c1": "Tiles", "c2": "Sanitaryware"})
+    assert [r.category_id for r in rows] == ["c2", "c1"]
+    assert rows[0].name == "Sanitaryware"
+
+
+def test_an_unresolvable_category_id_falls_back_to_uncategorized():
+    raw = [{"category_id": "gone", "revenue": 100.0, "qty": 1}]
+    rows = category_rows(raw, {})
+    assert rows[0].name == "Uncategorized"
+
+
+def test_a_missing_category_id_also_falls_back_to_uncategorized():
+    raw = [{"category_id": None, "revenue": 100.0, "qty": 1}]
+    rows = category_rows(raw, {})
+    assert rows[0].category_id == "uncategorized"
+    assert rows[0].name == "Uncategorized"
+
+
+def test_revenue_rounds_to_two_decimal_places():
+    raw = [{"category_id": "c1", "revenue": 100.005, "qty": 1}]
+    rows = category_rows(raw, {"c1": "Tiles"})
+    assert rows[0].revenue == 100.0 or rows[0].revenue == 100.01
