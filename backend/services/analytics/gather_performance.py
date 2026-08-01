@@ -24,6 +24,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from services.analytics.filters import AnalyticsFilter, build_match
+from services.analytics.gather import collected_by_quotation
 from services.analytics.metrics import line_revenue_pipeline, revenue_pipeline
 from services.analytics.performance import STAGE_ORDER
 from services.analytics.periods import buckets
@@ -312,3 +313,15 @@ async def gather_category_revenue(db, f: AnalyticsFilter, accessible_floors, win
     names = {c["id"]: c["name"] for c in categories if c.get("id")}
 
     return raw, names
+
+
+async def gather_collections_orders(db, f: AnalyticsFilter, accessible_floors, window) -> list[dict]:
+    """Ordered quotations with outstanding money: customer, order amount, and
+    collected so far (reusing Phase 1's collected_by_quotation, which counts
+    only status="completed" payments)."""
+    match = build_match(AnalyticsFilter(floor_id=f.floor_id, status="ordered"), accessible_floors, window)
+    orders = await db.quotations.find(
+        match, {"_id": 0, "id": 1, "customer_id": 1, "customer_name": 1, "ordered_at": 1, "grand_total": 1},
+    ).to_list(None)
+    paid = await collected_by_quotation(db, [o["id"] for o in orders])
+    return [{**o, "collected": paid.get(o["id"], 0.0)} for o in orders]

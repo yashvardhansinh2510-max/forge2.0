@@ -71,3 +71,10 @@ def test_gather_category_revenue_reads_categories_for_names():
     db = _FakeDb(quotations=[], categories=[{"id": "c1", "name": "Tiles"}])
     raw, names = asyncio.run(gather_performance.gather_category_revenue(db, AnalyticsFilter(floor_id="all"), None, WINDOW))
     assert names == {"c1": "Tiles"}
+
+
+def test_gather_collections_orders_is_floor_scoped():
+    db = _FakeDb(quotations=[], payments=[])
+    asyncio.run(gather_performance.gather_collections_orders(db, AnalyticsFilter(floor_id="all"), ["first-floor"], WINDOW))
+    scoped = [q for q in db.quotations.queries if isinstance(q, dict) and q.get("floor_id")]
+    assert scoped
