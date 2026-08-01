@@ -11,8 +11,8 @@ Usage:
     FORGE_PROBE_PASSWORD=... ./.venv/bin/python -m scripts.probe_floor_isolation
     FORGE_PROBE_PASSWORD=... ./.venv/bin/python -m scripts.probe_floor_isolation --base-url http://127.0.0.1:8010
 
-Exit code is the number of endpoints that failed isolation, so it is usable
-as a CI gate.
+Exit code: 0–N = number of endpoints that failed isolation (usable as a CI gate),
+64 = usage error (password not configured).
 """
 
 from __future__ import annotations
@@ -199,7 +199,9 @@ def main() -> int:
             "FORGE_PROBE_PASSWORD environment variable.",
             file=sys.stderr,
         )
-        return 2
+        # Return 64 (EX_USAGE) instead of 2 to distinguish config errors from isolation failures.
+        # Exit codes 0–10 are reserved for the count of endpoints that failed isolation.
+        return 64
 
     # One loop for the entire run -- see _floors_from_db().
     rows, failures = asyncio.run(probe(args.base_url, args.email, args.password))
