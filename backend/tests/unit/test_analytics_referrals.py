@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from services.analytics.attention import THRESHOLDS
-from services.analytics.referrals import referrer_summary_rows
+from services.analytics.referrals import PREFERENCE_LIMIT, referrer_profile, referrer_summary_rows
 
 NOW = datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc)
 
@@ -24,6 +24,10 @@ def _raw(**kw) -> dict:
     )
     base.update(kw)
     return base
+
+
+def _summary():
+    return referrer_summary_rows([_raw()], now=NOW, thresholds=THRESHOLDS)[0]
 
 
 def test_conversion_rate_is_confirmed_over_total_quotations():
@@ -70,3 +74,42 @@ def test_ranked_by_revenue_descending():
 
 def test_an_empty_referrer_list_returns_an_empty_list():
     assert referrer_summary_rows([], now=NOW, thresholds=THRESHOLDS) == []
+
+
+def test_profile_carries_the_contact_fields_the_summary_does_not():
+    profile = referrer_profile(
+        {"id": "r1", "name": "ABC Architects", "type": "architect", "phone": "+91900", "company": "ABC & Co"},
+        _summary(), monthly_trend=[], brand_rows=[], product_rows=[], floor_rows={},
+    )
+    assert profile.phone == "+91900" and profile.company == "ABC & Co"
+    assert profile.summary.revenue == _summary().revenue
+
+
+def test_brand_and_product_preference_are_sorted_and_capped():
+    brand_rows = [{"brand_id": f"b{i}", "brand_name": f"Brand {i}", "revenue": float(i)} for i in range(15)]
+    profile = referrer_profile(
+        {"id": "r1", "name": "X", "type": "architect", "phone": None, "company": None},
+        _summary(), monthly_trend=[], brand_rows=brand_rows, product_rows=[], floor_rows={},
+    )
+    assert len(profile.brand_preference) == PREFERENCE_LIMIT
+    assert profile.brand_preference[0]["revenue"] == 14.0   # highest first
+
+
+def test_floor_split_includes_both_floors_even_when_one_is_zero():
+    """A floor at 0 must still appear — omitting it would read as 'this
+    partner doesn't exist on that floor' rather than 'no revenue yet'."""
+    profile = referrer_profile(
+        {"id": "r1", "name": "X", "type": "architect", "phone": None, "company": None},
+        _summary(), monthly_trend=[], brand_rows=[], product_rows=[],
+        floor_rows={"first-floor": 500000.0, "ground-floor": 0.0},
+    )
+    assert profile.floor_split == {"first-floor": 500000.0, "ground-floor": 0.0}
+
+
+def test_monthly_trend_passes_through_unchanged():
+    trend = [{"bucket": "Jul 2026", "revenue": 100.0}, {"bucket": "Aug 2026", "revenue": 200.0}]
+    profile = referrer_profile(
+        {"id": "r1", "name": "X", "type": "architect", "phone": None, "company": None},
+        _summary(), monthly_trend=trend, brand_rows=[], product_rows=[], floor_rows={},
+    )
+    assert profile.monthly_trend == trend

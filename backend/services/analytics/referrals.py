@@ -57,3 +57,41 @@ def referrer_summary_rows(raw: list[dict], now: datetime, thresholds: dict) -> l
 
 def summary_dict(summary: ReferrerSummary) -> dict:
     return asdict(summary)
+
+
+PREFERENCE_LIMIT = 10
+
+
+@dataclass(frozen=True)
+class ReferrerProfile:
+    referrer_id: str
+    name: str
+    type: str
+    phone: str | None
+    company: str | None
+    summary: ReferrerSummary
+    monthly_trend: list[dict]
+    brand_preference: list[dict]
+    product_preference: list[dict]
+    floor_split: dict[str, float]
+
+
+def _top(rows: list[dict]) -> list[dict]:
+    return sorted(rows, key=lambda r: -float(r.get("revenue") or 0))[:PREFERENCE_LIMIT]
+
+
+def referrer_profile(
+    referrer: dict,
+    summary: ReferrerSummary,
+    monthly_trend: list[dict],
+    brand_rows: list[dict],
+    product_rows: list[dict],
+    floor_rows: dict[str, float],
+) -> ReferrerProfile:
+    return ReferrerProfile(
+        referrer_id=referrer["id"], name=referrer.get("name") or "Unknown", type=referrer.get("type") or "architect",
+        phone=referrer.get("phone"), company=referrer.get("company"),
+        summary=summary, monthly_trend=list(monthly_trend),
+        brand_preference=_top(brand_rows), product_preference=_top(product_rows),
+        floor_split=dict(floor_rows),
+    )
