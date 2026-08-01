@@ -456,6 +456,12 @@ async def dispatch_event(event_id: str, *, claim_id: str | None = None) -> dict:
                 raise RuntimeError(f"Unsupported outbox event type {current['event_type']}")
             notification = result.pop("post_commit_notification", None)
             await db.event_outbox.update_one({"id": event_id, "claim_id": claim_id}, {"$set": {"status": "completed", "result": result, "processed_at": now_iso(), "updated_at": now_iso()}, "$inc": {"attempts": 1}}, session=session)
+    # Analytics cache invalidation, after the commit for the same reason the
+    # notification is: the surfaces must never be able to read a version bump
+    # for a write that then rolled back. Bumping a version invalidates every
+    # cached metric declaring that collection — there is no delete to forget.
+    await _bump_analytics_versions(current["event_type"])
+
     if notification and notification.get("user_id"):
         try:
             await notify(**notification)
@@ -465,6 +471,29 @@ async def dispatch_event(event_id: str, *, claim_id: str | None = None) -> dict:
             import logging
             logging.getLogger("forge.outbox").exception("Post-commit order notification failed")
     return result
+
+
+# Which collections each event's handler writes, and therefore which cached
+# analytics become stale the moment it commits.
+_EVENT_COLLECTIONS: dict[str, tuple[str, ...]] = {
+    EVENT_QUOTATION_GENERATED: ("quotations", "followups", "activity_events"),
+    EVENT_ORDER_PLACED: ("quotations", "purchase_orders", "customer_orders", "payments", "followups", "activity_events"),
+    EVENT_PURCHASE_TRANSFERRED: ("quotations", "purchase_orders", "payments", "followups", "activity_events"),
+}
+
+
+async def _bump_analytics_versions(event_type: str) -> None:
+    """Never let a cache bump fail a completed business command."""
+    from services.analytics import cache
+
+    for collection in _EVENT_COLLECTIONS.get(event_type, ()):
+        try:
+            await cache.bump(collection)
+        except Exception:
+            import logging
+            logging.getLogger("forge.outbox").exception(
+                "Analytics cache bump failed for %s; entries will expire by TTL instead", collection,
+            )
 
 
 MAX_DISPATCH_ATTEMPTS = 8
