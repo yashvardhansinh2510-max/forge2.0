@@ -95,11 +95,30 @@ export type MoneyBlocked = {
   destination: string;
 };
 
+export type PendingQuotations = {
+  count: number;
+  value: number;
+  max_age_days: number | null;
+  destination: string;
+};
+
+export type PendingFollowups = {
+  count: number;
+  overdue_count: number;
+  value: number;
+  destination: string;
+};
+
+export type FloorRevenue = { floor_id: string; revenue: number; orders: number };
+
 export type Overview = {
   health: HealthScore;
   brief: MorningBrief;
   kpis: Kpis;
   money_blocked: MoneyBlocked;
+  pending_quotations: PendingQuotations;
+  pending_followups: PendingFollowups;
+  revenue_by_floor: FloorRevenue[];
   attention: ExecutiveRow[];
   opportunities: ExecutiveRow[];
   attention_total: number;

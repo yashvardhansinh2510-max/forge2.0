@@ -1,68 +1,264 @@
-import { Redirect, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Linking, ScrollView, Text, View } from "react-native";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
+import { Text, View } from "react-native";
 
-import { api } from "@/src/api/client";
-import { getSelectedFloorId } from "@/src/hooks/use-floor-access";
+import { executiveApi, type FeedEntry, type Overview } from "@/src/api/executive";
 import { AdminPage } from "@/src/components/AdminPage";
-import { Button, Card, EmptyState, ErrorState, KpiCard, ListRow, LoadingState, PillTabs, SearchField, SegmentedControl, Sheet, Table, TableCell, TableHeader, TableRow, TextField } from "@/src/components/ui";
+import { ActivityFeed } from "@/src/components/analytics/ActivityFeed";
+import { HealthScoreCard } from "@/src/components/analytics/HealthScoreCard";
+import { ComparisonLine } from "@/src/components/analytics/HistoryNote";
+import { MoneyBlockedCard } from "@/src/components/analytics/MoneyBlockedCard";
+import { MorningBrief } from "@/src/components/analytics/MorningBrief";
+import { RowList } from "@/src/components/analytics/RowList";
+import { Card, ErrorState, KpiCard, LoadingState, PillTabs } from "@/src/components/ui";
+import { fmtMoneyCompact } from "@/src/design/tokens";
+import { getSelectedFloorId, useFloorAccess } from "@/src/hooks/use-floor-access";
 import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
-type Filters = { floors: { id: string; name: string }[]; brands: { id: string; name: string }[]; salespeople: { id: string; full_name: string }[] };
-type Dashboard = { kpis: { revenue: number; orders: number; aov: number; gross_sales: number; customers: number; revenue_growth_pct: number }; trend: { bucket: string; revenue: number }[]; floors: any[]; brands: any[]; products: any[]; customers: any[]; salespeople: any[]; referrals: any[] };
-type Funnel = { stages: { key: string; label: string; count: number; conversion_pct: number; dropoff_pct: number; revenue: number }[] };
-const PRESETS = [{ value: "today", label: "Today" }, { value: "yesterday", label: "Yesterday" }, { value: "last_7_days", label: "7D" }, { value: "last_15_days", label: "15D" }, { value: "last_30_days", label: "30D" }, { value: "this_month", label: "This month" }, { value: "last_month", label: "Last month" }, { value: "quarter", label: "Quarter" }, { value: "year", label: "Year" }, { value: "custom", label: "Custom" }];
-const money = (n = 0) => `₹${Math.round(n).toLocaleString("en-IN")}`;
+const PRESETS = [
+  { value: "today", label: "Today" },
+  { value: "this_week", label: "This week" },
+  { value: "this_month", label: "This month" },
+  { value: "quarter", label: "Quarter" },
+  { value: "year", label: "Year" },
+  { value: "all", label: "All time" },
+];
 
-function RevenueBars({ points }: { points: Dashboard["trend"] }) {
-  const max = Math.max(...points.map((p) => p.revenue), 1);
-  if (!points.length) return <EmptyState title="No confirmed revenue in this period" subtitle="Adjust the date or floor filter to inspect another period." />;
-  return <View testID="executive-revenue-trend" style={{ flexDirection: "row", alignItems: "flex-end", height: 150, gap: 6 }}>
-    {points.slice(-14).map((p) => <View key={p.bucket} style={{ flex: 1, gap: 6, alignItems: "center" }}><View style={{ width: "100%", minHeight: 4, height: `${Math.max(4, p.revenue / max * 100)}%` as any, backgroundColor: colors.brand, borderRadius: 2 }} /><Text numberOfLines={1} style={type.caption}>{p.bucket.slice(-5)}</Text></View>)}
-  </View>;
-}
+const FLOOR_LABEL: Record<string, string> = {
+  "first-floor": "Sanitary",
+  "ground-floor": "Tiles",
+};
 
-function FilterPicker({ label, value, items, onChange, testID }: { label: string; value: string; items: { id: string; name: string }[]; onChange: (id: string) => void; testID: string }) {
-  const [open, setOpen] = useState(false); const [search, setSearch] = useState("");
-  const selected = items.find((item) => item.id === value)?.name || `All ${label}`;
-  const shown = items.filter((item) => item.name.toLowerCase().includes(search.toLowerCase()));
-  return <><Button label={selected} size="sm" variant="secondary" onPress={() => setOpen(true)} testID={`${testID}-open`} /><Sheet visible={open} onClose={() => setOpen(false)} title={`Filter by ${label}`} variant="bottom" minHeight="55%" testID={`${testID}-sheet`}><View style={{ gap: spacing.sm, flex: 1 }}><SearchField value={search} onChangeText={setSearch} onClear={() => setSearch("")} placeholder={`Search ${label.toLowerCase()}…`} testID={`${testID}-search`} /><ListRow title={`All ${label}`} onPress={() => { onChange(""); setOpen(false); }} testID={`${testID}-all`} />{shown.map((item) => <ListRow key={item.id} title={item.name} onPress={() => { onChange(item.id); setOpen(false); }} testID={`${testID}-${item.id}`} />)}</View></Sheet></>;
-}
+/**
+ * The Executive Overview (spec §7 Workspace 1) — the six above-the-fold
+ * elements, in the exact order the spec fixes, and nothing else above the
+ * fold. `ABOVE_THE_FOLD` on the backend (executive_overview_routes.py)
+ * enforces the same contract; adding a seventh element here without amending
+ * that constant is exactly the drift the spec's discipline exists to prevent.
+ *
+ * Below the fold: Revenue by Floor, Pending Quotations, Pending Follow-ups,
+ * and the Activity Feed — all backed by the same /analytics/overview payload
+ * Stage B verified live. Revenue Trend (bucketed time series) and Top 5
+ * Movers (brand/product/referrer/salesperson rank comparison) are Phase 2/3
+ * scope: no backend aggregation for either exists yet, and building them here
+ * would mean either fabricating a number or quietly reusing the legacy
+ * dashboard's differently-dated figures — both break this phase's own rules.
+ * They stay off the screen rather than being faked.
+ */
+export default function ExecutiveOverview() {
+  const { staff } = useAuth();
+  const { floors } = useFloorAccess();
+  const router = useRouter();
+  const params = useLocalSearchParams<{ floor_id?: string; preset?: string }>();
 
-export default function ExecutiveAnalytics() {
-  const { staff } = useAuth(); const router = useRouter();
-  const [filters, setFilters] = useState<Filters | null>(null); const [data, setData] = useState<Dashboard | null>(null); const [funnel, setFunnel] = useState<Funnel | null>(null); const [error, setError] = useState<string | null>(null);
-  // Starts on the business unit currently active in the shell rather than
-  // "All Floors": an unscoped default mixed both units' revenue together.
-  const [floor, setFloor] = useState("");
-  useEffect(() => { void getSelectedFloorId().then((id) => setFloor(id || "all")); }, []); const [brand, setBrand] = useState(""); const [salesperson, setSalesperson] = useState(""); const [referral, setReferral] = useState("all"); const [preset, setPreset] = useState("this_month"); const [granularity, setGranularity] = useState("month"); const [dateFrom, setDateFrom] = useState(""); const [dateTo, setDateTo] = useState("");
-  const query = useMemo(() => new URLSearchParams({ floor_id: floor, preset, granularity, ...(brand ? { brand_id: brand } : {}), ...(salesperson ? { salesperson_id: salesperson } : {}), ...(referral !== "all" ? { referrer_type: referral } : {}), ...(preset === "custom" ? { date_from: dateFrom, date_to: dateTo } : {}) }).toString(), [floor, brand, salesperson, referral, preset, granularity, dateFrom, dateTo]);
-  const exportData = async (format: "csv" | "xlsx" | "pdf") => { const url = await api.authenticatedUrl(`/executive-analytics/export?format=${format}&floor_id=${floor}&preset=${preset}`); await Linking.openURL(url); };
-  const load = useCallback(() => { if (!floor) return; setError(null); setData(null); setFunnel(null); Promise.all([api.get<Dashboard>(`/executive-analytics/dashboard?${query}`), api.get<Funnel>(`/executive-analytics/funnel?${query}`)]).then(([dashboard, stages]) => { setData(dashboard); setFunnel(stages); }).catch((e: any) => setError(e.detail || "Could not load executive analytics")); }, [query, floor]);
-  useEffect(() => { if (!floor) return; api.get<Filters>(`/executive-analytics/filters?floor_id=${floor}`).then(setFilters).catch(() => setFilters({ floors: [], brands: [], salespeople: [] })); }, [floor]);
+  // Filter state lives in the URL (spec §16.3) so a drill-down is shareable
+  // and back-navigable — but a fresh visit with no params yet still needs a
+  // sane default, which is the shell's currently-active floor, not "all".
+  const [floorId, setFloorId] = useState(params.floor_id || "");
+  const [preset, setPreset] = useState(params.preset || "this_month");
+  const [data, setData] = useState<Overview | null>(null);
+  const [feed, setFeed] = useState<FeedEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (params.floor_id || floorId) return;
+    void getSelectedFloorId().then((id) => setFloorId(id || "all"));
+  }, [params.floor_id, floorId]);
+
+  const load = useCallback(() => {
+    if (!floorId) return;
+    setError(null);
+    executiveApi
+      .overview({ floorId, preset })
+      .then(setData)
+      .catch((e: any) => setError(e?.detail || "Could not load the executive overview"));
+    // Own fetch, own cache key — the feed is already a tested, live-verified
+    // endpoint; folding it into /overview would mean re-deriving the same
+    // allowlist-and-floor-join logic a second way.
+    executiveApi
+      .feed({ floorId, limit: 15 })
+      .then((res) => setFeed(res.rows))
+      .catch(() => setFeed([]));
+  }, [floorId, preset]);
+
   useEffect(() => { load(); }, [load]);
-  if (staff && !["owner", "admin", "manager"].includes(staff.role)) return <Redirect href="/(admin)/dashboard" />;
-  return <AdminPage title="Executive Analytics" subtitle="Confirmed and completed orders only · live business books" right={<PillTabs testID="executive-granularity" value={granularity} onChange={setGranularity} options={[{ value: "day", label: "D" }, { value: "month", label: "M" }, { value: "quarter", label: "Q" }, { value: "year", label: "Y" }]} />}>
-    <ScrollView contentContainerStyle={{ gap: spacing.lg, paddingBottom: spacing.xxxl }}>
-      <View style={{ gap: spacing.sm }} testID="executive-global-filters"><SegmentedControl testID="executive-floor-filter" value={floor} onChange={setFloor} options={[{ value: "all", label: "All Floors" }, ...(filters?.floors || []).map((f) => ({ value: f.id, label: f.name }))]} /><PillTabs testID="executive-date-filter" value={preset} onChange={setPreset} options={PRESETS} /></View>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="executive-entity-filters"><FilterPicker label="Brands" value={brand} items={filters?.brands || []} onChange={setBrand} testID="executive-brand-filter" /><FilterPicker label="Salespeople" value={salesperson} items={(filters?.salespeople || []).map((s) => ({ id: s.id, name: s.full_name }))} onChange={setSalesperson} testID="executive-salesperson-filter" /><PillTabs testID="executive-referral-filter" value={referral} onChange={setReferral} options={[{ value: "all", label: "All referrals" }, { value: "architect", label: "Architect" }, { value: "interior_designer", label: "Interior Designer" }]} /></View>
-      {preset === "custom" ? <View style={{ flexDirection: "row", gap: spacing.sm }} testID="executive-custom-date-range"><TextField label="From" value={dateFrom} onChangeText={setDateFrom} placeholder="2026-01-01" containerStyle={{ flex: 1 }} testID="executive-date-from" /><TextField label="To" value={dateTo} onChangeText={setDateTo} placeholder="2026-01-31" containerStyle={{ flex: 1 }} testID="executive-date-to" /></View> : null}
-      <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }} testID="executive-export-actions"><Button label="CSV" size="sm" variant="secondary" onPress={() => exportData("csv")} testID="executive-export-csv" /><Button label="Excel" size="sm" variant="secondary" onPress={() => exportData("xlsx")} testID="executive-export-xlsx" /><Button label="PDF" size="sm" variant="secondary" onPress={() => exportData("pdf")} testID="executive-export-pdf" /></View>
+
+  const updateFilters = (next: { floorId?: string; preset?: string }) => {
+    const nextFloor = next.floorId ?? floorId;
+    const nextPreset = next.preset ?? preset;
+    setFloorId(nextFloor);
+    setPreset(nextPreset);
+    setData(null);
+    router.setParams({ floor_id: nextFloor, preset: nextPreset });
+  };
+
+  if (staff && !["owner", "admin", "manager"].includes(staff.role)) {
+    return <Redirect href="/(admin)/dashboard" />;
+  }
+
+  return (
+    <AdminPage
+      title="Executive Overview"
+      subtitle="Confirmed orders only, dated by ordered_at · live business books"
+    >
+      {/* A 6-option pill row does not fit AdminPage's header `right` slot on
+          mobile — that slot's flex row does not wrap, so it pushed the whole
+          page 153px wider than the viewport at 375px. Floor + preset filters
+          both live in the body instead, where flexWrap genuinely wraps. */}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="executive-preset-filter">
+        <PillTabs
+          testID="executive-preset"
+          value={preset}
+          onChange={(v) => updateFilters({ preset: v })}
+          options={PRESETS}
+        />
+      </View>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="executive-floor-filter">
+        <PillTabs
+          testID="executive-floor-tabs"
+          value={floorId || "all"}
+          onChange={(v) => updateFilters({ floorId: v })}
+          options={[
+            { value: "all", label: "All floors" },
+            ...floors.map((f) => ({ value: f.id, label: FLOOR_LABEL[f.id] || f.name })),
+          ]}
+        />
+      </View>
+
       {error ? <ErrorState subtitle={error} onRetry={load} /> : null}
-      {!error && !data ? <LoadingState label="Building live executive view…" /> : null}
-      {data ? <>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="executive-kpis">
-          <KpiCard label={`Total Revenue · ${data.kpis.revenue_growth_pct >= 0 ? "+" : ""}${data.kpis.revenue_growth_pct}%`} value={money(data.kpis.revenue)} style={{ flex: 1, minWidth: 150 }} /><KpiCard label="Confirmed Orders" value={String(data.kpis.orders)} style={{ flex: 1, minWidth: 130 }} /><KpiCard label="Average Order" value={money(data.kpis.aov)} style={{ flex: 1, minWidth: 150 }} /><KpiCard label="Customers" value={String(data.kpis.customers)} style={{ flex: 1, minWidth: 120 }} />
-        </View>
-        <Card testID="executive-trend-panel" style={{ gap: spacing.md }}><Text style={type.titleMd}>Revenue trend</Text><Text style={type.caption}>Live confirmed-order revenue for the selected period</Text><RevenueBars points={data.trend} /></Card>
-        <Card testID="executive-funnel-panel" style={{ gap: spacing.md }}><Text style={type.titleMd}>Walk-in conversion funnel</Text><Text style={type.caption}>Conversion, drop-off, and confirmed revenue at every operational stage</Text>{!funnel ? <LoadingState label="Loading funnel…" /> : funnel.stages.map((stage) => <View key={stage.key} testID={`executive-funnel-${stage.key}`} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.divider }}><View style={{ flex: 1 }}><Text style={type.bodyStrong}>{stage.label}</Text><Text style={type.caption}>{stage.conversion_pct}% conversion · {stage.dropoff_pct}% drop-off</Text></View><View style={{ alignItems: "flex-end" }}><Text style={type.bodyStrong}>{stage.count}</Text><Text style={type.caption}>{money(stage.revenue)}</Text></View></View>)}</Card>
-        <Card testID="executive-floor-panel" style={{ gap: spacing.md }}><Text style={type.titleMd}>Floor performance</Text><Table><TableHeader columns={[{ label: "Floor", flex: 2 }, { label: "Revenue", align: "right" }, { label: "Orders", align: "right" }]} />{data.floors.map((row, i) => <TableRow key={row.floor_id} isLast={i === data.floors.length - 1} onPress={() => setFloor(row.floor_id)} testID={`executive-floor-${row.floor_id}`}><TableCell flex={2}>{row.floor_id}</TableCell><TableCell align="right">{money(row.revenue)}</TableCell><TableCell align="right">{String(row.orders)}</TableCell></TableRow>)}</Table></Card>
-        <Card testID="executive-brand-panel" style={{ gap: spacing.md }}><Text style={type.titleMd}>Brand performance</Text><Table><TableHeader columns={[{ label: "Brand", flex: 2 }, { label: "Revenue", align: "right" }, { label: "Qty", align: "right" }]} />{data.brands.map((row, i) => <TableRow key={row.brand_id || i} isLast={i === data.brands.length - 1} onPress={() => router.push(`/(admin)/sales-data/brands/${row.brand_id}` as any)} testID={`executive-brand-${row.brand_id}`}><TableCell flex={2}>{row.brand_name || "Unmapped"}</TableCell><TableCell align="right">{money(row.revenue)}</TableCell><TableCell align="right">{String(row.quantity)}</TableCell></TableRow>)}</Table></Card>
-        <Card testID="executive-customer-panel" style={{ gap: spacing.md }}><Text style={type.titleMd}>Customer lifetime value</Text><Table><TableHeader columns={[{ label: "Customer", flex: 2 }, { label: "Lifetime revenue", align: "right" }, { label: "Orders", align: "right" }]} />{data.customers.map((row, i) => <TableRow key={row.customer_id} isLast={i === data.customers.length - 1} onPress={() => router.push(`/(admin)/customers/${row.customer_id}` as any)} testID={`executive-customer-${row.customer_id}`}><TableCell flex={2}>{row.name}</TableCell><TableCell align="right">{money(row.revenue)}</TableCell><TableCell align="right">{String(row.orders)}</TableCell></TableRow>)}</Table></Card>
-        <Card testID="executive-salespeople-panel" style={{ gap: spacing.md }}><Text style={type.titleMd}>Salesperson performance</Text><Table><TableHeader columns={[{ label: "Salesperson", flex: 2 }, { label: "Revenue", align: "right" }, { label: "Orders", align: "right" }, { label: "Conv.", align: "right" }]} />{data.salespeople.map((row, i) => <TableRow key={row.salesperson_id} isLast={i === data.salespeople.length - 1} onPress={() => router.push(`/(admin)/sales-data/people/salespeople/${row.salesperson_id}` as any)} testID={`executive-salesperson-${row.salesperson_id}`}><TableCell flex={2}>{row.name}</TableCell><TableCell align="right">{money(row.revenue)}</TableCell><TableCell align="right">{String(row.orders)}</TableCell><TableCell align="right">{row.conversion_rate}%</TableCell></TableRow>)}</Table></Card>
-        <Card testID="executive-referrals-panel" style={{ gap: spacing.md }}><Text style={type.titleMd}>Referral leaderboard</Text><Table><TableHeader columns={[{ label: "Partner", flex: 2 }, { label: "Revenue", align: "right" }, { label: "Orders", align: "right" }]} />{data.referrals.map((row, i) => <TableRow key={row.referrer_id} isLast={i === data.referrals.length - 1} onPress={() => router.push(`/(admin)/sales-data/people/referrers/${row.referrer_id}` as any)} testID={`executive-referrer-${row.referrer_id}`}><TableCell flex={2}>{row.name}</TableCell><TableCell align="right">{money(row.revenue)}</TableCell><TableCell align="right">{String(row.orders)}</TableCell></TableRow>)}</Table></Card>
-      </> : null}
-    </ScrollView>
-  </AdminPage>;
+      {!error && !data ? <LoadingState label="Building the executive view…" /> : null}
+
+      {data ? (
+        <>
+          {/* 1. Business Health */}
+          <HealthScoreCard health={data.health} testID="executive-health" />
+
+          {/* 2. Morning Brief */}
+          <MorningBrief brief={data.brief} testID="executive-brief" />
+
+          {/* 3. Revenue KPIs */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="executive-kpis">
+            <KpiCard
+              testID="executive-kpi-revenue"
+              label="Revenue"
+              value={fmtMoneyCompact(data.kpis.revenue)}
+              question="Are we making more money?"
+              footer={
+                <ComparisonLine
+                  comparison={data.kpis.comparison}
+                  previousLabel={data.kpis.previous_label}
+                />
+              }
+              style={{ flex: 1, minWidth: 160 }}
+            />
+            <KpiCard
+              testID="executive-kpi-orders"
+              label="Orders"
+              value={String(data.kpis.orders)}
+              question="How many deals did we close?"
+              style={{ flex: 1, minWidth: 140 }}
+            />
+            <KpiCard
+              testID="executive-kpi-aov"
+              label="Average Order"
+              value={fmtMoneyCompact(data.kpis.aov)}
+              question="Are deals getting bigger or smaller?"
+              style={{ flex: 1, minWidth: 160 }}
+            />
+            <KpiCard
+              testID="executive-kpi-outstanding"
+              label="Outstanding"
+              value={fmtMoneyCompact(data.kpis.outstanding.outstanding)}
+              question="How much money is owed to us?"
+              onPress={() => router.push("/(admin)/payments" as never)}
+              style={{ flex: 1, minWidth: 160 }}
+            />
+          </View>
+
+          {/* 4. Money Blocked */}
+          <MoneyBlockedCard blocked={data.money_blocked} testID="executive-money-blocked" />
+
+          {/* 5. Attention Center */}
+          <RowList
+            kind="attention"
+            rows={data.attention}
+            total={data.attention_total}
+            testID="executive-attention"
+          />
+
+          {/* 6. Opportunity Center */}
+          <RowList
+            kind="opportunity"
+            rows={data.opportunities}
+            total={data.opportunities_total}
+            testID="executive-opportunities"
+          />
+
+          {/* Below the fold */}
+          <Card testID="executive-pending" variant="flat" padding={spacing.xl}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.xl }}>
+              <View style={{ gap: 2, minWidth: 160 }}>
+                <Text style={type.captionStrong}>PENDING QUOTATIONS</Text>
+                <Text style={[type.titleMd, { fontVariant: ["tabular-nums"] }]}>
+                  {data.pending_quotations.count}
+                </Text>
+                <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
+                  {fmtMoneyCompact(data.pending_quotations.value)} undecided
+                  {data.pending_quotations.max_age_days !== null
+                    ? ` · oldest ${data.pending_quotations.max_age_days}d`
+                    : ""}
+                </Text>
+              </View>
+              <View style={{ gap: 2, minWidth: 160 }}>
+                <Text style={type.captionStrong}>PENDING FOLLOW-UPS</Text>
+                <Text style={[type.titleMd, { fontVariant: ["tabular-nums"] }]}>
+                  {data.pending_followups.count}
+                </Text>
+                <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
+                  {data.pending_followups.overdue_count} overdue ·{" "}
+                  {fmtMoneyCompact(data.pending_followups.value)} at stake
+                </Text>
+              </View>
+            </View>
+          </Card>
+
+          {data.revenue_by_floor.length > 1 ? (
+            <Card testID="executive-revenue-by-floor" variant="flat" padding={spacing.xl}>
+              <View style={{ gap: spacing.md }}>
+                <Text style={type.titleSm}>Revenue by Floor</Text>
+                <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
+                  Which floor is winning?
+                </Text>
+                <View style={{ gap: spacing.sm }}>
+                  {data.revenue_by_floor.map((row) => (
+                    <View
+                      key={row.floor_id}
+                      style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}
+                    >
+                      <Text style={type.body}>{FLOOR_LABEL[row.floor_id] || row.floor_id}</Text>
+                      <View style={{ alignItems: "flex-end" }}>
+                        <Text style={[type.bodyStrong, { fontVariant: ["tabular-nums"] }]}>
+                          {fmtMoneyCompact(row.revenue)}
+                        </Text>
+                        <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
+                          {row.orders} orders
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </Card>
+          ) : null}
+
+          {feed === null ? (
+            <LoadingState label="Loading activity…" />
+          ) : (
+            <ActivityFeed entries={feed} testID="executive-activity-feed" />
+          )}
+        </>
+      ) : null}
+    </AdminPage>
+  );
 }

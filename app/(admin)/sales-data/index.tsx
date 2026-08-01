@@ -21,7 +21,15 @@ type Floor = { id: string; name: string; slug: string };
 type PageTab = "overview" | "brand";
 type BrandRow = { brand_id: string; brand_name: string; revenue: number };
 
-export default function SalesData() {
+/**
+ * Superseded by the Executive Overview (`./executive.tsx`), spec §7
+ * Workspace 1. `/sales-data` now redirects there instead of rendering this
+ * component — the code stays in the repo, unreachable, until Phase 6 removes
+ * it alongside `sales_data_routes.py` (per the 2026-08-01 decision: replace
+ * the reachable screen now, delete the legacy code only after the
+ * replacement is proven feature-for-feature).
+ */
+function LegacySalesDataOverview() {
   const { staff } = useAuth();
   const router = useRouter();
 
@@ -232,3 +240,13 @@ export default function SalesData() {
     </AdminPage>
   );
 }
+
+export default function SalesDataIndex() {
+  return <Redirect href="/(admin)/sales-data/executive" />;
+}
+
+// Referenced only to keep the legacy component from being flagged as
+// dead code by tools that don't understand "kept until Phase 6" — it is
+// genuinely unreachable via routing (Expo Router only mounts the default
+// export above), this just satisfies no-unused-vars.
+void LegacySalesDataOverview;
