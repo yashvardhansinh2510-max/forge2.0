@@ -8,8 +8,8 @@ This catches ambient-state leaks that clicking through the UI hides: a query
 that silently runs unfiltered still *renders* fine in a browser.
 
 Usage:
-    ./.venv/bin/python -m scripts.probe_floor_isolation
-    ./.venv/bin/python -m scripts.probe_floor_isolation --base-url http://127.0.0.1:8010
+    FORGE_PROBE_PASSWORD=... ./.venv/bin/python -m scripts.probe_floor_isolation
+    FORGE_PROBE_PASSWORD=... ./.venv/bin/python -m scripts.probe_floor_isolation --base-url http://127.0.0.1:8010
 
 Exit code is the number of endpoints that failed isolation, so it is usable
 as a CI gate.
@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -52,6 +53,13 @@ ENDPOINTS: list[tuple[str, str, str | None, str | None]] = [
 # regardless of the header sent. It is expected to ignore the header, so a
 # first-floor request legitimately returns ground-floor rows.
 HEADER_INDEPENDENT = {"Tile orders"}
+
+# (endpoint, floor) pairs where zero rows is the correct, verified answer.
+# Sanitary Bathroom genuinely has no walk-ins recorded -- confirmed against
+# live data 2026-08-02. Every other scoped-zero is treated as a broken query,
+# because an empty result and a correctly-isolated result are indistinguishable
+# from the response alone.
+KNOWN_EMPTY: set[tuple[str, str]] = {("Walk-ins", "first_floor")}
 
 
 def _request(url: str, token: str | None, floor: str | None) -> object:
@@ -131,17 +139,44 @@ async def probe(base_url: str, email: str, password: str) -> tuple[list[dict], i
                 )
             except urllib.error.HTTPError as exc:
                 seen, count = {f"<HTTP {exc.code}>"}, -1
+            except urllib.error.URLError as exc:
+                # Backend unreachable mid-run -- record it as a failure row
+                # instead of letting the traceback kill the whole probe.
+                seen, count = {f"<URLError {exc.reason}>"}, -1
             result[name] = seen
             result[f"{name}_count"] = count
 
         problems: list[str] = []
+
+        # A scoped request returning 0 rows while the unscoped request
+        # returned >0 rows is a failure, except where a zero is legitimately
+        # expected (KNOWN_EMPTY). An empty floor set is otherwise
+        # indistinguishable from a broken/unfiltered query, so it must never
+        # pass silently as "ok" -- see floor_set()'s docstring.
+        unscoped_count = result["unscoped_count"]
+        if isinstance(unscoped_count, int) and unscoped_count > 0:
+            for name in ("first_floor", "ground_floor"):
+                if result[f"{name}_count"] == 0 and (label, name) not in KNOWN_EMPTY:
+                    problems.append(
+                        f"{name} returned 0 rows (unscoped had {unscoped_count}) -- query may be broken"
+                    )
+
         if label not in HEADER_INDEPENDENT:
             for name, expected in (("first_floor", SANITARY), ("ground_floor", GROUND)):
                 leaked = result[name] - {expected}  # type: ignore[operator]
                 if leaked:
                     problems.append(f"{name} leaked {sorted(leaked)}")
-        elif result["ground_floor"] - {GROUND}:  # type: ignore[operator]
-            problems.append(f"pinned domain returned {sorted(result['ground_floor'])}")  # type: ignore[arg-type]
+        else:
+            # Tile Orders is pinned to Ground Floor regardless of header, so
+            # ALL THREE variants must resolve to exactly {GROUND} -- checking
+            # only ground_floor (as before) would miss a leak that appears
+            # solely under X-Floor-Id: first-floor. Empty sets are ignored
+            # here; the KNOWN_EMPTY check above already turns an unexpected
+            # empty into its own failure.
+            for name in ("unscoped", "first_floor", "ground_floor"):
+                seen = result[name]
+                if seen and seen != {GROUND}:  # type: ignore[operator]
+                    problems.append(f"{name} returned {sorted(seen)} (expected pinned {{'{GROUND}'}})")  # type: ignore[arg-type]
 
         result["verdict"] = ("LEAK: " + "; ".join(problems)) if problems else "ok"
         if problems:
@@ -155,8 +190,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8010")
     parser.add_argument("--email", default="owner@forge.app")
-    parser.add_argument("--password", default="Forge@2026")
+    parser.add_argument("--password", default=os.environ.get("FORGE_PROBE_PASSWORD"))
     args = parser.parse_args()
+
+    if not args.password:
+        print(
+            "Error: no password provided. Pass --password or set the "
+            "FORGE_PROBE_PASSWORD environment variable.",
+            file=sys.stderr,
+        )
+        return 2
 
     # One loop for the entire run -- see _floors_from_db().
     rows, failures = asyncio.run(probe(args.base_url, args.email, args.password))
