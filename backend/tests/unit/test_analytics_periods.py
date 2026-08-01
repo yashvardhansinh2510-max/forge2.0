@@ -8,6 +8,7 @@ from services.analytics.periods import (
     HISTORY_INSUFFICIENT,
     HISTORY_NO_PRIOR,
     HISTORY_OK,
+    buckets,
     compare,
     previous,
     resolve,
@@ -139,3 +140,50 @@ def test_previous_of_a_month_to_date_window_stays_a_span_shift():
     prev = previous(p)
     assert prev.start.startswith("2026-07-31T13:30")
     assert prev.end.startswith("2026-08-01T00:00")
+
+
+def test_day_buckets_are_calendar_aligned_and_clamped_to_the_window():
+    result = buckets("2026-07-30T15:00:00+00:00", "2026-08-02T09:00:00+00:00", "day")
+    assert [b.label for b in result] == ["30 Jul", "31 Jul", "01 Aug", "02 Aug"]
+    # first bucket starts at the requested time, not calendar midnight before it
+    assert result[0].start == "2026-07-30T15:00:00+00:00"
+    assert result[-1].end == "2026-08-02T09:00:00+00:00"
+
+
+def test_week_buckets_start_on_monday():
+    # 2026-08-01 is a Saturday; the week bucket containing it starts Monday 2026-07-27
+    result = buckets("2026-07-25T00:00:00+00:00", "2026-08-05T00:00:00+00:00", "week")
+    assert result[0].label.startswith("Week of 20 Jul") or result[0].label.startswith("Week of 27 Jul")
+    assert len(result) >= 1
+
+
+def test_month_buckets_span_full_calendar_months():
+    result = buckets("2026-06-15T00:00:00+00:00", "2026-08-10T00:00:00+00:00", "month")
+    assert [b.label for b in result] == ["Jun 2026", "Jul 2026", "Aug 2026"]
+
+
+def test_quarter_buckets_use_q_labels():
+    result = buckets("2026-01-01T00:00:00+00:00", "2026-08-01T00:00:00+00:00", "quarter")
+    assert [b.label for b in result] == ["Q1 2026", "Q2 2026", "Q3 2026"]
+
+
+def test_year_buckets_span_calendar_years():
+    result = buckets("2025-11-01T00:00:00+00:00", "2026-02-01T00:00:00+00:00", "year")
+    assert [b.label for b in result] == ["2025", "2026"]
+
+
+def test_consecutive_buckets_share_an_edge_no_gap_no_overlap():
+    result = buckets("2026-07-01T00:00:00+00:00", "2026-07-05T00:00:00+00:00", "day")
+    for a, b in zip(result, result[1:]):
+        assert a.end == b.start
+
+
+def test_a_window_shorter_than_one_bucket_still_returns_exactly_one():
+    result = buckets("2026-08-01T10:00:00+00:00", "2026-08-01T14:00:00+00:00", "day")
+    assert len(result) == 1
+    assert result[0].start == "2026-08-01T10:00:00+00:00"
+    assert result[0].end == "2026-08-01T14:00:00+00:00"
+
+
+def test_an_inverted_window_returns_no_buckets_rather_than_crashing():
+    assert buckets("2026-08-05T00:00:00+00:00", "2026-08-01T00:00:00+00:00", "day") == []

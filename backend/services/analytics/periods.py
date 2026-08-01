@@ -135,3 +135,66 @@ def compare(current: float, previous_value: float, prior_window_exists: bool) ->
     delta = round((current - previous_value) / previous_value * 100, 1)
     direction = "flat" if delta == 0 else ("up" if delta > 0 else "down")
     return {"delta_pct": delta, "direction": direction, "history_state": HISTORY_OK}
+
+
+def _bucket_start(dt: datetime, granularity: str) -> datetime:
+    if granularity == "day":
+        return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    if granularity == "week":
+        aligned = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        return aligned - timedelta(days=aligned.weekday())  # Monday
+    if granularity == "month":
+        return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if granularity == "quarter":
+        q_month = ((dt.month - 1) // 3) * 3 + 1
+        return dt.replace(month=q_month, day=1, hour=0, minute=0, second=0, microsecond=0)
+    if granularity == "year":
+        return dt.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    raise ValueError(f"unknown granularity: {granularity}")
+
+
+def _bucket_label(start: datetime, granularity: str) -> str:
+    if granularity == "day":
+        return start.strftime("%d %b")
+    if granularity == "week":
+        return f"Week of {start.strftime('%d %b')}"
+    if granularity == "month":
+        return start.strftime("%b %Y")
+    if granularity == "quarter":
+        return f"Q{(start.month - 1) // 3 + 1} {start.year}"
+    if granularity == "year":
+        return str(start.year)
+    raise ValueError(f"unknown granularity: {granularity}")
+
+
+def _bucket_advance(start: datetime, granularity: str) -> datetime:
+    if granularity == "day":
+        return start + timedelta(days=1)
+    if granularity == "week":
+        return start + timedelta(days=7)
+    if granularity == "month":
+        return _add_months(start, 1)
+    if granularity == "quarter":
+        return _add_months(start, 3)
+    if granularity == "year":
+        return start.replace(year=start.year + 1)
+    raise ValueError(f"unknown granularity: {granularity}")
+
+
+def buckets(start: str, end: str, granularity: str) -> list[Period]:
+    """Calendar-aligned buckets, clamped to [start, end) at the first and last
+    edge so a chart never implies data outside the requested window while
+    still labelling each bar by its real calendar period."""
+    start_dt = datetime.fromisoformat(start)
+    end_dt = datetime.fromisoformat(end)
+    if end_dt <= start_dt:
+        return []
+    result: list[Period] = []
+    cursor = _bucket_start(start_dt, granularity)
+    while cursor < end_dt:
+        nxt = _bucket_advance(cursor, granularity)
+        bucket_start = max(cursor, start_dt)
+        bucket_end = min(nxt, end_dt)
+        result.append(Period(bucket_start.isoformat(), bucket_end.isoformat(), _bucket_label(cursor, granularity)))
+        cursor = nxt
+    return result
