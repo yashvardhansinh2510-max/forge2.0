@@ -74,3 +74,66 @@ def test_serialized_rows_are_ranked_by_impact():
 
 def test_the_overview_row_limit_is_a_stated_constant_not_a_magic_number():
     assert routes.OVERVIEW_ROW_LIMIT > 0 and routes.BRIEF_ACTION_LIMIT == 3
+
+
+def test_pending_quotations_counts_every_open_quotation_not_just_stalled_ones():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    quotations = [
+        {"grand_total": 50000.0, "created_at": (now - timedelta(days=1)).isoformat()},   # fresh, below threshold
+        {"grand_total": 540000.0, "created_at": (now - timedelta(days=9)).isoformat()},   # would fire in Attention
+    ]
+    out = routes._pending_quotations_from(quotations, now)
+    assert out["count"] == 2
+    assert out["value"] == 590000.0
+    assert out["max_age_days"] == 9
+
+
+def test_pending_quotations_tolerates_a_missing_timestamp():
+    from datetime import datetime, timezone
+    now = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    out = routes._pending_quotations_from([{"grand_total": 1000.0}], now)
+    assert out["max_age_days"] is None
+
+
+def test_pending_followups_counts_overdue_strictly():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    followups = [
+        {"value": 1000.0, "due_at": (now - timedelta(hours=1)).isoformat()},   # overdue
+        {"value": 2000.0, "due_at": (now + timedelta(hours=1)).isoformat()},   # not yet
+    ]
+    out = routes._pending_followups_from(followups, now)
+    assert out["count"] == 2
+    assert out["overdue_count"] == 1
+    assert out["value"] == 3000.0
+
+
+def test_money_blocked_from_reads_a_prefetched_attention_input_not_the_database():
+    from services.analytics.attention import AttentionInput
+    data = AttentionInput(
+        unreleased_items=[{"value": 100.0}],
+        ready_items=[{"value": 200.0}],
+        orders=[{"grand_total": 500.0, "collected": 300.0}],
+    )
+    out = routes._money_blocked_from(data)
+    assert out["awaiting_release"] == 100.0
+    assert out["awaiting_dispatch"] == 200.0
+    assert out["awaiting_payment"] == 200.0
+    assert out["total"] == 500.0
+
+
+def test_overview_fetches_attention_and_opportunity_exactly_once():
+    """The handler used to call gather_attention up to 3 times per request
+    (directly, inside _brief's _rows_for, inside _money_blocked). One fetch,
+    reused everywhere, or live requests pay for redundant Mongo round-trips."""
+    import inspect
+    source = inspect.getsource(routes.overview)
+    assert source.count("gather.gather_attention(") == 1
+    assert source.count("gather.gather_opportunity(") == 1
+
+
+def test_revenue_by_floor_uses_the_same_kpi_pipeline_not_a_second_definition():
+    import inspect
+    source = inspect.getsource(routes._revenue_by_floor)
+    assert "_kpis(" in source

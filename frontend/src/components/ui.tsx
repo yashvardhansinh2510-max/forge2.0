@@ -1591,7 +1591,14 @@ export function PillTabs<T extends string>({
   testID?: string;
 }) {
   return (
-    <View testID={testID} style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+    // width: "100%" is load-bearing, not decorative: without an explicit
+    // width, RN-Web sizes this row to its content (shrink-to-fit) instead of
+    // its parent's available width, so flexWrap never triggers — pills past
+    // the viewport edge are silently clipped by an ancestor's overflow, not
+    // wrapped onto a second line. Fits by luck with 4 short options; breaks
+    // silently the moment a caller passes enough options or long enough
+    // labels to overflow (found via a 6-option preset picker at 375px).
+    <View testID={testID} style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap", width: "100%" }}>
       {options.map((o) => {
         const on = o.value === value;
         return (

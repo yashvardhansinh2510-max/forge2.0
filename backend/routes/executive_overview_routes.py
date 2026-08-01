@@ -108,15 +108,13 @@ async def _kpis(f: AnalyticsFilter, floors, period) -> dict:
     }
 
 
-async def _money_blocked(f: AnalyticsFilter, floors) -> dict:
+def _money_blocked_from(data) -> dict:
     """₹ awaiting release, awaiting dispatch, and awaiting payment.
 
-    Read-only view over the same collections Operations (Phase 5) will own; the
-    numbers come from the same rows the Attention rules use, so the card and
-    the rows can never disagree.
+    Takes an already-fetched AttentionInput rather than querying again — the
+    same rows the Attention rules read, so the card and the rows can never
+    disagree, and the overview handler is not paying for two identical fetches.
     """
-    thresholds = await _thresholds()
-    data = await gather.gather_attention(db, f, floors, (None, None), thresholds)
     awaiting_release = 0.0
     for item in data.unreleased_items:
         awaiting_release += float(item.get("value") or 0)
@@ -138,6 +136,43 @@ async def _money_blocked(f: AnalyticsFilter, floors) -> dict:
     }
 
 
+def _pending_quotations_from(quotations: list[dict], now: datetime) -> dict:
+    """Count, ₹ value and oldest age of every open quotation — not just the
+    ones that crossed the stalled-quotation threshold. Derived from the same
+    open-quotation rows the Attention rules already fetched; no new query."""
+    from services.analytics.attention import age_days
+
+    value = 0.0
+    for q in quotations:
+        value += float(q.get("grand_total") or 0)
+    ages = [age_days(q.get("created_at"), now) for q in quotations]
+    known_ages = [a for a in ages if a is not None]
+    return {
+        "count": len(quotations),
+        "value": round(value, 2),
+        "max_age_days": max(known_ages) if known_ages else None,
+        "destination": "/(admin)/quotations",
+    }
+
+
+def _pending_followups_from(followups: list[dict], now: datetime) -> dict:
+    """Count, overdue count and ₹ value at stake for open follow-ups."""
+    from services.analytics.attention import is_overdue
+
+    value = 0.0
+    overdue = 0
+    for f_ in followups:
+        value += float(f_.get("value") or 0)
+        if is_overdue(f_.get("due_at"), now):
+            overdue += 1
+    return {
+        "count": len(followups),
+        "overdue_count": overdue,
+        "value": round(value, 2),
+        "destination": "/(admin)/followups",
+    }
+
+
 async def _rows_for(f: AnalyticsFilter, floors, period):
     """Both rule sets, from the one implementation of each."""
     thresholds = await _thresholds()
@@ -150,11 +185,26 @@ async def _rows_for(f: AnalyticsFilter, floors, period):
     )
 
 
-async def _brief(f: AnalyticsFilter, floors, user: UserPublic) -> dict:
+async def _revenue_by_floor(f: AnalyticsFilter, floors, period) -> list[dict]:
+    """Revenue and orders per accessible floor, via the SAME _kpis pipeline —
+    not a second revenue definition. Only meaningful for an "all floors" view;
+    a caller already scoped to one floor gets a single-row breakdown."""
+    candidate_floors = floors if floors is not None else ["first-floor", "ground-floor"]
+    out = []
+    for floor_id in candidate_floors:
+        scoped = _filter_from_query(floor_id, f.preset, f.date_from, f.date_to)
+        kpis = await _kpis(scoped, [floor_id], period)
+        out.append({"floor_id": floor_id, "revenue": kpis["revenue"], "orders": kpis["orders"]})
+    return out
+
+
+async def _brief(f: AnalyticsFilter, floors, user: UserPublic, recommended: list | None = None) -> dict:
     """§11 — a deterministic digest, no model involved.
 
     Recommended actions are the top three of the SAME Attention and Opportunity
-    rows the cards below render, so the brief can never contradict them.
+    rows the cards below render, so the brief can never contradict them. If the
+    caller already ranked them (the overview handler has), that list is reused
+    rather than re-fetched; the standalone /brief endpoint computes its own.
     """
     yesterday = resolve("yesterday")
     match = build_match(
@@ -170,8 +220,10 @@ async def _brief(f: AnalyticsFilter, floors, user: UserPublic) -> dict:
         line_revenue_pipeline(match, "items.product_id", limit=1),
     ).to_list(1)
 
-    attention, opportunity = await _rows_for(f, floors, _period_of(f))
-    recommended = rank(list(attention) + list(opportunity))[:BRIEF_ACTION_LIMIT]
+    if recommended is None:
+        attention, opportunity = await _rows_for(f, floors, _period_of(f))
+        recommended = rank(list(attention) + list(opportunity))
+    top = recommended[:BRIEF_ACTION_LIMIT]
 
     return {
         "greeting": f"Good morning, {(user.full_name or '').split(' ')[0]}".strip().rstrip(","),
@@ -184,7 +236,7 @@ async def _brief(f: AnalyticsFilter, floors, user: UserPublic) -> dict:
             "top_product_revenue": float(brands[0]["revenue"]) if brands else None,
             "label": yesterday.label,
         },
-        "recommended_actions": _serialize_rows(recommended, user.role),
+        "recommended_actions": _serialize_rows(top, user.role),
     }
 
 
@@ -201,13 +253,29 @@ async def overview(
     period = _period_of(f)
     try:
         targets = await load_targets()
+        thresholds = await _thresholds()
+        now = datetime.now(timezone.utc)
+
+        # Fetched once and reused everywhere below — this handler used to
+        # gather_attention twice (once here, once inside _brief's own
+        # _rows_for call) and gather it a third time inside _money_blocked.
+        # Same rows, same rules, one round-trip.
+        attention_data = await gather.gather_attention(db, f, floors, (period.start, period.end), thresholds)
+        opportunity_data = await gather.gather_opportunity(db, f, floors, (period.start, period.end), thresholds)
+        attention = attention_rows(attention_data, now, thresholds)
+        opportunity = opportunity_rows(opportunity_data, now, thresholds)
+        ranked_all = rank(list(attention) + list(opportunity))
+
         signals = await gather.gather_health_signals(db, f, floors, (period.start, period.end), targets)
-        attention, opportunity = await _rows_for(f, floors, period)
+
         payload = {
             "health": health_score(signals, targets),
-            "brief": await _brief(f, floors, user),
+            "brief": await _brief(f, floors, user, recommended=ranked_all),
             "kpis": await _kpis(f, floors, period),
-            "money_blocked": await _money_blocked(f, floors),
+            "money_blocked": _money_blocked_from(attention_data),
+            "pending_quotations": _pending_quotations_from(attention_data.quotations, now),
+            "pending_followups": _pending_followups_from(attention_data.followups, now),
+            "revenue_by_floor": await _revenue_by_floor(f, floors, period),
             "attention": _serialize_rows(attention[:OVERVIEW_ROW_LIMIT], user.role),
             "opportunities": _serialize_rows(opportunity[:OVERVIEW_ROW_LIMIT], user.role),
             "attention_total": len(attention),
