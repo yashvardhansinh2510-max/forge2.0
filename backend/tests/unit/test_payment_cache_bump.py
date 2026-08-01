@@ -32,7 +32,7 @@ def test_the_bump_call_is_not_nested_inside_the_transaction_try_block():
     try_blocks = [n for n in ast.walk(func) if isinstance(n, ast.Try)]
     # Check only the outermost (main transaction) try block, not nested ones or cache-error ones
     main_try_block = min(try_blocks, key=lambda b: b.lineno)
-    block_lines = range(main_try_block.lineno, (main_try_block.body[-1].end_lineno or main_try_block.lineno) + 1)
+    block_lines = range(main_try_block.lineno, (main_try_block.end_lineno or main_try_block.lineno) + 1)
     assert bump_call.lineno not in block_lines, (
         "cache.bump appears to be called inside the payment-insert try/except — "
         "it must run only after commit succeeds"
