@@ -1,6 +1,5 @@
 """Quotation Builder API — v2 with multi-level discounts, autosave, duplicate."""
 import asyncio
-from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,8 +28,7 @@ from services.domain_outbox import (
     enqueue_after_primary_commit,
 )
 from services.followup_engine import reconcile_followups
-from services.pricing import effective_discount_pct as _effective_discount_pct
-from services.pricing import net_amount_list, per_line_net_amounts, stamp_net_amounts
+from services.pricing import _resolve_line_rows, net_amount_list, per_line_net_amounts, stamp_net_amounts
 from services.pricing import recalc_quotation_totals as _recalc
 from services.sequence import next_number
 from services.tiles_stage import can_move_to_quotation, can_place_order
@@ -625,6 +623,36 @@ async def tiles_product_history(
 
 
 # --- Breakdown (for line + totals transparency) ---
+def _breakdown_lines(doc: dict) -> list[dict]:
+    """Per-line transparency rows: gross, the effective discount and where it
+    came from, and the resulting net."""
+    items = [QuotationLineItem(**raw) for raw in doc.get("items", [])]
+    rows = _resolve_line_rows(
+        items,
+        doc.get("project_discount_pct", 0),
+        doc.get("category_discounts", {}) or {},
+        {k: RoomDiscountCfg(**v) for k, v in (doc.get("room_discounts") or {}).items()},
+    )
+
+    lines_out = []
+    for it, row in zip(items, rows, strict=True):
+        gross, disc = row["gross"], row["disc"]
+        net = gross - disc
+        # A room-amount line's pct is back-derived from an allocated rupee
+        # figure, so it is quantized to 4dp before the display round — the
+        # behaviour this endpoint has always had.
+        row_pct = round(row["pct"], 4) if row["source"] == "room_amount" else row["pct"]
+        lines_out.append({
+            "line_id": it.id, "product_id": it.product_id, "sku": it.sku, "name": it.name,
+            "room": it.room, "qty": it.qty, "unit_price": it.unit_price, "gross": round(gross, 2),
+            "discount_pct": round(row_pct, 2), "discount_source": row["source"].replace("room_amount", "room"),
+            "discount_amount": round(disc, 2),
+            "net": round(net, 2),
+            "total": round(net, 2),
+        })
+    return lines_out
+
+
 @router.get("/{quotation_id}/breakdown")
 async def quotation_breakdown(quotation_id: str, user: UserPublic = Depends(get_current_user)):
     """How the final numbers were calculated — per line + summary."""
@@ -637,44 +665,7 @@ async def quotation_breakdown(quotation_id: str, user: UserPublic = Depends(get_
     room_discs_raw = doc.get("room_discounts", {}) or {}
     room_discs = {k: RoomDiscountCfg(**v) for k, v in room_discs_raw.items()}
 
-    rows = []
-    for raw in doc.get("items", []):
-        it = QuotationLineItem(**raw)
-        gross = it.qty * it.unit_price
-        pct, source = _effective_discount_pct(it, room_discs, cat_discs, project_pct)
-        rows.append({"it": it, "gross": gross, "pct": pct, "source": source, "disc": gross * pct / 100})
-
-    # Second pass — proportional allocation of flat room-amount discounts,
-    # mirrors _recalc exactly so the breakdown always adds up to the totals.
-    by_room: dict[str, list[dict]] = defaultdict(list)
-    for row in rows:
-        if row["source"] == "room_amount":
-            by_room[row["it"].room or ""].append(row)
-    for room, room_rows in by_room.items():
-        cfg = room_discs.get(room)
-        if not cfg or cfg.type != "amount" or cfg.value <= 0:
-            continue
-        room_gross = sum(r["gross"] for r in room_rows)
-        flat = min(cfg.value, room_gross)
-        if room_gross <= 0 or flat <= 0:
-            continue
-        for row in room_rows:
-            row["disc"] = flat * (row["gross"] / room_gross)
-            row["pct"] = round((row["disc"] / row["gross"]) * 100, 4) if row["gross"] else 0
-
-    lines_out = []
-    for row in rows:
-        it, gross, disc = row["it"], row["gross"], row["disc"]
-        net = gross - disc
-        lines_out.append({
-            "line_id": it.id, "product_id": it.product_id, "sku": it.sku, "name": it.name,
-            "room": it.room, "qty": it.qty, "unit_price": it.unit_price, "gross": round(gross, 2),
-            "discount_pct": round(row["pct"], 2), "discount_source": row["source"].replace("room_amount", "room"),
-            "discount_amount": round(disc, 2),
-            "net": round(net, 2),
-            "total": round(net, 2),
-        })
-
+    lines_out = _breakdown_lines(doc)
     totals = _recalc([QuotationLineItem(**i) for i in doc.get("items", [])], project_pct, cat_discs, room_discs)
     return {
         "lines": lines_out,
@@ -690,30 +681,14 @@ def _enriched_items_for_pdf(doc: dict) -> list[dict]:
     pct (product/room/category/project), so the PDF's per-line Disc% column
     always matches the grand total — instead of only ever showing product-
     level overrides and leaving inherited discounts blank."""
-    project_pct = doc.get("project_discount_pct", 0)
-    cat_discs = doc.get("category_discounts", {}) or {}
-    room_discs = {k: RoomDiscountCfg(**v) for k, v in (doc.get("room_discounts") or {}).items()}
-    rows = []
-    for raw in doc.get("items", []):
-        it = QuotationLineItem(**raw)
-        gross = it.qty * it.unit_price
-        pct, source = _effective_discount_pct(it, room_discs, cat_discs, project_pct)
-        rows.append({"raw": raw, "gross": gross, "pct": pct, "source": source})
-    by_room: dict[str, list[dict]] = defaultdict(list)
-    for row in rows:
-        if row["source"] == "room_amount":
-            by_room[row["raw"].get("room") or ""].append(row)
-    for room, room_rows in by_room.items():
-        cfg = room_discs.get(room)
-        if not cfg or cfg.type != "amount" or cfg.value <= 0:
-            continue
-        room_gross = sum(r["gross"] for r in room_rows)
-        flat = min(cfg.value, room_gross)
-        if room_gross <= 0 or flat <= 0:
-            continue
-        for row in room_rows:
-            row["pct"] = round(((flat * (row["gross"] / room_gross)) / row["gross"]) * 100, 2) if row["gross"] else 0
-    return [{**row["raw"], "discount_pct": round(row["pct"], 2)} for row in rows]
+    raws = doc.get("items", [])
+    rows = _resolve_line_rows(
+        [QuotationLineItem(**raw) for raw in raws],
+        doc.get("project_discount_pct", 0),
+        doc.get("category_discounts", {}) or {},
+        {k: RoomDiscountCfg(**v) for k, v in (doc.get("room_discounts") or {}).items()},
+    )
+    return [{**raw, "discount_pct": round(row["pct"], 2)} for raw, row in zip(raws, rows, strict=True)]
 
 
 # --- PDF branding (Settings > Company + Settings > PDF, merged) -----------

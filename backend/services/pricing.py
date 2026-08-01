@@ -54,15 +54,22 @@ def _resolve_line_rows(
     """The one implementation of the discount cascade and the room "amount"
     pro-rata allocation.
 
-    This loop used to exist twice — once in recalc_quotation_totals and once
-    in per_line_net_amounts — which was a standing invitation for per-line
-    revenue to drift from grand_total. Both now build on this.
+    This loop used to exist four times — recalc_quotation_totals,
+    per_line_net_amounts, the /breakdown route, and the PDF item enricher —
+    which was a standing invitation for per-line revenue to drift from
+    grand_total, and did leave the last two disagreeing on rounding. All four
+    now build on this.
+
+    "pct" is the effective discount percent, UNROUNDED — including the value
+    back-derived for a room "amount" line once its flat rupee discount has
+    been allocated. Rounding is a display concern and belongs to the caller;
+    doing it here is what let the breakdown (4dp) and the PDF (2dp) drift.
     """
     rows = []
     for it in items:
         gross = it.qty * it.unit_price
         pct, source = effective_discount_pct(it, room_discounts, category_discounts, project_discount_pct)
-        rows.append({"line_id": it.id, "gross": gross, "source": source, "room": it.room, "disc": gross * pct / 100})
+        rows.append({"line_id": it.id, "gross": gross, "source": source, "room": it.room, "pct": pct, "disc": gross * pct / 100})
 
     by_room: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
@@ -78,6 +85,7 @@ def _resolve_line_rows(
             continue
         for row in room_rows:
             row["disc"] = flat * (row["gross"] / room_gross)
+            row["pct"] = (row["disc"] / row["gross"]) * 100 if row["gross"] else 0
     return rows
 
 
