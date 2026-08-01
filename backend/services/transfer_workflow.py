@@ -19,7 +19,7 @@ from models import (
     PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
     Quotation, QuotationLineItem, UserPublic,
 )
-from services.domain_outbox import enqueue_after_primary_commit
+from services.domain_outbox import enqueue_after_primary_commit, resolve_activity_floor_id
 from services.sequence import next_number as _atomic_next_number
 
 EVENT_PURCHASE_TRANSFERRED = "PurchaseTransferred"
@@ -203,7 +203,12 @@ async def execute_transfer(
 
 
 async def _upsert_activity(*, key: str, event_type: str, entity_type: str, entity_id: str, actor_id: str, actor_name: str, customer_id: str, quotation_id: str | None, purchase_id: str | None, summary: str, payload: dict, session: Any) -> None:
-    activity = ActivityEvent(event_type=event_type, entity_type=entity_type, entity_id=entity_id, actor_id=actor_id, actor_name=actor_name, customer_id=customer_id, quotation_id=quotation_id, purchase_id=purchase_id, summary=summary, payload=payload).dict()
+    floor_id = await resolve_activity_floor_id(
+        quotation_id=quotation_id, purchase_id=purchase_id,
+        entity_type=entity_type, entity_id=entity_id,
+        customer_id=customer_id, session=session,
+    )
+    activity = ActivityEvent(event_type=event_type, entity_type=entity_type, entity_id=entity_id, actor_id=actor_id, actor_name=actor_name, customer_id=customer_id, quotation_id=quotation_id, purchase_id=purchase_id, summary=summary, payload=payload, floor_id=floor_id).dict()
     activity["automation_key"] = key
     await db.activity_events.update_one({"automation_key": key}, {"$setOnInsert": activity}, upsert=True, session=session)
 

@@ -68,7 +68,76 @@ async def enqueue_after_primary_commit(
     return event
 
 
+# entity_type value -> collection name holding that entity. Mirrors
+# migrations/0014_backfill_activity_notification_floor_id.py's map exactly —
+# both the one-time backfill and this live write path must agree on where an
+# entity_type/entity_id pair resolves to, or new rows would disagree with the
+# history the migration already stamped.
+_ENTITY_COLLECTIONS = {
+    "quotation": "quotations",
+    "purchase": "purchase_orders",
+    "customer": "customers",
+    "product": "products",
+    "followup": "followups",
+    "payment": "payments",
+    "walkin": "walkins",
+}
+
+
+async def resolve_activity_floor_id(
+    *,
+    quotation_id: str | None,
+    purchase_id: str | None,
+    entity_type: str | None,
+    entity_id: str | None,
+    customer_id: str | None,
+    session: Any,
+) -> str | None:
+    """Resolve the floor an activity event belongs to from its parent
+    document, in the same decreasing order of reliability that
+    migrations/0014_backfill_activity_notification_floor_id.py uses to
+    backfill historical rows:
+
+      1. quotation_id  -> that quotation's floor_id
+      2. purchase_id   -> that purchase order's floor_id
+      3. entity_type/entity_id -> the referenced document's floor_id
+      4. customer_id   -> that customer's floor_id
+
+    All lookups run with `session` so they see uncommitted writes from the
+    same transaction (e.g. a quotation or purchase order inserted earlier in
+    this same commit).
+
+    Returns None — never a guessed default — when nothing resolves. A row
+    that stays unresolved is invisible to every business unit, which is the
+    accepted, deliberate behaviour; defaulting to "first-floor" here would
+    file Ground Floor history under Sanitary Bathroom.
+    """
+    if quotation_id:
+        quotation = await db.quotations.find_one({"id": quotation_id}, {"_id": 0, "floor_id": 1}, session=session)
+        if quotation and quotation.get("floor_id"):
+            return quotation["floor_id"]
+    if purchase_id:
+        purchase = await db.purchase_orders.find_one({"id": purchase_id}, {"_id": 0, "floor_id": 1}, session=session)
+        if purchase and purchase.get("floor_id"):
+            return purchase["floor_id"]
+    collection_name = _ENTITY_COLLECTIONS.get(entity_type or "")
+    if collection_name and entity_id:
+        entity = await db[collection_name].find_one({"id": entity_id}, {"_id": 0, "floor_id": 1}, session=session)
+        if entity and entity.get("floor_id"):
+            return entity["floor_id"]
+    if customer_id:
+        customer = await db.customers.find_one({"id": customer_id}, {"_id": 0, "floor_id": 1}, session=session)
+        if customer and customer.get("floor_id"):
+            return customer["floor_id"]
+    return None
+
+
 async def _upsert_activity(*, key: str, event_type: str, entity_type: str, entity_id: str, actor_id: str, actor_name: str, customer_id: str | None, quotation_id: str | None, purchase_id: str | None, summary: str, payload: dict, session: Any) -> None:
+    floor_id = await resolve_activity_floor_id(
+        quotation_id=quotation_id, purchase_id=purchase_id,
+        entity_type=entity_type, entity_id=entity_id,
+        customer_id=customer_id, session=session,
+    )
     event = ActivityEvent(
         event_type=event_type,
         entity_type=entity_type,  # type: ignore[arg-type]
@@ -80,6 +149,7 @@ async def _upsert_activity(*, key: str, event_type: str, entity_type: str, entit
         purchase_id=purchase_id,
         summary=summary,
         payload=payload,
+        floor_id=floor_id,
     ).dict()
     event["automation_key"] = key
     await db.activity_events.update_one({"automation_key": key}, {"$setOnInsert": event}, upsert=True, session=session)
