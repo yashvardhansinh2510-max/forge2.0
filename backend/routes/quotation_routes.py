@@ -265,6 +265,17 @@ async def get_quotation(quotation_id: str, user: UserPublic = Depends(get_curren
     return Quotation(**doc)
 
 
+def _ordered_at_patch(doc: dict, new_status: str) -> dict:
+    """Return the ordered_at fragment for a status transition, or {}.
+
+    Write-once by design — an order confirmed in June must keep dating to
+    June no matter how many times it is edited afterwards.
+    """
+    if new_status == "ordered" and not doc.get("ordered_at"):
+        return {"ordered_at": now_iso()}
+    return {}
+
+
 def _stamped_items_for_update(
     update: dict,
     doc: dict,
@@ -343,6 +354,7 @@ async def update_quotation(
         update["status"] = body.status
         if body.status == "approved":
             update["approved_by"] = user.id
+        update.update(_ordered_at_patch(doc, body.status))
     if body.project_name is not None:
         update["project_name"] = body.project_name
     if body.phone_snapshot is not None:
@@ -926,7 +938,7 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
                         raise HTTPException(status_code=400, detail="Cannot place order — quotation has no items")
                     await db.quotations.update_one(
                         {"id": quotation_id},
-                        {"$set": {"status": "ordered", "updated_at": now_iso()}},
+                        {"$set": {"status": "ordered", "updated_at": now_iso(), **_ordered_at_patch(doc, "ordered")}},
                         session=session,
                     )
                     event = await enqueue_after_primary_commit(

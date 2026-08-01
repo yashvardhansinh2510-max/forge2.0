@@ -132,7 +132,8 @@ async def execute_transfer(
             )
             quote = Quotation(
                 number=await _next_number("quotations", "FQ", session), customer_id=destination["id"],
-                customer_name=destination_name, status="ordered", items=[quote_line], rooms=[source_item.get("room")] if source_item.get("room") else [],
+                customer_name=destination_name, status="ordered", ordered_at=now,
+                items=[quote_line], rooms=[source_item.get("room")] if source_item.get("room") else [],
                 subtotal=round(quote_line.net, 2), grand_total=round(quote_line.net, 2),
                 notes=f"Transfer from {source_name} · {source_po.get('number')}" + (f" — {reason}" if reason else ""),
                 created_by=user.id, created_by_name=user.full_name, source="transfer",

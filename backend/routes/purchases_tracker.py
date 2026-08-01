@@ -1113,6 +1113,10 @@ async def transfer_item(
         customer_id=body.new_customer_id,
         customer_name=new_cust.get("company") or new_cust.get("name"),
         status="ordered",
+        # Born ordered, so this is its confirmation moment. Without the stamp
+        # the row carries no ordered_at and drops out of every revenue report,
+        # which dates by that field and never by updated_at.
+        ordered_at=now_iso(),
         items=[auto_line],
         subtotal=round(auto_line.net, 2),
         grand_total=round(auto_line.net, 2),

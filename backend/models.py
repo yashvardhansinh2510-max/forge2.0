@@ -520,6 +520,11 @@ class Quotation(TimestampedModel):
     referrer_id: Optional[str] = None               # tracking is via a structured Referrer
     referrer_name: Optional[str] = None              # denormalized at write time — see Referrer
     status: QuotationStatus = "draft"
+    # Stamped once, when status first becomes "ordered", and never rewritten.
+    # EVERY revenue calculation dates by this field. updated_at cannot be used:
+    # it is re-stamped on every edit, so editing an old order would move its
+    # revenue into the current period.
+    ordered_at: Optional[str] = None
     items: list[QuotationLineItem] = []
     rooms: list[str] = []                # ordered list of room labels
     collapsed_rooms: list[str] = []      # ui state — persisted so it survives reloads
