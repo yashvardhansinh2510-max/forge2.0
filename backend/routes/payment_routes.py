@@ -9,6 +9,7 @@ final price the customer pays, and payments accumulate against it directly.
 """
 from __future__ import annotations
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote_plus
@@ -19,9 +20,12 @@ from auth import floor_for_write, floor_query, get_current_user, require_min_rol
 from db import client, db
 from models import Payment, PaymentCreate, UserPublic
 from services.activity_log import log_event
+from services.analytics import cache
 from services.followup_engine import reconcile_followups
 from services.notifications import notify
 from settings import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
@@ -391,6 +395,10 @@ async def create_payment(
             "fully_paid": fully_paid,
         },
     )
+    try:
+        await cache.bump("payments")
+    except Exception:
+        logger.exception("cache bump failed for payments after payment %s", payment.id)
     # A payment landing is exactly when payment_overdue/payment_partial
     # reminders should refresh or auto-close — event-triggered, not a cron job.
     asyncio.create_task(reconcile_followups())
