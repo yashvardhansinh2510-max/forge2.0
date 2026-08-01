@@ -15,26 +15,26 @@ ROWS = [{"name": "ABC Architects", "revenue": 1200000.0}, {"name": "XYZ Interior
 
 
 def test_csv_header_row_uses_the_declared_labels():
-    text = rows_to_csv(ROWS, COLUMNS).decode("utf-8")
+    text = rows_to_csv(ROWS, COLUMNS).decode("utf-8-sig")
     reader = csv.reader(io.StringIO(text))
     header = next(reader)
     assert header == ["Name", "Revenue"]
 
 
 def test_csv_data_rows_follow_column_order():
-    text = rows_to_csv(ROWS, COLUMNS).decode("utf-8")
+    text = rows_to_csv(ROWS, COLUMNS).decode("utf-8-sig")
     reader = list(csv.reader(io.StringIO(text)))
     assert reader[1] == ["ABC Architects", "1200000.0"]
 
 
 def test_csv_handles_a_row_missing_a_declared_key():
-    text = rows_to_csv([{"name": "No Revenue Field"}], COLUMNS).decode("utf-8")
+    text = rows_to_csv([{"name": "No Revenue Field"}], COLUMNS).decode("utf-8-sig")
     reader = list(csv.reader(io.StringIO(text)))
     assert reader[1] == ["No Revenue Field", ""]
 
 
 def test_csv_is_safe_with_the_rupee_symbol():
-    text = rows_to_csv([{"name": "₹ Test", "revenue": 1.0}], COLUMNS).decode("utf-8")
+    text = rows_to_csv([{"name": "₹ Test", "revenue": 1.0}], COLUMNS).decode("utf-8-sig")
     assert "₹ Test" in text
 
 

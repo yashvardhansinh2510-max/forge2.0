@@ -24,7 +24,12 @@ def rows_to_csv(rows: list[dict], columns: list[Column]) -> bytes:
     writer.writerow([label for _, label in columns])
     for row in rows:
         writer.writerow([row.get(key, "") for key, _ in columns])
-    return buf.getvalue().encode("utf-8")  # UTF-8 encoding for compatibility
+    # UTF-8 with BOM (byte-order-mark): required for Excel to correctly detect UTF-8
+    # and render non-ASCII characters (₹ rupee symbol) when user opens CSV directly.
+    # Without BOM, Excel guesses a system ANSI codepage and produces mojibake.
+    # The BOM is safe: utf-8-sig decode strips it, utf-8 decode shows it as literal
+    # — tests must use utf-8-sig decode to handle the BOM correctly.
+    return buf.getvalue().encode("utf-8-sig")
 
 
 def rows_to_xlsx(rows: list[dict], columns: list[Column], sheet_title: str = "Export") -> bytes:
