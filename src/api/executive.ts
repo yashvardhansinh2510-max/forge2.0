@@ -42,6 +42,13 @@ export type ExecutiveRow = {
   actions: RowAction[];
   entity: Record<string, string>;
   history_state: HistoryState;
+  /** followup_engine.score_followup's real, already-stored output — only
+   *  present on followup_overdue rows, which are the one rule type that
+   *  engine actually scores. null everywhere else: no other rule has an
+   *  equivalent, and Today's Priorities falls back to rank position rather
+   *  than inventing a second score for those rows. */
+  priority_score: number | null;
+  reason_factors: string[];
 };
 
 export type HealthComponent = {
