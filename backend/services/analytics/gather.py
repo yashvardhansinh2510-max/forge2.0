@@ -104,7 +104,10 @@ async def gather_attention(db, f: AnalyticsFilter, accessible_floors, window, th
     followups = await db.followups.find(
         {**followup_match, "status": "open"},
         {"_id": 0, "id": 1, "status": 1, "due_at": 1, "value": 1, "customer_id": 1, "customer_name": 1,
-         "customer_phone": 1, "reason": 1, "assigned_to": 1, "assigned_to_name": 1, "floor_id": 1},
+         "customer_phone": 1, "reason": 1, "assigned_to": 1, "assigned_to_name": 1, "floor_id": 1,
+         # Today's Priorities (§14.2) stars: the real followup_engine output,
+         # already computed and stored — read, never recomputed here.
+         "priority_score": 1, "priority_level": 1, "reason_factors": 1},
     ).to_list(_MAX_ROWS)
 
     po_match = build_match(AnalyticsFilter(floor_id=f.floor_id, status="any"), accessible_floors, (None, None))

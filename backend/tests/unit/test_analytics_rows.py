@@ -78,3 +78,19 @@ def test_action_roles_are_real_roles_from_the_hierarchy():
     from auth import ROLE_HIERARCHY
     for action, min_role in ACTION_ROLES.items():
         assert min_role in ROLE_HIERARCHY, f"{action} declares unknown role {min_role}"
+
+
+def test_a_row_with_no_priority_engine_output_carries_none():
+    """Most rules (quotation_stalled, brand_declining, ...) have no equivalent
+    to followup_engine.score_followup — priority_score must default to None,
+    never a fabricated number standing in for "we don't know"."""
+    d = row_dict(_row(), "owner")
+    assert d["priority_score"] is None
+    assert d["reason_factors"] == []
+
+
+def test_a_followup_rows_real_priority_engine_output_is_carried_through():
+    row = _row(priority_score=82, reason_factors=("₹5.4L at stake", "No contact for 9 days"))
+    d = row_dict(row, "owner")
+    assert d["priority_score"] == 82
+    assert d["reason_factors"] == ["₹5.4L at stake", "No contact for 9 days"]

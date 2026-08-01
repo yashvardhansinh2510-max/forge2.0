@@ -73,6 +73,13 @@ class ActionRow:
     actions: tuple[str, ...]
     entity: dict[str, str] = field(default_factory=dict)
     history_state: str = "ok"
+    # Today's Priorities (§14.2) stars reuse followup_engine.score_followup's
+    # OUTPUT — already computed and stored on every Followup document — rather
+    # than inventing a second priority scale. Only followup_overdue rows have
+    # a real equivalent; every other rule leaves this None rather than
+    # fabricating a number that class of row was never scored on.
+    priority_score: int | None = None
+    reason_factors: tuple[str, ...] = ()
 
 
 def may_perform(action: str, role: str) -> bool:
@@ -106,6 +113,8 @@ def row_dict(row: ActionRow, role: str) -> dict:
         "actions": [a for a in row.actions if may_perform(a, role)],
         "entity": dict(row.entity),
         "history_state": row.history_state,
+        "priority_score": row.priority_score,
+        "reason_factors": list(row.reason_factors),
     }
 
 

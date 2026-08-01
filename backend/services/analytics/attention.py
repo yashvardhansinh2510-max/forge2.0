@@ -271,6 +271,13 @@ def followup_overdue(followups: list[dict], now: datetime, thresholds: dict) -> 
                 "customer_id": f.get("customer_id") or "",
                 "phone": f.get("customer_phone") or "",
             },
+            # The real, already-stored followup_engine.score_followup output —
+            # see the ActionRow docstring. Not recomputed here: the inputs
+            # (days_since_contact, urgency_pts, tier) aren't in this dict, and
+            # re-deriving them would risk a second implementation drifting
+            # from the one the Follow-ups screen itself trusts.
+            priority_score=f.get("priority_score"),
+            reason_factors=tuple(f.get("reason_factors") or ()),
         ))
     return rows
 

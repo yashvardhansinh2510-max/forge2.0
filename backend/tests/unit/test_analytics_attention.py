@@ -99,6 +99,29 @@ def test_followup_overdue_fires_on_due_date_and_carries_its_value():
     assert "whatsapp" in rows[0].actions
 
 
+def test_followup_overdue_carries_the_real_stored_priority_score():
+    """Today's Priorities (§14.2) reuses followup_engine.score_followup's
+    OUTPUT, already computed and stored on the document — not a value this
+    rule invents."""
+    followups = [{
+        "id": "f1", "status": "open", "due_at": _iso(4), "value": 120000.0,
+        "priority_score": 82, "priority_level": "critical",
+        "reason_factors": ["₹1.2L at stake", "No contact for 9 days"],
+    }]
+    row = attention.followup_overdue(followups, now=NOW, thresholds=attention.THRESHOLDS)[0]
+    assert row.priority_score == 82
+    assert row.reason_factors == ("₹1.2L at stake", "No contact for 9 days")
+
+
+def test_followup_overdue_tolerates_a_document_with_no_stored_score():
+    """Legacy documents or ones the engine never scored must not crash the
+    rule or fabricate a number."""
+    followups = [{"id": "f1", "status": "open", "due_at": _iso(4), "value": 120000.0}]
+    row = attention.followup_overdue(followups, now=NOW, thresholds=attention.THRESHOLDS)[0]
+    assert row.priority_score is None
+    assert row.reason_factors == ()
+
+
 def test_a_completed_followup_never_fires():
     followups = [{"id": "f1", "status": "completed", "due_at": _iso(40), "value": 120000.0}]
     assert attention.followup_overdue(followups, now=NOW, thresholds=attention.THRESHOLDS) == []
