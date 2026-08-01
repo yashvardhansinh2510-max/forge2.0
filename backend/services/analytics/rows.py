@@ -9,11 +9,19 @@ Actions are declared by the MINIMUM ROLE of the endpoint each one actually
 calls, read from the routes themselves rather than assumed:
 
     record_payment      routes/payment_routes.py:264   require_min_role("accounts")
-    assign              follow-up assignment           require_min_role("manager")
+    assign              routes/followup_routes.py:578  get_current_user (any staff)
     schedule_followup   routes/followup_routes.py:534  get_current_user (any staff)
     whatsapp            routes/followup_routes.py:663  get_current_user (any staff)
     send_reminder       same contact endpoint          get_current_user (any staff)
     open / open_customer / open_po / call              navigation and dialling only
+
+Corrected 2026-08-01 (Stage E, §18's live-permission check): `assign` was
+declared "manager" from an unverified assumption in the original Task 1
+pass, not from reading the real endpoint. `PATCH /followups/{id}` — the
+actual reassignment path — has no role gate beyond authentication. The
+error was over-restrictive (§14.1's failure direction is under-restrictive,
+widening access), but a stated role requirement that doesn't match the
+route it claims to describe is a correctness bug regardless of direction.
 
 Sales Data is gated owner/admin/manager, but that gate must never widen access
 to the underlying operation (§14.1 rule 1) — so the row filters its own actions
@@ -47,7 +55,7 @@ ACTION_ROLES: dict[str, str] = {
     "whatsapp": "worker",
     "send_reminder": "worker",
     "schedule_followup": "worker",
-    "assign": "manager",
+    "assign": "worker",
     "record_payment": "accounts",
 }
 
