@@ -403,10 +403,20 @@ function PhoneBar() {
   // other unit gets that unit's own Tiles nav destination via the same
   // useTilesNav() mechanism, and if neither is available the FAB hides
   // rather than reaching into the other unit's routes.
+  //
+  // The predicate must be POSITIVE, not `!== TILES_FLOOR_ID`: selectedFloorId
+  // starts as "" while useFloorAccess() resolves asynchronously, and a
+  // negative predicate put that unresolved state in the Sanitary branch — a
+  // multi-floor user sitting on Ground Floor who tapped + before hydration
+  // completed landed in the Sanitary Quotation Builder, which itself flips
+  // the active floor. A positive match on each concrete floor id leaves the
+  // unresolved "" state inert (no branch matches, FAB hides).
   const { selectedFloorId } = useFloorAccess();
-  const fabAction = selectedFloorId !== TILES_FLOOR_ID
+  const fabAction = !hasAccess("quotations")
+    ? null
+    : selectedFloorId === SANITARY_FLOOR_ID
     ? { label: "New quotation", onPress: () => router.push("/(admin)/quotations/new" as any) }
-    : tilesNav.items.length
+    : selectedFloorId === TILES_FLOOR_ID && tilesNav.items.length
     ? { label: `Open ${tilesNav.items[0].label}`, onPress: () => { void tilesNav.open(tilesNav.items[0]); } }
     : null;
 
