@@ -19,14 +19,25 @@ import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
-import { TILES_FLOOR_ID } from "@/src/constants/floors";
+import { SANITARY_FLOOR_ID, TILES_FLOOR_ID } from "@/src/constants/floors";
 
-type NavItem = { href: string; label: string; icon: FeatherName; match: string; roles?: string[] };
+type NavItem = {
+  href: string; label: string; icon: FeatherName; match: string; roles?: string[];
+  // Business units this destination exists in. Omitted = every unit.
+  // A single-unit module must be invisible from the others, not merely
+  // reachable-but-empty: the Quotation Builder is pinned to Sanitary
+  // Bathroom (every request it makes passes floorId: "first-floor"), so on
+  // Ground Floor the Quotations item listed nothing and its "New Quotation"
+  // button silently moved the user to the other business unit. Tile Orders /
+  // Quotation Tiles are the mirror image and are already handled this way by
+  // `useTilesNav`.
+  floors?: string[];
+};
 
 const PRIMARY: NavItem[] = [
   { href: "/(admin)/dashboard", label: "Today", icon: "sunrise", match: "dashboard" },
   { href: "/(admin)/walkins", label: "Walk-ins", icon: "user-plus", match: "walkins" },
-  { href: "/(admin)/quotations", label: "Quotations", icon: "file-text", match: "quotations" },
+  { href: "/(admin)/quotations", label: "Quotations", icon: "file-text", match: "quotations", floors: [SANITARY_FLOOR_ID] },
   { href: "/(admin)/catalog", label: "Catalog", icon: "package", match: "catalog" },
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
@@ -180,11 +191,31 @@ function useTilesNav() {
   return { items, open };
 }
 
+/** Nav visibility = module permission AND the active business unit.
+ *
+ * Both filters have to be applied in the same place: `useModuleAccess` alone
+ * let a Sanitary-only destination render while Ground Floor was active, which
+ * is how the Quotations item ended up showing an always-empty list whose only
+ * action switched the user's business unit out from under them. */
+function useVisibleNav() {
+  const hasAccess = useModuleAccess();
+  const { access, selectedFloorId } = useFloorAccess();
+  return (items: NavItem[]) => items.filter((item) => {
+    if (!hasAccess(item.match)) return false;
+    if (!item.floors) return true;
+    // While the floor is still resolving, keep the item — hiding it first and
+    // showing it a frame later reads as the nav flickering on every load.
+    if (!access || !selectedFloorId) return true;
+    return item.floors.includes(selectedFloorId);
+  });
+}
+
 // ── Desktop sidebar ─────────────────────────────────────────────────────────
 function Sidebar() {
   const router = useRouter();
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
+  const visible = useVisibleNav();
   const hasAccess = useModuleAccess();
   const tilesNav = useTilesNav();
   const isActive = (m: string) => segments.includes(m);
@@ -199,7 +230,7 @@ function Sidebar() {
         <SearchTrigger />
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: space.x3, gap: 1 }} showsVerticalScrollIndicator={false}>
-        {PRIMARY.filter((n) => hasAccess(n.match)).map((n) => (
+        {visible(PRIMARY).map((n) => (
           <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} />
         ))}
         {hasAccess("quotations") && tilesNav.items.map((n) => (
@@ -211,7 +242,7 @@ function Sidebar() {
           />
         ))}
         <View style={{ height: space.x5 }} />
-        {SECONDARY.filter((n) => hasAccess(n.match)).map((n) => (
+        {visible(SECONDARY).map((n) => (
           <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} />
         ))}
       </ScrollView>
@@ -248,6 +279,7 @@ function Rail() {
   const router = useRouter();
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
+  const visible = useVisibleNav();
   const hasAccess = useModuleAccess();
   const palette = usePalette();
   const tilesNav = useTilesNav();
@@ -283,7 +315,7 @@ function Rail() {
         </Pressable>
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 2 }} showsVerticalScrollIndicator={false}>
-        {PRIMARY.filter((n) => hasAccess(n.match)).map((n) => <RailBtn key={n.href} item={n} />)}
+        {visible(PRIMARY).map((n) => <RailBtn key={n.href} item={n} />)}
         {hasAccess("quotations") && tilesNav.items.map((n) => {
           const on = n.match === "orders" ? segments.includes("orders") : segments.includes("tiles") && !segments.includes("orders");
           return (
@@ -305,7 +337,7 @@ function Rail() {
           );
         })}
         <View style={{ height: space.x4 }} />
-        {SECONDARY.filter((n) => hasAccess(n.match)).map((n) => (
+        {visible(SECONDARY).map((n) => (
           <RailBtn key={n.href} item={n} />
         ))}
       </ScrollView>
@@ -327,7 +359,7 @@ function Rail() {
 // ── Phone bottom bar + More sheet ───────────────────────────────────────────
 const PHONE_TABS: NavItem[] = [
   { href: "/(admin)/dashboard", label: "Today", icon: "home", match: "dashboard" },
-  { href: "/(admin)/quotations", label: "Quotes", icon: "file-text", match: "quotations" },
+  { href: "/(admin)/quotations", label: "Quotes", icon: "file-text", match: "quotations", floors: [SANITARY_FLOOR_ID] },
 ];
 const PHONE_TABS_RIGHT: NavItem[] = [
   { href: "/(admin)/followups", label: "Tasks", icon: "check-square", match: "followups" },
@@ -348,13 +380,21 @@ function PhoneBar() {
   const router = useRouter();
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
+  const visible = useVisibleNav();
   const hasAccess = useModuleAccess();
   const palette = usePalette();
   const tilesNav = useTilesNav();
   const [moreOpen, setMoreOpen] = useState(false);
   const isActive = (m: string) => segments.includes(m);
-  const visibleMore = MORE_ITEMS.filter((n) => hasAccess(n.match));
+  const visibleMore = visible(MORE_ITEMS);
   const moreActive = visibleMore.some((m) => isActive(m.match));
+  // The left tab slot is Quotes on Sanitary Bathroom. On Ground Floor that
+  // destination doesn't exist, so the slot takes that unit's equivalent
+  // (Quotation Tiles) rather than collapsing and leaving a hole in the bar.
+  const visiblePhoneTabs = visible(PHONE_TABS);
+  const phoneTabs = visiblePhoneTabs.length < PHONE_TABS.length && tilesNav.items.length
+    ? [...visiblePhoneTabs, { ...tilesNav.items[0], label: "Tiles" }]
+    : visiblePhoneTabs;
   // The FAB is not a NavItem and isn't run through visible(), so it needs its
   // own unit check: it used to unconditionally open the Sanitary Quotation
   // Builder, which on Ground Floor doesn't exist for that unit and silently
@@ -392,7 +432,7 @@ function PhoneBar() {
   return (
     <>
       <View style={styles.phoneBar}>
-        {PHONE_TABS.filter((t) => hasAccess(t.match)).map((t) => <Tab key={t.href} item={t} />)}
+        {phoneTabs.map((t) => <Tab key={t.href} item={t} />)}
         <View style={styles.fabSlot}>
           {fabAction ? (
             <Pressable
@@ -406,7 +446,7 @@ function PhoneBar() {
             </Pressable>
           ) : null}
         </View>
-        {PHONE_TABS_RIGHT.filter((t) => hasAccess(t.match)).map((t) => <Tab key={t.href} item={t} />)}
+        {visible(PHONE_TABS_RIGHT).map((t) => <Tab key={t.href} item={t} />)}
         <Pressable
           testID="bottom-nav-more"
           onPress={() => setMoreOpen(true)}
