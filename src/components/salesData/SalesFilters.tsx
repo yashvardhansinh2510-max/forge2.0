@@ -73,9 +73,9 @@ export function SalesFilters({
   };
 
   return (
-    <View style={{ gap: spacing.md }} testID="sales-data-filters">
-      <View style={{ gap: spacing.xs }}>
-        <Text style={type.captionStrong}>BUSINESS UNIT</Text>
+    <View style={{ gap: spacing.lg }} testID="sales-data-filters">
+      <View style={{ gap: spacing.sm }}>
+        <Text style={type.overline}>Business unit</Text>
         <PillTabs
           testID="sales-data-floor"
           value={floorId || "all"}
@@ -87,8 +87,8 @@ export function SalesFilters({
         />
       </View>
 
-      <View style={{ gap: spacing.xs }}>
-        <Text style={type.captionStrong}>PERIOD</Text>
+      <View style={{ gap: spacing.sm }}>
+        <Text style={type.overline}>Period</Text>
         <PillTabs
           testID="sales-data-preset"
           value={showCustom || isCustom ? "custom" : period.preset}

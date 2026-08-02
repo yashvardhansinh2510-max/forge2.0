@@ -1,7 +1,8 @@
 import { Text, View } from "react-native";
 
 import { Card, EmptyState, ErrorState, LoadingState, SkeletonList } from "@/src/components/ui";
-import { colors, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
+import { colors, layout, spacing, type } from "@/src/theme/tokens";
 
 /**
  * One block of the Sales Data page: a titled card that owns its own loading,
@@ -32,11 +33,20 @@ export function SalesSection<T>({
   testID: string;
   children: (rows: T[]) => React.ReactNode;
 }) {
+  const { isPhone } = useBp();
+  // 24px of interior padding crowds a 375px viewport; the card language's own
+  // base/spacious pair is what keeps every card on the page breathing the
+  // same way at each width instead of one fixed value at all of them.
+  const padding = isPhone ? layout.cardPadding.base : layout.cardPadding.spacious;
+
   return (
-    <Card testID={testID} variant="flat" padding={spacing.xl}>
-      <View style={{ gap: spacing.md }}>
-        <View style={{ gap: 2 }}>
-          <Text style={type.titleSm}>{title}</Text>
+    <Card testID={testID} variant="flat" padding={padding}>
+      <View style={{ gap: spacing.lg }}>
+        <View style={{ gap: spacing.s4 }}>
+          {/* titleMd, not titleSm: at 15px a section heading sat only two
+              points above the 13px rows beneath it, which read as emphasis
+              rather than as a level in the hierarchy. */}
+          <Text style={type.titleMd}>{title}</Text>
           {question ? (
             <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>{question}</Text>
           ) : null}
