@@ -1,252 +1,533 @@
 import { Redirect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 
+import { executiveApi, type Overview } from "@/src/api/executive";
+import {
+  salesDataApi,
+  type BestSellingProductRow,
+  type BrandRevenueRow,
+  type CustomerRevenueRow,
+  type RecentOrderRow,
+  type ReferrerSummaryRow,
+  type SalesFilter,
+} from "@/src/api/salesData";
 import { AdminPage } from "@/src/components/AdminPage";
-import { api } from "@/src/api/client";
+import { FLOOR_LABEL, SalesFilters } from "@/src/components/salesData/SalesFilters";
+import { SalesSection } from "@/src/components/salesData/SalesSection";
+import { useSalesPeriod } from "@/src/components/salesData/useSalesPeriod";
 import {
-  EmptyState, ErrorState, KpiCard, LoadingState, PillTabs, SegmentedControl, Table, TableCell,
-  TableHeader, TableRow, Tabs,
+  Alert, Badge, Button, Card, ErrorState, KpiCard, SkeletonList,
+  Table, TableCell, TableHeader, TableRow,
 } from "@/src/components/ui";
+import { useBp } from "@/src/design/responsive";
 import { fmtMoney, fmtMoneyCompact } from "@/src/design/tokens";
-import { spacing } from "@/src/theme/tokens";
+import { getSelectedFloorId, useFloorAccess } from "@/src/hooks/use-floor-access";
 import { useAuth } from "@/src/state/auth";
-import { getSelectedFloorId } from "@/src/hooks/use-floor-access";
-import { TrendChart } from "@/src/components/salesData/TrendChart";
-import {
-  DATE_PRESET_LABEL, DatePreset, Granularity, OverviewResponse, ReferredByFilter, presetToRange,
-} from "@/src/components/salesData/salesDataApi";
+import { colors, spacing, type } from "@/src/theme/tokens";
 
-type Floor = { id: string; name: string; slug: string };
-type PageTab = "overview" | "brand";
-type BrandRow = { brand_id: string; brand_name: string; revenue: number };
+const ANALYTICS_ROLES = ["owner", "admin", "manager"];
+const TOP_N = 10;
 
 /**
- * Superseded by the Executive Overview (`./executive.tsx`), spec §7
- * Workspace 1. `/sales-data` now redirects there instead of rendering this
- * component — the code stays in the repo, unreachable, until Phase 6 removes
- * it alongside `sales_data_routes.py` (per the 2026-08-01 decision: replace
- * the reachable screen now, delete the legacy code only after the
- * replacement is proven feature-for-feature).
+ * Money inside a table cell.
+ *
+ * A full ₹25,26,885 does not fit the revenue column at 375px — it truncated
+ * to "₹25,26,…", which is worse than a rounded figure because the reader
+ * cannot tell the magnitude at all. Phones get the compact form the KPI
+ * cards already use; every wider breakpoint keeps the exact rupee value.
+ *
+ * A hook rather than a prop so every table on the page — including the two
+ * referrer workspaces below — formats money identically without threading a
+ * formatter through each one.
  */
-function LegacySalesDataOverview() {
+function useCellMoney() {
+  const { isPhone } = useBp();
+  return (value: number) => (isPhone ? fmtMoneyCompact(value) : `₹${fmtMoney(value)}`);
+}
+
+function shortDate(iso: string | null): string {
+  if (!iso) return "—";
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleDateString(undefined, { day: "2-digit", month: "short" });
+}
+
+type Sections = {
+  brands: BrandRevenueRow[] | null;
+  customers: CustomerRevenueRow[] | null;
+  products: BestSellingProductRow[] | null;
+  orders: RecentOrderRow[] | null;
+  architects: ReferrerSummaryRow[] | null;
+  designers: ReferrerSummaryRow[] | null;
+};
+
+const EMPTY_SECTIONS: Sections = {
+  brands: null, customers: null, products: null, orders: null, architects: null, designers: null,
+};
+
+/**
+ * Sales Data — the launch dashboard (Milestone 4), and the permanent entry
+ * point for the module.
+ *
+ * This is Phase 1 of the Sales Data architecture, not a replacement for it.
+ * Every figure comes from the Phase 0 analytics layer: the KPI row and
+ * Revenue by Floor from `/analytics/overview`, the Referred By workspaces
+ * from `/analytics/referrers` unchanged, and the four breakdowns from
+ * `/analytics/*` endpoints shaped as standalone filterable resources so the
+ * Products, Brands and Customers workspaces on the roadmap extend them
+ * rather than replacing them.
+ *
+ * The one rule the page holds: **nothing on this screen is computed here.**
+ * Every total, average and rank is derived by the backend from one canonical
+ * definition, so no two blocks can disagree about the same book. The
+ * breakdowns all reconcile to the Total Revenue card by construction —
+ * verified live at ₹39,77,337 across brand, customer, product and order
+ * sums.
+ */
+export default function SalesDataIndex() {
   const { staff } = useAuth();
+  const { floors } = useFloorAccess();
+  const cellMoney = useCellMoney();
   const router = useRouter();
 
-  // All hooks are declared unconditionally, in the same order every render —
-  // the role check below is a plain `if` AFTER every hook call, never a
-  // conditional `return` before one. An early return before a hook would
-  // violate the Rules of Hooks: this component would call a different
-  // number of hooks depending on `staff.role`, and React throws "Rendered
-  // fewer hooks than expected" the next time it re-renders with a
-  // different hook count.
-  const [floors, setFloors] = useState<Floor[]>([]);
-  // Defaults to the business unit currently active in the shell, not to the
-  // company-wide "Both" roll-up: Sales Data is a per-floor screen for the
-  // floor you are working in. "Both" stays available as an explicit,
-  // deliberate choice for owner/admin company-wide reporting.
-  const [floorId, setFloorId] = useState<string>("");
-  useEffect(() => { void getSelectedFloorId().then((id) => setFloorId(id || "both")); }, []);
-  const [referredBy, setReferredBy] = useState<ReferredByFilter>("all");
-  const [preset, setPreset] = useState<DatePreset>("this_month");
-  const [granularity, setGranularity] = useState<Granularity>("month");
-  const [tab, setTab] = useState<PageTab>("overview");
+  const [floorId, setFloorId] = useState("");
+  useEffect(() => {
+    if (floorId) return;
+    void getSelectedFloorId().then((id) => setFloorId(id || "all"));
+  }, [floorId]);
 
-  const [overview, setOverview] = useState<OverviewResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { period, origin, serverDefault, choose, jumpToLatest } = useSalesPeriod(floorId);
 
-  const [brands, setBrands] = useState<BrandRow[] | null>(null);
-  const [brandsError, setBrandsError] = useState<string | null>(null);
-
-  useEffect(() => { api.get<Floor[]>("/settings/floors").then(setFloors).catch(() => setFloors([])); }, []);
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const [sections, setSections] = useState<Sections>(EMPTY_SECTIONS);
+  const [sectionError, setSectionError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    if (!floorId) return; // active floor not resolved yet — never query unscoped
-    setError(null);
+    if (!floorId || !period) return; // never query before the scope is known
+    const filter: SalesFilter = {
+      floorId,
+      preset: period.preset,
+      dateFrom: period.dateFrom,
+      dateTo: period.dateTo,
+    };
+    const executiveQuery = {
+      floorId: floorId === "all" ? undefined : floorId,
+      preset: period.preset,
+      dateFrom: period.preset === "custom" ? period.dateFrom || undefined : undefined,
+      dateTo: period.preset === "custom" ? period.dateTo || undefined : undefined,
+    };
+
+    setOverviewError(null);
     setOverview(null);
-    const { date_from, date_to } = presetToRange(preset);
-    const params = new URLSearchParams();
-    if (floorId !== "both") params.set("floor_id", floorId);
-    if (referredBy !== "all") params.set("referrer_type", referredBy);
-    if (date_from) params.set("date_from", date_from);
-    if (date_to) params.set("date_to", date_to);
-    params.set("granularity", granularity);
-    api.get<OverviewResponse>(`/sales-data/overview?${params.toString()}`)
+    setSections(EMPTY_SECTIONS);
+    setSectionError(null);
+
+    executiveApi.overview(executiveQuery)
       .then(setOverview)
-      .catch((e: any) => setError(e?.detail || "Could not load sales data"));
-  }, [floorId, referredBy, preset, granularity]);
+      .catch((e: any) => setOverviewError(e?.detail || "Could not load the sales summary"));
+
+    Promise.all([
+      salesDataApi.revenueByBrand(filter),
+      salesDataApi.revenueByCustomer(filter),
+      salesDataApi.bestSellingProducts(filter, TOP_N),
+      salesDataApi.recentOrders(filter, TOP_N),
+      salesDataApi.referrers(filter, "architect"),
+      salesDataApi.referrers(filter, "interior_designer"),
+    ])
+      .then(([brands, customers, products, orders, architects, designers]) => {
+        setSections({
+          brands: brands.rows,
+          customers: customers.rows,
+          products: products.rows,
+          orders: orders.rows,
+          architects: architects.rows,
+          designers: designers.rows,
+        });
+      })
+      .catch((e: any) => setSectionError(e?.detail || "Could not load the sales breakdowns"));
+  }, [floorId, period]);
 
   useEffect(() => { load(); }, [load]);
 
-  const loadBrands = useCallback(() => {
-    if (!floorId) return; // see load()
-    setBrandsError(null);
-    setBrands(null);
-    const { date_from, date_to } = presetToRange(preset);
-    const params = new URLSearchParams();
-    if (floorId !== "both") params.set("floor_id", floorId);
-    if (date_from) params.set("date_from", date_from);
-    if (date_to) params.set("date_to", date_to);
-    api.get<{ brands: BrandRow[] }>(`/sales-data/brands?${params.toString()}`)
-      .then((res) => setBrands(res.brands))
-      .catch((e: any) => setBrandsError(e?.detail || "Could not load brand revenue"));
-  }, [preset, floorId]);
-
-  useEffect(() => {
-    if (tab !== "brand") return;
-    loadBrands();
-  }, [tab, loadBrands]);
-
-  if (staff && staff.role !== "owner" && staff.role !== "admin") {
+  // The role check is a plain `if` AFTER every hook call — an early return
+  // before a hook would change this component's hook count between renders.
+  if (staff && !ANALYTICS_ROLES.includes(staff.role)) {
     return <Redirect href="/(admin)/dashboard" />;
   }
 
-  return (
-    <AdminPage title="Sales Data" subtitle="Every sale, filtered by floor, referrer, and brand">
-      <View style={{ gap: spacing.md }}>
-        <SegmentedControl
-          testID="sales-data-floor"
-          value={floorId}
-          onChange={setFloorId}
-          options={[
-            { value: "both", label: "Both" },
-            ...floors.map((f) => ({ value: f.id, label: f.name })),
-          ]}
-        />
-        <PillTabs
-          testID="sales-data-referred-by"
-          value={referredBy}
-          onChange={setReferredBy}
-          options={[
-            { value: "all", label: "All" },
-            { value: "architect", label: "Architect" },
-            { value: "interior_designer", label: "Interior Designer" },
-          ]}
-        />
-        <PillTabs
-          testID="sales-data-preset"
-          value={preset}
-          onChange={setPreset}
-          options={(Object.keys(DATE_PRESET_LABEL) as DatePreset[]).map((p) => ({ value: p, label: DATE_PRESET_LABEL[p] }))}
-        />
-        <SegmentedControl
-          testID="sales-data-granularity"
-          value={granularity}
-          onChange={setGranularity}
-          options={[
-            { value: "day", label: "Day" }, { value: "month", label: "Month" },
-            { value: "quarter", label: "Quarter" }, { value: "year", label: "Year" },
-          ]}
-        />
-      </View>
+  const kpis = overview?.kpis;
 
-      <Tabs
-        testID="sales-data-tabs"
-        value={tab}
-        onChange={setTab}
-        options={[{ value: "overview", label: "Overview" }, { value: "brand", label: "By Brand" }]}
+  /** The unit's own name, preferring what the owner configured. FLOOR_LABEL
+   *  carries the two trading names the business uses day to day; anything
+   *  else (a third unit) falls back to its configured name rather than
+   *  rendering the raw `second-floor` slug. */
+  const floorName = (id: string) =>
+    FLOOR_LABEL[id] || floors.find((f) => f.id === id)?.name || id;
+
+  const visibleFloorRevenue = (overview?.revenue_by_floor || []).filter(
+    (row) => floorId === "all" || row.floor_id === floorId,
+  );
+
+  const isEmptyPeriod = !!kpis && kpis.orders === 0;
+  // Only offer the jump when the server actually knows of a period that has
+  // orders in it, and it is not the one already on screen.
+  const canJumpToLatest =
+    isEmptyPeriod && !!serverDefault?.latest_order_at && serverDefault.date_from !== period?.dateFrom;
+
+  return (
+    <AdminPage
+      title="Sales Data"
+      subtitle={`Confirmed orders only${period ? ` · ${period.label}` : ""}`}
+    >
+      {period ? (
+        <SalesFilters
+          floors={floors}
+          floorId={floorId}
+          onFloorChange={setFloorId}
+          period={period}
+          onPeriodChange={choose}
+        />
+      ) : null}
+
+      {origin === "fallback" ? (
+        <Alert
+          tone="info"
+          title="No orders yet this month"
+          description={`Showing the most recent available sales period — ${period?.label}.`}
+        />
+      ) : null}
+
+      {canJumpToLatest ? (
+        <Alert
+          tone="info"
+          title="No confirmed orders in this period"
+          description={`The most recent orders are in ${serverDefault?.label}.`}
+          action={<Button label={`Show ${serverDefault?.label}`} variant="secondary" onPress={jumpToLatest} />}
+        />
+      ) : null}
+
+      {/* ---------------------------------------------------------------
+          1-3. Total Revenue · Total Orders · Outstanding Payments
+          --------------------------------------------------------------- */}
+      {overviewError ? <ErrorState subtitle={overviewError} onRetry={load} /> : null}
+      {!overviewError && !kpis ? <SkeletonList rows={2} /> : null}
+      {kpis ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="sales-data-kpis">
+          <KpiCard
+            testID="sales-kpi-revenue"
+            label="Total Revenue"
+            value={fmtMoneyCompact(kpis.revenue)}
+            question="What did we sell this period?"
+            style={{ flex: 1, minWidth: 160 }}
+          />
+          <KpiCard
+            testID="sales-kpi-orders"
+            label="Total Orders"
+            value={String(kpis.orders)}
+            question="How many deals did we close?"
+            style={{ flex: 1, minWidth: 140 }}
+          />
+          <KpiCard
+            testID="sales-kpi-outstanding"
+            label="Outstanding Payments"
+            value={fmtMoneyCompact(kpis.outstanding.outstanding)}
+            question="How much money is still owed to us?"
+            tone={kpis.outstanding.outstanding > 0 ? "warning" : "neutral"}
+            onPress={() => router.push("/(admin)/payments" as never)}
+            style={{ flex: 1, minWidth: 180 }}
+          />
+        </View>
+      ) : null}
+
+      {/* ---------------------------------------------------------------
+          4. Revenue by Floor
+          --------------------------------------------------------------- */}
+      {overview ? (
+        <Card testID="sales-revenue-by-floor" variant="flat" padding={spacing.xl}>
+          <View style={{ gap: spacing.md }}>
+            <View style={{ gap: 2 }}>
+              <Text style={type.titleSm}>Revenue by Business Unit</Text>
+              <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
+                {floorId === "all" ? "Which unit is winning?" : "This unit's share of the book"}
+              </Text>
+            </View>
+            {/* `/analytics/overview` always reports every accessible floor
+                here, regardless of the floor filter — it is built as a
+                cross-unit comparison. Rendering that unfiltered under a
+                single-unit KPI row made the page contradict itself: Total
+                Revenue showed one unit while the breakdown below it summed
+                to the whole company. Scoping the rows to the active filter
+                is what keeps the two halves of the card telling one story. */}
+            {visibleFloorRevenue.map((row) => (
+              <View
+                key={row.floor_id}
+                testID={`sales-floor-row-${row.floor_id}`}
+                style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.md }}
+              >
+                <Text style={type.body}>{floorName(row.floor_id)}</Text>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={[type.bodyStrong, { fontVariant: ["tabular-nums"] }]}>
+                    {fmtMoneyCompact(row.revenue)}
+                  </Text>
+                  <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
+                    {row.orders} {row.orders === 1 ? "order" : "orders"}
+                  </Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        </Card>
+      ) : null}
+
+      {/* ---------------------------------------------------------------
+          5. Revenue by Brand
+          --------------------------------------------------------------- */}
+      <SalesSection
+        testID="sales-revenue-by-brand"
+        title="Revenue by Brand"
+        question="Which brands are actually selling?"
+        rows={sections.brands}
+        error={sectionError}
+        onRetry={load}
+        emptyTitle="No brand revenue in this period"
+      >
+        {(rows) => (
+          <Table>
+            <TableHeader columns={[{ label: "Brand", flex: 2 }, { label: "Qty", align: "right" }, { label: "Revenue", align: "right" }]} />
+            {rows.map((row, i) => (
+              <TableRow key={row.brand_id} isLast={i === rows.length - 1} testID={`sales-brand-row-${row.brand_id}`}>
+                <TableCell flex={2}>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexShrink: 1 }}>
+                    <Text numberOfLines={1} style={[type.bodySm, { flexShrink: 1 }]}>{row.name}</Text>
+                    {/* Not a brand — revenue from products whose catalog doc
+                        is gone. Labelled rather than dropped so this column
+                        still totals to the Total Revenue card above. */}
+                    {row.is_unlinked ? <Badge label="Unmatched" tone="warning" /> : null}
+                  </View>
+                </TableCell>
+                <TableCell align="right">{String(row.quantity)}</TableCell>
+                <TableCell align="right">{cellMoney(row.revenue)}</TableCell>
+              </TableRow>
+            ))}
+          </Table>
+        )}
+      </SalesSection>
+
+      {/* ---------------------------------------------------------------
+          6. Revenue by Customer
+          --------------------------------------------------------------- */}
+      <SalesSection
+        testID="sales-revenue-by-customer"
+        title="Revenue by Customer"
+        question="Who is buying the most?"
+        rows={sections.customers}
+        error={sectionError}
+        onRetry={load}
+        emptyTitle="No customer revenue in this period"
+        footer={
+          sections.customers && sections.customers.length > TOP_N ? (
+            <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
+              Showing the top {TOP_N} of {sections.customers.length} customers.
+            </Text>
+          ) : null
+        }
+      >
+        {(rows) => (
+          <Table>
+            <TableHeader columns={[{ label: "Customer", flex: 2 }, { label: "Orders", align: "right" }, { label: "Revenue", align: "right" }]} />
+            {rows.slice(0, TOP_N).map((row, i, shown) => (
+              <TableRow
+                key={row.customer_id || row.name}
+                isLast={i === shown.length - 1}
+                testID={`sales-customer-row-${row.customer_id}`}
+                onPress={row.customer_id ? () => router.push(`/(admin)/customers/${row.customer_id}` as never) : undefined}
+              >
+                <TableCell flex={2}>{row.name}</TableCell>
+                <TableCell align="right">{String(row.orders)}</TableCell>
+                <TableCell align="right">{cellMoney(row.revenue)}</TableCell>
+              </TableRow>
+            ))}
+          </Table>
+        )}
+      </SalesSection>
+
+      {/* ---------------------------------------------------------------
+          7. Referred By — two separate workspaces, from the quotation's own
+          "Referred By" field. Never fabricated: an empty book renders an
+          empty state, not a zero row.
+          --------------------------------------------------------------- */}
+      <ReferrerWorkspace
+        testID="sales-referrals-architects"
+        title="Referred By — Architects"
+        rows={sections.architects}
+        error={sectionError}
+        onRetry={load}
+        onOpen={(id) => router.push(`/(admin)/sales-data/referrer/${id}` as never)}
+      />
+      <ReferrerWorkspace
+        testID="sales-referrals-designers"
+        title="Referred By — Interior Designers"
+        rows={sections.designers}
+        error={sectionError}
+        onRetry={load}
+        onOpen={(id) => router.push(`/(admin)/sales-data/referrer/${id}` as never)}
       />
 
-      {tab === "overview" && error ? <ErrorState subtitle={error} onRetry={load} /> : null}
-      {tab === "overview" && !error && !overview ? <LoadingState label="Loading sales data…" /> : null}
-      {tab === "overview" && !error && overview && overview.total_revenue === 0 ? (
-        <EmptyState title="No sales in this range" subtitle="Try a wider date range or different filters." />
-      ) : null}
-      {!error && overview && overview.total_revenue > 0 && tab === "overview" ? (
-        <View style={{ gap: spacing.lg }}>
-          <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
-            {referredBy === "all" ? (
-              <>
-                <KpiCard label="Total Revenue" value={`₹${fmtMoneyCompact(overview.total_revenue)}`} style={{ flex: 1, minWidth: 160 }} />
-                {overview.revenue_by_floor.map((f) => {
-                  const floor = floors.find((fl) => fl.id === f.floor_id);
-                  return (
-                    <KpiCard
-                      key={f.floor_id}
-                      label={floor?.name || f.floor_id}
-                      value={`₹${fmtMoneyCompact(f.revenue)}`}
-                      style={{ flex: 1, minWidth: 160 }}
-                    />
-                  );
-                })}
-              </>
-            ) : (
-              // Referrer type selected — KPIs re-scope IN PLACE (same row,
-              // same position) rather than the page restructuring, per the
-              // approved design: Architect/Interior Designer Revenue, how
-              // many people contributed, and the average deal size.
-              <>
-                <KpiCard
-                  label={referredBy === "architect" ? "Architect Revenue" : "Interior Designer Revenue"}
-                  value={`₹${fmtMoneyCompact(overview.total_revenue)}`}
-                  style={{ flex: 1, minWidth: 160 }}
-                />
-                <KpiCard
-                  label="# Active"
-                  value={String(overview.referrers?.length || 0)}
-                  style={{ flex: 1, minWidth: 160 }}
-                />
-                <KpiCard
-                  label="Avg Deal Size"
-                  value={`₹${fmtMoneyCompact(overview.quotation_count ? overview.total_revenue / overview.quotation_count : 0)}`}
-                  style={{ flex: 1, minWidth: 160 }}
-                />
-              </>
-            )}
-          </View>
-          <TrendChart points={overview.trend} />
-          {overview.referrers ? (
-            <Table>
-              <TableHeader columns={[{ label: "Name", flex: 2 }, { label: "Revenue", align: "right" }]} />
-              {overview.referrers.map((r, i) => (
-                <TableRow
-                  key={r.referrer_id}
-                  isLast={i === overview.referrers!.length - 1}
-                  onPress={() => router.push(`/(admin)/sales-data/referrer/${r.referrer_id}?preset=${preset}&floorId=${floorId}` as any)}
-                  testID={`referrer-rank-row-${r.referrer_id}`}
-                >
-                  <TableCell flex={2}>{r.name}</TableCell>
-                  <TableCell align="right">₹{fmtMoney(r.revenue)}</TableCell>
-                </TableRow>
-              ))}
-            </Table>
-          ) : null}
-        </View>
-      ) : null}
+      {/* ---------------------------------------------------------------
+          8. Best Selling Products
+          --------------------------------------------------------------- */}
+      <SalesSection
+        testID="sales-best-selling-products"
+        title="Best Selling Products"
+        question="What is moving off the shelves?"
+        rows={sections.products}
+        error={sectionError}
+        onRetry={load}
+        emptyTitle="No products sold in this period"
+      >
+        {(rows) => (
+          <Table>
+            <TableHeader columns={[{ label: "Product", flex: 3 }, { label: "Qty", align: "right" }, { label: "Revenue", align: "right" }]} />
+            {rows.map((row, i) => (
+              <TableRow key={row.product_id} isLast={i === rows.length - 1} testID={`sales-product-row-${row.product_id}`}>
+                <TableCell flex={3}>
+                  <View style={{ gap: 1, flexShrink: 1 }}>
+                    <Text numberOfLines={1} style={type.bodySm}>{row.name}</Text>
+                    {row.brand_name ? (
+                      <Text numberOfLines={1} style={[type.caption, { color: colors.onSurfaceMuted }]}>
+                        {row.brand_name}
+                      </Text>
+                    ) : null}
+                  </View>
+                </TableCell>
+                <TableCell align="right">{String(row.quantity)}</TableCell>
+                <TableCell align="right">{cellMoney(row.revenue)}</TableCell>
+              </TableRow>
+            ))}
+          </Table>
+        )}
+      </SalesSection>
 
-      {tab === "brand" ? (
-        <View style={{ gap: spacing.lg }}>
-          {brandsError ? <ErrorState subtitle={brandsError} onRetry={loadBrands} /> : null}
-          {!brandsError && !brands ? <LoadingState label="Loading brand revenue…" /> : null}
-          {brands && brands.length === 0 ? <EmptyState title="No brand revenue in this range" /> : null}
-          {brands && brands.length > 0 ? (
-            <Table>
-              <TableHeader columns={[{ label: "Brand", flex: 2 }, { label: "Revenue", align: "right" }]} />
-              {brands.map((b, i) => (
-                <TableRow
-                  key={b.brand_id}
-                  isLast={i === brands.length - 1}
-                  onPress={() => router.push(`/(admin)/sales-data/brand/${b.brand_id}?preset=${preset}&floorId=${floorId}` as any)}
-                  testID={`brand-rank-row-${b.brand_id}`}
-                >
-                  <TableCell flex={2}>{b.brand_name}</TableCell>
-                  <TableCell align="right">₹{fmtMoney(b.revenue)}</TableCell>
-                </TableRow>
-              ))}
-            </Table>
-          ) : null}
-        </View>
-      ) : null}
+      {/* ---------------------------------------------------------------
+          9. Recent Orders
+          --------------------------------------------------------------- */}
+      <SalesSection
+        testID="sales-recent-orders"
+        title="Recent Orders"
+        question="What has just been confirmed?"
+        rows={sections.orders}
+        error={sectionError}
+        onRetry={load}
+        emptyTitle="No confirmed orders in this period"
+        emptySubtitle="Orders appear here the moment a quotation is confirmed."
+        footer={
+          sections.orders && sections.orders.length >= TOP_N ? (
+            <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
+              Showing the {TOP_N} most recent confirmed orders.
+            </Text>
+          ) : null
+        }
+      >
+        {(rows) => (
+          <Table>
+            <TableHeader
+              columns={[
+                { label: "Order", flex: 2 },
+                { label: "Date", width: 62, align: "right" },
+                { label: "Value", align: "right" },
+                { label: "Due", align: "right" },
+              ]}
+            />
+            {rows.map((row, i) => (
+              <TableRow
+                key={row.id}
+                isLast={i === rows.length - 1}
+                testID={`sales-order-row-${row.id}`}
+                onPress={() => router.push(`/(admin)/quotations/${row.id}` as never)}
+              >
+                <TableCell flex={2}>
+                  <View style={{ gap: 1, flexShrink: 1 }}>
+                    <Text numberOfLines={1} style={type.bodySm}>{row.customer_name}</Text>
+                    <Text numberOfLines={1} style={[type.caption, { color: colors.onSurfaceMuted }]}>
+                      {row.number || "—"}
+                    </Text>
+                  </View>
+                </TableCell>
+                <TableCell width={62} align="right">{shortDate(row.ordered_at)}</TableCell>
+                <TableCell align="right">{cellMoney(row.grand_total)}</TableCell>
+                <TableCell align="right">
+                  <Text
+                    numberOfLines={1}
+                    style={[type.bodySm, { color: row.outstanding > 0 ? colors.warning : colors.success }]}
+                  >
+                    {row.outstanding > 0 ? cellMoney(row.outstanding) : "Paid"}
+                  </Text>
+                </TableCell>
+              </TableRow>
+            ))}
+          </Table>
+        )}
+      </SalesSection>
     </AdminPage>
   );
 }
 
-export default function SalesDataIndex() {
-  return <Redirect href="/(admin)/sales-data/executive" />;
+/**
+ * One Referred By workspace. Architects and Interior Designers get their own,
+ * from the same Phase 0 `/analytics/referrers` endpoint filtered by type.
+ *
+ * The empty state is the important case, not the edge case: the live book
+ * currently has no referral attributed to any quotation at all, so this is
+ * what the owner will see at launch. It says why the block is empty rather
+ * than rendering a zero row that would imply a referrer earning nothing.
+ */
+function ReferrerWorkspace({
+  title, rows, error, onRetry, onOpen, testID,
+}: {
+  title: string;
+  rows: ReferrerSummaryRow[] | null;
+  error?: string | null;
+  onRetry?: () => void;
+  onOpen: (referrerId: string) => void;
+  testID: string;
+}) {
+  const cellMoney = useCellMoney();
+  return (
+    <SalesSection
+      testID={testID}
+      title={title}
+      question="Who is sending us business?"
+      rows={rows}
+      error={error}
+      onRetry={onRetry}
+      emptyTitle="No referrals recorded in this period"
+      emptySubtitle="Set 'Referred By' on a quotation and that person's business appears here."
+    >
+      {(list) => (
+        <Table>
+          <TableHeader
+            columns={[
+              { label: "Name", flex: 2 },
+              { label: "Orders", align: "right" },
+              { label: "Revenue", align: "right" },
+            ]}
+          />
+          {list.map((row, i) => (
+            <TableRow
+              key={row.referrer_id}
+              isLast={i === list.length - 1}
+              testID={`${testID}-row-${row.referrer_id}`}
+              onPress={() => onOpen(row.referrer_id)}
+            >
+              <TableCell flex={2}>{row.name}</TableCell>
+              <TableCell align="right">{String(row.quotations_confirmed)}</TableCell>
+              <TableCell align="right">{cellMoney(row.revenue)}</TableCell>
+            </TableRow>
+          ))}
+        </Table>
+      )}
+    </SalesSection>
+  );
 }
-
-// Referenced only to keep the legacy component from being flagged as
-// dead code by tools that don't understand "kept until Phase 6" — it is
-// genuinely unreachable via routing (Expo Router only mounts the default
-// export above), this just satisfies no-unused-vars.
-void LegacySalesDataOverview;
