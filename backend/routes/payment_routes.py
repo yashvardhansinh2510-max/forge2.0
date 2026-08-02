@@ -16,7 +16,7 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
-from auth import floor_for_write, floor_query, get_current_user, require_min_role
+from auth import floor_for_write, floor_inherit, floor_query, get_current_user, require_min_role
 from db import client, db
 from models import Payment, PaymentCreate, UserPublic
 from services.activity_log import log_event
@@ -409,6 +409,7 @@ async def create_payment(
         + (" — fully paid" if fully_paid else f" — ₹{max(grand - total_paid, 0):,.0f} outstanding"),
         kind="success",
         link=f"/quotations/{body.quotation_id}",
+        floor_id=floor_inherit(quot),
     ))
     return payment
 

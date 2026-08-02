@@ -52,7 +52,21 @@ async def find_customer_matches(
     name: Optional[str] = None,
     city: Optional[str] = None,
     address: Optional[str] = None,
+    floor_ids: Optional[list[str]] = None,
 ) -> dict:
+    """`floor_ids` restricts matching to those business units.
+
+    It is not optional in practice — every caller passes one. Customer records
+    are floor-scoped, so an unrestricted search both leaked another unit's
+    contact details (name, company, both phone numbers, email, address) to
+    anyone who could type a name, and let a HIGH-confidence phone match
+    silently attach a walk-in to a customer belonging to the other business.
+    """
+    floor_scope: list[dict] = [{"floor_id": {"$in": floor_ids}}] if floor_ids is not None else []
+
+    def scoped(criteria: dict) -> dict:
+        return {"$and": [*floor_scope, criteria]} if floor_scope else criteria
+
     phone_digits = _digits(phone)
     alt_digits = _digits(alternate_phone)
     phone_candidates = [d for d in (phone_digits, alt_digits) if d]
@@ -61,10 +75,10 @@ async def find_customer_matches(
     seen_ids: set[str] = set()
     if phone_candidates:
         high = await db.customers.find(
-            {"$or": (
+            scoped({"$or": (
                 [{"phone": {"$regex": _fuzzy_digit_pattern(d)}} for d in phone_candidates]
                 + [{"alternate_phone": {"$regex": _fuzzy_digit_pattern(d)}} for d in phone_candidates]
-            )},
+            )}),
             _PROJECTION,
         ).to_list(_MAX_PER_TIER)
         seen_ids = {c["id"] for c in high}
@@ -83,14 +97,14 @@ async def find_customer_matches(
     if name_norm and address_norm:
         medium_or.append({"name": {"$regex": f"^{name_norm}$", "$options": "i"}, "address": {"$regex": address_norm[:40], "$options": "i"}})
     if medium_or:
-        candidates = await db.customers.find({"$or": medium_or}, _PROJECTION).to_list(_MAX_PER_TIER + len(seen_ids))
+        candidates = await db.customers.find(scoped({"$or": medium_or}), _PROJECTION).to_list(_MAX_PER_TIER + len(seen_ids))
         medium = [c for c in candidates if c["id"] not in seen_ids][:_MAX_PER_TIER]
         seen_ids |= {c["id"] for c in medium}
 
     low: list[dict] = []
     if name_norm and len(name_norm) >= 3:
         candidates = await db.customers.find(
-            {"name": {"$regex": name_norm[:30], "$options": "i"}}, _PROJECTION,
+            scoped({"name": {"$regex": name_norm[:30], "$options": "i"}}), _PROJECTION,
         ).to_list(_MAX_PER_TIER + len(seen_ids))
         low = [c for c in candidates if c["id"] not in seen_ids][:_MAX_PER_TIER]
 

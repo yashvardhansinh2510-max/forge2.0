@@ -7,7 +7,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from auth import (
-    TILES_FLOOR_ID, accessible_floor_ids, floor_for_write, floor_query, get_current_customer,
+    TILES_FLOOR_ID, accessible_floor_ids, floor_for_write, floor_inherit, floor_query,
+    get_current_customer,
     get_current_user, get_floor_scoped_or_404, require_floor_access, require_min_role,
     tiles_floor_query,
 )
@@ -245,6 +246,10 @@ async def create_quotation(
         entity_type="quotation",
         entity_id=quot.id,
         actor=user,
+        # From the document, not the request header: a Tiles document reached
+        # by direct URL/refresh carries a stale ambient floor, and the floor
+        # resolved above is the one the document is actually filed under.
+        floor_id=quot.floor_id,
         customer_id=customer["id"],
         quotation_id=quot.id,
         summary=f"{quot.number} · {quot.customer_name} · {len(items)} items",
@@ -477,7 +482,8 @@ async def update_quotation(
         for etype, summary, payload in events:
             await log_event(
                 event_type=etype, entity_type="quotation", entity_id=quotation_id,
-                actor=user, customer_id=doc.get("customer_id"), quotation_id=quotation_id,
+                actor=user, floor_id=floor_inherit(doc),
+                customer_id=doc.get("customer_id"), quotation_id=quotation_id,
                 summary=summary, payload=payload,
             )
 

@@ -18,6 +18,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from pymongo.errors import DuplicateKeyError
+
 from auth import floor_inherit
 from db import db
 from models import Followup, now_iso
@@ -460,6 +462,107 @@ async def reconcile_followups() -> dict:
         return await _reconcile_followups_locked()
 
 
+async def _persist_desired_followups(
+    desired: dict[str, dict], quotation_created_by: dict[str, str] | None = None,
+) -> dict:
+    """Write the reconciler's desired state: upsert what should exist, resolve
+    what should not.
+
+    Split out from `_reconcile_followups_locked` so the write half is testable
+    without standing up the entire quotation/payment/purchase corpus the
+    desired-state half needs. Behaviour is unchanged.
+    """
+    quotation_created_by = quotation_created_by or {}
+    existing = await db.followups.find(
+        {"is_automated": True, "status": {"$in": ["open", "snoozed"]}}, {"_id": 0},
+    ).to_list(10000)
+    existing_by_key = {f["source_key"]: f for f in existing if f.get("source_key")}
+    # `source_key` is uniquely indexed across ALL statuses, so a key still held
+    # by a completed or dismissed row cannot be inserted again. Reading only
+    # open/snoozed rows above therefore made the engine attempt a duplicate
+    # insert for any trigger a human had already closed while its condition
+    # still held — E11000 aborted the entire pass, and because all 15 mutation
+    # routes fire this fire-and-forget, follow-up automation silently stopped
+    # app-wide (no new cards, no auto-resolution) with only a startup WARNING
+    # to show for it. Skipping these keys is also the correct behaviour on its
+    # own terms: a closed follow-up means the work was handled, and resurrecting
+    # it would reopen finished work every reconcile.
+    closed_keys = {
+        d["source_key"]
+        async for d in db.followups.find(
+            {"is_automated": True, "status": {"$nin": ["open", "snoozed"]},
+             "source_key": {"$ne": None}},
+            {"_id": 0, "source_key": 1},
+        )
+    }
+
+    created = updated = resolved = 0
+    for key, fields in desired.items():
+        ex = existing_by_key.pop(key, None)
+        if ex:
+            if ex.get("status") == "open":
+                patch = {k: v for k, v in fields.items() if k != "due_at"}
+                patch["updated_at"] = now_iso()
+                await db.followups.update_one({"id": ex["id"]}, {"$set": patch})
+                updated += 1
+            # snoozed rows are left completely untouched — respect the snooze.
+        elif key in closed_keys:
+            # Already handled by a human — do not recreate it.
+            continue
+        else:
+            f = Followup(source_key=key, is_automated=True, **fields)
+            try:
+                await db.followups.insert_one(f.dict())
+            except DuplicateKeyError:
+                # Belt and braces against a concurrent writer between the read
+                # above and this insert. One card must never be able to abort
+                # the whole reconciliation again.
+                continue
+            created += 1
+            # Operational handoff follow-ups (2026-08) must show up on the
+            # customer's unified timeline the moment they're created — every
+            # other producer's card creation is silent by design (the
+            # Follow-ups list IS its visibility), but this one is a
+            # cross-team business-event handoff worth a permanent audit row.
+            if fields.get("rule_type") == "order_confirmed_ops":
+                await log_event(
+                    event_type="quotation.order_confirmed_followup_created", entity_type="followup", entity_id=f.id,
+                    customer_id=fields.get("customer_id"), quotation_id=fields.get("quotation_id"),
+                    actor_name="Automation", summary=fields.get("reason"),
+                    floor_id=fields.get("floor_id"),
+                )
+            # Nudge the rep who owns this customer's quotation the moment a
+            # new high-priority follow-up appears — this is the ONLY place
+            # in the app that ever wrote a Notification before this fix
+            # existed only as a one-time demo seed.
+            if fields.get("priority_level") in ("critical", "high"):
+                recipient = quotation_created_by.get(fields.get("quotation_id"))
+                asyncio.create_task(notify(
+                    recipient,
+                    f"Follow-up needed · {fields.get('customer_name')}",
+                    body=fields.get("reason"),
+                    kind="warning" if fields.get("priority_level") == "critical" else "info",
+                    link=f"/customers/{fields.get('customer_id')}",
+                    floor_id=fields.get("floor_id"),
+                ))
+
+    for _key, ex in existing_by_key.items():
+        await db.followups.update_one({"id": ex["id"]}, {"$set": {
+            "status": "done", "auto_resolved": True, "completed_at": now_iso(),
+            "resolution_note": "Resolved automatically — the trigger condition no longer applies.",
+            "updated_at": now_iso(),
+        }})
+        resolved += 1
+        await log_event(
+            event_type="followup.auto_resolved", entity_type="followup", entity_id=ex["id"],
+            customer_id=ex.get("customer_id"), quotation_id=ex.get("quotation_id"), purchase_id=ex.get("purchase_id"),
+            actor_name="Automation", summary=f"Follow-up resolved automatically — {ex.get('reason')}",
+            floor_id=ex.get("floor_id"),
+        )
+
+    return {"created": created, "updated": updated, "auto_resolved": resolved, "active": len(desired)}
+
+
 async def _reconcile_followups_locked() -> dict:
     from routes.payment_routes import ORDER_STATUSES, _paid_by_quotation  # local import avoids cycle at module load
 
@@ -703,62 +806,5 @@ async def _reconcile_followups_locked() -> dict:
             )
 
     # ---- Persist: upsert desired, auto-resolve stale --------------------------
-    existing = await db.followups.find(
-        {"is_automated": True, "status": {"$in": ["open", "snoozed"]}}, {"_id": 0},
-    ).to_list(10000)
-    existing_by_key = {f["source_key"]: f for f in existing if f.get("source_key")}
     quotation_created_by = {q["id"]: q.get("created_by") for q in quotations}
-
-    created = updated = resolved = 0
-    for key, fields in desired.items():
-        ex = existing_by_key.pop(key, None)
-        if ex:
-            if ex.get("status") == "open":
-                patch = {k: v for k, v in fields.items() if k != "due_at"}
-                patch["updated_at"] = now_iso()
-                await db.followups.update_one({"id": ex["id"]}, {"$set": patch})
-                updated += 1
-            # snoozed rows are left completely untouched — respect the snooze.
-        else:
-            f = Followup(source_key=key, is_automated=True, **fields)
-            await db.followups.insert_one(f.dict())
-            created += 1
-            # Operational handoff follow-ups (2026-08) must show up on the
-            # customer's unified timeline the moment they're created — every
-            # other producer's card creation is silent by design (the
-            # Follow-ups list IS its visibility), but this one is a
-            # cross-team business-event handoff worth a permanent audit row.
-            if fields.get("rule_type") == "order_confirmed_ops":
-                await log_event(
-                    event_type="quotation.order_confirmed_followup_created", entity_type="followup", entity_id=f.id,
-                    customer_id=fields.get("customer_id"), quotation_id=fields.get("quotation_id"),
-                    actor_name="Automation", summary=fields.get("reason"),
-                )
-            # Nudge the rep who owns this customer's quotation the moment a
-            # new high-priority follow-up appears — this is the ONLY place
-            # in the app that ever wrote a Notification before this fix
-            # existed only as a one-time demo seed.
-            if fields.get("priority_level") in ("critical", "high"):
-                recipient = quotation_created_by.get(fields.get("quotation_id"))
-                asyncio.create_task(notify(
-                    recipient,
-                    f"Follow-up needed · {fields.get('customer_name')}",
-                    body=fields.get("reason"),
-                    kind="warning" if fields.get("priority_level") == "critical" else "info",
-                    link=f"/customers/{fields.get('customer_id')}",
-                ))
-
-    for _key, ex in existing_by_key.items():
-        await db.followups.update_one({"id": ex["id"]}, {"$set": {
-            "status": "done", "auto_resolved": True, "completed_at": now_iso(),
-            "resolution_note": "Resolved automatically — the trigger condition no longer applies.",
-            "updated_at": now_iso(),
-        }})
-        resolved += 1
-        await log_event(
-            event_type="followup.auto_resolved", entity_type="followup", entity_id=ex["id"],
-            customer_id=ex.get("customer_id"), quotation_id=ex.get("quotation_id"), purchase_id=ex.get("purchase_id"),
-            actor_name="Automation", summary=f"Follow-up resolved automatically — {ex.get('reason')}",
-        )
-
-    return {"created": created, "updated": updated, "auto_resolved": resolved, "active": len(desired)}
+    return await _persist_desired_followups(desired, quotation_created_by)

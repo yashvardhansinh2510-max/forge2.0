@@ -220,11 +220,15 @@ async def get_current_user(
             kind="staff", collection="users",
         )
         user = UserPublic(**doc)
-        if x_floor_id:
+        # The header wins when present (it can be, for a fetch()-based
+        # download); otherwise replay the floor recorded at mint time so the
+        # download stays scoped to the unit the user was actually in.
+        effective_floor = x_floor_id or record.get("floor_id")
+        if effective_floor:
             allowed = accessible_floor_ids(user)
-            if allowed is not None and x_floor_id not in allowed:
+            if allowed is not None and effective_floor not in allowed:
                 raise HTTPException(status_code=403, detail="You do not have access to this floor")
-            user.active_floor_id = x_floor_id
+            user.active_floor_id = effective_floor
         return user
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")

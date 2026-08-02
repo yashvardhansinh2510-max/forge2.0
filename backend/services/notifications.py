@@ -21,14 +21,21 @@ async def notify(
     body: Optional[str] = None,
     kind: Literal["info", "success", "warning", "error"] = "info",
     link: Optional[str] = None,
+    floor_id: Optional[str] = None,
 ) -> None:
     """Best-effort — a notification failing to write must never break the
     business action that triggered it (payment recording, order placement,
-    follow-up reconciliation, etc.)."""
+    follow-up reconciliation, etc.).
+
+    `floor_id` is the business unit the triggering record belongs to. Always
+    take it from that record (`doc.get("floor_id")`), never from the request
+    header: a notification outlives the request that created it and is read
+    back later under whatever floor the recipient happens to be viewing.
+    """
     if not user_id:
         return
     try:
-        n = Notification(user_id=user_id, kind=kind, title=title, body=body, link=link)
+        n = Notification(user_id=user_id, kind=kind, title=title, body=body, link=link, floor_id=floor_id)
         await db.notifications.insert_one(n.dict())
     except Exception:  # noqa: BLE001 — notifications are never allowed to fail the caller
         pass

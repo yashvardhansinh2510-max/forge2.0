@@ -465,6 +465,7 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             "body": f"{len(created_po_ids)} purchase order(s) created for {quotation.get('customer_name')} — outstanding ₹{payment_amount:,.0f}",
             "kind": "success",
             "link": f"/quotations/{quotation_id}",
+            "floor_id": floor_inherit(quotation),
         },
     }
 

@@ -27,7 +27,9 @@ async def ensure_download_token_indexes() -> None:
     await db.download_tokens.create_index("expires_at", expireAfterSeconds=0, name="download_token_ttl")
 
 
-async def create_download_token(user_id: str, session_id: str | None = None) -> str:
+async def create_download_token(
+    user_id: str, session_id: str | None = None, floor_id: str | None = None,
+) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     await db.download_tokens.insert_one({
@@ -36,6 +38,13 @@ async def create_download_token(user_id: str, session_id: str | None = None) -> 
         # Bound to the minting request's session so the download inherits the
         # same revocation semantics as a normal API call.
         "session_id": session_id,
+        # …and to its business unit. A browser download is a plain navigation
+        # and structurally cannot send X-Floor-Id, so without this the
+        # download runs with no active floor — which, for an all-floors
+        # owner/manager, makes `floor_query()` unrestricted and lets a PDF or
+        # export URL resolve against the other unit's records. This is the one
+        # in-product request path where the header is absent by construction.
+        "floor_id": floor_id,
         "used": False,
         "created_at": now.isoformat(),
         "expires_at": now + timedelta(seconds=_TTL_SECONDS),

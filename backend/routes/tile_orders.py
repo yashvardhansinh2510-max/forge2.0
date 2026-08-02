@@ -149,7 +149,7 @@ async def mark_items_ready(
 
     for batch in created_batches:
         await log_event(
-            event_type="ready_batch.created", entity_type="purchase", entity_id=po_id, actor=user,
+            event_type="ready_batch.created", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
             customer_id=po.get("customer_id"), purchase_id=po_id,
             summary=f"Marked {batch['qty']:g} boxes of '{batch['tile_name']}' ready ({batch['batch_number']})",
             payload={"ready_batch_id": batch["id"], "batch_number": batch["batch_number"], "po_item_id": batch["po_item_id"], "qty": batch["qty"]},
@@ -168,7 +168,7 @@ async def mark_items_ready(
         )
     if new_status:
         await log_event(
-            event_type="status.changed", entity_type="purchase", entity_id=po_id, actor=user,
+            event_type="status.changed", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
             customer_id=po.get("customer_id"), purchase_id=po_id,
             summary=f"Status changed to {new_status}", payload={"to": new_status},
         )
@@ -368,19 +368,19 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
             )
 
     await log_event(
-        event_type="dispatch.created", entity_type="purchase", entity_id=po_id, actor=user,
+        event_type="dispatch.created", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=po.get("customer_id"), purchase_id=po_id,
         summary=f"Dispatch {dispatch.dispatch_number} created — {len(chalan_items)} line(s)",
         payload={"dispatch_id": dispatch.id, "dispatch_number": dispatch.dispatch_number},
     )
     await log_event(
-        event_type="chalan.generated", entity_type="purchase", entity_id=po_id, actor=user,
+        event_type="chalan.generated", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=po.get("customer_id"), purchase_id=po_id,
         summary=f"Chalan {chalan.number} generated for Dispatch {dispatch.dispatch_number}",
         payload={"chalan_id": chalan.id, "chalan_number": chalan.number, "dispatch_id": dispatch.id},
     )
     await log_event(
-        event_type="status.changed", entity_type="purchase", entity_id=po_id, actor=user,
+        event_type="status.changed", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=po.get("customer_id"), purchase_id=po_id,
         summary=f"Status changed to {new_status}", payload={"to": new_status},
     )
@@ -468,7 +468,7 @@ async def move_material_to_godown(
 
     for row in moved_rows:
         await log_event(
-            event_type="item.moved_to_godown", entity_type="purchase", entity_id=po_id, actor=user,
+            event_type="item.moved_to_godown", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
             customer_id=po.get("customer_id"), purchase_id=po_id,
             summary=f"Moved {row['qty']:g} boxes of '{row['tile_name']}' to Godown",
             payload={"po_item_id": row["po_item_id"], "qty": row["qty"]},
@@ -632,19 +632,19 @@ async def _commit_simple_dispatch(
             chalan_number=chalan.number, performed_by=user.id, performed_by_name=user.full_name,
         )
     await log_event(
-        event_type="dispatch.created", entity_type="purchase", entity_id=po_id, actor=user,
+        event_type="dispatch.created", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=po.get("customer_id"), purchase_id=po_id,
         summary=f"Dispatch {dispatch.dispatch_number} created from {source_label} — {len(chalan_items)} line(s)",
         payload={"dispatch_id": dispatch.id, "dispatch_number": dispatch.dispatch_number, "source": source},
     )
     await log_event(
-        event_type="chalan.generated", entity_type="purchase", entity_id=po_id, actor=user,
+        event_type="chalan.generated", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=po.get("customer_id"), purchase_id=po_id,
         summary=f"Chalan {chalan.number} generated for Dispatch {dispatch.dispatch_number}",
         payload={"chalan_id": chalan.id, "chalan_number": chalan.number, "dispatch_id": dispatch.id},
     )
     await log_event(
-        event_type="status.changed", entity_type="purchase", entity_id=po_id, actor=user,
+        event_type="status.changed", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=po.get("customer_id"), purchase_id=po_id,
         summary=f"Status changed to {new_status}", payload={"to": new_status},
     )
@@ -723,7 +723,7 @@ async def mark_dispatch_godown_received(
         await db.purchase_orders.update_one({"id": po["id"]}, {"$set": {"items": items, "updated_at": now}})
 
     await log_event(
-        event_type="dispatch.godown_received", entity_type="purchase", entity_id=dispatch["purchase_order_id"], actor=user,
+        event_type="dispatch.godown_received", entity_type="purchase", entity_id=dispatch["purchase_order_id"], actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=dispatch.get("customer_id"), purchase_id=dispatch["purchase_order_id"],
         summary=f"Dispatch {dispatch['dispatch_number']} received at Buildcon Godown" + (f" · {body.note}" if body.note else ""),
         payload={"dispatch_id": dispatch_id},
@@ -820,7 +820,7 @@ async def update_dispatch_transport(
     await db.chalans.update_one({"id": chalan["id"]}, {"$set": {**updates, "updated_at": now}})
     await db.dispatches.update_one({"id": dispatch_id}, {"$set": {"updated_at": now}})
     await log_event(
-        event_type="chalan.updated", entity_type="purchase", entity_id=dispatch["purchase_order_id"], actor=user,
+        event_type="chalan.updated", entity_type="purchase", entity_id=dispatch["purchase_order_id"], actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=dispatch.get("customer_id"), purchase_id=dispatch["purchase_order_id"],
         summary=f"Chalan {chalan.get('number')} transport details updated — "
                 + ", ".join(f"{k.replace('_', ' ')}: {v}" for k, v in updates.items()),
@@ -926,7 +926,7 @@ async def mark_dispatch_delivered(
             performed_by=user.id, performed_by_name=user.full_name,
         )
     await log_event(
-        event_type="dispatch.delivered", entity_type="purchase", entity_id=po_id, actor=user,
+        event_type="dispatch.delivered", entity_type="purchase", entity_id=po_id, actor=user, floor_id=TILES_FLOOR_ID,
         customer_id=dispatch.get("customer_id"), purchase_id=po_id,
         summary=f"Dispatch {dispatch['dispatch_number']} delivered"
                 + (f" — received by {body.received_by}" if body.received_by else "")

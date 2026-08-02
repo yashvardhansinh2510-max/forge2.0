@@ -907,6 +907,11 @@ class ActivityEvent(TimestampedModel):
     payload: dict = {}
     # Human-readable summary rendered by the frontend as-is when present.
     summary: Optional[str] = None
+    # Business unit this event belongs to. Optional only because events
+    # predating floor stamping exist; `services/activity_log.timeline_for`
+    # filters strictly on it, so an unstamped event is invisible to every
+    # floor-scoped reader rather than leaking into the wrong one.
+    floor_id: Optional[str] = None
 
 
 class PurchaseOrder_Legacy(TimestampedModel):
@@ -1086,6 +1091,10 @@ class Notification(TimestampedModel):
     body: Optional[str] = None
     read: bool = False
     link: Optional[str] = None
+    # Business unit the triggering event belongs to. Same containment rule
+    # as ActivityEvent.floor_id: unstamped rows are hidden from floor-scoped
+    # listings rather than shown on every floor.
+    floor_id: Optional[str] = None
 
 
 # ---------- Catalog Import Pipeline ----------

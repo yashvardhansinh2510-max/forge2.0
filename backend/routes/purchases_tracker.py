@@ -1358,7 +1358,11 @@ async def create_po_for_shortage(
     """One click on the "Create Purchase Order" recommendation — opens a new
     draft PO for exactly the missing quantity, for the same customer, at the
     first stage. Never runs automatically; a human always presses this."""
-    s = await db.purchase_shortages.find_one({"id": shortage_id}, {"_id": 0})
+    # Floor-scoped, not a bare id lookup: acting on another business unit's
+    # shortage created a purchase order on that unit (the new PO inherits the
+    # shortage's floor via floor_inherit below), so an id was enough to write
+    # into a floor the caller has no access to.
+    s = await db.purchase_shortages.find_one(floor_query(user, {"id": shortage_id}), {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Shortage not found")
     if s.get("status") != "awaiting_reorder":
@@ -1424,7 +1428,7 @@ async def dismiss_shortage(
     body: ShortageDismissBody,
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    s = await db.purchase_shortages.find_one({"id": shortage_id}, {"_id": 0})
+    s = await db.purchase_shortages.find_one(floor_query(user, {"id": shortage_id}), {"_id": 0})
     if not s:
         raise HTTPException(status_code=404, detail="Shortage not found")
     now = now_iso()
@@ -1537,7 +1541,7 @@ async def generate_chalan(
         await notify(
             recipient, "Material released by the supplier",
             body=f"Chalan {chalan.number} generated for {po.get('customer_name')} · {po.get('number')}",
-            kind="success", link=f"/tiles/orders/{po_id}",
+            kind="success", link=f"/tiles/orders/{po_id}", floor_id=floor_inherit(po),
         )
     return {"po_id": po_id, "chalan": chalan.dict(), "stage": stage}
 
@@ -1649,7 +1653,7 @@ async def dispatch_chalan(
             await notify(
                 recipient, "Your tile order has been dispatched",
                 body=f"{po.get('number')} for {po.get('customer_name')} is fully dispatched",
-                kind="success", link=f"/tiles/orders/{po_id}",
+                kind="success", link=f"/tiles/orders/{po_id}", floor_id=floor_inherit(po),
             )
     return {"po_id": po_id, "chalan_id": chalan_id, "stage": stage}
 

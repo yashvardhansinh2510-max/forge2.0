@@ -27,7 +27,12 @@ async def find_or_create_customer(
     an explicit staff decision made BEFORE this function is ever called)."""
     from services.duplicate_detection import find_customer_matches
 
-    matches = await find_customer_matches(phone=phone, alternate_phone=alternate_phone)
+    # Scoped to the department this walk-in is for: matching across business
+    # units would reuse (and then attach revenue to) the other unit's
+    # customer record.
+    matches = await find_customer_matches(
+        phone=phone, alternate_phone=alternate_phone, floor_ids=[floor_id],
+    )
     if matches["high"]:
         return matches["high"][0]
 

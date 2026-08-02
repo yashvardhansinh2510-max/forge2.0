@@ -8,7 +8,7 @@ Consumed by:
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from auth import accessible_floor_ids, floor_query, get_current_user
+from auth import floor_query, floor_scope_ids, get_current_user, get_floor_scoped_or_404
 from db import db
 from models import UserPublic
 from services.activity_log import timeline_for
@@ -21,17 +21,12 @@ async def global_activity(
     limit: int = Query(50, ge=1, le=500),
     user: UserPublic = Depends(get_current_user),
 ):
-    # BACKEND_AUDIT_2026-07-17.md Medium #34: `activity_events` documents
-    # don't carry floor_id (that would need every log_event call site across
-    # the backend updated to pass it — too large a mechanical sweep to do
-    # safely here), so the global feed cannot be precisely floor-filtered
-    # yet. As a containment measure, floor-restricted staff see nothing from
-    # this endpoint rather than an unfiltered cross-floor feed; owners/
-    # managers (unrestricted) are unaffected. Real per-event floor scoping
-    # is tracked as follow-up work, not silently shipped as "fixed".
-    if accessible_floor_ids(user) is not None:
-        return []
-    return await timeline_for(limit=limit)
+    # `activity_events` now carries `floor_id` (stamped by `log_event`,
+    # backfilled by migration 0014), so this feed is filtered in Mongo like
+    # every other module rather than being blanked out for floor-restricted
+    # staff — which is what the old containment measure did, and which still
+    # showed owners/managers a merged cross-unit feed.
+    return await timeline_for(limit=limit, floor_ids=floor_scope_ids(user))
 
 
 async def _assert_quotation_access(user: UserPublic, quotation_id: str) -> None:
@@ -92,9 +87,18 @@ async def customer_timeline(
 async def product_timeline(
     product_id: str,
     limit: int = Query(200, ge=1, le=500),
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """Audit trail for a product's image uploads/replacements/deletions —
     survives independently of the live `product_media` rows (a deleted
-    image's metadata is captured here at delete time, not lost with it)."""
+    image's metadata is captured here at delete time, not lost with it).
+
+    Gated the same way the quotation/purchase/customer timelines are: this
+    was the one timeline with no access check at all, so any authenticated
+    staff member could read another business unit's catalogue history by id.
+    """
+    await get_floor_scoped_or_404(
+        db.products, product_id, user, not_found="Product not found",
+        projection={"_id": 0, "id": 1, "floor_id": 1},
+    )
     return await timeline_for(entity_type="product", entity_id=product_id, limit=limit)

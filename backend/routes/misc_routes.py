@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import os
 
-from auth import accessible_floor_ids, floor_query, get_current_user, hash_password, invalidate_principal_cache, require_min_role
+from auth import accessible_floor_ids, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, require_min_role
 from db import db
 from models import FloorCreatePayload, FloorPublic, TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from services.activity_log import log_event
@@ -40,7 +40,7 @@ async def mint_download_token(user: UserPublic = Depends(get_current_user)):
     """Call this (normal Authorization-header request) right before opening a
     browser-download URL (PDF/xlsx export). Returns a token good for one
     download within 60 seconds — see services/download_tokens.py."""
-    token = await create_download_token(user.id, user.session_id)
+    token = await create_download_token(user.id, user.session_id, user.active_floor_id)
     return {"token": token, "expires_in": 60}
 
 
@@ -176,7 +176,15 @@ async def health_system():
 
 @router.get("/notifications")
 async def list_notifications(user: UserPublic = Depends(get_current_user)):
-    return await db.notifications.find({"user_id": user.id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    # Own-notifications only was never enough on its own: an owner/manager
+    # receives notifications from both business units, so the bell mixed
+    # Sanitary Bathroom alerts into Ground Floor and vice versa. Filtered in
+    # Mongo on the floor each notification's source record belongs to.
+    query: dict = {"user_id": user.id}
+    floor_ids = floor_scope_ids(user)
+    if floor_ids is not None:
+        query["floor_id"] = {"$in": floor_ids}
+    return await db.notifications.find(query, {"_id": 0}).sort("created_at", -1).to_list(100)
 
 
 @router.get("/team")

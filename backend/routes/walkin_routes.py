@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
-from auth import floor_query, get_current_user, require_min_role
+from auth import floor_query, floor_scope_ids, get_current_user, require_min_role
 from db import db
 from models import UserPublic, now_iso
 from models_walkins import WalkIn, WalkInCreate, WalkInUpdate, ReassignWalkInBody, WALKIN_OPEN_STATUSES
@@ -72,7 +72,7 @@ async def check_duplicate(
     phone: Optional[str] = None, alternate_phone: Optional[str] = None,
     email: Optional[str] = None, name: Optional[str] = None, city: Optional[str] = None,
     address: Optional[str] = None,
-    _: UserPublic = Depends(get_current_user),
+    user: UserPublic = Depends(get_current_user),
 ):
     """Confidence-tiered duplicate detection (see services/duplicate_detection.py):
     high (phone/alt-phone) auto-links, medium (email / name+city / name+address)
@@ -80,8 +80,12 @@ async def check_duplicate(
     that never blocks creation."""
     from services.duplicate_detection import find_customer_matches
 
+    # Scoped to the caller's business unit. Unscoped, this endpoint returned
+    # the other unit's customer name, company, both phone numbers, email and
+    # address to anyone who could type a name into the walk-in form.
     return await find_customer_matches(
         phone=phone, alternate_phone=alternate_phone, email=email, name=name, city=city, address=address,
+        floor_ids=floor_scope_ids(user),
     )
 
 
@@ -92,7 +96,13 @@ async def create_walkin(body: WalkInCreate, user: UserPublic = Depends(require_m
         raise HTTPException(status_code=404, detail="Department (floor) not found")
 
     if body.use_existing_customer_id:
-        customer = await db.customers.find_one({"id": body.use_existing_customer_id}, {"_id": 0})
+        # Floor-checked against the walk-in's own department, not merely
+        # "exists": an id from the other business unit would otherwise attach
+        # this walk-in — and every quotation/order that follows — to a
+        # customer record that unit owns.
+        customer = await db.customers.find_one(
+            {"id": body.use_existing_customer_id, "floor_id": body.floor_id}, {"_id": 0},
+        )
         if not customer:
             raise HTTPException(status_code=404, detail="Selected existing customer not found")
     else:
@@ -102,6 +112,7 @@ async def create_walkin(body: WalkInCreate, user: UserPublic = Depends(require_m
             phone=body.customer_phone, alternate_phone=body.alternate_phone,
             email=body.email, name=body.customer_name,
             city=body.city, address=body.address,
+            floor_ids=[body.floor_id],
         )
         if matches["high"]:
             customer = matches["high"][0]

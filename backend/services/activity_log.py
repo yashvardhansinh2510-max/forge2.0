@@ -66,8 +66,17 @@ async def log_event(
     purchase_id: Optional[str] = None,
     payload: Optional[dict] = None,
     summary: Optional[str] = None,
+    floor_id: Optional[str] = None,
 ) -> Optional[ActivityEvent]:
-    """Best-effort insert into activity_events. Returns the event or None."""
+    """Best-effort insert into activity_events. Returns the event or None.
+
+    `floor_id` is what makes timelines and the activity feed obey business-unit
+    isolation. Prefer passing it explicitly from the source document
+    (`floor_inherit(quotation)`, `TILES_FLOOR_ID`, …) — that is correct even
+    when the request's ambient floor header is stale or absent. The actor's
+    active floor is only a fallback for the many call sites where the request
+    header genuinely is the authority (a staff member acting inside one unit).
+    """
     try:
         ev = ActivityEvent(
             event_type=event_type,
@@ -80,6 +89,7 @@ async def log_event(
             purchase_id=purchase_id,
             payload=payload or {},
             summary=summary,
+            floor_id=floor_id or (actor.active_floor_id if actor else None),
         )
         await db.activity_events.insert_one(ev.dict())
         return ev
@@ -96,10 +106,19 @@ async def timeline_for(
     purchase_id: Optional[str] = None,
     customer_id: Optional[str] = None,
     limit: int = 200,
+    floor_ids: Optional[list[str]] = None,
 ) -> list[dict]:
-    """Fetch chronologically-descending audit events under any grouping key."""
+    """Fetch chronologically-descending audit events under any grouping key.
+
+    `floor_ids=None` means "no floor restriction" and must only be passed by
+    callers that have already proven the caller's access another way. Every
+    HTTP surface passes `floor_scope_ids(user)` so the filter runs in Mongo,
+    never in the client.
+    """
     q: dict = {}
     ors: list[dict] = []
+    if floor_ids is not None:
+        q["floor_id"] = {"$in": floor_ids}
     if entity_type and entity_id:
         q["entity_type"] = entity_type
         q["entity_id"] = entity_id
