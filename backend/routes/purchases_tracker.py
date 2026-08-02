@@ -1089,7 +1089,13 @@ async def transfer_item(
     if body.new_customer_id == src_customer_id:
         raise HTTPException(status_code=400, detail="Destination customer must differ from source")
 
-    new_cust = await db.customers.find_one({"id": body.new_customer_id}, {"_id": 0})
+    # Floor-scoped, not a bare id lookup: an unscoped lookup let a caller
+    # transfer a purchase item to ANY customer id they could guess, including
+    # one in the other business unit — a cross-unit write, since this handler
+    # goes on to auto-create a quotation/PO for that destination customer.
+    # 404 (not 403) on a cross-unit id so the response can't be used to probe
+    # whether an id exists in the other unit.
+    new_cust = await db.customers.find_one(floor_query(user, {"id": body.new_customer_id}), {"_id": 0})
     if not new_cust:
         raise HTTPException(status_code=404, detail="Destination customer not found")
 
