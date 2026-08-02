@@ -1,8 +1,9 @@
 import { usePathname, useRouter } from "expo-router";
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
+import { colors, layout, radius, spacing, type } from "@/src/theme/tokens";
 
 type Member = {
   label: string;
@@ -68,7 +69,16 @@ export function destinationFor(member: Member): string {
 export function WorkspaceSwitcher() {
   const router = useRouter();
   const pathname = usePathname();
+  const { isPhone } = useBp();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+
+  // The switcher renders outside AdminPage, so it does not inherit the page's
+  // horizontal gutter — the first tab used to sit flush against the screen
+  // edge while every card below it was inset, and the last tab was clipped
+  // mid-word with nothing to suggest the row scrolled. Padding the scroll
+  // CONTENT (not the ScrollView) keeps the row scrollable edge to edge while
+  // aligning its first and last items to the same gutter as the page.
+  const gutter = isPhone ? layout.screenPadding.phone : layout.screenPadding.tablet;
 
   // `/sales-data` is a prefix of every other workspace route, so matching it
   // by `startsWith` would light up the Overview group on every screen in the
@@ -82,8 +92,19 @@ export function WorkspaceSwitcher() {
   const openMember = (member: Member) => router.push(destinationFor(member) as never);
 
   return (
-    <View style={{ gap: spacing.xs }}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.xs }}>
+    <View style={{
+      gap: spacing.sm,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.sm,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+      backgroundColor: colors.surface,
+    }}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ gap: spacing.xs, paddingHorizontal: gutter, alignItems: "center" }}
+      >
         {WORKSPACE_GROUPS.map((group) => {
           const isActive = activeGroup?.key === group.key;
           return (
@@ -91,60 +112,99 @@ export function WorkspaceSwitcher() {
               key={group.key}
               testID={`workspace-group-${group.key}`}
               accessibilityLabel={group.label}
+              hitSlop={layout.hitSlop}
               onPress={() => {
                 setOpenGroup(group.members.length > 1 ? (openGroup === group.key ? null : group.key) : null);
                 // Opens to the first member that actually exists, falling back
                 // to the first entry when the whole group is still roadmap.
                 openMember(group.members.find((m) => m.implemented) || group.members[0]);
               }}
-              style={{
-                minHeight: 44,
+              style={({ pressed }: any) => ({
+                // 36 with hitSlop rather than a 44 box: a 44px-tall pill row
+                // reads as a second page header stacked above the real one.
+                height: 36,
                 justifyContent: "center",
                 paddingHorizontal: spacing.md,
                 borderRadius: radius.pill,
                 backgroundColor: isActive ? colors.brand : "transparent",
-              }}
+                opacity: pressed ? 0.85 : 1,
+              })}
             >
-              <Text style={[type.bodyStrong, { color: isActive ? colors.onBrand : colors.onSurface }]}>{group.label}</Text>
+              <Text
+                numberOfLines={1}
+                style={[type.titleSm, { color: isActive ? colors.onBrand : colors.onSurfaceSecondary }]}
+              >
+                {group.label}
+              </Text>
             </Pressable>
           );
         })}
       </ScrollView>
 
       {openGroup ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.xs }}>
-          {WORKSPACE_GROUPS.find((g) => g.key === openGroup)!.members.map((member) => (
-            <Pressable
-              key={member.route}
-              testID={`workspace-member-${member.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
-              accessibilityLabel={member.implemented ? member.label : `${member.label} — coming soon`}
-              onPress={() => openMember(member)}
-              style={{
-                minHeight: 44,
-                justifyContent: "center",
-                paddingHorizontal: spacing.md,
-                flexDirection: "row",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <Text style={[type.body, member.implemented ? null : { color: colors.onSurfaceMuted }]}>
-                {member.label}
-              </Text>
-              {member.implemented ? null : (
-                <View style={{
-                  paddingHorizontal: 6,
-                  paddingVertical: 1,
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: spacing.xs, paddingHorizontal: gutter, alignItems: "center" }}
+        >
+          {WORKSPACE_GROUPS.find((g) => g.key === openGroup)!.members.map((member) => {
+            const isActive = isActiveMember(member);
+            return (
+              <Pressable
+                key={member.route}
+                testID={`workspace-member-${member.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+                accessibilityLabel={member.implemented ? member.label : `${member.label} — coming soon`}
+                hitSlop={layout.hitSlop}
+                onPress={() => openMember(member)}
+                style={({ pressed }: any) => ({
+                  height: 32,
+                  justifyContent: "center",
+                  paddingHorizontal: spacing.md,
                   borderRadius: radius.pill,
-                  backgroundColor: colors.surfaceTertiary,
-                }}>
-                  <Text style={{ fontSize: 9, fontFamily: type.titleMd.fontFamily, fontWeight: "700", color: colors.onSurfaceMuted }}>
-                    SOON
-                  </Text>
-                </View>
-              )}
-            </Pressable>
-          ))}
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: isActive ? colors.brandBorder : colors.border,
+                  backgroundColor: isActive ? colors.brandTint : colors.surfaceSecondary,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: spacing.s4,
+                  opacity: pressed ? 0.85 : 1,
+                })}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    type.bodySm,
+                    {
+                      color: isActive ? colors.brand
+                        : member.implemented ? colors.onSurface
+                        : colors.onSurfaceMuted,
+                    },
+                  ]}
+                >
+                  {member.label}
+                </Text>
+                {member.implemented ? null : (
+                  <View style={{
+                    paddingHorizontal: spacing.s4,
+                    paddingVertical: 1,
+                    borderRadius: radius.pill,
+                    backgroundColor: colors.surfaceTertiary,
+                  }}>
+                    <Text style={{
+                      fontSize: 9,
+                      lineHeight: 12,
+                      fontFamily: type.titleMd.fontFamily,
+                      fontWeight: "700",
+                      letterSpacing: 0.4,
+                      color: colors.onSurfaceMuted,
+                    }}>
+                      SOON
+                    </Text>
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}
         </ScrollView>
       ) : null}
     </View>

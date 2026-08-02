@@ -31,6 +31,10 @@ type NavItem = {
   // button silently moved the user to the other business unit. Tile Orders /
   // Quotation Tiles are the mirror image and are already handled this way by
   // `useTilesNav`.
+  //
+  // Purchases is the same shape: the supplier-PO workflow belongs to Sanitary
+  // Bathroom, and Ground Floor runs its stock through Tile Orders instead, so
+  // the item is restricted rather than left showing an empty tracker.
   floors?: string[];
 };
 
@@ -40,7 +44,7 @@ const PRIMARY: NavItem[] = [
   { href: "/(admin)/quotations", label: "Quotations", icon: "file-text", match: "quotations", floors: [SANITARY_FLOOR_ID] },
   { href: "/(admin)/catalog", label: "Catalog", icon: "package", match: "catalog" },
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
-  { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
+  { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases", floors: [SANITARY_FLOOR_ID] },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
   { href: "/(admin)/followups", label: "Follow-ups", icon: "phone-call", match: "followups" },
 ];
@@ -368,7 +372,7 @@ const MORE_ITEMS: NavItem[] = [
   { href: "/(admin)/walkins", label: "Walk-ins", icon: "user-plus", match: "walkins" },
   { href: "/(admin)/catalog", label: "Catalog", icon: "package", match: "catalog" },
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
-  { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases" },
+  { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases", floors: [SANITARY_FLOOR_ID] },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
   { href: "/(admin)/notifications", label: "Notifications", icon: "bell", match: "notifications" },
   { href: "/(admin)/sales-data", label: "Sales Data", icon: "trending-up", match: "sales-data" },
