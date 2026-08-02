@@ -73,12 +73,13 @@ def test_first_floor_caller_gets_rejected_for_ground_floor_order(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(payment_routes.whatsapp_reminder("q-ground", user=user))
 
-    # get_floor_scoped_or_404 raises 403 (not 404) once the record is found
-    # but the caller isn't authorized for its floor — see
-    # test_auth_get_floor_scoped_or_404.py::test_unauthorized_floor_is_403_not_404,
-    # which this endpoint now matches exactly (it 404s only when the id
-    # doesn't exist at all).
-    assert exc.value.status_code == 403
+    # get_floor_scoped_or_404 raises 404 (not 403) for a cross-unit id, with
+    # the same detail as a genuinely missing one — owner decision
+    # 2026-08-02: a 403 would confirm "this id exists, just not for you",
+    # an existence oracle across the business-unit boundary. See
+    # test_auth_get_floor_scoped_or_404.py.
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Order not found"
     # Nothing about the other unit's customer should be reachable from the error.
     assert "Ramesh" not in str(exc.value.detail)
     assert "9820012345" not in str(exc.value.detail)
@@ -96,7 +97,8 @@ def test_ground_floor_caller_gets_rejected_for_first_floor_order(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(payment_routes.whatsapp_reminder("q-first", user=user))
 
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Order not found"
 
 
 def test_unknown_order_id_is_404(monkeypatch):

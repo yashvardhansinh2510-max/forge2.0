@@ -87,7 +87,11 @@ def test_get_product_denies_access_when_user_lacks_floor_access(monkeypatch):
     """Regression: Verify that get_product denies access when the user doesn't
     have access to the product's floor. This catches the bug where a missing
     floor_id in the projection falls back to hardcoded "first-floor" and
-    incorrectly allows access. Must mock the service to isolate authorization."""
+    incorrectly allows access. Must mock the service to isolate authorization.
+
+    Cross-unit access 404s, not 403s (owner decision 2026-08-02): a 403
+    would confirm "this id exists, just not for you", an existence oracle
+    across the business-unit boundary. See test_auth_get_floor_scoped_or_404.py."""
     doc = {"id": "p1", "floor_id": "ground-floor"}
     monkeypatch.setattr(catalog_routes, "db", _FakeDb(doc))
     # Mock service to prevent 404 from service call; auth should fail first
@@ -101,7 +105,8 @@ def test_get_product_denies_access_when_user_lacks_floor_access(monkeypatch):
             user=_user(active_floor_id="first-floor", floor_ids=["first-floor"]),
         ))
 
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Product not found"
 
 
 def test_complete_the_set_scopes_pool_to_source_floor_not_ambient(monkeypatch):

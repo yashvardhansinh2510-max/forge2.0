@@ -387,9 +387,20 @@ async def get_floor_scoped_or_404(
     record ID instead of `floor_query(user, {id_field: doc_id})`: filtering
     the initial query by ambient state 404s a legitimate request whenever
     that ambient state doesn't happen to match the record, even though the
-    record exists and the caller genuinely has access to it."""
+    record exists and the caller genuinely has access to it.
+
+    Cross-unit access raises 404, not 403 (owner decision 2026-08-02): the
+    two business units behave as independent companies, so a 403 — which
+    confirms "this id exists, just not for you" — is itself an existence
+    oracle across the unit boundary. The detail is byte-identical to the
+    genuinely-missing case for the same reason. A record with no floor_id
+    is inaccessible rather than defaulting to Sanitary (first-floor) — the
+    exact mistake migration 0014's design rejects."""
     doc = await collection.find_one({id_field: doc_id}, projection, session=session)
     if not doc:
         raise HTTPException(status_code=404, detail=not_found)
-    require_floor_access(doc.get("floor_id", "first-floor"), user)
+    floor_id = doc.get("floor_id")
+    allowed = accessible_floor_ids(user)
+    if floor_id is None or (allowed is not None and floor_id not in allowed):
+        raise HTTPException(status_code=404, detail=not_found)
     return doc
