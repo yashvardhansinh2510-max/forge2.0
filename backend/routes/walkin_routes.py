@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
-from auth import floor_query, floor_scope_ids, get_current_user, require_min_role
+from auth import floor_query, floor_scope_ids, get_current_user, require_floor_access, require_min_role
 from db import db
 from models import UserPublic, now_iso
 from models_walkins import WalkIn, WalkInCreate, WalkInUpdate, ReassignWalkInBody, WALKIN_OPEN_STATUSES
@@ -94,12 +94,21 @@ async def check_duplicate(
 async def create_walkin(body: WalkInCreate, user: UserPublic = Depends(require_min_role("sales"))):
     if not await db.floors.find_one({"id": body.floor_id}, {"_id": 0, "id": 1}):
         raise HTTPException(status_code=404, detail="Department (floor) not found")
+    # `body.floor_id` was only checked for EXISTENCE above — a caller could
+    # still name a real floor they have no access to. Without this, every
+    # downstream decision (customer lookup, duplicate-match scope, the
+    # inserted WalkIn/customer's floor_id) anchors on an attacker-controlled
+    # value: a first-floor-only user could write into ground-floor's book,
+    # or — worse — trigger the 409 duplicate-match response below and read
+    # the other unit's customer PII back in the response body.
+    require_floor_access(body.floor_id, user)
 
     if body.use_existing_customer_id:
-        # Floor-checked against the walk-in's own department, not merely
-        # "exists": an id from the other business unit would otherwise attach
-        # this walk-in — and every quotation/order that follows — to a
-        # customer record that unit owns.
+        # Floor-checked against `body.floor_id`, which by this point has
+        # itself been verified above to be a floor the caller may access —
+        # not merely "exists": an id from the other business unit would
+        # otherwise attach this walk-in — and every quotation/order that
+        # follows — to a customer record that unit owns.
         customer = await db.customers.find_one(
             {"id": body.use_existing_customer_id, "floor_id": body.floor_id}, {"_id": 0},
         )
