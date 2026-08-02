@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import os
 
-from auth import accessible_floor_ids, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, require_min_role
+from auth import accessible_floor_ids, floor_for_write, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, require_min_role
 from db import db
 from models import FloorCreatePayload, FloorPublic, TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from services.activity_log import log_event
@@ -39,8 +39,17 @@ async def _ensure_default_floors() -> None:
 async def mint_download_token(user: UserPublic = Depends(get_current_user)):
     """Call this (normal Authorization-header request) right before opening a
     browser-download URL (PDF/xlsx export). Returns a token good for one
-    download within 60 seconds — see services/download_tokens.py."""
-    token = await create_download_token(user.id, user.session_id, user.active_floor_id)
+    download within 60 seconds — see services/download_tokens.py.
+
+    Uses `floor_for_write(user)` rather than `user.active_floor_id` directly:
+    an all-floors owner/manager on the "All floors" view sends no
+    X-Floor-Id, leaving `active_floor_id` empty, which would store
+    `floor_id: None` on the token. The consume path then leaves
+    `active_floor_id = None` on the resulting principal, making
+    `floor_query()` unrestricted for that download — the exact leak
+    described in services/download_tokens.py. `floor_for_write` always
+    resolves to a concrete floor."""
+    token = await create_download_token(user.id, user.session_id, floor_for_write(user))
     return {"token": token, "expires_in": 60}
 
 

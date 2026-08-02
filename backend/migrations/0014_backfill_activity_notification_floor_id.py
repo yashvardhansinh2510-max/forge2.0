@@ -52,6 +52,7 @@ _ENTITY_COLLECTIONS = {
     "followup": "followups",
     "payment": "payments",
     "walkin": "walkins",
+    "tile_customer_order": "customer_orders",
 }
 
 # Notification link prefix -> collection. Ordered longest-first so

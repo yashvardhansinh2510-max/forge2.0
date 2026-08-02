@@ -111,9 +111,16 @@ async def timeline_for(
     """Fetch chronologically-descending audit events under any grouping key.
 
     `floor_ids=None` means "no floor restriction" and must only be passed by
-    callers that have already proven the caller's access another way. Every
-    HTTP surface passes `floor_scope_ids(user)` so the filter runs in Mongo,
-    never in the client.
+    callers that have already proven the caller's access another way. Of the
+    five HTTP surfaces in `routes/activity_routes.py`, only the global feed
+    passes `floor_scope_ids(user)` here; the four per-entity timelines
+    (quotation/purchase/customer/product) pass `floor_ids=None` because each
+    one already authorizes by reading the parent record through a
+    floor-scoped lookup (`floor_query`/`get_floor_scoped_or_404`) before
+    calling this function -- the access check happens one level up, not in
+    this filter. A new per-entity timeline caller must add that same
+    parent-record check before calling `timeline_for`; passing `floor_ids`
+    here is not a substitute for it.
     """
     q: dict = {}
     ors: list[dict] = []
