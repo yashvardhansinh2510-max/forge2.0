@@ -16,7 +16,7 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
-from auth import floor_for_write, floor_inherit, floor_query, get_current_user, require_min_role
+from auth import floor_for_write, floor_inherit, floor_query, get_current_user, get_floor_scoped_or_404, require_min_role
 from db import client, db
 from models import Payment, PaymentCreate, UserPublic
 from services.activity_log import log_event
@@ -464,11 +464,9 @@ def _clean_phone(phone: Optional[str]) -> Optional[str]:
 
 
 @router.get("/orders/{order_id}/whatsapp-reminder")
-async def whatsapp_reminder(order_id: str, _: UserPublic = Depends(get_current_user)):
+async def whatsapp_reminder(order_id: str, user: UserPublic = Depends(get_current_user)):
     """Build a wa.me link + message body for a payment reminder."""
-    doc = await db.quotations.find_one({"id": order_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Order not found")
+    doc = await get_floor_scoped_or_404(db.quotations, order_id, user, not_found="Order not found", projection={"_id": 0})
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0}) or {}
     paid_map = await _paid_by_quotation([order_id])
     paid = paid_map.get(order_id, 0.0)
