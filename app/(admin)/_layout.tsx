@@ -355,6 +355,20 @@ function PhoneBar() {
   const isActive = (m: string) => segments.includes(m);
   const visibleMore = MORE_ITEMS.filter((n) => hasAccess(n.match));
   const moreActive = visibleMore.some((m) => isActive(m.match));
+  // The FAB is not a NavItem and isn't run through visible(), so it needs its
+  // own unit check: it used to unconditionally open the Sanitary Quotation
+  // Builder, which on Ground Floor doesn't exist for that unit and silently
+  // flipped the active business unit to Sanitary just by pressing it. Mirror
+  // phoneTabs' substitution — Sanitary gets the quotation builder, every
+  // other unit gets that unit's own Tiles nav destination via the same
+  // useTilesNav() mechanism, and if neither is available the FAB hides
+  // rather than reaching into the other unit's routes.
+  const { selectedFloorId } = useFloorAccess();
+  const fabAction = selectedFloorId !== TILES_FLOOR_ID
+    ? { label: "New quotation", onPress: () => router.push("/(admin)/quotations/new" as any) }
+    : tilesNav.items.length
+    ? { label: `Open ${tilesNav.items[0].label}`, onPress: () => { void tilesNav.open(tilesNav.items[0]); } }
+    : null;
 
   const Tab = ({ item }: { item: NavItem }) => {
     const on = isActive(item.match);
@@ -380,15 +394,17 @@ function PhoneBar() {
       <View style={styles.phoneBar}>
         {PHONE_TABS.filter((t) => hasAccess(t.match)).map((t) => <Tab key={t.href} item={t} />)}
         <View style={styles.fabSlot}>
-          <Pressable
-            testID="bottom-fab-new-quotation"
-            accessibilityRole="button"
-            accessibilityLabel="New quotation"
-            onPress={() => router.push("/(admin)/quotations/new" as any)}
-            style={({ pressed }) => [styles.fab, { transform: [{ scale: pressed ? 0.94 : 1 }] }]}
-          >
-            <Feather name="plus" size={22} color={color.onAction} />
-          </Pressable>
+          {fabAction ? (
+            <Pressable
+              testID="bottom-fab-new-quotation"
+              accessibilityRole="button"
+              accessibilityLabel={fabAction.label}
+              onPress={fabAction.onPress}
+              style={({ pressed }) => [styles.fab, { transform: [{ scale: pressed ? 0.94 : 1 }] }]}
+            >
+              <Feather name="plus" size={22} color={color.onAction} />
+            </Pressable>
+          ) : null}
         </View>
         {PHONE_TABS_RIGHT.filter((t) => hasAccess(t.match)).map((t) => <Tab key={t.href} item={t} />)}
         <Pressable
