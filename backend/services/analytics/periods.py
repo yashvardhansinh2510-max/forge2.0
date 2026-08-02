@@ -92,6 +92,53 @@ def resolve(preset: str, date_from: Optional[str] = None, date_to: Optional[str]
     return Period(None, None, "All time")
 
 
+def month_period(moment: datetime) -> Period:
+    """The whole calendar month containing `moment`, labelled "July 2026"."""
+    start = _month_start(moment)
+    return Period(_iso(start), _iso(_add_months(start, 1)), start.strftime("%B %Y"))
+
+
+def smart_default_period(
+    latest_order_at: Optional[str], now: Optional[datetime] = None,
+) -> tuple[str, Period, bool]:
+    """The period the Sales Data page opens on — never an empty screen.
+
+    Returns (preset, period, fallback_applied).
+
+    "This month" is the honest calendar default and stays the answer whenever
+    the current month actually contains a confirmed order. But a business
+    opening the app on the 1st or 2nd would otherwise be shown zeroes across
+    every card while a full book sits one day behind the month boundary, so
+    when the current month is empty this falls back to the calendar month of
+    the most recent confirmed order and says so (`fallback_applied`) rather
+    than silently reinterpreting what "this month" means.
+
+    A business with no confirmed orders at all gets "this month" and no
+    banner: there is no better period to show, and claiming a fallback
+    happened would be false.
+    """
+    now = now or datetime.now(timezone.utc)
+    this_month = resolve("this_month", now=now)
+
+    if not latest_order_at:
+        return "this_month", this_month, False
+
+    try:
+        latest = datetime.fromisoformat(latest_order_at.replace("Z", "+00:00"))
+    except ValueError:
+        # An unparseable stamp is a data problem, not a reason to 500 the
+        # whole page — fall back to the plain calendar default.
+        return "this_month", this_month, False
+
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+
+    if this_month.start and latest >= datetime.fromisoformat(this_month.start):
+        return "this_month", this_month, False
+
+    return "custom", month_period(latest), True
+
+
 def previous(period: Period, mode: str = "period") -> Optional[Period]:
     """The window this one is compared against.
 

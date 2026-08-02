@@ -29,6 +29,7 @@ from services.analytics import cache, gather
 from services.analytics.attention import THRESHOLDS, attention_rows
 from services.analytics.feed import COMPLETION_EVENTS
 from services.analytics.filters import AnalyticsFilter, FloorAccessError, build_match
+from services.analytics.gather_breakdowns import latest_confirmed_order_at
 from services.analytics.health import health_score
 from services.analytics.metrics import (
     METRIC_SOURCES,
@@ -38,7 +39,7 @@ from services.analytics.metrics import (
     revenue_pipeline,
 )
 from services.analytics.opportunity import opportunity_rows
-from services.analytics.periods import compare, previous, resolve
+from services.analytics.periods import compare, previous, resolve, smart_default_period
 from services.analytics.rows import rank, row_dict
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -188,8 +189,21 @@ async def _rows_for(f: AnalyticsFilter, floors, period):
 async def _revenue_by_floor(f: AnalyticsFilter, floors, period) -> list[dict]:
     """Revenue and orders per accessible floor, via the SAME _kpis pipeline —
     not a second revenue definition. Only meaningful for an "all floors" view;
-    a caller already scoped to one floor gets a single-row breakdown."""
-    candidate_floors = floors if floors is not None else ["first-floor", "ground-floor"]
+    a caller already scoped to one floor gets a single-row breakdown.
+
+    An all-floors caller (`floors is None`) resolves the candidate list from
+    db.floors rather than a hardcoded pair. The literal
+    `["first-floor", "ground-floor"]` this used to carry silently omitted any
+    third business unit from the owner's own Revenue by Floor breakdown —
+    `second-floor` already exists in the live floors collection, so the bug
+    was live and would have started losing real money the day that unit
+    booked its first order.
+    """
+    if floors is not None:
+        candidate_floors = list(floors)
+    else:
+        docs = await db.floors.find({"active": True}, {"_id": 0, "id": 1}).sort("id", 1).to_list(200)
+        candidate_floors = [d["id"] for d in docs if d.get("id")]
     out = []
     for floor_id in candidate_floors:
         scoped = _filter_from_query(floor_id, f.preset, f.date_from, f.date_to)
@@ -285,6 +299,39 @@ async def overview(
     except FloorAccessError as exc:
         raise _floor_error_to_http(exc) from exc
     return payload
+
+
+@router.get("/default-period")
+async def default_period(
+    floor_id: str | None = Query(None),
+    user: UserPublic = Depends(require_roles(*_ANALYTICS_ROLES)),
+):
+    """The period Sales Data should open on for THIS caller, on THIS floor.
+
+    Resolved server-side rather than in the client because only the database
+    knows whether the current month has any confirmed orders in it, and
+    because the answer is floor-dependent: a unit that booked nothing this
+    month should fall back even when the other unit did not.
+
+    The client is free to ignore this and pass its own preset — this only
+    supplies the opening value for a first visit with nothing persisted.
+    """
+    f = _filter_from_query(floor_id, None, None, None)
+    floors = accessible_floor_ids(user)
+    try:
+        latest = await latest_confirmed_order_at(db, f, floors)
+    except FloorAccessError as exc:
+        raise _floor_error_to_http(exc) from exc
+
+    preset, period, fallback_applied = smart_default_period(latest)
+    return {
+        "preset": preset,
+        "date_from": period.start,
+        "date_to": period.end,
+        "label": period.label,
+        "fallback_applied": fallback_applied,
+        "latest_order_at": latest,
+    }
 
 
 @router.get("/health")

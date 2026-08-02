@@ -137,3 +137,27 @@ def test_revenue_by_floor_uses_the_same_kpi_pipeline_not_a_second_definition():
     import inspect
     source = inspect.getsource(routes._revenue_by_floor)
     assert "_kpis(" in source
+
+
+def test_revenue_by_floor_never_hardcodes_the_floor_list():
+    """It used to carry a literal ["first-floor", "ground-floor"] for
+    all-floor callers, which silently omitted every other business unit from
+    the owner's own Revenue by Floor breakdown. `second-floor` already exists
+    in the live floors collection, so the bug was live — it would have begun
+    losing real money the day that unit booked its first order. The candidate
+    list must come from db.floors.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(routes._revenue_by_floor).lstrip())
+    func = tree.body[0]
+    # The docstring names the old literal to explain the bug, so assert
+    # against the executable body only — otherwise the explanation trips the
+    # very check it documents.
+    body = func.body[1:] if ast.get_docstring(func) else func.body
+    code = "\n".join(ast.unparse(node) for node in body)
+
+    assert "db.floors.find(" in code
+    assert "first-floor" not in code
+    assert "ground-floor" not in code
