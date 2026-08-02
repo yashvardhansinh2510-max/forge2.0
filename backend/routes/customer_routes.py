@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from auth import (
-    floor_for_write, floor_query, get_current_customer, get_current_user, get_floor_scoped_or_404,
+    floor_for_write, floor_inherit, floor_query, get_current_customer, get_current_user, get_floor_scoped_or_404,
     hash_password, invalidate_principal_cache, require_min_role,
 )
 from db import db
@@ -110,11 +110,13 @@ async def update_customer(
             event_type="customer.portal_enabled" if patch["portal_enabled"] else "customer.portal_disabled",
             entity_type="customer", entity_id=customer_id, customer_id=customer_id, actor=user,
             summary="Customer Portal Enabled" if patch["portal_enabled"] else "Customer Portal Disabled",
+            floor_id=floor_inherit(existing),
         )
     else:
         await log_event(
             event_type="customer.updated", entity_type="customer", entity_id=customer_id,
             customer_id=customer_id, actor=user, summary="Customer Details Updated",
+            floor_id=floor_inherit(existing),
         )
 
     doc = await db.customers.find_one({"id": customer_id}, {"_id": 0, "password_hash": 0})
