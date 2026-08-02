@@ -310,31 +310,61 @@ def accessible_floor_ids(user: UserPublic) -> list[str] | None:
     return None if has_all_floor_access(user) else list(user.floor_ids or [])
 
 
+def _resolve_floor_scope(user: UserPublic) -> list[str]:
+    """Single source of truth for turning a caller into a concrete, non-empty
+    list of floor ids — shared by every read helper below (`floor_query`,
+    `floor_scope_ids`) AND `floor_for_write`.
+
+    Historically these disagreed for one caller: an all-floors user
+    (owner/manager) with no `active_floor_id` set. `floor_query()` treated
+    that as "no floor filter at all" (reads BOTH business units in one
+    call), while `floor_for_write()` picked a single floor
+    ("first-floor"/Sanitary). Same caller, same request, read everything but
+    wrote to one floor.
+
+    That state is unreachable from the product today — the shell always
+    pins a concrete `active_floor_id` immediately after login (see
+    frontend/src/state/auth.tsx, frontend/src/hooks/use-floor-access.ts),
+    and the one screen with a genuine "both floors" concept (Sales Data,
+    routes/sales_data_routes.py) never calls floor_query() at all — it
+    resolves its own explicit floor list from a query param, independent of
+    `active_floor_id`. So no legitimate all-floors *read* depends on
+    floor_query()'s old unrestricted branch (see task-5-report.md for the
+    call-site survey), which makes it safe to narrow reads to match writes,
+    per this function's single resolution used by both.
+
+    Reads now share floor_for_write's existing, already-tested single-floor
+    default (see tests/unit/test_quotation_floor_id_from_items.py) rather
+    than raising: floor_for_write's default is depended on by real, tested
+    write-path fallback logic (_floor_id_for_new_quotation in
+    routes/quotation_routes.py), so changing that default — or replacing it
+    with a hard error — would break currently-passing behavior for no
+    isolation benefit. Mirroring it into reads closes the asymmetry without
+    touching that contract.
+    """
+    if user.active_floor_id:
+        return [user.active_floor_id]
+    allowed = accessible_floor_ids(user)
+    return list(allowed) if allowed else ["first-floor"]
+
+
 def floor_query(user: UserPublic, base: dict | None = None) -> dict:
     """Compose a Mongo filter that scopes staff to their assigned floors."""
     base = base or {}
-    allowed = [user.active_floor_id] if user.active_floor_id else accessible_floor_ids(user)
-    if allowed is None:
-        return base
-    scope = {"floor_id": {"$in": allowed}}
+    scope = {"floor_id": {"$in": _resolve_floor_scope(user)}}
     return {"$and": [scope, base]} if base else scope
 
 
-def floor_scope_ids(user: UserPublic) -> Optional[list[str]]:
+def floor_scope_ids(user: UserPublic) -> list[str]:
     """Resolve the caller's floor filter the same way `floor_query()` does
     for Mongo-filter-based queries, but as a plain list — for callers that
     build their own aggregation pipeline or in-memory filter rather than
     taking a Mongo filter dict."""
-    if user.active_floor_id:
-        return [user.active_floor_id]
-    return accessible_floor_ids(user)
+    return _resolve_floor_scope(user)
 
 
 def floor_for_write(user: UserPublic) -> str:
-    if user.active_floor_id:
-        return user.active_floor_id
-    allowed = accessible_floor_ids(user)
-    return (allowed or ["first-floor"])[0] if allowed is not None else "first-floor"
+    return _resolve_floor_scope(user)[0]
 
 
 def floor_inherit(source: dict | None) -> str:

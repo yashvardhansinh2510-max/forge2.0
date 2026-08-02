@@ -186,6 +186,178 @@ async def probe(base_url: str, email: str, password: str) -> tuple[list[dict], i
     return rows, failures
 
 
+# ---------------------------------------------------------------------------
+# Write-path probing
+# ---------------------------------------------------------------------------
+#
+# The read probe above proves GET responses never leak rows across floors.
+# Phase 0's most serious defects were on WRITE paths instead (POST /walkins
+# trusting a caller-supplied floor_id; an unscoped transfer destination) --
+# reads were clean throughout. This section attempts a representative
+# id-addressed mutation against a record belonging to the OTHER business
+# unit and asserts 404 (Phase 1 standardised cross-unit record access on
+# 404, not 403 -- see auth.get_floor_scoped_or_404's docstring).
+#
+# Why this needs its own principal instead of reusing the read probe's
+# owner login: owner/manager have has_all_floor_access() == True
+# (auth.ROLE_HIERARCHY), so cross-unit id-addressed access is NOT blocked
+# for them by design -- an owner can legitimately open any record on any
+# floor by ID; a 404 there would itself be wrong (see
+# get_floor_scoped_or_404's docstring). None of the seeded demo staff
+# accounts are floor-restricted either (every account's floor_ids covers
+# every floor) -- there is currently no real login that would ever observe
+# a 404 here. So this probe borrows the SAME code path POST /auth/login
+# uses (auth.create_session + auth.create_token) to mint a genuine session
+# for the existing admin@forge.app account, having first temporarily
+# narrowed its floor_ids to a single floor for the run -- no password
+# needed, the account's credentials never change. Both the temporary
+# floor_ids value and the session are removed before this function
+# returns, including on a failed assertion (try/finally).
+WRITE_TEST_PRINCIPAL_EMAIL = "admin@forge.app"
+WRITE_TEST_FLOOR = GROUND       # the floor the temp principal is restricted to
+WRITE_TEST_OTHER_FLOOR = SANITARY  # "the other business unit" for this run
+
+# (label, collection to source record ids from, id-selection filter, method,
+# path template -- "{id}" substituted with the record's own id, request body)
+WRITE_PROBES: list[tuple[str, str, dict, str, str, dict]] = [
+    ("Quotation", "quotations", {"status": {"$nin": ["ordered", "won"]}},
+     "PATCH", "/api/quotations/{id}", {}),
+    ("Customer", "customers", {},
+     "PATCH", "/api/customers/{id}", {}),
+    ("Purchase order", "purchase_orders", {},
+     "PATCH", "/api/purchase-orders/{id}", {}),
+    ("Tile order dispatch", "dispatches", {"is_deleted": False},
+     "PATCH", "/api/tile-orders/dispatches/{id}/transport", {}),
+]
+# Payment is handled separately below: it is id-addressed via a BODY field
+# (quotation_id), not a URL path segment -- POST /api/payments against an
+# order id belonging to the other floor. Reuses the Quotation ids above.
+# The quotation-status filter above (excluding ordered/won) is what keeps
+# this genuinely non-mutating: create_payment 400s on "not a confirmed
+# order yet" before it ever inserts anything, for both the same-unit and
+# cross-unit request.
+PAYMENT_PROBE_LABEL = "Payment (order id)"
+
+
+def _write_request(method: str, url: str, token: str, floor: str, body: dict) -> int:
+    """Fire one write request, return the HTTP status code. Never raises --
+    an HTTPError IS the result being tested, not a probe failure."""
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode(), method=method,
+        headers={"Content-Type": "application/json"},
+    )
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("X-Floor-Id", floor)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+
+
+def _write_verdict(same_status: int | str, cross_status: int | str) -> str:
+    problems: list[str] = []
+    if same_status == 404:
+        problems.append(f"same-unit request 404'd ({same_status}) -- the gate is blocking legitimate same-floor access")
+    if cross_status != 404:
+        problems.append(f"cross-unit request did NOT 404 (got {cross_status}) -- cross-unit record access leaked past the floor gate")
+    return ("LEAK: " + "; ".join(problems)) if problems else "ok"
+
+
+async def write_probe(base_url: str) -> tuple[list[dict], int]:
+    from db import db  # backend/db.py -- only imported on the DB-verify path
+    import auth        # create_session/create_token -- the real login code path
+
+    admin = await db.users.find_one(
+        {"email": WRITE_TEST_PRINCIPAL_EMAIL}, {"_id": 0, "id": 1, "role": 1, "floor_ids": 1},
+    )
+    if not admin:
+        print(f"write probe: {WRITE_TEST_PRINCIPAL_EMAIL} not found -- skipping write probe", file=sys.stderr)
+        return [], 0
+
+    admin_id = admin["id"]
+    original_floor_ids = admin.get("floor_ids")
+    session_id: str | None = None
+    rows: list[dict] = []
+    failures = 0
+
+    try:
+        await db.users.update_one({"id": admin_id}, {"$set": {"floor_ids": [WRITE_TEST_FLOOR]}})
+        session_id = await auth.create_session("staff", admin_id, None)
+        token = auth.create_token(admin_id, "staff", {"role": admin["role"], "session_id": session_id})
+
+        # Resolve one real record id per floor for each probed collection.
+        ids_by_collection: dict[str, dict[str, str]] = {}
+        for _label, collection, extra, *_rest in WRITE_PROBES:
+            if collection in ids_by_collection:
+                continue
+            found: dict[str, str] = {}
+            for floor in (WRITE_TEST_FLOOR, WRITE_TEST_OTHER_FLOOR):
+                doc = await db[collection].find_one({"floor_id": floor, **extra}, {"_id": 0, "id": 1})
+                if doc:
+                    found[floor] = doc["id"]
+            ids_by_collection[collection] = found
+
+        for label, collection, _extra, method, path_tpl, body in WRITE_PROBES:
+            ids = ids_by_collection[collection]
+            if WRITE_TEST_FLOOR not in ids or WRITE_TEST_OTHER_FLOOR not in ids:
+                rows.append({
+                    "endpoint": label, "same_unit": "<no fixture>", "cross_unit": "<no fixture>",
+                    "verdict": "SKIP: no record found on one or both floors to probe with",
+                })
+                continue
+            same_status = _write_request(
+                method, f"{base_url}{path_tpl.format(id=ids[WRITE_TEST_FLOOR])}", token, WRITE_TEST_FLOOR, body,
+            )
+            cross_status = _write_request(
+                method, f"{base_url}{path_tpl.format(id=ids[WRITE_TEST_OTHER_FLOOR])}", token, WRITE_TEST_FLOOR, body,
+            )
+            verdict = _write_verdict(same_status, cross_status)
+            if verdict != "ok":
+                failures += 1
+            rows.append({"endpoint": label, "same_unit": same_status, "cross_unit": cross_status, "verdict": verdict})
+
+        # Payment: id-addressed via body.quotation_id, not the URL path.
+        quotation_ids = ids_by_collection.get("quotations", {})
+        if WRITE_TEST_FLOOR in quotation_ids and WRITE_TEST_OTHER_FLOOR in quotation_ids:
+            same_status = _write_request(
+                "POST", f"{base_url}/api/payments", token, WRITE_TEST_FLOOR,
+                {"quotation_id": quotation_ids[WRITE_TEST_FLOOR], "amount": 1},
+            )
+            cross_status = _write_request(
+                "POST", f"{base_url}/api/payments", token, WRITE_TEST_FLOOR,
+                {"quotation_id": quotation_ids[WRITE_TEST_OTHER_FLOOR], "amount": 1},
+            )
+            verdict = _write_verdict(same_status, cross_status)
+            if verdict != "ok":
+                failures += 1
+            rows.append({"endpoint": PAYMENT_PROBE_LABEL, "same_unit": same_status, "cross_unit": cross_status, "verdict": verdict})
+        else:
+            rows.append({
+                "endpoint": PAYMENT_PROBE_LABEL, "same_unit": "<no fixture>", "cross_unit": "<no fixture>",
+                "verdict": "SKIP: no record found on one or both floors to probe with",
+            })
+
+    finally:
+        # Restore, unconditionally -- even if an assertion above raised or a
+        # request errored unexpectedly. This is the only live-data mutation
+        # write probing performs (a staff account's own floor_ids), and it
+        # is always undone in the same run.
+        await db.users.update_one({"id": admin_id}, {"$set": {"floor_ids": original_floor_ids}})
+        if session_id:
+            await db.user_sessions.delete_one({"id": session_id})
+
+    return rows, failures
+
+
+async def run_all(base_url: str, email: str, password: str) -> tuple[list[dict], int, list[dict], int]:
+    """Both probes share the single event loop -- see _floors_from_db()'s
+    docstring for why a second asyncio.run() is unsafe here."""
+    read_rows, read_failures = await probe(base_url, email, password)
+    write_rows, write_failures = await write_probe(base_url)
+    return read_rows, read_failures, write_rows, write_failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8010")
@@ -204,21 +376,36 @@ def main() -> int:
         return 64
 
     # One loop for the entire run -- see _floors_from_db().
-    rows, failures = asyncio.run(probe(args.base_url, args.email, args.password))
+    read_rows, read_failures, write_rows, write_failures = asyncio.run(
+        run_all(args.base_url, args.email, args.password)
+    )
 
     def cell(r: dict, name: str) -> str:
         floors = ",".join(sorted(v for v in r[name] if v != "None")) or "-"
         return f"{floors} ({r[f'{name}_count']})"
 
+    print("== Read paths ==")
     print(f"{'endpoint':<18} {'unscoped':<30} {'first-floor':<18} {'ground-floor':<18} verdict")
     print("-" * 104)
-    for r in rows:
+    for r in read_rows:
         print(f"{r['endpoint']:<18} {cell(r, 'unscoped'):<30} {cell(r, 'first_floor'):<18} "
               f"{cell(r, 'ground_floor'):<18} {r['verdict']}")
-
-    print(f"\n{len(rows) - failures}/{len(rows)} endpoints isolated correctly.")
+    print(f"\n{len(read_rows) - read_failures}/{len(read_rows)} read endpoints isolated correctly.")
     print("Counts in parentheses. A zero count is NOT evidence of isolation -- "
           "compare it against the release report's figures before calling it a pass.")
+
+    print(f"\n== Write paths (cross-unit id-addressed mutations, must 404) ==")
+    print(f"{'endpoint':<24} {'same-unit':<12} {'cross-unit':<12} verdict")
+    print("-" * 104)
+    for r in write_rows:
+        print(f"{r['endpoint']:<24} {str(r['same_unit']):<12} {str(r['cross_unit']):<12} {r['verdict']}")
+    print(f"\n{len(write_rows) - write_failures}/{len(write_rows)} write endpoints correctly reject cross-unit access.")
+    print("same-unit must be a non-404 status (the gate let a legitimate same-floor "
+          "request through); cross-unit must be exactly 404.")
+
+    failures = read_failures + write_failures
+    print(f"\n{len(read_rows) + len(write_rows) - failures}/{len(read_rows) + len(write_rows)} "
+          f"total checks passed ({read_failures} read failure(s), {write_failures} write failure(s)).")
     return failures
 
 
