@@ -4,6 +4,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
+from auth import floor_inherit
 from db import db
 from models import Product
 
@@ -113,7 +114,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
     falls back to the ``catalog_image_blobs`` collection.
     """
     supplier = job["supplier_name"]
-    floor_id = floor_id or job.get("floor_id", "first-floor")
+    floor_id = floor_id or floor_inherit(job)
     brand_doc = await db.brands.find_one({"name": supplier, "floor_id": floor_id}, {"_id": 0})
     if not brand_doc:
         # Autocreate brand if missing

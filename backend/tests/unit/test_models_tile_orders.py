@@ -48,6 +48,7 @@ def test_ready_batch_defaults():
         customer_order_id="co-1", supplier_id="s-1", supplier_name="Qutone Rajkot",
         customer_id="cust-1", customer_name="Nileshbhai Pokiya", tile_name="Glossy Ivory 600x600",
         qty=8, remaining_qty=8, created_by="u-1", created_by_name="Warehouse Rep",
+        floor_id="ground-floor",
     )
     assert batch.auto_created is False
     assert batch.is_deleted is False
@@ -62,6 +63,7 @@ def test_dispatch_defaults_and_chalan_link():
         destination_address="123 Ring Road", destination_city="Rajkot",
         dispatch_date="2026-07-29", dispatch_time="14:23",
         created_by="u-1", created_by_name="Warehouse Rep", chalan_id="ch-1",
+        floor_id="ground-floor",
     )
     assert dispatch.attachments == []
     assert dispatch.inventory_transaction_id is None
@@ -76,6 +78,7 @@ def test_chalan_is_a_plain_dict_after_serialization_and_has_no_update_hook():
         items=[TileChalanItem(po_item_id="item-1", tile_name="Glossy Ivory 600x600", boxes=8, quantity=8)],
         created_by="u-1", created_by_name="Warehouse Rep",
         generated_at="2026-07-29T14:23:00+00:00", generated_by_name="Warehouse Rep",
+        floor_id="ground-floor",
     )
     data = chalan.dict()
     assert "update" not in data  # no mutable-state field snuck in

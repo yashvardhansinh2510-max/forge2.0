@@ -9,7 +9,7 @@ import logging
 import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 
-from auth import floor_for_write, floor_query, get_current_user, require_min_role
+from auth import floor_for_write, floor_inherit, floor_query, get_current_user, require_min_role
 from catalog_pipeline.orchestrator import import_accepted, rollback_job, run_pipeline
 from db import db
 from models import CatalogImportJob, UserPublic
@@ -251,7 +251,7 @@ async def approve_and_import(
         # Not fatal but flagged in response
         pass
 
-    stats = await import_accepted(doc, user.id, floor_id=doc.get("floor_id", "first-floor"))
+    stats = await import_accepted(doc, user.id, floor_id=floor_inherit(doc))
     catalog_service.schedule_catalog_refresh()
     await db.catalog_imports.update_one(
         floor_query(user, {"id": job_id}),

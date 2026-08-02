@@ -24,7 +24,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
-from auth import floor_for_write, floor_query, get_current_user, require_min_role
+from auth import floor_for_write, floor_inherit, floor_query, get_current_user, require_min_role
 from db import db
 from models import (
     AutomationRuleUpdate, Followup, FollowupCallOutcomePayload, FollowupCompletePayload,
@@ -731,7 +731,7 @@ async def log_call(followup_id: str, body: FollowupCallOutcomePayload, user: Use
             due_at=due.isoformat(), is_automated=False,
             assigned_to=f.get("assigned_to") or user.id, assigned_to_name=f.get("assigned_to_name") or user.full_name,
             tags=f.get("tags", []),
-            floor_id=f.get("floor_id", "first-floor"),
+            floor_id=floor_inherit(f),
         )
         await db.followups.insert_one(nf.dict())
         next_created = nf.id

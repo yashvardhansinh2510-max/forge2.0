@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from auth import floor_query, floor_scope_ids, get_current_user, require_min_role
+from auth import floor_inherit, floor_query, floor_scope_ids, get_current_user, require_min_role
 from db import db
 from models import ProductMedia, UserPublic
 from services import catalog_service, media_service
@@ -82,7 +82,7 @@ async def _brand_slug_for_product(product_id: str, user: UserPublic) -> tuple[st
         raise HTTPException(status_code=404, detail="Product not found")
     brand = await db.brands.find_one({"id": prod.get("brand_id")}, {"_id": 0, "slug": 1, "name": 1})
     slug = (brand or {}).get("slug") or (brand or {}).get("name") or "unknown"
-    return slug, prod.get("brand_id"), prod.get("family_key"), prod.get("floor_id", "first-floor")
+    return slug, prod.get("brand_id"), prod.get("family_key"), floor_inherit(prod)
 
 
 async def _assert_media_access(media_id: str, user: UserPublic) -> dict:
@@ -187,7 +187,7 @@ async def upload_family_media(
     doc = await media_service.upload_and_register(
         data=data, mime=mime, brand_slug=slug,
         family_key=family_key, brand_id=sample["brand_id"],
-        floor_id=sample.get("floor_id", "first-floor"),
+        floor_id=floor_inherit(sample),
         source_type=source_type, role=role,  # type: ignore[arg-type]
         is_primary=is_primary, sort_order=sort_order,
         uploaded_by=user.id, notes=notes,

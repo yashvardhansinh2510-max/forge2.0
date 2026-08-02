@@ -18,7 +18,7 @@ def test_purchase_order_item_tile_fields_default():
 def test_purchase_order_tile_rollup_fields_default():
     po = PurchaseOrder(
         number="FPO-2026-0001", customer_id="cust-1", customer_name="Nileshbhai Pokiya",
-        created_by="u-1", created_by_name="Sales Rep",
+        created_by="u-1", created_by_name="Sales Rep", floor_id="first-floor",
     )
     assert po.customer_order_id is None
     assert po.ready_boxes == 0

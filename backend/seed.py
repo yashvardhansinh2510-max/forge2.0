@@ -136,13 +136,13 @@ async def resync_catalog_if_needed():
 
     brand_by_name: dict[str, Brand] = {}
     for name, country in BRANDS:
-        b = Brand(name=name, slug=name.lower().replace(" ", "-"), country=country)
+        b = Brand(name=name, slug=name.lower().replace(" ", "-"), country=country, floor_id="first-floor")
         brand_by_name[name] = b
         await db.brands.insert_one(b.dict())
 
     cat_by_name: dict[str, Category] = {}
     for name, slug in CATEGORIES:
-        c = Category(name=name, slug=slug)
+        c = Category(name=name, slug=slug, floor_id="first-floor")
         cat_by_name[name] = c
         await db.categories.insert_one(c.dict())
 
@@ -165,6 +165,7 @@ async def resync_catalog_if_needed():
             # replace these entries with the actual product images by SKU.
             images=[],
             tags=[cat.lower(), brand.lower(), finish.lower(), "demo"],
+            floor_id="first-floor",
         )
         await db.products.insert_one(p.dict())
 
@@ -197,13 +198,13 @@ async def seed_if_empty():
     # ---- Brands & Categories ----
     brand_by_name: dict[str, Brand] = {}
     for name, country in BRANDS:
-        b = Brand(name=name, slug=name.lower().replace(" ", "-"), country=country)
+        b = Brand(name=name, slug=name.lower().replace(" ", "-"), country=country, floor_id="first-floor")
         brand_by_name[name] = b
         await db.brands.insert_one(b.dict())
 
     cat_by_name: dict[str, Category] = {}
     for name, slug in CATEGORIES:
-        c = Category(name=name, slug=slug)
+        c = Category(name=name, slug=slug, floor_id="first-floor")
         cat_by_name[name] = c
         await db.categories.insert_one(c.dict())
 
@@ -225,6 +226,7 @@ async def seed_if_empty():
             stock=25 + (i % 40),
             images=[],
             tags=[cat.lower(), brand.lower(), finish.lower(), "demo"],
+            floor_id="first-floor",
         )
         products.append(p)
         await db.products.insert_one(p.dict())
@@ -236,6 +238,7 @@ async def seed_if_empty():
             name=name, company=company, email=email.lower(), phone=phone,
             tier=tier, city=city,  # type: ignore[arg-type]
             password_hash=hash_password(settings.demo_password),
+            floor_id="first-floor",
         )
         await db.customers.insert_one(c.dict())
         customer_ids.append(c.id)
@@ -278,6 +281,7 @@ async def seed_if_empty():
             valid_until=(now + timedelta(days=valid_until_offsets[idx % len(valid_until_offsets)])).isoformat(),
             created_by=sales_user.id,
             created_by_name=sales_user.full_name,
+            floor_id="first-floor",
         )
         # nudge timestamps so dashboard sees "this month"
         q_dict = q.dict()
@@ -303,6 +307,7 @@ async def seed_if_empty():
                 amount=round(grand, 2), mode="bank", status="completed",
                 reference=f"UTR{1000 + i}", note="Full & final",
                 paid_at=paid_at, recorded_by=users["accounts"].id, recorded_by_name=users["accounts"].full_name,
+                floor_id="first-floor",
             )
             await db.payments.insert_one(p.dict())
         elif i % 3 == 0:
@@ -314,6 +319,7 @@ async def seed_if_empty():
                 amount=round(grand * 0.5, 2), mode="upi", status="completed",
                 reference=f"UPI-{2000 + i}", note="Advance received",
                 paid_at=paid_at, recorded_by=users["accounts"].id, recorded_by_name=users["accounts"].full_name,
+                floor_id="first-floor",
             )
             await db.payments.insert_one(p.dict())
         # else: remains fully due
@@ -345,6 +351,7 @@ async def seed_if_empty():
             city=entry[4],
             payment_terms="30 days credit",
             active=True,
+            floor_id="first-floor",
         )
         await db.suppliers.insert_one(sup.dict())
 

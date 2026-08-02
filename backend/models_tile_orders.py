@@ -65,7 +65,7 @@ class TileCustomerOrder(TimestampedModel):
     delivery_city: str
     delivery_pincode: str
     delivery_state: str
-    floor_id: str = "first-floor"
+    floor_id: str
     created_by: str
     created_by_name: str
     brands: list[TileCustomerOrderBrand] = []
@@ -87,7 +87,7 @@ class TileReadyBatch(TimestampedModel):
     purchase_order_id: str
     po_item_id: str
     customer_order_id: str
-    floor_id: str = "first-floor"
+    floor_id: str
     supplier_id: Optional[str] = None
     supplier_name: str
     customer_id: str
@@ -126,7 +126,7 @@ class TileDispatch(TimestampedModel):
     dispatch_number: str        # "DSP-2026-0001"
     purchase_order_id: str
     customer_order_id: str
-    floor_id: str = "first-floor"
+    floor_id: str
     supplier_id: Optional[str] = None
     supplier_name: str
     customer_id: str
@@ -177,7 +177,7 @@ class TileChalan(TimestampedModel):
     dispatch_id: str            # 1:1
     purchase_order_id: str
     customer_order_id: str
-    floor_id: str = "first-floor"
+    floor_id: str
     supplier_name: str
     supplier_contact: Optional[str] = None
     supplier_address: Optional[str] = None
@@ -218,7 +218,7 @@ class TileMaterialMovement(TimestampedModel):
     purchase_order_id: str
     po_item_id: Optional[str] = None
     customer_order_id: Optional[str] = None
-    floor_id: str = "first-floor"
+    floor_id: str
     customer_id: Optional[str] = None
     customer_name: str
     brand_id: Optional[str] = None

@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from auth import floor_for_write, floor_query, floor_scope_ids, get_current_user, get_floor_scoped_or_404, require_min_role
+from auth import floor_for_write, floor_inherit, floor_query, floor_scope_ids, get_current_user, get_floor_scoped_or_404, require_min_role
 from db import db, strip_ids
 from models import Brand, BrandCreate, Category, CategoryCreate, Product, ProductCreate, ProductPatch, UserPublic
 from services import catalog_service, media_service
@@ -390,7 +390,7 @@ async def product_alternates(
     itself is always excluded.
     """
     source = await get_floor_scoped_or_404(db.products, product_id, user, not_found="Product not found", projection={"_id": 0, "id": 1, "floor_id": 1})
-    result = await catalog_service.alternate_products(product_id, user.id, limit, floor_ids=[source.get("floor_id", "first-floor")])
+    result = await catalog_service.alternate_products(product_id, user.id, limit, floor_ids=[floor_inherit(source)])
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result
@@ -407,7 +407,7 @@ async def complete_the_set(
     valve, spout, robe hook — the classic bathroom cross-sell.
     """
     source = await get_floor_scoped_or_404(db.products, product_id, user, not_found="Product not found", projection={"_id": 0, "id": 1, "floor_id": 1})
-    result = await catalog_service.complete_set_products(product_id, limit, floor_ids=[source.get("floor_id", "first-floor")])
+    result = await catalog_service.complete_set_products(product_id, limit, floor_ids=[floor_inherit(source)])
     if result is None:
         raise HTTPException(status_code=404, detail="Product not found")
     return result

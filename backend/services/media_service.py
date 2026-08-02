@@ -13,6 +13,7 @@ from typing import Optional
 
 from PIL import Image
 
+from auth import floor_inherit
 from db import db
 from media_storage import get_media_storage, StorageError
 from media_storage.factory import public_bucket, private_bucket
@@ -237,7 +238,7 @@ async def replace_media(
     new_doc = await upload_and_register(
         data=data, mime=mime, brand_slug=brand_slug,
         product_id=old.get("product_id"), family_key=old.get("family_key"), brand_id=old.get("brand_id"),
-        floor_id=old.get("floor_id", "first-floor"),
+        floor_id=floor_inherit(old),
         source_type=old.get("source_type", "internal"), role=old.get("role", "gallery"),
         is_primary=old.get("is_primary", False), sort_order=old.get("sort_order", 100),
         uploaded_by=uploaded_by, notes=notes, actor=actor,

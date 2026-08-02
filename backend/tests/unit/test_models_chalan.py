@@ -22,6 +22,6 @@ def test_chalan_defaults_to_released_stage():
 def test_purchase_order_defaults_to_no_chalans():
     po = PurchaseOrder(
         number="FPO-0001", customer_id="c1", customer_name="Test Customer",
-        created_by="u1", created_by_name="Test User",
+        created_by="u1", created_by_name="Test User", floor_id="first-floor",
     )
     assert po.chalans == []

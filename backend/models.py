@@ -102,7 +102,14 @@ class CustomerBase(BaseModel):
     # Customer Portal login gate — a customer can only sign into the portal
     # when this is true, regardless of whether a password_hash exists.
     portal_enabled: bool = False
-    floor_id: str = "first-floor"
+    # floor_id deliberately NOT on this base — CustomerCreate (the POST
+    # /customers request body) inherits CustomerBase, and the live frontend
+    # never sends floor_id in that payload (customer_routes.create_customer
+    # always overwrites it server-side via floor_for_write(user) before
+    # persisting). Making it required here would 422 every "Add Customer"
+    # request. It is required instead on CustomerPublic below — the
+    # persisted/response shape — so every STORED customer document is still
+    # guaranteed a real floor_id; only the request contract is unaffected.
     # ---- Reserved CRM fields (Walk-ins module, 2026-07-30) ----
     # Cheap to add now, all optional/defaulted so every existing Customer
     # document reads back identically — no migration. Not yet exposed in
@@ -144,6 +151,9 @@ class CustomerUpdatePayload(BaseModel):
 
 
 class CustomerPublic(CustomerBase, TimestampedModel):
+    # Required here (not on CustomerBase — see the comment there) so every
+    # persisted/returned customer document is guaranteed a real floor_id.
+    floor_id: str
     # Set when Send Invite / Reset Password issues a temporary password — the
     # customer must set their own password on first portal login.
     must_change_password: bool = False
@@ -268,7 +278,7 @@ class Brand(TimestampedModel):
     slug: str
     logo_url: Optional[str] = None
     country: Optional[str] = None
-    floor_id: str = "first-floor"
+    floor_id: str
 
 
 class Category(TimestampedModel):
@@ -276,7 +286,7 @@ class Category(TimestampedModel):
     slug: str
     parent_id: Optional[str] = None
     icon: Optional[str] = None
-    floor_id: str = "first-floor"
+    floor_id: str
 
 
 class BrandCreate(BaseModel):
@@ -310,7 +320,7 @@ class ProductVariant(BaseModel):
 
 
 class Product(TimestampedModel):
-    floor_id: str = "first-floor"
+    floor_id: str
     name: str
     sku: str
     brand_id: str
@@ -497,7 +507,7 @@ class ReferrerCreate(BaseModel):
 
 
 class Quotation(TimestampedModel):
-    floor_id: str = "first-floor"
+    floor_id: str
     number: str                          # human-readable e.g. FQ-2026-0001
     customer_id: str
     customer_name: str
@@ -603,7 +613,7 @@ class QuotationUpdate(BaseModel):
 # ---------- Ops modules (scaffold) ----------
 class Supplier(TimestampedModel):
     """A dealership/supplier we buy from — normally one per brand but not strict."""
-    floor_id: str = "first-floor"
+    floor_id: str
     name: str
     brand_id: Optional[str] = None
     brand_name: Optional[str] = None
@@ -792,7 +802,7 @@ class Chalan(BaseModel):
 
 
 class PurchaseOrder(TimestampedModel):
-    floor_id: str = "first-floor"
+    floor_id: str
     number: str                            # human — e.g. FPO-2026-0001
     quotation_id: Optional[str] = None
     quotation_number: Optional[str] = None
@@ -925,7 +935,7 @@ class PurchaseOrder_Legacy(TimestampedModel):
 
 
 class Payment(TimestampedModel):
-    floor_id: str = "first-floor"
+    floor_id: str
     idempotency_key: Optional[str] = None
     quotation_id: Optional[str] = None
     quotation_number: Optional[str] = None
@@ -973,7 +983,7 @@ class Followup(TimestampedModel):
     produced (and kept in sync / auto-resolved) by services/followup_engine.py —
     never created ad-hoc elsewhere. Manual rows (is_automated=False) are created
     by staff via the '+ New Follow-up' action or a logged call outcome."""
-    floor_id: str = "first-floor"
+    floor_id: str
     source_key: Optional[str] = None        # dedupe key for automated rules, e.g. "payment_overdue:<qid>"
     rule_type: FollowupRuleType = "manual"
     category: FollowupCategory = "general"
@@ -1109,7 +1119,7 @@ class CatalogImportJob(TimestampedModel):
     rows: list[dict] = []
     error: Optional[str] = None
     created_by: str
-    floor_id: str = "first-floor"
+    floor_id: str
 
 
 
@@ -1129,7 +1139,7 @@ class ProductMedia(TimestampedModel):
     product_id: Optional[str] = None        # attach to specific variant (SKU-level)
     family_key: Optional[str] = None        # attach to the whole family (shared across variants)
     brand_id: Optional[str] = None
-    floor_id: str = "first-floor"
+    floor_id: str
     source_type: MediaSourceType = "supplier"
     role: MediaRole = "gallery"
     bucket: str                              # "forge-products" | "forge-private"
