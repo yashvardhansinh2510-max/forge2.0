@@ -24,7 +24,7 @@ import { useBp } from "@/src/design/responsive";
 import { fmtMoney, fmtMoneyCompact } from "@/src/design/tokens";
 import { getSelectedFloorId, useFloorAccess } from "@/src/hooks/use-floor-access";
 import { useAuth } from "@/src/state/auth";
-import { colors, spacing, type } from "@/src/theme/tokens";
+import { colors, layout, spacing, type } from "@/src/theme/tokens";
 
 const ANALYTICS_ROLES = ["owner", "admin", "manager"];
 const TOP_N = 10;
@@ -89,7 +89,23 @@ export default function SalesDataIndex() {
   const { staff } = useAuth();
   const { floors } = useFloorAccess();
   const cellMoney = useCellMoney();
+  const { isPhone } = useBp();
   const router = useRouter();
+
+  // The KPI row used to give each card its own minWidth (160 / 140 / 180),
+  // which wrapped into a ragged 2-then-1 block at narrow widths — two
+  // half-width cards above one full-width one. Every card now carries the
+  // identical rule, so the row is a clean 3-up band from tablet upwards and a
+  // clean single stack on a phone, with no in-between state where the cards
+  // are different sizes.
+  const kpiGap = spacing.md;
+  const kpiCardStyle = isPhone
+    ? { width: "100%" as const }
+    : { flex: 1, minWidth: 200, flexBasis: 0 };
+
+  // Matches SalesSection, so the one hand-rolled Card on this page breathes
+  // exactly like the six that go through the shared section component.
+  const sectionPadding = isPhone ? layout.cardPadding.base : layout.cardPadding.spacious;
 
   const [floorId, setFloorId] = useState("");
   useEffect(() => {
@@ -214,20 +230,20 @@ export default function SalesDataIndex() {
       {overviewError ? <ErrorState subtitle={overviewError} onRetry={load} /> : null}
       {!overviewError && !kpis ? <SkeletonList rows={2} /> : null}
       {kpis ? (
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="sales-data-kpis">
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: kpiGap }} testID="sales-data-kpis">
           <KpiCard
             testID="sales-kpi-revenue"
             label="Total Revenue"
             value={fmtMoneyCompact(kpis.revenue)}
             question="What did we sell this period?"
-            style={{ flex: 1, minWidth: 160 }}
+            style={kpiCardStyle}
           />
           <KpiCard
             testID="sales-kpi-orders"
             label="Total Orders"
             value={String(kpis.orders)}
             question="How many deals did we close?"
-            style={{ flex: 1, minWidth: 140 }}
+            style={kpiCardStyle}
           />
           <KpiCard
             testID="sales-kpi-outstanding"
@@ -236,7 +252,7 @@ export default function SalesDataIndex() {
             question="How much money is still owed to us?"
             tone={kpis.outstanding.outstanding > 0 ? "warning" : "neutral"}
             onPress={() => router.push("/(admin)/payments" as never)}
-            style={{ flex: 1, minWidth: 180 }}
+            style={kpiCardStyle}
           />
         </View>
       ) : null}
@@ -245,10 +261,10 @@ export default function SalesDataIndex() {
           4. Revenue by Floor
           --------------------------------------------------------------- */}
       {overview ? (
-        <Card testID="sales-revenue-by-floor" variant="flat" padding={spacing.xl}>
-          <View style={{ gap: spacing.md }}>
-            <View style={{ gap: 2 }}>
-              <Text style={type.titleSm}>Revenue by Business Unit</Text>
+        <Card testID="sales-revenue-by-floor" variant="flat" padding={sectionPadding}>
+          <View style={{ gap: spacing.lg }}>
+            <View style={{ gap: spacing.s4 }}>
+              <Text style={type.titleMd}>Revenue by Business Unit</Text>
               <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
                 {floorId === "all" ? "Which unit is winning?" : "This unit's share of the book"}
               </Text>

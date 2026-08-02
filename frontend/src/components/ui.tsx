@@ -30,6 +30,10 @@ import {
   type,
 } from "@/src/theme/tokens";
 import { color as ds, font as dsFont, statusTone, toneColor } from "@/src/design/tokens";
+// The single breakpoint authority. `layout` above comes from theme/tokens,
+// which carries no `bp` — reading layout.bp there yields undefined and every
+// comparison against it silently returns false.
+import { useBp } from "@/src/design/responsive";
 
 type FeatherName = keyof typeof Feather.glyphMap;
 
@@ -715,6 +719,20 @@ export function KpiCard({
     warning: { bg: colors.surfaceSecondary, iconBg: colors.warningBg,     iconFg: colors.warning },
   }[tone];
 
+  // A KPI row is read by scanning down a column of values, so the value's
+  // optical size and the card's height must not vary with how much optional
+  // chrome a given card happens to carry. Both are driven by the breakpoint
+  // alone: every card in a row is the same height whether or not it has an
+  // icon, a trend, a footer or a question.
+  const { isPhone } = useBp();
+
+  const cardPadding = isPhone ? layout.cardPadding.base : layout.cardPadding.spacious;
+  const valueSize = isPhone ? 24 : 28;
+  // Tall enough that the label / value / question stack breathes at every
+  // width, and identical across the row so the cards form a single band
+  // rather than a ragged skyline.
+  const minHeight = isPhone ? 124 : 148;
+
   const Container: any = onPress ? Pressable : View;
   return (
     <Container
@@ -726,44 +744,63 @@ export function KpiCard({
         borderRadius: radius.lg,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: colors.border,
-        padding: spacing.lg,
-        gap: 10,
-        minHeight: question ? 148 : undefined,
+        padding: cardPadding,
+        gap: spacing.s8,
+        minHeight,
+        justifyContent: "flex-start",
       }, style]}
     >
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-        <Text style={type.captionStrong}>{label}</Text>
+      <View style={{
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: spacing.s8,
+        minHeight: 20,
+      }}>
+        {/* overline, not captionStrong: uppercase + tracked reads as a field
+            label rather than as body copy, which is what lets the value below
+            carry the whole visual weight of the card. */}
+        <Text style={[type.overline, { flexShrink: 1 }]} numberOfLines={1}>{label}</Text>
         {icon ? (
           <View style={{
-            width: 32, height: 32, borderRadius: 10,
+            width: 36, height: 36, borderRadius: radius.md,
             backgroundColor: toneMap.iconBg,
             alignItems: "center", justifyContent: "center",
           }}>
-            <Feather name={icon} size={16} color={toneMap.iconFg} />
+            <Feather name={icon} size={iconSize.md} color={toneMap.iconFg} />
           </View>
         ) : null}
       </View>
-      <Text style={{
-        fontSize: 26,
-        fontFamily: type.displayMd.fontFamily,
-        fontWeight: "700",
-        color: colors.onSurface,
-        letterSpacing: -0.5,
-        fontVariant: ["tabular-nums"],
-      }} numberOfLines={1} adjustsFontSizeToFit>
+
+      {/* adjustsFontSizeToFit is a no-op on react-native-web, so the value is
+          sized by breakpoint instead of relying on it to rescue an overflow. */}
+      <Text
+        style={{
+          fontSize: valueSize,
+          lineHeight: Math.round(valueSize * 1.2),
+          fontFamily: type.displayMd.fontFamily,
+          fontWeight: "700",
+          color: colors.onSurface,
+          letterSpacing: -0.6,
+          fontVariant: ["tabular-nums"],
+        }}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
         {value}
       </Text>
+
       {sub || trend ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.s8, flexWrap: "wrap" }}>
           {trend ? (
             <View style={{
-              flexDirection: "row", alignItems: "center", gap: 3,
+              flexDirection: "row", alignItems: "center", gap: spacing.s4,
               backgroundColor: trend.direction === "up" ? colors.successBg : colors.errorBg,
-              paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.sm,
+              paddingHorizontal: spacing.s8, paddingVertical: 3, borderRadius: radius.sm,
             }}>
               <Feather
                 name={trend.direction === "up" ? "trending-up" : "trending-down"}
-                size={11}
+                size={iconSize.sm}
                 color={trend.direction === "up" ? colors.success : colors.error}
               />
               <Text style={{
@@ -779,9 +816,16 @@ export function KpiCard({
           {sub ? <Text style={type.caption}>{sub}</Text> : null}
         </View>
       ) : null}
+
       {footer}
+
+      {/* Pinned to the bottom edge so the question line sits on one baseline
+          across the whole row, however tall the value stack above it is. */}
       {question ? (
-        <Text style={[type.caption, { color: colors.onSurfaceMuted, marginTop: "auto" }]} numberOfLines={2}>
+        <Text
+          style={[type.caption, { color: colors.onSurfaceMuted, marginTop: "auto", paddingTop: spacing.s8 }]}
+          numberOfLines={2}
+        >
           {question}
         </Text>
       ) : null}

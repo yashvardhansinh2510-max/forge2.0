@@ -11,6 +11,7 @@ import { MoneyBlockedCard } from "@/src/components/analytics/MoneyBlockedCard";
 import { MorningBrief } from "@/src/components/analytics/MorningBrief";
 import { RowList } from "@/src/components/analytics/RowList";
 import { Card, ErrorState, KpiCard, LoadingState, PillTabs } from "@/src/components/ui";
+import { useBp } from "@/src/design/responsive";
 import { fmtMoneyCompact } from "@/src/design/tokens";
 import { getSelectedFloorId, useFloorAccess } from "@/src/hooks/use-floor-access";
 import { useAuth } from "@/src/state/auth";
@@ -49,8 +50,18 @@ const FLOOR_LABEL: Record<string, string> = {
 export default function ExecutiveOverview() {
   const { staff } = useAuth();
   const { floors } = useFloorAccess();
+  const { isPhone, isTablet } = useBp();
   const router = useRouter();
   const params = useLocalSearchParams<{ floor_id?: string; preset?: string }>();
+
+  // One rule for all four cards, so the row is a clean 1-up / 2-up / 4-up
+  // band instead of wrapping into uneven sizes. Per-card minWidths used to
+  // let three cards sit on one line and the fourth drop to full width.
+  const kpiCardStyle = isPhone
+    ? { width: "100%" as const }
+    : isTablet
+      ? { flexBasis: "48%" as const, flexGrow: 1 }
+      : { flex: 1, minWidth: 180, flexBasis: 0 };
 
   // Filter state lives in the URL (spec §16.3) so a drill-down is shareable
   // and back-navigable — but a fresh visit with no params yet still needs a
@@ -138,7 +149,7 @@ export default function ExecutiveOverview() {
           <MorningBrief brief={data.brief} testID="executive-brief" />
 
           {/* 3. Revenue KPIs */}
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }} testID="executive-kpis">
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.md }} testID="executive-kpis">
             <KpiCard
               testID="executive-kpi-revenue"
               label="Revenue"
@@ -150,21 +161,21 @@ export default function ExecutiveOverview() {
                   previousLabel={data.kpis.previous_label}
                 />
               }
-              style={{ flex: 1, minWidth: 160 }}
+              style={kpiCardStyle}
             />
             <KpiCard
               testID="executive-kpi-orders"
               label="Orders"
               value={String(data.kpis.orders)}
               question="How many deals did we close?"
-              style={{ flex: 1, minWidth: 140 }}
+              style={kpiCardStyle}
             />
             <KpiCard
               testID="executive-kpi-aov"
               label="Average Order"
               value={fmtMoneyCompact(data.kpis.aov)}
               question="Are deals getting bigger or smaller?"
-              style={{ flex: 1, minWidth: 160 }}
+              style={kpiCardStyle}
             />
             <KpiCard
               testID="executive-kpi-outstanding"
@@ -172,7 +183,7 @@ export default function ExecutiveOverview() {
               value={fmtMoneyCompact(data.kpis.outstanding.outstanding)}
               question="How much money is owed to us?"
               onPress={() => router.push("/(admin)/payments" as never)}
-              style={{ flex: 1, minWidth: 160 }}
+              style={kpiCardStyle}
             />
           </View>
 
