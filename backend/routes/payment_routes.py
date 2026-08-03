@@ -16,11 +16,15 @@ from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
-from auth import floor_for_write, floor_inherit, floor_query, get_current_user, get_floor_scoped_or_404, require_min_role
+from auth import (
+    accessible_floor_ids, floor_for_write, floor_inherit, floor_query,
+    get_current_user, get_floor_scoped_or_404, require_min_role,
+)
 from db import client, db
 from models import Payment, PaymentCreate, UserPublic
 from services.activity_log import log_event
 from services.analytics import cache
+from services.export import export_response
 from services.followup_engine import reconcile_followups
 from services.notifications import notify
 from settings import settings
@@ -429,6 +433,184 @@ async def list_payments(
     docs = await db.payments.find(floor_query(user), {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit + 1).to_list(limit + 1)
     response.headers["X-Has-More"] = "true" if len(docs) > limit else "false"
     return docs[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Payment History — permanent reconciliation ledger.
+#
+# Zero new storage: every row here IS an existing `payments` document
+# (created exclusively by create_payment() above, the single write path for
+# this collection). This is a read/derive layer only — it joins in the
+# quotation's invoice number + grand_total and the customer's name, then
+# computes a running outstanding-before/after balance per quotation from the
+# SAME payment rows (not a second ledger), so it always reconciles exactly
+# with what /payments and /payments/orders already show.
+#
+# Floor scope follows the Sales Data precedent (routes/sales_data_routes.py
+# `_resolve_floor_ids`), NOT the single-active-floor `floor_query()` used
+# everywhere else — this is deliberately a cross-business-unit reconciliation
+# view (it has its own Business Unit column + filter), the same carve-out
+# auth.py's `_resolve_floor_scope` docstring documents for Sales Data.
+# ---------------------------------------------------------------------------
+def _resolve_history_floor_ids(user: UserPublic, business_unit: Optional[str]) -> Optional[list[str]]:
+    """None means "no floor restriction" (every floor the caller can see).
+    An explicit business_unit narrows to exactly that floor, after checking
+    the caller is actually allowed onto it."""
+    if business_unit and business_unit != "all":
+        allowed = accessible_floor_ids(user)
+        if allowed is not None and business_unit not in allowed:
+            raise HTTPException(status_code=403, detail="You do not have access to this business unit")
+        return [business_unit]
+    return accessible_floor_ids(user)  # None (unrestricted) for owner/manager, else their assigned floors
+
+
+async def _floor_names() -> dict[str, str]:
+    rows = await db.floors.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(50)
+    return {r["id"]: r["name"] for r in rows}
+
+
+def _history_filter(
+    floor_ids: Optional[list[str]], q: Optional[str], date_from: Optional[str], date_to: Optional[str],
+    customer_id: Optional[str], mode: Optional[str], status: Optional[str],
+) -> dict:
+    query: dict = {}
+    if floor_ids is not None:
+        query["floor_id"] = {"$in": floor_ids}
+    if customer_id:
+        query["customer_id"] = customer_id
+    if mode:
+        query["mode"] = mode
+    if status:
+        query["status"] = status
+    date_range: dict = {}
+    if date_from:
+        date_range["$gte"] = date_from
+    if date_to:
+        date_range["$lte"] = date_to if len(date_to) > 10 else f"{date_to}T23:59:59.999"
+    if date_range:
+        # paid_at is optional on older rows; created_at is always present and
+        # indexed, so filtering on it keeps this fast and gap-free.
+        query["created_at"] = date_range
+    if q:
+        rx = {"$regex": q.strip(), "$options": "i"}
+        or_clause = [{"customer_name": rx}, {"quotation_number": rx}, {"reference": rx}, {"note": rx}]
+        query["$and"] = query.get("$and", []) + [{"$or": or_clause}]
+    return query
+
+
+_SORT_MAP = {
+    "date_desc": [("created_at", -1)],
+    "date_asc": [("created_at", 1)],
+    "amount_desc": [("amount", -1)],
+    "amount_asc": [("amount", 1)],
+}
+
+
+async def _enrich_history_rows(docs: list[dict]) -> list[dict]:
+    """Attach invoice number, business unit label, and outstanding
+    before/after — all derived, nothing stored twice."""
+    qids = list({d["quotation_id"] for d in docs if d.get("quotation_id")})
+    quotations = await db.quotations.find(
+        {"id": {"$in": qids}}, {"_id": 0, "id": 1, "number": 1, "doc_number": 1, "grand_total": 1},
+    ).to_list(len(qids) + 5) if qids else []
+    quot_by_id = {qq["id"]: qq for qq in quotations}
+
+    # Running balance needs EVERY completed payment on each touched
+    # quotation (not just the ones matching this page's filters), otherwise
+    # a search/date filter would silently produce a wrong running balance.
+    all_pmts = await db.payments.find(
+        {"quotation_id": {"$in": qids}, "status": "completed"},
+        {"_id": 0, "id": 1, "quotation_id": 1, "amount": 1, "paid_at": 1, "created_at": 1},
+    ).to_list(5000) if qids else []
+    by_qid: dict[str, list[dict]] = {}
+    for p in all_pmts:
+        by_qid.setdefault(p["quotation_id"], []).append(p)
+    outstanding_by_payment_id: dict[str, tuple[float, float]] = {}
+    for qid, pmts in by_qid.items():
+        pmts.sort(key=lambda p: (p.get("paid_at") or p.get("created_at") or "", p.get("id") or ""))
+        grand = float((quot_by_id.get(qid) or {}).get("grand_total") or 0)
+        running = 0.0
+        for p in pmts:
+            before = round(grand - running, 2)
+            running += float(p.get("amount") or 0)
+            after = round(grand - running, 2)
+            outstanding_by_payment_id[p["id"]] = (before, after)
+
+    floor_names = await _floor_names()
+    out = []
+    for d in docs:
+        qq = quot_by_id.get(d.get("quotation_id"), {})
+        before_after = outstanding_by_payment_id.get(d["id"])
+        out.append({
+            **d,
+            "paid_at": d.get("paid_at") or d.get("created_at"),
+            "invoice_number": qq.get("doc_number") or qq.get("number") or d.get("quotation_number"),
+            "business_unit": floor_names.get(d.get("floor_id"), d.get("floor_id")),
+            "outstanding_before": before_after[0] if before_after else None,
+            "outstanding_after": before_after[1] if before_after else None,
+        })
+    return out
+
+
+@router.get("/history")
+async def payment_history(
+    response: Response,
+    q: Optional[str] = Query(None, description="Search customer, invoice number, or reference"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None),
+    business_unit: Optional[str] = Query(None, description="Floor id, or omit/'all' for every accessible unit"),
+    mode: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    sort: str = Query("date_desc", pattern="^(date_desc|date_asc|amount_desc|amount_asc)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    user: UserPublic = Depends(get_current_user),
+):
+    floor_ids = _resolve_history_floor_ids(user, business_unit)
+    query = _history_filter(floor_ids, q, date_from, date_to, customer_id, mode, status)
+    total = await db.payments.count_documents(query)
+    docs = await db.payments.find(query, {"_id": 0}).sort(_SORT_MAP[sort]).skip(skip).limit(limit).to_list(limit)
+    response.headers["X-Total-Count"] = str(total)
+    return {"total": total, "items": await _enrich_history_rows(docs)}
+
+
+_HISTORY_COLUMNS = [
+    ("customer_name", "Customer"),
+    ("invoice_number", "Invoice / Order"),
+    ("business_unit", "Business Unit"),
+    ("paid_at", "Payment Date"),
+    ("amount", "Payment Amount"),
+    ("mode", "Payment Method"),
+    ("reference", "Transaction Reference"),
+    ("recorded_by_name", "Collected By"),
+    ("outstanding_before", "Outstanding Before"),
+    ("outstanding_after", "Outstanding After"),
+    ("status", "Status"),
+    ("note", "Notes"),
+]
+
+
+@router.get("/history/export")
+async def export_payment_history(
+    q: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None),
+    business_unit: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    sort: str = Query("date_desc", pattern="^(date_desc|date_asc|amount_desc|amount_asc)$"),
+    fmt: str = Query("xlsx", pattern="^(csv|xlsx)$"),
+    user: UserPublic = Depends(get_current_user),
+):
+    floor_ids = _resolve_history_floor_ids(user, business_unit)
+    query = _history_filter(floor_ids, q, date_from, date_to, customer_id, mode, status)
+    docs = await db.payments.find(query, {"_id": 0}).sort(_SORT_MAP[sort]).limit(5000).to_list(5000)
+    rows = await _enrich_history_rows(docs)
+    for r in rows:
+        r["mode"] = MODE_LABELS.get(r.get("mode"), r.get("mode"))
+    return export_response(rows, _HISTORY_COLUMNS, "payment_history", fmt)
 
 
 # ---------------------------------------------------------------------------

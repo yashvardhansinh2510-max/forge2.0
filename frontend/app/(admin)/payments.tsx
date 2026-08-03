@@ -5,10 +5,11 @@
 // preserved byte-for-byte from the previous implementation.
 // ═══════════════════════════════════════════════════════════════════════════
 import { Feather } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView,
-  StyleSheet, Text, TextInput, useWindowDimensions, View,
+  StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -17,10 +18,16 @@ import { useBp } from "@/src/design/responsive";
 import { toast } from "@/src/components/Toast";
 import {
   Alert as UIAlert,
-  Badge, Button, Card, EmptyState, FormField, HeroCard,
+  Badge, Button, Card, Dropdown, EmptyState, FilterBar, FormField, HeroCard,
   Panel, PageHeader, ProgressBar, SearchField, Sheet,
-  Skeleton, StatTile, StatusBadge, HoverCard, ActivityRow,
+  Skeleton, StatTile, StatusBadge, HoverCard, ActivityRow, Tabs,
 } from "@/src/components/ds";
+// The ledger table reuses Tile Orders' DataTable rather than duplicating a
+// second responsive-table primitive — it's the one component in the app
+// that already solves "12 dense columns on a 375px phone" (pinned action
+// column + horizontal scroll, see its own doc comment). Generic, not
+// tiles-specific, despite the folder it lives in.
+import { CellMono, CellNumber, CellText, CellTitle, DataTable, type Column } from "@/src/components/tiles/TileTable";
 import {
   colors, icon as iconSize, moneyShort, radius, spacing, type,
 } from "@/src/theme/tokens";
@@ -83,8 +90,38 @@ const paymentTone = (s: "paid" | "partial" | "due"): "success" | "warning" | "da
   s === "paid" ? "success" : s === "partial" ? "warning" : "danger";
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Payment History — permanent reconciliation ledger. Reads-only, derived
+// entirely from the same Payment records the Collections tab already shows
+// (see backend/routes/payment_routes.py GET /payments/history) — zero new
+// storage, so it always reconciles exactly with Collections.
+// ═══════════════════════════════════════════════════════════════════════════
+type TabKey = "collections" | "history";
+
+type HistoryRow = {
+  id: string; customer_id: string; customer_name?: string | null;
+  invoice_number?: string | null; business_unit?: string | null; floor_id: string;
+  paid_at?: string | null; amount: number; mode: PayMode;
+  reference?: string | null; recorded_by_name?: string | null;
+  outstanding_before: number | null; outstanding_after: number | null;
+  status: "pending" | "completed" | "failed"; note?: string | null;
+  quotation_id?: string | null;
+};
+
+type FloorOpt = { id: string; name: string };
+
+const HISTORY_SORTS: { value: string; label: string }[] = [
+  { value: "date_desc", label: "Newest first" },
+  { value: "date_asc", label: "Oldest first" },
+  { value: "amount_desc", label: "Amount: high to low" },
+  { value: "amount_asc", label: "Amount: low to high" },
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
 export default function PaymentsScreen() {
   const { isDesktop } = useBp();
+  const router = useRouter();
+
+  const [tab, setTab] = useState<TabKey>("collections");
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
@@ -101,6 +138,20 @@ export default function PaymentsScreen() {
   const [mode, setMode] = useState<PayMode>("cash");
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // ── Payment History state ────────────────────────────────────────────────
+  const [floors, setFloors] = useState<FloorOpt[]>([]);
+  const [historyRows, setHistoryRows] = useState<HistoryRow[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyQ, setHistoryQ] = useState("");
+  const [historyUnit, setHistoryUnit] = useState<string>("all");
+  const [historyMode, setHistoryMode] = useState<string>("all");
+  const [historyDateFrom, setHistoryDateFrom] = useState("");
+  const [historyDateTo, setHistoryDateTo] = useState("");
+  const [historySort, setHistorySort] = useState("date_desc");
+  const [historyPage, setHistoryPage] = useState(0);
+  const HISTORY_PAGE_SIZE = 50;
 
   const loadStats = useCallback(async () => {
     try { setStats(await api.get<Stats>("/payments/stats")); }
@@ -187,18 +238,108 @@ export default function PaymentsScreen() {
     await Linking.openURL(`tel:${detail.customer.phone.replace(/\s+/g, "")}`);
   };
 
+  // ── Payment History: load + export ───────────────────────────────────────
+  useEffect(() => {
+    api.get<FloorOpt[]>("/settings/floors").then(setFloors).catch(() => setFloors([]));
+  }, []);
+
+  const historyParams = useCallback(() => {
+    const qs = new URLSearchParams();
+    if (historyQ.trim()) qs.set("q", historyQ.trim());
+    if (historyUnit !== "all") qs.set("business_unit", historyUnit);
+    if (historyMode !== "all") qs.set("mode", historyMode);
+    if (historyDateFrom) qs.set("date_from", historyDateFrom);
+    if (historyDateTo) qs.set("date_to", historyDateTo);
+    qs.set("sort", historySort);
+    return qs;
+  }, [historyQ, historyUnit, historyMode, historyDateFrom, historyDateTo, historySort]);
+
+  const loadHistory = useCallback(async (page: number = historyPage) => {
+    setHistoryLoading(true);
+    try {
+      const qs = historyParams();
+      qs.set("skip", String(page * HISTORY_PAGE_SIZE));
+      qs.set("limit", String(HISTORY_PAGE_SIZE));
+      const res = await api.get<{ total: number; items: HistoryRow[] }>(`/payments/history?${qs.toString()}`);
+      setHistoryRows(res.items);
+      setHistoryTotal(res.total);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not load payment history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [historyParams, historyPage]);
+
+  // Reset to page 0 whenever a filter changes, then (re)load — debounced only
+  // on free-text search so filter chips feel instant.
+  useEffect(() => {
+    if (tab !== "history") return;
+    setHistoryPage(0);
+    const t = setTimeout(() => loadHistory(0), historyQ ? 260 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, historyQ, historyUnit, historyMode, historyDateFrom, historyDateTo, historySort]);
+
+  useEffect(() => {
+    if (tab === "history") loadHistory(historyPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyPage]);
+
+  const exportHistory = async (fmt: "csv" | "xlsx") => {
+    try {
+      const qs = historyParams();
+      qs.set("fmt", fmt);
+      const url = await api.authenticatedUrl(`/payments/history/export?${qs.toString()}`);
+      if (Platform.OS === "web") {
+        // @ts-ignore — web only
+        window.open(url, "_blank");
+      } else {
+        await Linking.openURL(url);
+      }
+      toast.success("Export ready");
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not export");
+    }
+  };
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
       <PageHeader
         title="Payments"
-        subtitle="Track outstanding balances, record payments, and send reminders."
-        overline="COLLECTIONS"
-        actions={
+        subtitle={tab === "collections"
+          ? "Track outstanding balances, record payments, and send reminders."
+          : "Permanent reconciliation ledger — every collected payment, reconciled exactly with Collections."}
+        overline={tab === "collections" ? "COLLECTIONS" : "LEDGER"}
+        actions={tab === "collections" ? (
           <Button icon="download" label="Export" variant="secondary" size="md"
             onPress={() => toast.success("Export coming soon")} />
-        }
+        ) : (
+          <Dropdown
+            testID="history-export"
+            label="Export"
+            icon="download"
+            variant="secondary"
+            items={[
+              { label: "Export as XLSX", icon: "file-text", onPress: () => exportHistory("xlsx") },
+              { label: "Export as CSV", icon: "file", onPress: () => exportHistory("csv") },
+            ]}
+          />
+        )}
       />
 
+      <View style={{ paddingHorizontal: spacing.xl }}>
+        <Tabs
+          testID="payments-tabs"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "collections", label: "Collections" },
+            { value: "history", label: "Payment History", count: historyTotal || undefined },
+          ]}
+        />
+      </View>
+
+      {tab === "collections" ? (
       <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
         {/* Hero — white card with brand icon tile */}
         <HeroCard
@@ -394,6 +535,25 @@ export default function PaymentsScreen() {
           </View>
         </View>
       </ScrollView>
+      ) : (
+        <PaymentHistoryTab
+          rows={historyRows}
+          total={historyTotal}
+          loading={historyLoading}
+          page={historyPage}
+          pageSize={HISTORY_PAGE_SIZE}
+          onPageChange={setHistoryPage}
+          q={historyQ} onQChange={setHistoryQ}
+          unit={historyUnit} onUnitChange={setHistoryUnit}
+          floors={floors}
+          mode={historyMode} onModeChange={setHistoryMode}
+          dateFrom={historyDateFrom} onDateFromChange={setHistoryDateFrom}
+          dateTo={historyDateTo} onDateToChange={setHistoryDateTo}
+          sort={historySort} onSortChange={setHistorySort}
+          onOpenCustomer={(id) => router.push(`/(admin)/customers/${id}` as any)}
+          onOpenOrder={(id) => router.push(`/(admin)/quotations/${id}` as any)}
+        />
+      )}
 
       <RecordPaymentSheet
         visible={showRecord}
@@ -407,6 +567,197 @@ export default function PaymentsScreen() {
         saving={saving}
       />
     </SafeAreaView>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PaymentHistoryTab — banking-ledger view. Filters + a dense DataTable that
+// horizontally scrolls (with the customer name pinned) rather than clipping
+// on a phone — same table primitive as Tile Orders, so a 12-column ledger
+// behaves identically to every other dense operational table in the app.
+// ─────────────────────────────────────────────────────────────────────────────
+const PAY_MODE_FILTERS: { value: string; label: string }[] = [
+  { value: "all", label: "All methods" },
+  { value: "cash", label: "Cash" },
+  { value: "upi", label: "UPI" },
+  { value: "bank", label: "Bank Transfer" },
+  { value: "cheque", label: "Cheque" },
+  { value: "card", label: "Card" },
+];
+
+function DateInput({ value, onChange, placeholder, testID }: {
+  value: string; onChange: (v: string) => void; placeholder: string; testID?: string;
+}) {
+  if (Platform.OS === "web") {
+    return (
+      // @ts-ignore native HTML date input — matches RecordPaymentSheet's pattern.
+      <input
+        type="date" value={value} onChange={(e: any) => onChange(e.target.value)}
+        data-testid={testID}
+        style={{
+          border: `1px solid ${colors.border}`, borderRadius: radius.md,
+          padding: "0 12px", fontSize: 13, height: 40, minWidth: 140,
+          backgroundColor: colors.surfaceSecondary, color: colors.onSurface,
+          fontFamily: "inherit", outline: "none", boxSizing: "border-box",
+        } as any}
+      />
+    );
+  }
+  return (
+    <TextInput
+      testID={testID}
+      value={value}
+      onChangeText={onChange}
+      placeholder={placeholder}
+      placeholderTextColor={colors.onSurfaceMuted}
+      style={styles.dateInput}
+    />
+  );
+}
+
+function PaymentHistoryTab(props: {
+  rows: HistoryRow[]; total: number; loading: boolean;
+  page: number; pageSize: number; onPageChange: (p: number) => void;
+  q: string; onQChange: (v: string) => void;
+  unit: string; onUnitChange: (v: string) => void; floors: FloorOpt[];
+  mode: string; onModeChange: (v: string) => void;
+  dateFrom: string; onDateFromChange: (v: string) => void;
+  dateTo: string; onDateToChange: (v: string) => void;
+  sort: string; onSortChange: (v: string) => void;
+  onOpenCustomer: (customerId: string) => void;
+  onOpenOrder: (quotationId: string) => void;
+}) {
+  const {
+    rows, total, loading, page, pageSize, onPageChange,
+    q, onQChange, unit, onUnitChange, floors,
+    mode, onModeChange, dateFrom, onDateFromChange, dateTo, onDateToChange,
+    sort, onSortChange, onOpenCustomer, onOpenOrder,
+  } = props;
+
+  const unitOptions = [{ value: "all", label: "All business units" }, ...floors.map((f) => ({ value: f.id, label: f.name }))];
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const rangeStart = total === 0 ? 0 : page * pageSize + 1;
+  const rangeEnd = Math.min(total, (page + 1) * pageSize);
+
+  const columns: Column<HistoryRow>[] = [
+    {
+      key: "customer", label: "CUSTOMER", grow: 2, minWidth: 170, sticky: true,
+      render: (r) => <CellTitle>{r.customer_name || "—"}</CellTitle>,
+    },
+    {
+      key: "invoice", label: "INVOICE / ORDER", width: 150,
+      render: (r) => <CellMono>{r.invoice_number || "—"}</CellMono>,
+    },
+    {
+      key: "unit", label: "BUSINESS UNIT", width: 168,
+      render: (r) => <CellText muted>{r.business_unit || r.floor_id}</CellText>,
+    },
+    {
+      key: "date", label: "PAYMENT DATE", width: 120,
+      render: (r) => <CellText>{dateShort(r.paid_at)}</CellText>,
+    },
+    {
+      key: "amount", label: "AMOUNT", width: 130, align: "right",
+      render: (r) => <CellNumber value={money(r.amount)} />,
+    },
+    {
+      key: "method", label: "METHOD", width: 128,
+      render: (r) => <CellText muted>{MODE_LABELS[r.mode] || r.mode}</CellText>,
+    },
+    {
+      key: "reference", label: "REFERENCE", width: 140,
+      render: (r) => <CellMono>{r.reference || "—"}</CellMono>,
+    },
+    {
+      key: "collected_by", label: "COLLECTED BY", width: 150,
+      render: (r) => <CellText muted>{r.recorded_by_name || "—"}</CellText>,
+    },
+    {
+      key: "before", label: "OUTSTANDING BEFORE", width: 150, align: "right",
+      render: (r) => <CellNumber value={r.outstanding_before != null ? money(r.outstanding_before) : "—"} dim />,
+    },
+    {
+      key: "after", label: "OUTSTANDING AFTER", width: 150, align: "right",
+      render: (r) => <CellNumber value={r.outstanding_after != null ? money(r.outstanding_after) : "—"} dim />,
+    },
+    {
+      key: "status", label: "STATUS", width: 118, align: "center",
+      render: (r) => <StatusBadge status={r.status} />,
+    },
+    {
+      key: "notes", label: "NOTES", grow: 1, minWidth: 160,
+      render: (r) => <CellText muted>{r.note || "—"}</CellText>,
+    },
+  ];
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
+      <Card padding={spacing.md} style={{ gap: spacing.md }}>
+        <SearchField
+          testID="history-search"
+          value={q}
+          onChangeText={onQChange}
+          placeholder="Search customer, invoice number, or reference…"
+          onClear={() => onQChange("")}
+        />
+        <FilterBar testID="history-unit-filter" label="BUSINESS UNIT" value={unit} onChange={onUnitChange} options={unitOptions} />
+        <FilterBar testID="history-mode-filter" label="PAYMENT METHOD" value={mode} onChange={onModeChange} options={PAY_MODE_FILTERS} />
+        <View style={{ gap: spacing.sm }}>
+          <Text style={type.overline}>DATE RANGE</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
+            <DateInput testID="history-date-from" value={dateFrom} onChange={onDateFromChange} placeholder="From (YYYY-MM-DD)" />
+            <Text style={type.caption}>to</Text>
+            <DateInput testID="history-date-to" value={dateTo} onChange={onDateToChange} placeholder="To (YYYY-MM-DD)" />
+            {dateFrom || dateTo ? (
+              <Button label="Clear dates" variant="ghost" size="sm"
+                onPress={() => { onDateFromChange(""); onDateToChange(""); }} />
+            ) : null}
+            <View style={{ flex: 1 }} />
+            <Dropdown
+              testID="history-sort"
+              label={HISTORY_SORTS.find((s) => s.value === sort)?.label || "Sort"}
+              icon="arrow-down"
+              variant="secondary"
+              items={HISTORY_SORTS.map((s) => ({ label: s.label, onPress: () => onSortChange(s.value) }))}
+            />
+          </View>
+        </View>
+      </Card>
+
+      {loading && rows.length === 0 ? (
+        <View style={{ gap: spacing.sm }}>
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} w="100%" h={56} radius={radius.md} />)}
+        </View>
+      ) : rows.length === 0 ? (
+        <EmptyState icon="file-text" title="No payments match these filters"
+          subtitle="Try widening the date range or clearing a filter." />
+      ) : (
+        <>
+          <DataTable
+            testID="payment-history-table"
+            columns={columns}
+            data={rows}
+            rowMinHeight={56}
+            keyExtractor={(r) => r.id}
+            rowTestID={(r) => `history-row-${r.id}`}
+            onRowPress={(r) => (r.quotation_id ? onOpenOrder(r.quotation_id) : onOpenCustomer(r.customer_id))}
+            emptyMessage="No payments match these filters."
+          />
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.sm }}>
+            <Text style={type.caption}>
+              {rangeStart}–{rangeEnd} of {total} payment{total === 1 ? "" : "s"}
+            </Text>
+            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <Button label="Previous" size="sm" variant="secondary" disabled={page <= 0}
+                onPress={() => onPageChange(Math.max(0, page - 1))} testID="history-prev-page" />
+              <Button label={`Page ${page + 1} of ${pageCount}`} size="sm" variant="ghost" disabled />
+              <Button label="Next" size="sm" variant="secondary" disabled={page + 1 >= pageCount}
+                onPress={() => onPageChange(page + 1)} testID="history-next-page" />
+            </View>
+          </View>
+        </>
+      )}
+    </ScrollView>
   );
 }
 
@@ -600,5 +951,17 @@ const styles = StyleSheet.create({
     color: colors.onSurface,
     fontVariant: ["tabular-nums"],
     ...(Platform.OS === "web" ? { outlineStyle: "none" } as any : {}),
+  },
+  dateInput: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    fontSize: 13,
+    backgroundColor: colors.surfaceSecondary,
+    color: colors.onSurface,
+    fontFamily: type.body.fontFamily,
+    height: 40,
+    minWidth: 140,
   },
 });
