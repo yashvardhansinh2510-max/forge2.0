@@ -197,6 +197,12 @@ export const statusTone: Record<string, { label: string; tone: Tone }> = {
   open:             { label: "Open",      tone: "neutral" },
   done:             { label: "Done",      tone: "ok" },
   snoozed:          { label: "Snoozed",   tone: "neutral" },
+  // Payment.status (backend/models.py) — distinct from the quotation-derived
+  // paid/partial/due tones above. Added for the Payment History ledger;
+  // any other status-badge consumer of a raw Payment record benefits too.
+  completed:        { label: "Completed", tone: "ok" },
+  pending:          { label: "Pending",   tone: "warn" },
+  failed:           { label: "Failed",    tone: "risk" },
 } as const;
 
 export const toneColor: Record<Tone, { fg: string; dot: string; tint: string }> = {
