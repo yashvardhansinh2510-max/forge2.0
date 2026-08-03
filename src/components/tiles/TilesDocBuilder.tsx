@@ -8,23 +8,32 @@
 // filled through the text-only SKU/name picker; every populated value stays
 // editable afterwards.
 //
-// Recorded design decision (Production readiness audit, 2026-07-23): this
-// component deliberately bypasses both the shared design-token system
-// (colors.ts / tokens.ts) and the app's useBp() breakpoint standard. Both
-// are consequences of the same constraint — the "paper" is a fixed-size,
-// pixel-faithful replica of a specific printed form (see PAPER_W below), not
-// a responsive app screen, so it renders inside a horizontal ScrollView on
-// narrow viewports instead of reflowing. The hardcoded hex values throughout
-// this file mirror the printed document's own fixed colors (its blue sheet
-// background, ruled borders, red highlight text) rather than the app's
-// theme, which would drift the on-screen replica away from what actually
-// prints. Not a defect to fix — recorded here so it reads as an intentional
-// choice rather than an unexplained gap the next person has to re-diagnose.
+// Recorded design decision (Production readiness audit, 2026-07-23; revised
+// 2026-08-03 — see the Production UI/UX Stabilization Milestone): the on-
+// screen "paper" (SelectionPaper / QuotationPaper below) deliberately bypasses
+// both the shared design-token system (colors.ts / tokens.ts) and the app's
+// useBp() breakpoint standard. It renders inside a horizontal ScrollView on
+// narrow viewports instead of reflowing, because it is a fixed-size, pixel-
+// faithful replica of a specific printed form (see PAPER_W below), not a
+// responsive app screen — reflowing it, shrinking it, or scaling it would
+// let the on-screen editor drift away from what actually prints. This is
+// still true and still intentional for tablet and desktop.
+//
+// Phones are a different medium, not a smaller version of the same one: a
+// pixel-faithful A4 replica is not something anyone can usefully edit on a
+// 375px screen, horizontal scroll or not. So below useBp().isPhone branches
+// to `MobileTilesEditor` — a genuinely separate, application-first
+// presentation (cards, sections, a product picker sheet) that calls the
+// EXACT SAME `useTilesDoc()` hook as the paper: same document model, same
+// autosave, same validation, same pricing/totals math, same backend calls.
+// Nothing about persistence or business logic is duplicated — only the
+// phone-width presentation differs. Both presentations always produce the
+// identical PDF, because they edit the identical document.
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -32,7 +41,9 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { productImageList } from "@/src/components/quotation/helpers/media";
 import type { Customer, Product } from "@/src/components/quotation/helpers/types";
+import { Button, Card, Dropdown, TextField } from "@/src/components/ds";
 import { BuildConLogo } from "@/src/design/BrandLogo";
+import { useBp } from "@/src/design/responsive";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { downloadApiFile, printApiFile } from "@/src/utils/downloadFile";
 
@@ -1164,17 +1175,389 @@ const quoStyles = StyleSheet.create({
 });
 
 // ---------------------------------------------------------------------------
+// MOBILE EDITOR (phone widths only) — application-first presentation of the
+// exact same `doc` returned by useTilesDoc() above. See the file header for
+// why this exists as a genuinely separate presentation rather than a
+// reflowed/scaled paper. Every handler called below (updateRow, addRow,
+// removeRow, applyProduct, setHeaderField, save, generatePdf, print,
+// placeOrder, runWorkflowAction, pickCustomer) is the identical function the
+// paper views call — one document model, one autosave path, one set of
+// backend calls.
+// ---------------------------------------------------------------------------
+type MobileFieldKey = "area" | "size" | "rateSqft" | "boxSqft" | "offerRate" | "rateBox" | "totalBox" | "pcsBox" | "total";
+type MobileFieldDef = { key: MobileFieldKey; label: string; numeric?: boolean; suffix?: string };
+
+// Mirrors SEL_COLS / QUO_COLS above — Selection intentionally carries only
+// the fields the printed selection sheet has (no pricing beyond rate/sqft);
+// Quotation carries the full pricing grid. Keeping this list in sync with
+// the paper's own column set is a manual but small surface (3 vs 9 fields).
+const MOBILE_FIELDS: Record<TilesDocType, MobileFieldDef[]> = {
+  tiles_selection: [
+    { key: "area", label: "Area / Room" },
+    { key: "size", label: "Size" },
+    { key: "rateSqft", label: "Rate / Sq.Ft", numeric: true, suffix: "per sq.ft" },
+  ],
+  tiles_quotation: [
+    { key: "area", label: "Area / Room" },
+    { key: "size", label: "Size" },
+    { key: "rateSqft", label: "Rate / Sq.Ft", numeric: true },
+    { key: "boxSqft", label: "Sq.Ft / Box", numeric: true },
+    { key: "offerRate", label: "Offer Rate", numeric: true },
+    { key: "rateBox", label: "Rate / Box", numeric: true },
+    { key: "totalBox", label: "Qty (Boxes)", numeric: true },
+    { key: "pcsBox", label: "Pcs / Box" },
+    { key: "total", label: "Line Total (Rs.)", numeric: true },
+  ],
+};
+
+function SaveStatusPill({ state }: { state: "idle" | "saving" | "saved" | "error" }) {
+  if (state === "idle") return null;
+  const meta = {
+    saving: { label: "Saving…", tone: colors.onSurfaceMuted, icon: "loader" as const },
+    saved: { label: "All changes saved", tone: colors.success, icon: "check-circle" as const },
+    error: { label: "Couldn't save — will retry", tone: colors.error, icon: "alert-circle" as const },
+  }[state];
+  return (
+    <View style={mobileStyles.savePill}>
+      <Feather name={meta.icon} size={12} color={meta.tone} />
+      <Text style={[mobileStyles.savePillText, { color: meta.tone }]}>{meta.label}</Text>
+    </View>
+  );
+}
+
+function SummaryLine({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <View style={mobileStyles.summaryLine}>
+      <Text style={[mobileStyles.summaryLabel, bold && mobileStyles.summaryBold]}>{label}</Text>
+      <Text style={[mobileStyles.summaryValue, bold && mobileStyles.summaryBold]}>{value}</Text>
+    </View>
+  );
+}
+
+function MobileRowCard({
+  doc, row, index, docType, onOpenPicker,
+}: {
+  doc: ReturnType<typeof useTilesDoc>; row: TileRow; index: number; docType: TilesDocType; onOpenPicker: () => void;
+}) {
+  const fields = MOBILE_FIELDS[docType];
+  return (
+    <View style={mobileStyles.rowCard} testID={`mobile-row-${index}`}>
+      <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" }}>
+        <Pressable onPress={onOpenPicker} style={mobileStyles.thumb} testID={`mobile-thumb-${index}`}>
+          {row.image ? (
+            <Image source={{ uri: row.image }} resizeMode="cover" style={{ width: "100%", height: "100%", borderRadius: radius.sm }} />
+          ) : (
+            <Feather name="image" size={18} color={colors.onSurfaceMuted} />
+          )}
+        </Pressable>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={mobileStyles.rowIndex}>Item {index + 1}</Text>
+          {row.productId ? (
+            <>
+              <TextInput
+                value={row.name}
+                onChangeText={(t) => doc.updateRow(row.key, { name: t })}
+                multiline
+                style={mobileStyles.rowTitleInput}
+                testID={`mobile-name-${index}`}
+              />
+              <Pressable onPress={onOpenPicker} style={mobileStyles.swapRow} testID={`mobile-swap-${index}`}>
+                <Feather name="refresh-cw" size={11} color={colors.brand} />
+                <Text style={mobileStyles.swapLabel}>Change product</Text>
+              </Pressable>
+            </>
+          ) : (
+            <Pressable onPress={onOpenPicker} style={mobileStyles.selectBtn} testID={`mobile-select-product-${index}`}>
+              <Feather name="search" size={14} color={colors.brand} />
+              <Text style={mobileStyles.selectLabel}>Select product…</Text>
+            </Pressable>
+          )}
+        </View>
+        {index > 0 || doc.rows.length > 1 ? (
+          <Pressable onPress={() => doc.removeRow(row.key)} hitSlop={10} style={mobileStyles.deleteBtn} testID={`mobile-remove-row-${index}`}>
+            <Feather name="trash-2" size={15} color={colors.error} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      <View style={mobileStyles.fieldGrid}>
+        {fields.map((f) => (
+          <View key={f.key} style={mobileStyles.fieldSlot}>
+            <TextField
+              label={f.label}
+              value={(row as any)[f.key]}
+              onChangeText={(t: string) => doc.updateRow(row.key, { [f.key]: t } as Partial<TileRow>)}
+              keyboardType={f.numeric ? "decimal-pad" : "default"}
+              testID={`mobile-${f.key}-${index}`}
+              helper={f.suffix}
+            />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function MobileTilesEditor({
+  docType, doc, router,
+}: { docType: TilesDocType; doc: ReturnType<typeof useTilesDoc>; router: ReturnType<typeof useRouter> }) {
+  const [pickerRow, setPickerRow] = useState<string | null>(null);
+  const isSelection = docType === "tiles_selection";
+  const title = isSelection ? "Tiles Selection" : "Tiles Quotation";
+  const itemCount = doc.rows.filter((r) => r.productId).length;
+
+  // Identical math to QuotationPaper's totals useMemo above — same inputs,
+  // same result, just computed again here since the paper components aren't
+  // mounted on phone. Kept deliberately tiny (a for-loop over `doc.rows`) so
+  // a future refactor that hoists this into useTilesDoc() has almost nothing
+  // to move.
+  const totals = useMemo(() => {
+    let boxes = 0; let subtotal = 0;
+    for (const row of doc.rows) {
+      if (!row.productId) continue;
+      boxes += num(row.totalBox);
+      subtotal += row.totalEdited && num(row.total) > 0 ? num(row.total) : num(row.rateBox) * num(row.totalBox);
+    }
+    return { boxes, subtotal };
+  }, [doc.rows]);
+
+  const primaryAction = doc.workflowAction
+    ? { label: doc.workflowAction.label, onPress: doc.runWorkflowAction, loading: doc.busy === "workflow", icon: doc.workflowAction.kind === "move_to_quotation" ? "arrow-right-circle" as const : "check-circle" as const }
+    : !isSelection
+      ? { label: "Place Order", onPress: doc.placeOrder, loading: doc.busy === "order", icon: "shopping-cart" as const }
+      : null;
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={["top"]}>
+      <View style={mobileStyles.header}>
+        <Pressable onPress={() => router.back()} hitSlop={10} style={shellStyles.backBtn} testID="tiles-back">
+          <Feather name="chevron-left" size={20} color={colors.onSurface} />
+        </Pressable>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={type.overline}>Ground Floor · Tiles</Text>
+          <Text style={[type.titleMd, { marginTop: 1 }]} numberOfLines={1}>
+            {title}{doc.docNumberServer ? `  ·  ${doc.docNumberServer}` : ""}
+          </Text>
+        </View>
+        <Dropdown
+          testID="tiles-mobile-menu"
+          label="More"
+          icon="more-vertical"
+          variant="ghost"
+          items={[
+            { label: doc.saveState === "saving" ? "Saving…" : "Save now", icon: "save", onPress: doc.save },
+            isSelection
+              ? { label: "Print selection", icon: "printer", onPress: doc.print }
+              : { label: "Generate quotation PDF", icon: "file-text", onPress: doc.generatePdf },
+            ...(!isSelection && primaryAction?.label !== "Place Order"
+              ? [{ label: "Place Order", icon: "shopping-cart" as const, onPress: doc.placeOrder }]
+              : []),
+          ]}
+        />
+      </View>
+
+      {doc.loading ? (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator color={colors.brand} />
+        </View>
+      ) : (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}>
+          <ScrollView
+            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: primaryAction ? 96 : spacing.xxxl }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <SaveStatusPill state={doc.saveState} />
+
+            <Card padding={spacing.md} style={{ gap: spacing.md }}>
+              <Text style={mobileStyles.sectionTitle}>CUSTOMER &amp; DETAILS</Text>
+              <FormFieldCustomerName doc={doc} />
+              <TextField label="Contact no." value={doc.header.phone} onChangeText={(t: string) => doc.setHeaderField("phone", t)} keyboardType="phone-pad" testID="mobile-phone" />
+              <View style={mobileStyles.fieldGrid}>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label="Date" value={doc.header.docDate} onChangeText={(t: string) => doc.setHeaderField("docDate", t)} testID="mobile-date" />
+                </View>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label={isSelection ? "Selection no." : "Quotation no."} value={doc.header.docNumber} onChangeText={(t: string) => doc.setHeaderField("docNumber", t)} testID="mobile-doc-number" />
+                </View>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label="Reference" value={doc.header.reference} onChangeText={(t: string) => doc.setHeaderField("reference", t)} testID="mobile-reference" />
+                </View>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label="Attended by" value={doc.header.attendedBy} onChangeText={(t: string) => doc.setHeaderField("attendedBy", t)} testID="mobile-attended-by" />
+                </View>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label="Prepared by" value={doc.header.preparedBy} onChangeText={(t: string) => doc.setHeaderField("preparedBy", t)} testID="mobile-prepared-by" />
+                </View>
+              </View>
+              <TextField label="Address" value={doc.header.address} onChangeText={(t: string) => doc.setHeaderField("address", t)} multiline testID="mobile-address" />
+            </Card>
+
+            <View style={{ gap: spacing.sm }}>
+              <Text style={mobileStyles.sectionTitle}>PRODUCTS{itemCount ? ` (${itemCount})` : ""}</Text>
+              {doc.rows.map((row, index) => (
+                <MobileRowCard key={row.key} doc={doc} row={row} index={index} docType={docType} onOpenPicker={() => setPickerRow(row.key)} />
+              ))}
+              <Button
+                label="Add product" icon="plus" variant="secondary" fullWidth
+                onPress={doc.addRow} disabled={doc.rows.length >= MAX_ROWS}
+                testID="mobile-add-row"
+              />
+            </View>
+
+            {!isSelection ? (
+              <Card padding={spacing.md} style={{ gap: 2 }}>
+                <Text style={[mobileStyles.sectionTitle, { marginBottom: 6 }]}>PRICE SUMMARY</Text>
+                <SummaryLine label="Total boxes" value={totals.boxes ? String(Math.round(totals.boxes * 100) / 100) : "—"} />
+                <SummaryLine label="Subtotal" value={money(totals.subtotal)} />
+                <SummaryLine label="Transportation" value="Extra" />
+                <SummaryLine label="Total quote" value={money(totals.subtotal)} bold />
+              </Card>
+            ) : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      )}
+
+      {primaryAction ? (
+        <View style={mobileStyles.bottomBar}>
+          <Button
+            label={primaryAction.label} icon={primaryAction.icon} onPress={primaryAction.onPress}
+            loading={primaryAction.loading} variant="primary" size="lg" fullWidth
+            testID="tiles-mobile-primary-action"
+          />
+        </View>
+      ) : null}
+
+      <TilesProductPicker
+        open={pickerRow !== null}
+        onClose={() => setPickerRow(null)}
+        onPick={(product, history) => { if (pickerRow) doc.applyProduct(pickerRow, product, history); }}
+        customerId={doc.customerId}
+      />
+    </SafeAreaView>
+  );
+}
+
+// Customer name field needs the same autocomplete-against-existing-customers
+// behavior as the paper's CustomerNameField, styled for a full-width mobile
+// TextField instead of an underlined paper cell.
+function FormFieldCustomerName({ doc }: { doc: ReturnType<typeof useTilesDoc> }) {
+  const [focused, setFocused] = useState(false);
+  const matches = useMemo(() => {
+    const q = doc.header.customerName.trim().toLowerCase();
+    if (!q || q.length < 2) return [];
+    return doc.customers.filter((c) => c.name.toLowerCase().includes(q) || (c.phone || "").includes(q)).slice(0, 5);
+  }, [doc.header.customerName, doc.customers]);
+  const exactPicked = doc.customerId && matches.length === 1 && matches[0].id === doc.customerId;
+  const show = focused && matches.length > 0 && !exactPicked;
+  return (
+    <View style={{ zIndex: 200 }}>
+      <TextField
+        label="Customer name"
+        value={doc.header.customerName}
+        onChangeText={(t: string) => doc.setHeaderField("customerName", t)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 180)}
+        testID="mobile-customer-name"
+      />
+      {show ? (
+        <View style={mobileStyles.suggestPanel}>
+          {matches.map((c) => (
+            <Pressable
+              key={c.id}
+              onPress={() => { doc.pickCustomer(c); setFocused(false); }}
+              style={mobileStyles.suggestRow}
+              testID={`mobile-customer-suggest-${c.id}`}
+            >
+              <Text style={mobileStyles.suggestName} numberOfLines={1}>{c.name}</Text>
+              {c.phone ? <Text style={mobileStyles.suggestPhone}>{c.phone}</Text> : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const mobileStyles = StyleSheet.create({
+  header: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  sectionTitle: { ...type.overline, color: colors.onSurfaceMuted },
+  savePill: {
+    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill,
+    backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  savePillText: { fontSize: 12, fontFamily: type.body.fontFamily, fontWeight: "600" },
+  fieldGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  fieldSlot: { flexBasis: "47%", flexGrow: 1, minWidth: 130 },
+  rowCard: {
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    padding: spacing.md, gap: spacing.md,
+  },
+  thumb: {
+    width: 56, height: 56, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary,
+    alignItems: "center", justifyContent: "center", overflow: "hidden",
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  rowIndex: { ...type.overline, color: colors.onSurfaceMuted, marginBottom: 2 },
+  rowTitleInput: {
+    fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface,
+    padding: 0, ...(Platform.OS === "web" ? { outlineStyle: "none" } as any : {}),
+  },
+  swapRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
+  swapLabel: { fontSize: 12, color: colors.brand, fontWeight: "600" },
+  selectBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
+    paddingVertical: 10, paddingHorizontal: 12, borderRadius: radius.md,
+    backgroundColor: colors.brandTint, minHeight: 44,
+  },
+  selectLabel: { fontSize: 13, color: colors.brand, fontWeight: "600" },
+  deleteBtn: {
+    width: 36, height: 36, borderRadius: radius.md, alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.surfaceSecondary,
+  },
+  summaryLine: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
+  summaryLabel: { fontSize: 13, color: colors.onSurfaceSecondary },
+  summaryValue: { fontSize: 13, color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  summaryBold: { fontWeight: "700", color: colors.onSurface, fontSize: 14 },
+  bottomBar: {
+    position: "absolute", left: 0, right: 0, bottom: 0,
+    padding: spacing.md, backgroundColor: colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  suggestPanel: {
+    position: "absolute", top: "100%", left: 0, right: 0, marginTop: 3, zIndex: 300,
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, overflow: "hidden",
+    ...(Platform.OS === "web" ? { boxShadow: "0 10px 28px rgba(0,0,0,0.18)" } as any : {}),
+  },
+  suggestRow: { paddingHorizontal: 14, paddingVertical: 10, flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  suggestName: { fontSize: 13, fontWeight: "600", color: colors.onSurface, flexShrink: 1 },
+  suggestPhone: { fontSize: 12, color: colors.onSurfaceSecondary, fontVariant: ["tabular-nums"] },
+});
+
+// ---------------------------------------------------------------------------
 // Page shell — topbar with the action buttons + scrollable paper
 // ---------------------------------------------------------------------------
 export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
   const router = useRouter();
   const doc = useTilesDoc(docType);
+  const { isPhone } = useBp();
   const isSelection = docType === "tiles_selection";
   const title = isSelection ? "Tiles Selection" : "Tiles Quotation";
 
   const saveLabel = doc.saveState === "saving" ? "Saving…"
     : doc.saveState === "saved" ? "Saved"
     : doc.saveState === "error" ? "Retry save" : "Save";
+
+  if (isPhone) {
+    return <MobileTilesEditor docType={docType} doc={doc} router={router} />;
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={["top"]}>
