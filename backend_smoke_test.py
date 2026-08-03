@@ -9,7 +9,7 @@ import json
 import sys
 
 # Use the public endpoint (Kubernetes ingress)
-BASE_URL = "https://management-intel-1.preview.emergentagent.com"
+BASE_URL = "https://tile-catalog-nexion.preview.emergentagent.com"
 
 def test_health():
     """Test /api/health endpoint"""

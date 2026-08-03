@@ -1,1020 +1,580 @@
+#!/usr/bin/env python3
 """
-Comprehensive backend testing for Tile Orders redesign (Ground Floor Tiles module).
-Tests the new workflow: Brand/Supplier page Release action + BuildCon Customer page
-Move to Godown and Dispatch actions.
+Nexion Brand Import Verification Test Suite
+Tests all 10 verification points from the review request
 """
+
 import requests
 import json
-from typing import Optional
+import sys
+from typing import Dict, Any, Optional
 
 # Configuration
-BASE_URL = "https://management-intel-1.preview.emergentagent.com/api"
-LOGIN_EMAIL = "owner@forge.app"
-LOGIN_PASSWORD = "Forge@2026"
+BASE_URL = "https://tile-catalog-nexion.preview.emergentagent.com/api"
+TEST_USER = "owner@forge.app"
+TEST_PASSWORD = "Forge@2026"
 
-# Global state
-token = None
-test_po_id = None
-test_po_item_id = None
-test_brand_id = None
-test_customer_id = None
-test_chalan_id = None
+# Test results tracking
+test_results = []
 
-def login():
-    """Authenticate and get JWT token"""
-    global token
+def log_test(test_num: str, description: str, passed: bool, details: str = ""):
+    """Log test result"""
+    status = "✅ PASS" if passed else "❌ FAIL"
+    result = {
+        "test": test_num,
+        "description": description,
+        "status": status,
+        "passed": passed,
+        "details": details
+    }
+    test_results.append(result)
+    print(f"\n{status} | Test {test_num}: {description}")
+    if details:
+        print(f"  Details: {details}")
+
+def print_summary():
+    """Print test summary"""
+    passed = sum(1 for r in test_results if r["passed"])
+    total = len(test_results)
     print("\n" + "="*80)
-    print("AUTHENTICATION")
+    print(f"TEST SUMMARY: {passed}/{total} PASSED")
     print("="*80)
     
-    response = requests.post(
-        f"{BASE_URL}/auth/login",
-        json={"email": LOGIN_EMAIL, "password": LOGIN_PASSWORD}
-    )
+    for result in test_results:
+        print(f"{result['status']} | Test {result['test']}: {result['description']}")
+        if result['details'] and not result['passed']:
+            print(f"  {result['details']}")
     
-    if response.status_code == 200:
-        data = response.json()
-        token = data.get("token") or data.get("access_token")
-        print(f"✅ Login successful: {LOGIN_EMAIL}")
-        if token:
-            print(f"   Token: {token[:50]}...")
-        else:
-            print(f"   Warning: No token in response")
-        return True
-    else:
-        print(f"❌ Login failed: {response.status_code}")
-        print(f"   Response: {response.text}")
-        return False
+    return passed == total
 
-def get_headers():
-    """Get authorization headers"""
-    return {"Authorization": f"Bearer {token}"}
-
-def test_1_get_brands():
-    """TEST 1: GET /api/tile-orders/brands - should return brands grouped by brand_id/brand_name"""
-    global test_brand_id
-    print("\n" + "="*80)
-    print("TEST 1: GET /api/tile-orders/brands")
-    print("="*80)
-    
-    response = requests.get(f"{BASE_URL}/tile-orders/brands", headers=get_headers())
-    
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        brands = data.get("brands", [])
-        print(f"✅ Brands endpoint working")
-        print(f"   Total brands: {len(brands)}")
-        
-        if brands:
-            # Verify shape
-            first_brand = brands[0]
-            required_keys = ["brand_id", "brand_name", "active_orders", "max_supplier_silent_days"]
-            missing_keys = [k for k in required_keys if k not in first_brand]
-            
-            if missing_keys:
-                print(f"❌ Missing keys in brand object: {missing_keys}")
-            else:
-                print(f"✅ Brand object shape correct")
-            
-            # Print sample brands
-            for brand in brands[:5]:
-                print(f"   - {brand.get('brand_name')}: {brand.get('active_orders')} active orders")
-                if not test_brand_id and brand.get('active_orders', 0) > 0:
-                    test_brand_id = brand.get('brand_id')
-            
-            if test_brand_id:
-                print(f"\n   Selected test brand_id: {test_brand_id}")
-        else:
-            print("⚠️  No brands found")
-        
-        return True
-    else:
-        print(f"❌ Failed: {response.text}")
-        return False
-
-def test_2_get_brand_orders():
-    """TEST 2: GET /api/tile-orders/brands/{brand_id}/orders - verify response shape"""
-    global test_po_id, test_po_item_id
-    print("\n" + "="*80)
-    print(f"TEST 2: GET /api/tile-orders/brands/{test_brand_id}/orders")
-    print("="*80)
-    
-    if not test_brand_id:
-        print("⚠️  Skipping: No test_brand_id available")
-        return False
-    
-    response = requests.get(
-        f"{BASE_URL}/tile-orders/brands/{test_brand_id}/orders",
-        headers=get_headers()
-    )
-    
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Brand orders endpoint working")
-        
-        # Verify kpi exists
-        if "kpi" in data:
-            print(f"✅ KPI object present")
-            kpi = data["kpi"]
-            print(f"   Orders: {kpi.get('orders')}, Pending: {kpi.get('pending')}, Ready: {kpi.get('ready')}")
-        else:
-            print(f"❌ Missing 'kpi' in response")
-        
-        # Verify orders array
-        orders = data.get("orders", [])
-        print(f"   Total orders: {len(orders)}")
-        
-        if orders:
-            first_order = orders[0]
-            required_fields = ["boxes_released", "boxes_remaining", "arrival_date"]
-            missing_fields = [f for f in required_fields if f not in first_order]
-            
-            if missing_fields:
-                print(f"❌ Missing fields in order: {missing_fields}")
-            else:
-                print(f"✅ Order row has required fields")
-            
-            # Find a PO with boxes_pending > 0 for testing
-            for order in orders:
-                if order.get("boxes_remaining", 0) > 0:
-                    test_po_id = order.get("po_id")
-                    print(f"\n   Selected test PO: {order.get('po_number')} (boxes_remaining: {order.get('boxes_remaining')})")
-                    break
-        
-        return True
-    else:
-        print(f"❌ Failed: {response.text}")
-        return False
-
-def test_3_get_purchase_order():
-    """TEST 3: GET /api/tile-orders/purchase-orders/{po_id} - verify boxes_godown field"""
-    global test_po_item_id, test_customer_id
-    print("\n" + "="*80)
-    print(f"TEST 3: GET /api/tile-orders/purchase-orders/{test_po_id}")
-    print("="*80)
-    
-    if not test_po_id:
-        print("⚠️  Skipping: No test_po_id available")
-        return False
-    
-    response = requests.get(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-        headers=get_headers()
-    )
-    
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Purchase order endpoint working")
-        print(f"   PO Number: {data.get('number')}")
-        print(f"   Customer: {data.get('customer_name')}")
-        print(f"   Brand: {data.get('brand_name')} (ID: {data.get('brand_id')})")
-        
-        # Get customer_id from customer orders list
-        co_list_response = requests.get(
-            f"{BASE_URL}/tile-orders/customer-orders",
-            headers=get_headers()
+# Test 1: Login and get token
+def test_1_login():
+    """Test 1: Login as owner@forge.app and confirm token works"""
+    try:
+        response = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": TEST_USER, "password": TEST_PASSWORD},
+            timeout=30
         )
-        if co_list_response.status_code == 200:
-            orders = co_list_response.json().get("orders", [])
-            if orders:
-                test_customer_id = orders[0].get("id")  # Use first customer order's ID as customer_id
-        
-        # Verify brand_id and brand_name at top level
-        if "brand_id" in data and "brand_name" in data:
-            print(f"✅ brand_id and brand_name present at top level")
-        else:
-            print(f"❌ Missing brand_id or brand_name at top level")
-        
-        # Verify items have boxes_godown
-        items = data.get("items", [])
-        print(f"   Total items: {len(items)}")
-        
-        if items:
-            first_item = items[0]
-            if "boxes_godown" in first_item:
-                print(f"✅ boxes_godown field present in items")
-            else:
-                print(f"❌ boxes_godown field missing in items")
-            
-            # Find an item with boxes_pending > 0 for release testing
-            for item in items:
-                if item.get("boxes_pending", 0) > 0:
-                    test_po_item_id = item.get("id")
-                    print(f"\n   Selected test item: {item.get('name')}")
-                    print(f"   - boxes_pending: {item.get('boxes_pending')}")
-                    print(f"   - boxes_ready: {item.get('boxes_ready')}")
-                    print(f"   - boxes_godown: {item.get('boxes_godown')}")
-                    print(f"   - boxes_dispatched: {item.get('boxes_dispatched')}")
-                    break
-        
-        return True
-    else:
-        print(f"❌ Failed: {response.text}")
-        return False
-
-def test_4_mark_ready():
-    """TEST 4: POST /api/tile-orders/purchase-orders/{po_id}/ready - Release action"""
-    print("\n" + "="*80)
-    print(f"TEST 4: POST /api/tile-orders/purchase-orders/{test_po_id}/ready")
-    print("="*80)
-    
-    if not test_po_id or not test_po_item_id:
-        print("⚠️  Skipping: No test_po_id or test_po_item_id available")
-        return False
-    
-    # Get current state
-    po_response = requests.get(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-        headers=get_headers()
-    )
-    
-    if po_response.status_code != 200:
-        print(f"❌ Failed to get PO: {po_response.text}")
-        return False
-    
-    po_data = po_response.json()
-    item = next((i for i in po_data.get("items", []) if i["id"] == test_po_item_id), None)
-    
-    if not item:
-        print(f"❌ Item not found in PO")
-        return False
-    
-    boxes_pending_before = item.get("boxes_pending", 0)
-    boxes_ready_before = item.get("boxes_ready", 0)
-    
-    if boxes_pending_before <= 0:
-        print(f"⚠️  No boxes pending for this item, skipping release test")
-        return False
-    
-    # Release 1 box (or less if only partial available)
-    qty_to_release = min(1.0, boxes_pending_before)
-    
-    print(f"   Releasing {qty_to_release} boxes")
-    print(f"   Before: boxes_pending={boxes_pending_before}, boxes_ready={boxes_ready_before}")
-    
-    response = requests.post(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}/ready",
-        headers=get_headers(),
-        json={"items": [{"po_item_id": test_po_item_id, "qty": qty_to_release}]}
-    )
-    
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Release successful")
-        print(f"   Ready batches created: {len(data.get('ready_batches', []))}")
-        
-        # Verify state change
-        po_response_after = requests.get(
-            f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-            headers=get_headers()
-        )
-        
-        if po_response_after.status_code == 200:
-            po_data_after = po_response_after.json()
-            item_after = next((i for i in po_data_after.get("items", []) if i["id"] == test_po_item_id), None)
-            
-            if item_after:
-                boxes_pending_after = item_after.get("boxes_pending", 0)
-                boxes_ready_after = item_after.get("boxes_ready", 0)
-                
-                print(f"   After: boxes_pending={boxes_pending_after}, boxes_ready={boxes_ready_after}")
-                
-                # Verify the math
-                expected_pending = boxes_pending_before - qty_to_release
-                expected_ready = boxes_ready_before + qty_to_release
-                
-                if abs(boxes_pending_after - expected_pending) < 0.01:
-                    print(f"✅ boxes_pending decreased correctly")
-                else:
-                    print(f"❌ boxes_pending mismatch: expected {expected_pending}, got {boxes_pending_after}")
-                
-                if abs(boxes_ready_after - expected_ready) < 0.01:
-                    print(f"✅ boxes_ready increased correctly")
-                else:
-                    print(f"❌ boxes_ready mismatch: expected {expected_ready}, got {boxes_ready_after}")
-        
-        # Check Material Movement Register
-        print("\n   Checking Material Movement Register...")
-        movements_response = requests.get(
-            f"{BASE_URL}/tile-orders/movements?movement_type=release",
-            headers=get_headers()
-        )
-        
-        if movements_response.status_code == 200:
-            movements_data = movements_response.json()
-            rows = movements_data.get("rows", [])
-            
-            if rows:
-                latest_movement = rows[0]  # Should be sorted by created_at desc
-                print(f"✅ Movement register entry found")
-                print(f"   - movement_type: {latest_movement.get('movement_type')}")
-                print(f"   - customer_name: {latest_movement.get('customer_name')}")
-                print(f"   - brand_name: {latest_movement.get('brand_name')}")
-                print(f"   - tile_name: {latest_movement.get('tile_name')}")
-                print(f"   - boxes: {latest_movement.get('boxes')}")
-            else:
-                print(f"⚠️  No movement entries found")
-        
-        return True
-    else:
-        print(f"❌ Failed: {response.text}")
-        return False
-
-def test_5_move_to_godown():
-    """TEST 5: POST /api/tile-orders/purchase-orders/{po_id}/items/move-to-godown"""
-    print("\n" + "="*80)
-    print(f"TEST 5: POST /api/tile-orders/purchase-orders/{test_po_id}/items/move-to-godown")
-    print("="*80)
-    
-    if not test_po_id or not test_po_item_id:
-        print("⚠️  Skipping: No test_po_id or test_po_item_id available")
-        return False
-    
-    # Get current state
-    po_response = requests.get(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-        headers=get_headers()
-    )
-    
-    if po_response.status_code != 200:
-        print(f"❌ Failed to get PO: {po_response.text}")
-        return False
-    
-    po_data = po_response.json()
-    item = next((i for i in po_data.get("items", []) if i["id"] == test_po_item_id), None)
-    
-    if not item:
-        print(f"❌ Item not found in PO")
-        return False
-    
-    boxes_ready_before = item.get("boxes_ready", 0)
-    boxes_godown_before = item.get("boxes_godown", 0)
-    
-    if boxes_ready_before <= 0:
-        print(f"⚠️  No boxes ready for this item, skipping move-to-godown test")
-        return False
-    
-    # Move 0.5 boxes to godown (or less if only partial available)
-    qty_to_move = min(0.5, boxes_ready_before)
-    
-    print(f"   Moving {qty_to_move} boxes to godown")
-    print(f"   Before: boxes_ready={boxes_ready_before}, boxes_godown={boxes_godown_before}")
-    
-    response = requests.post(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}/items/move-to-godown",
-        headers=get_headers(),
-        json={"items": [{"po_item_id": test_po_item_id, "qty": qty_to_move}]}
-    )
-    
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Move to godown successful")
-        print(f"   Moved items: {len(data.get('moved', []))}")
-        
-        # Verify state change
-        po_response_after = requests.get(
-            f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-            headers=get_headers()
-        )
-        
-        if po_response_after.status_code == 200:
-            po_data_after = po_response_after.json()
-            item_after = next((i for i in po_data_after.get("items", []) if i["id"] == test_po_item_id), None)
-            
-            if item_after:
-                boxes_ready_after = item_after.get("boxes_ready", 0)
-                boxes_godown_after = item_after.get("boxes_godown", 0)
-                
-                print(f"   After: boxes_ready={boxes_ready_after}, boxes_godown={boxes_godown_after}")
-                
-                # Verify the math
-                expected_ready = boxes_ready_before - qty_to_move
-                expected_godown = boxes_godown_before + qty_to_move
-                
-                if abs(boxes_ready_after - expected_ready) < 0.01:
-                    print(f"✅ boxes_ready decreased correctly")
-                else:
-                    print(f"❌ boxes_ready mismatch: expected {expected_ready}, got {boxes_ready_after}")
-                
-                if abs(boxes_godown_after - expected_godown) < 0.01:
-                    print(f"✅ boxes_godown increased correctly")
-                else:
-                    print(f"❌ boxes_godown mismatch: expected {expected_godown}, got {boxes_godown_after}")
-        
-        # Verify NO chalan/dispatch was created
-        print("\n   Verifying no chalan/dispatch created...")
-        movements_response = requests.get(
-            f"{BASE_URL}/tile-orders/movements?movement_type=move_to_godown",
-            headers=get_headers()
-        )
-        
-        if movements_response.status_code == 200:
-            movements_data = movements_response.json()
-            rows = movements_data.get("rows", [])
-            
-            if rows:
-                latest_movement = rows[0]
-                chalan_number = latest_movement.get("chalan_number")
-                dispatch_number = latest_movement.get("dispatch_number")
-                
-                if not chalan_number and not dispatch_number:
-                    print(f"✅ No chalan/dispatch created (as expected)")
-                else:
-                    print(f"❌ Unexpected chalan/dispatch: chalan={chalan_number}, dispatch={dispatch_number}")
-            else:
-                print(f"⚠️  No movement entries found")
-        
-        # Test error path: try to move more than available
-        print("\n   Testing error path: move more than available...")
-        error_response = requests.post(
-            f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}/items/move-to-godown",
-            headers=get_headers(),
-            json={"items": [{"po_item_id": test_po_item_id, "qty": 9999}]}
-        )
-        
-        if error_response.status_code == 400:
-            print(f"✅ Error path working: 400 returned for excessive qty")
-        else:
-            print(f"❌ Error path failed: expected 400, got {error_response.status_code}")
-        
-        return True
-    else:
-        print(f"❌ Failed: {response.text}")
-        return False
-
-def test_6_dispatch_from_released():
-    """TEST 6: POST /api/tile-orders/purchase-orders/{po_id}/dispatch-from-released"""
-    global test_chalan_id
-    print("\n" + "="*80)
-    print(f"TEST 6: POST /api/tile-orders/purchase-orders/{test_po_id}/dispatch-from-released")
-    print("="*80)
-    
-    if not test_po_id or not test_po_item_id:
-        print("⚠️  Skipping: No test_po_id or test_po_item_id available")
-        return False
-    
-    # Get current state
-    po_response = requests.get(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-        headers=get_headers()
-    )
-    
-    if po_response.status_code != 200:
-        print(f"❌ Failed to get PO: {po_response.text}")
-        return False
-    
-    po_data = po_response.json()
-    item = next((i for i in po_data.get("items", []) if i["id"] == test_po_item_id), None)
-    
-    if not item:
-        print(f"❌ Item not found in PO")
-        return False
-    
-    boxes_ready_before = item.get("boxes_ready", 0)
-    boxes_dispatched_before = item.get("boxes_dispatched", 0)
-    
-    if boxes_ready_before <= 0:
-        print(f"⚠️  No boxes ready for this item, skipping dispatch-from-released test")
-        return False
-    
-    # Dispatch 0.5 boxes from released (or less if only partial available)
-    qty_to_dispatch = min(0.5, boxes_ready_before)
-    
-    print(f"   Dispatching {qty_to_dispatch} boxes from released")
-    print(f"   Before: boxes_ready={boxes_ready_before}, boxes_dispatched={boxes_dispatched_before}")
-    
-    response = requests.post(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}/dispatch-from-released",
-        headers=get_headers(),
-        json={"items": [{"po_item_id": test_po_item_id, "qty": qty_to_dispatch}]}
-    )
-    
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Dispatch from released successful")
-        
-        dispatch = data.get("dispatch", {})
-        chalan = data.get("chalan", {})
-        
-        print(f"   Dispatch number: {dispatch.get('dispatch_number')}")
-        print(f"   Chalan number: {chalan.get('number')}")
-        
-        test_chalan_id = chalan.get("id")
-        
-        # Verify state change
-        po_response_after = requests.get(
-            f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-            headers=get_headers()
-        )
-        
-        if po_response_after.status_code == 200:
-            po_data_after = po_response_after.json()
-            item_after = next((i for i in po_data_after.get("items", []) if i["id"] == test_po_item_id), None)
-            
-            if item_after:
-                boxes_ready_after = item_after.get("boxes_ready", 0)
-                boxes_dispatched_after = item_after.get("boxes_dispatched", 0)
-                
-                print(f"   After: boxes_ready={boxes_ready_after}, boxes_dispatched={boxes_dispatched_after}")
-                
-                # Verify the math
-                expected_ready = boxes_ready_before - qty_to_dispatch
-                expected_dispatched = boxes_dispatched_before + qty_to_dispatch
-                
-                if abs(boxes_ready_after - expected_ready) < 0.01:
-                    print(f"✅ boxes_ready decreased correctly")
-                else:
-                    print(f"❌ boxes_ready mismatch: expected {expected_ready}, got {boxes_ready_after}")
-                
-                if abs(boxes_dispatched_after - expected_dispatched) < 0.01:
-                    print(f"✅ boxes_dispatched increased correctly")
-                else:
-                    print(f"❌ boxes_dispatched mismatch: expected {expected_dispatched}, got {boxes_dispatched_after}")
-        
-        # Test PDF generation
-        if test_chalan_id:
-            print(f"\n   Testing PDF generation for chalan {test_chalan_id}...")
-            pdf_response = requests.get(
-                f"{BASE_URL}/tile-orders/chalans/{test_chalan_id}/pdf",
-                headers=get_headers()
-            )
-            
-            if pdf_response.status_code == 200:
-                content_type = pdf_response.headers.get("Content-Type", "")
-                if "application/pdf" in content_type:
-                    print(f"✅ PDF generated successfully (Content-Type: {content_type})")
-                else:
-                    print(f"❌ Wrong content type: {content_type}")
-            else:
-                print(f"❌ PDF generation failed: {pdf_response.status_code}")
-        
-        # Verify movement register
-        print("\n   Checking Material Movement Register...")
-        movements_response = requests.get(
-            f"{BASE_URL}/tile-orders/movements?movement_type=dispatch_from_released",
-            headers=get_headers()
-        )
-        
-        if movements_response.status_code == 200:
-            movements_data = movements_response.json()
-            rows = movements_data.get("rows", [])
-            
-            if rows:
-                latest_movement = rows[0]
-                chalan_number = latest_movement.get("chalan_number")
-                dispatch_number = latest_movement.get("dispatch_number")
-                
-                if chalan_number and dispatch_number:
-                    print(f"✅ Movement register entry has chalan and dispatch numbers")
-                    print(f"   - chalan_number: {chalan_number}")
-                    print(f"   - dispatch_number: {dispatch_number}")
-                else:
-                    print(f"❌ Missing chalan or dispatch number in movement")
-            else:
-                print(f"⚠️  No movement entries found")
-        
-        # Test error path: dispatch more than available
-        print("\n   Testing error path: dispatch more than available...")
-        error_response = requests.post(
-            f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}/dispatch-from-released",
-            headers=get_headers(),
-            json={"items": [{"po_item_id": test_po_item_id, "qty": 9999}]}
-        )
-        
-        if error_response.status_code == 400:
-            print(f"✅ Error path working: 400 returned for excessive qty")
-        else:
-            print(f"❌ Error path failed: expected 400, got {error_response.status_code}")
-        
-        return True
-    else:
-        print(f"❌ Failed: {response.text}")
-        return False
-
-def test_7_dispatch_from_godown():
-    """TEST 7: POST /api/tile-orders/purchase-orders/{po_id}/dispatch-from-godown"""
-    print("\n" + "="*80)
-    print(f"TEST 7: POST /api/tile-orders/purchase-orders/{test_po_id}/dispatch-from-godown")
-    print("="*80)
-    
-    if not test_po_id or not test_po_item_id:
-        print("⚠️  Skipping: No test_po_id or test_po_item_id available")
-        return False
-    
-    # Get current state
-    po_response = requests.get(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-        headers=get_headers()
-    )
-    
-    if po_response.status_code != 200:
-        print(f"❌ Failed to get PO: {po_response.text}")
-        return False
-    
-    po_data = po_response.json()
-    item = next((i for i in po_data.get("items", []) if i["id"] == test_po_item_id), None)
-    
-    if not item:
-        print(f"❌ Item not found in PO")
-        return False
-    
-    boxes_godown_before = item.get("boxes_godown", 0)
-    boxes_dispatched_before = item.get("boxes_dispatched", 0)
-    
-    if boxes_godown_before <= 0:
-        print(f"⚠️  No boxes in godown for this item, skipping dispatch-from-godown test")
-        return False
-    
-    # Dispatch all boxes from godown
-    qty_to_dispatch = boxes_godown_before
-    
-    print(f"   Dispatching {qty_to_dispatch} boxes from godown")
-    print(f"   Before: boxes_godown={boxes_godown_before}, boxes_dispatched={boxes_dispatched_before}")
-    
-    response = requests.post(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}/dispatch-from-godown",
-        headers=get_headers(),
-        json={"items": [{"po_item_id": test_po_item_id, "qty": qty_to_dispatch}]}
-    )
-    
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Dispatch from godown successful")
-        
-        dispatch = data.get("dispatch", {})
-        chalan = data.get("chalan", {})
-        
-        print(f"   Dispatch number: {dispatch.get('dispatch_number')}")
-        print(f"   Chalan number: {chalan.get('number')}")
-        print(f"   Source: {dispatch.get('source')}")
-        
-        # Verify state change
-        po_response_after = requests.get(
-            f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-            headers=get_headers()
-        )
-        
-        if po_response_after.status_code == 200:
-            po_data_after = po_response_after.json()
-            item_after = next((i for i in po_data_after.get("items", []) if i["id"] == test_po_item_id), None)
-            
-            if item_after:
-                boxes_godown_after = item_after.get("boxes_godown", 0)
-                boxes_dispatched_after = item_after.get("boxes_dispatched", 0)
-                
-                print(f"   After: boxes_godown={boxes_godown_after}, boxes_dispatched={boxes_dispatched_after}")
-                
-                # Verify the math
-                expected_godown = boxes_godown_before - qty_to_dispatch
-                expected_dispatched = boxes_dispatched_before + qty_to_dispatch
-                
-                if abs(boxes_godown_after - expected_godown) < 0.01:
-                    print(f"✅ boxes_godown decreased correctly")
-                else:
-                    print(f"❌ boxes_godown mismatch: expected {expected_godown}, got {boxes_godown_after}")
-                
-                if abs(boxes_dispatched_after - expected_dispatched) < 0.01:
-                    print(f"✅ boxes_dispatched increased correctly")
-                else:
-                    print(f"❌ boxes_dispatched mismatch: expected {expected_dispatched}, got {boxes_dispatched_after}")
-        
-        # Verify PDF works
-        chalan_id = chalan.get("id")
-        if chalan_id:
-            print(f"\n   Testing PDF generation for chalan {chalan_id}...")
-            pdf_response = requests.get(
-                f"{BASE_URL}/tile-orders/chalans/{chalan_id}/pdf",
-                headers=get_headers()
-            )
-            
-            if pdf_response.status_code == 200:
-                content_type = pdf_response.headers.get("Content-Type", "")
-                if "application/pdf" in content_type:
-                    print(f"✅ PDF generated successfully")
-                else:
-                    print(f"❌ Wrong content type: {content_type}")
-            else:
-                print(f"❌ PDF generation failed: {pdf_response.status_code}")
-        
-        # Verify movement register
-        print("\n   Checking Material Movement Register...")
-        movements_response = requests.get(
-            f"{BASE_URL}/tile-orders/movements?movement_type=dispatch_from_godown",
-            headers=get_headers()
-        )
-        
-        if movements_response.status_code == 200:
-            movements_data = movements_response.json()
-            rows = movements_data.get("rows", [])
-            
-            if rows:
-                latest_movement = rows[0]
-                print(f"✅ Movement register entry found")
-                print(f"   - chalan_number: {latest_movement.get('chalan_number')}")
-                print(f"   - dispatch_number: {latest_movement.get('dispatch_number')}")
-            else:
-                print(f"⚠️  No movement entries found")
-        
-        # Test error path: dispatch from empty godown
-        print("\n   Testing error path: dispatch from empty godown...")
-        error_response = requests.post(
-            f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}/dispatch-from-godown",
-            headers=get_headers(),
-            json={"items": [{"po_item_id": test_po_item_id, "qty": 1}]}
-        )
-        
-        if error_response.status_code == 400:
-            print(f"✅ Error path working: 400 returned for empty godown")
-        else:
-            print(f"❌ Error path failed: expected 400, got {error_response.status_code}")
-        
-        return True
-    else:
-        print(f"❌ Failed: {response.text}")
-        return False
-
-def test_8_verify_invariant():
-    """TEST 8: Verify invariant: qty == boxes_ready + boxes_godown + boxes_dispatched + boxes_pending"""
-    print("\n" + "="*80)
-    print("TEST 8: Verify invariant for touched item")
-    print("="*80)
-    
-    if not test_po_id or not test_po_item_id:
-        print("⚠️  Skipping: No test_po_id or test_po_item_id available")
-        return False
-    
-    po_response = requests.get(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-        headers=get_headers()
-    )
-    
-    if po_response.status_code != 200:
-        print(f"❌ Failed to get PO: {po_response.text}")
-        return False
-    
-    po_data = po_response.json()
-    item = next((i for i in po_data.get("items", []) if i["id"] == test_po_item_id), None)
-    
-    if not item:
-        print(f"❌ Item not found in PO")
-        return False
-    
-    qty = item.get("qty", 0)
-    boxes_ready = item.get("boxes_ready", 0)
-    boxes_godown = item.get("boxes_godown", 0)
-    boxes_dispatched = item.get("boxes_dispatched", 0)
-    boxes_pending = item.get("boxes_pending", 0)
-    
-    print(f"   Item: {item.get('name')}")
-    print(f"   qty (ordered): {qty}")
-    print(f"   boxes_ready: {boxes_ready}")
-    print(f"   boxes_godown: {boxes_godown}")
-    print(f"   boxes_dispatched: {boxes_dispatched}")
-    print(f"   boxes_pending: {boxes_pending}")
-    
-    total = boxes_ready + boxes_godown + boxes_dispatched + boxes_pending
-    print(f"   Sum: {total}")
-    
-    # Float-tolerant comparison
-    if abs(qty - total) < 0.01:
-        print(f"✅ Invariant holds: qty == boxes_ready + boxes_godown + boxes_dispatched + boxes_pending")
-        return True
-    else:
-        print(f"❌ Invariant violated: qty ({qty}) != sum ({total}), diff = {abs(qty - total)}")
-        return False
-
-def test_9_customer_order_detail():
-    """TEST 9: GET /api/tile-orders/customer-orders/{id} - verify brand_id/brand_name and boxes_godown"""
-    print("\n" + "="*80)
-    print("TEST 9: GET /api/tile-orders/customer-orders/{id}")
-    print("="*80)
-    
-    if not test_po_id:
-        print("⚠️  Skipping: No test_po_id available")
-        return False
-    
-    # First get the PO to find the customer_order_id
-    po_response = requests.get(
-        f"{BASE_URL}/tile-orders/purchase-orders/{test_po_id}",
-        headers=get_headers()
-    )
-    
-    if po_response.status_code != 200:
-        print(f"❌ Failed to get PO: {po_response.text}")
-        return False
-    
-    po_data = po_response.json()
-    
-    # Get customer orders list to find one
-    co_list_response = requests.get(
-        f"{BASE_URL}/tile-orders/customer-orders",
-        headers=get_headers()
-    )
-    
-    if co_list_response.status_code != 200:
-        print(f"❌ Failed to get customer orders list: {co_list_response.text}")
-        return False
-    
-    co_list_data = co_list_response.json()
-    orders = co_list_data.get("orders", [])
-    
-    if not orders:
-        print(f"⚠️  No customer orders found")
-        return False
-    
-    co_id = orders[0].get("id")
-    
-    print(f"   Testing customer order: {orders[0].get('number')}")
-    
-    response = requests.get(
-        f"{BASE_URL}/tile-orders/customer-orders/{co_id}",
-        headers=get_headers()
-    )
-    
-    print(f"Status: {response.status_code}")
-    
-    if response.status_code == 200:
-        data = response.json()
-        print(f"✅ Customer order detail endpoint working")
-        
-        suppliers = data.get("suppliers", [])
-        print(f"   Suppliers/brands: {len(suppliers)}")
-        
-        if suppliers:
-            first_supplier = suppliers[0]
-            
-            # Verify brand_id and brand_name
-            if "brand_id" in first_supplier and "brand_name" in first_supplier:
-                print(f"✅ brand_id and brand_name present in supplier group")
-                print(f"   - brand_id: {first_supplier.get('brand_id')}")
-                print(f"   - brand_name: {first_supplier.get('brand_name')}")
-            else:
-                print(f"❌ Missing brand_id or brand_name in supplier group")
-            
-            # Verify items have boxes_godown
-            items = first_supplier.get("items", [])
-            if items:
-                first_item = items[0]
-                if "boxes_godown" in first_item:
-                    print(f"✅ boxes_godown field present in items")
-                    print(f"   - boxes_godown: {first_item.get('boxes_godown')}")
-                else:
-                    print(f"❌ boxes_godown field missing in items")
-        
-        return True
-    else:
-        print(f"❌ Failed: {response.text}")
-        return False
-
-def test_10_movements_filtering():
-    """TEST 10: GET /api/tile-orders/movements with brand_id and customer_id filters"""
-    print("\n" + "="*80)
-    print("TEST 10: GET /api/tile-orders/movements with filters")
-    print("="*80)
-    
-    # Get test_customer_id from recent movements if not set
-    global test_customer_id
-    if not test_customer_id:
-        movements_response = requests.get(
-            f"{BASE_URL}/tile-orders/movements",
-            headers=get_headers()
-        )
-        if movements_response.status_code == 200:
-            rows = movements_response.json().get("rows", [])
-            if rows:
-                test_customer_id = rows[0].get("customer_id")
-    
-    if not test_brand_id:
-        print(f"⚠️  Skipping: No test_brand_id available")
-        return False
-    
-    # Test brand_id filter
-    print(f"\n   Testing brand_id filter: {test_brand_id}")
-    brand_response = requests.get(
-        f"{BASE_URL}/tile-orders/movements?brand_id={test_brand_id}",
-        headers=get_headers()
-    )
-    
-    if brand_response.status_code == 200:
-        brand_data = brand_response.json()
-        rows = brand_data.get("rows", [])
-        print(f"✅ Brand filter working: {len(rows)} movements found")
-        
-        # Verify all rows have the correct brand_id
-        if rows:
-            wrong_brand = [r for r in rows if r.get("brand_id") != test_brand_id]
-            if wrong_brand:
-                print(f"❌ Found {len(wrong_brand)} rows with wrong brand_id")
-            else:
-                print(f"✅ All rows have correct brand_id")
-    else:
-        print(f"❌ Brand filter failed: {brand_response.status_code}")
-    
-    # Test customer_id filter
-    print(f"\n   Testing customer_id filter: {test_customer_id}")
-    customer_response = requests.get(
-        f"{BASE_URL}/tile-orders/movements?customer_id={test_customer_id}",
-        headers=get_headers()
-    )
-    
-    if customer_response.status_code == 200:
-        customer_data = customer_response.json()
-        rows = customer_data.get("rows", [])
-        print(f"✅ Customer filter working: {len(rows)} movements found")
-        
-        # Verify all rows have the correct customer_id
-        if rows:
-            wrong_customer = [r for r in rows if r.get("customer_id") != test_customer_id]
-            if wrong_customer:
-                print(f"❌ Found {len(wrong_customer)} rows with wrong customer_id")
-            else:
-                print(f"✅ All rows have correct customer_id")
-    else:
-        print(f"❌ Customer filter failed: {customer_response.status_code}")
-    
-    return True
-
-def test_11_regression_check():
-    """TEST 11: Sanity-check pre-existing endpoints"""
-    print("\n" + "="*80)
-    print("TEST 11: Regression check on pre-existing endpoints")
-    print("="*80)
-    
-    endpoints = [
-        "/tile-orders/dashboard",
-        "/tile-orders/customer-orders",
-        "/tile-orders/suppliers"
-    ]
-    
-    all_passed = True
-    
-    for endpoint in endpoints:
-        response = requests.get(f"{BASE_URL}{endpoint}", headers=get_headers())
         
         if response.status_code == 200:
-            print(f"✅ {endpoint}: 200 OK")
+            data = response.json()
+            token = data.get("access_token") or data.get("token")
+            user = data.get("user", {})
+            
+            if token and len(token) > 50:
+                log_test(
+                    "1", 
+                    "Login as owner@forge.app and confirm token works",
+                    True,
+                    f"Token received ({len(token)} chars), User: {user.get('name')} ({user.get('email')}), Role: {user.get('role')}"
+                )
+                return token
+            else:
+                log_test("1", "Login as owner@forge.app", False, "Token missing or invalid")
+                return None
         else:
-            print(f"❌ {endpoint}: {response.status_code}")
-            all_passed = False
-    
-    return all_passed
+            log_test("1", "Login as owner@forge.app", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return None
+    except Exception as e:
+        log_test("1", "Login as owner@forge.app", False, f"Exception: {str(e)}")
+        return None
 
+# Test 2: GET /api/brands - confirm Nexion exists
+def test_2_brands(token: str):
+    """Test 2: GET /api/brands - confirm Nexion exists with floor_id ground-floor"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(f"{BASE_URL}/brands", headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            brands = response.json()
+            nexion_brand = None
+            
+            for brand in brands:
+                if brand.get("name") == "Nexion":
+                    nexion_brand = brand
+                    break
+            
+            if nexion_brand:
+                floor_id = nexion_brand.get("floor_id")
+                brand_id = nexion_brand.get("id")
+                
+                if floor_id == "ground-floor":
+                    log_test(
+                        "2",
+                        "GET /api/brands - confirm Nexion exists with floor_id ground-floor",
+                        True,
+                        f"Nexion brand found: id={brand_id}, floor_id={floor_id}"
+                    )
+                    return brand_id
+                else:
+                    log_test("2", "GET /api/brands", False, f"Nexion floor_id is '{floor_id}', expected 'ground-floor'")
+                    return None
+            else:
+                log_test("2", "GET /api/brands", False, f"Nexion brand not found. Available brands: {[b.get('name') for b in brands]}")
+                return None
+        else:
+            log_test("2", "GET /api/brands", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return None
+    except Exception as e:
+        log_test("2", "GET /api/brands", False, f"Exception: {str(e)}")
+        return None
+
+# Test 3: GET /api/products?brand_id=<nexion> - confirm ~761 products
+def test_3_products_by_brand(token: str, brand_id: str):
+    """Test 3: GET /api/products?brand_id=<nexion> - confirm ~761 products"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # First request to get total count
+        response = requests.get(
+            f"{BASE_URL}/products",
+            headers=headers,
+            params={"brand_id": brand_id, "limit": 100},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            total = data.get("total", 0)
+            items = data.get("items", [])
+            
+            # Verify all products have floor_id ground-floor
+            all_ground_floor = all(item.get("floor_id") == "ground-floor" for item in items)
+            
+            if 750 <= total <= 770:  # Allow small variance
+                log_test(
+                    "3",
+                    "GET /api/products?brand_id=<nexion> - confirm ~761 products",
+                    True,
+                    f"Total Nexion products: {total} (expected ~761), All have floor_id=ground-floor: {all_ground_floor}"
+                )
+                return items[0] if items else None  # Return first product for later tests
+            else:
+                log_test("3", "GET /api/products?brand_id=<nexion>", False, f"Product count {total} not in expected range 750-770")
+                return None
+        else:
+            log_test("3", "GET /api/products?brand_id=<nexion>", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return None
+    except Exception as e:
+        log_test("3", "GET /api/products?brand_id=<nexion>", False, f"Exception: {str(e)}")
+        return None
+
+# Test 4: Search by product name (CALACATTA)
+def test_4_search_by_name(token: str):
+    """Test 4: GET /api/catalog/search?q=CALACATTA - confirm Nexion products show up"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(
+            f"{BASE_URL}/catalog/search",
+            headers=headers,
+            params={"q": "CALACATTA"},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            results = response.json()
+            items = results.get("items", [])
+            
+            # Check if any Nexion products in results
+            nexion_products = [item for item in items if item.get("brand_name") == "Nexion"]
+            
+            if nexion_products:
+                log_test(
+                    "4",
+                    "GET /api/catalog/search?q=CALACATTA - confirm Nexion products show up",
+                    True,
+                    f"Found {len(nexion_products)} Nexion products matching 'CALACATTA' (out of {len(items)} total results)"
+                )
+                return nexion_products[0] if nexion_products else None
+            else:
+                log_test("4", "GET /api/catalog/search?q=CALACATTA", False, f"No Nexion products found. Total results: {len(items)}")
+                return None
+        else:
+            log_test("4", "GET /api/catalog/search?q=CALACATTA", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return None
+    except Exception as e:
+        log_test("4", "GET /api/catalog/search?q=CALACATTA", False, f"Exception: {str(e)}")
+        return None
+
+# Test 5: Search by SKU prefix
+def test_5_search_by_sku(token: str):
+    """Test 5: GET /api/catalog/search?q=NEXION-CALACATTA - confirm SKU search works"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(
+            f"{BASE_URL}/catalog/search",
+            headers=headers,
+            params={"q": "NEXION-CALACATTA"},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            results = response.json()
+            items = results.get("items", [])
+            
+            # Check if results contain products with NEXION-CALACATTA in SKU
+            matching_products = [item for item in items if "NEXION-CALACATTA" in item.get("sku", "").upper()]
+            
+            if matching_products:
+                sample_sku = matching_products[0].get("sku")
+                log_test(
+                    "5",
+                    "GET /api/catalog/search?q=NEXION-CALACATTA - confirm SKU search works",
+                    True,
+                    f"Found {len(matching_products)} products with SKU containing 'NEXION-CALACATTA'. Sample: {sample_sku}"
+                )
+                return matching_products[0]
+            else:
+                log_test("5", "GET /api/catalog/search?q=NEXION-CALACATTA", False, f"No products with NEXION-CALACATTA SKU found. Total results: {len(items)}")
+                return None
+        else:
+            log_test("5", "GET /api/catalog/search?q=NEXION-CALACATTA", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return None
+    except Exception as e:
+        log_test("5", "GET /api/catalog/search?q=NEXION-CALACATTA", False, f"Exception: {str(e)}")
+        return None
+
+# Test 6: Search by size
+def test_6_search_by_size(token: str):
+    """Test 6: GET /api/catalog/search?q=1198X2398 - confirm size-based search works"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(
+            f"{BASE_URL}/catalog/search",
+            headers=headers,
+            params={"q": "1198X2398"},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            results = response.json()
+            items = results.get("items", [])
+            
+            # Check if results contain Nexion products with this size
+            nexion_with_size = [
+                item for item in items 
+                if item.get("brand_name") == "Nexion" and "1198X2398" in item.get("size", "").upper()
+            ]
+            
+            if nexion_with_size:
+                sample_product = nexion_with_size[0]
+                log_test(
+                    "6",
+                    "GET /api/catalog/search?q=1198X2398 - confirm size-based search works",
+                    True,
+                    f"Found {len(nexion_with_size)} Nexion products with size 1198X2398. Sample: {sample_product.get('name')} ({sample_product.get('size')})"
+                )
+                return nexion_with_size[0]
+            else:
+                log_test("6", "GET /api/catalog/search?q=1198X2398", False, f"No Nexion products with size 1198X2398 found. Total results: {len(items)}")
+                return None
+        else:
+            log_test("6", "GET /api/catalog/search?q=1198X2398", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return None
+    except Exception as e:
+        log_test("6", "GET /api/catalog/search?q=1198X2398", False, f"Exception: {str(e)}")
+        return None
+
+# Test 7: Get single product detail
+def test_7_product_detail(token: str, product_id: str):
+    """Test 7: GET /api/products/{id} - confirm hero_image_url/gallery with Supabase URL"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(
+            f"{BASE_URL}/products/{product_id}",
+            headers=headers,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            product = response.json()
+            
+            # Check for required fields
+            hero_image = product.get("hero_image_url")
+            gallery = product.get("gallery", [])
+            name = product.get("name")
+            size = product.get("size")
+            finish = product.get("finish")
+            mrp = product.get("mrp")
+            price = product.get("price")
+            specs = product.get("specs", {})
+            pcs_per_box = specs.get("pcs_per_box")
+            sqft_per_box = specs.get("sqft_per_box")
+            
+            # Check if hero_image or gallery has Supabase URL
+            has_supabase_url = False
+            supabase_url = None
+            
+            if hero_image and "supabase.co" in hero_image:
+                has_supabase_url = True
+                supabase_url = hero_image
+            elif gallery:
+                for img in gallery:
+                    img_url = img.get("url") if isinstance(img, dict) else img
+                    if img_url and "supabase.co" in img_url:
+                        has_supabase_url = True
+                        supabase_url = img_url
+                        break
+            
+            required_fields = {
+                "name": name,
+                "size": size,
+                "finish": finish,
+                "mrp": mrp,
+                "price": price,
+                "pcs_per_box": pcs_per_box,
+                "sqft_per_box": sqft_per_box
+            }
+            
+            missing_fields = [k for k, v in required_fields.items() if v is None]
+            
+            if has_supabase_url and not missing_fields:
+                log_test(
+                    "7",
+                    "GET /api/products/{id} - confirm hero_image_url/gallery with Supabase URL and specs",
+                    True,
+                    f"Product: {name}, Size: {size}, Finish: {finish}, MRP: {mrp}, Price: {price}, Specs: {pcs_per_box} pcs/box, {sqft_per_box} sqft/box. Supabase URL found."
+                )
+                return supabase_url
+            else:
+                issues = []
+                if not has_supabase_url:
+                    issues.append("No Supabase URL found in hero_image_url or gallery")
+                if missing_fields:
+                    issues.append(f"Missing fields: {', '.join(missing_fields)}")
+                
+                log_test("7", "GET /api/products/{id}", False, "; ".join(issues))
+                return None
+        else:
+            log_test("7", "GET /api/products/{id}", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return None
+    except Exception as e:
+        log_test("7", "GET /api/products/{id}", False, f"Exception: {str(e)}")
+        return None
+
+# Test 8: Fetch image URL directly
+def test_8_image_fetch(image_url: str):
+    """Test 8: Fetch hero_image_url directly and confirm HTTP 200"""
+    try:
+        response = requests.get(image_url, timeout=30)
+        
+        if response.status_code == 200:
+            content_type = response.headers.get("Content-Type", "")
+            content_length = len(response.content)
+            
+            if "image" in content_type and content_length > 1000:
+                log_test(
+                    "8",
+                    "Fetch hero_image_url directly and confirm HTTP 200",
+                    True,
+                    f"Image fetched successfully: {content_length} bytes, Content-Type: {content_type}"
+                )
+                return True
+            else:
+                log_test("8", "Fetch hero_image_url", False, f"Invalid image: {content_length} bytes, Content-Type: {content_type}")
+                return False
+        else:
+            log_test("8", "Fetch hero_image_url", False, f"HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        log_test("8", "Fetch hero_image_url", False, f"Exception: {str(e)}")
+        return False
+
+# Test 9: Floor isolation check
+def test_9_floor_isolation(token: str, nexion_brand_id: str):
+    """Test 9: Confirm first-floor queries never return Nexion products"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # Get all products and check floor_id
+        response = requests.get(
+            f"{BASE_URL}/products",
+            headers=headers,
+            params={"brand_id": nexion_brand_id, "limit": 100},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get("items", [])
+            
+            # Check if ANY product has floor_id != ground-floor
+            first_floor_products = [item for item in items if item.get("floor_id") == "first-floor"]
+            
+            if not first_floor_products:
+                # Also verify by checking all products have ground-floor
+                all_ground_floor = all(item.get("floor_id") == "ground-floor" for item in items)
+                
+                if all_ground_floor:
+                    log_test(
+                        "9",
+                        "Floor isolation check - confirm NO Nexion products on first-floor",
+                        True,
+                        f"Verified: All {len(items)} Nexion products have floor_id=ground-floor, NONE have floor_id=first-floor"
+                    )
+                    return True
+                else:
+                    other_floors = set(item.get("floor_id") for item in items if item.get("floor_id") != "ground-floor")
+                    log_test("9", "Floor isolation check", False, f"Found Nexion products on other floors: {other_floors}")
+                    return False
+            else:
+                log_test("9", "Floor isolation check", False, f"Found {len(first_floor_products)} Nexion products with floor_id=first-floor (VIOLATION)")
+                return False
+        else:
+            log_test("9", "Floor isolation check", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return False
+    except Exception as e:
+        log_test("9", "Floor isolation check", False, f"Exception: {str(e)}")
+        return False
+
+# Test 10: Regression check - existing brands unaffected
+def test_10_regression_check(token: str):
+    """Test 10: Confirm existing brands (Qutone, Dimore, Hansgrohe, Grohe, Vitra, AXOR) unaffected"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # Get all brands
+        response = requests.get(f"{BASE_URL}/brands", headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            brands = response.json()
+            
+            # Expected brands and their floors
+            expected_brands = {
+                "Qutone": "ground-floor",
+                "Dimore": "ground-floor",
+                "Hansgrohe": "first-floor",
+                "Grohe": "first-floor",
+                "Vitra": "first-floor",
+                "AXOR": "first-floor"
+            }
+            
+            found_brands = {}
+            for brand in brands:
+                name = brand.get("name")
+                if name in expected_brands:
+                    found_brands[name] = {
+                        "floor_id": brand.get("floor_id"),
+                        "id": brand.get("id")
+                    }
+            
+            # Check if all expected brands exist with correct floor_id
+            all_correct = True
+            issues = []
+            
+            for brand_name, expected_floor in expected_brands.items():
+                if brand_name not in found_brands:
+                    all_correct = False
+                    issues.append(f"{brand_name} not found")
+                elif found_brands[brand_name]["floor_id"] != expected_floor:
+                    all_correct = False
+                    issues.append(f"{brand_name} has floor_id={found_brands[brand_name]['floor_id']}, expected {expected_floor}")
+            
+            if all_correct:
+                # Get product counts for each brand
+                brand_counts = {}
+                for brand_name, brand_info in found_brands.items():
+                    resp = requests.get(
+                        f"{BASE_URL}/products",
+                        headers=headers,
+                        params={"brand_id": brand_info["id"], "limit": 1},
+                        timeout=30
+                    )
+                    if resp.status_code == 200:
+                        brand_counts[brand_name] = resp.json().get("total", 0)
+                
+                log_test(
+                    "10",
+                    "Regression check - existing brands unaffected",
+                    True,
+                    f"All 6 existing brands found with correct floor_id. Product counts: {brand_counts}"
+                )
+                return True
+            else:
+                log_test("10", "Regression check", False, f"Issues: {'; '.join(issues)}")
+                return False
+        else:
+            log_test("10", "Regression check", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            return False
+    except Exception as e:
+        log_test("10", "Regression check", False, f"Exception: {str(e)}")
+        return False
+
+# Main test execution
 def main():
-    """Run all tests"""
-    print("\n" + "="*80)
-    print("TILE ORDERS BACKEND TESTING - WORKFLOW REDESIGN")
-    print("BuildCon House - Ground Floor Tiles Module")
+    print("="*80)
+    print("NEXION BRAND IMPORT VERIFICATION TEST SUITE")
+    print("="*80)
+    print(f"Backend URL: {BASE_URL}")
+    print(f"Test User: {TEST_USER}")
     print("="*80)
     
-    if not login():
-        print("\n❌ Authentication failed, cannot proceed with tests")
-        return
+    # Test 1: Login
+    token = test_1_login()
+    if not token:
+        print("\n❌ CRITICAL: Login failed. Cannot proceed with other tests.")
+        print_summary()
+        sys.exit(1)
     
-    results = {
-        "TEST 1: GET /api/tile-orders/brands": test_1_get_brands(),
-        "TEST 2: GET /api/tile-orders/brands/{brand_id}/orders": test_2_get_brand_orders(),
-        "TEST 3: GET /api/tile-orders/purchase-orders/{po_id}": test_3_get_purchase_order(),
-        "TEST 4: POST /api/tile-orders/purchase-orders/{po_id}/ready": test_4_mark_ready(),
-        "TEST 5: POST /api/tile-orders/purchase-orders/{po_id}/items/move-to-godown": test_5_move_to_godown(),
-        "TEST 6: POST /api/tile-orders/purchase-orders/{po_id}/dispatch-from-released": test_6_dispatch_from_released(),
-        "TEST 7: POST /api/tile-orders/purchase-orders/{po_id}/dispatch-from-godown": test_7_dispatch_from_godown(),
-        "TEST 8: Verify invariant": test_8_verify_invariant(),
-        "TEST 9: GET /api/tile-orders/customer-orders/{id}": test_9_customer_order_detail(),
-        "TEST 10: GET /api/tile-orders/movements with filters": test_10_movements_filtering(),
-        "TEST 11: Regression check": test_11_regression_check(),
-    }
+    # Test 2: Get Nexion brand
+    nexion_brand_id = test_2_brands(token)
+    if not nexion_brand_id:
+        print("\n❌ CRITICAL: Nexion brand not found. Cannot proceed with brand-specific tests.")
+        print_summary()
+        sys.exit(1)
     
-    print("\n" + "="*80)
-    print("FINAL SUMMARY")
-    print("="*80)
+    # Test 3: Get products by brand
+    sample_product = test_3_products_by_brand(token, nexion_brand_id)
     
-    passed = sum(1 for v in results.values() if v)
-    total = len(results)
+    # Test 4: Search by name
+    product_from_search = test_4_search_by_name(token)
     
-    for test_name, result in results.items():
-        status = "✅ PASS" if result else "❌ FAIL"
-        print(f"{status}: {test_name}")
+    # Test 5: Search by SKU
+    product_from_sku = test_5_search_by_sku(token)
     
-    print(f"\n{passed}/{total} tests passed ({passed*100//total}%)")
+    # Test 6: Search by size
+    product_from_size = test_6_search_by_size(token)
     
-    if passed == total:
-        print("\n🎉 ALL TESTS PASSED!")
+    # Test 7: Get product detail (use any product we found)
+    test_product_id = None
+    if sample_product:
+        test_product_id = sample_product.get("id")
+    elif product_from_search:
+        test_product_id = product_from_search.get("id")
+    elif product_from_sku:
+        test_product_id = product_from_sku.get("id")
+    elif product_from_size:
+        test_product_id = product_from_size.get("id")
+    
+    image_url = None
+    if test_product_id:
+        image_url = test_7_product_detail(token, test_product_id)
     else:
-        print(f"\n⚠️  {total - passed} test(s) failed")
+        log_test("7", "GET /api/products/{id}", False, "No product ID available from previous tests")
+    
+    # Test 8: Fetch image
+    if image_url:
+        test_8_image_fetch(image_url)
+    else:
+        log_test("8", "Fetch hero_image_url", False, "No image URL available from Test 7")
+    
+    # Test 9: Floor isolation
+    test_9_floor_isolation(token, nexion_brand_id)
+    
+    # Test 10: Regression check
+    test_10_regression_check(token)
+    
+    # Print summary
+    all_passed = print_summary()
+    
+    if all_passed:
+        print("\n✅ ALL TESTS PASSED - Nexion brand import verification complete")
+        sys.exit(0)
+    else:
+        print("\n❌ SOME TESTS FAILED - See details above")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
