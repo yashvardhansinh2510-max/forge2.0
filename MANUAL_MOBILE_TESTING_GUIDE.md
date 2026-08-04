@@ -1,7 +1,7 @@
 # Manual Mobile/Tablet Quotation Builder Testing Guide
 
 ## Test Configuration
-- **URL**: https://tile-catalog-nexion.preview.emergentagent.com
+- **URL**: https://buildcon-preview.preview.emergentagent.com
 - **Login**: owner@forge.app / Forge@2026
 - **Test Path**: `/(admin)/quotations/new`
 
@@ -24,7 +24,7 @@ Test the FULL add-to-quotation flow at these 3 sizes, one at a time (fresh visit
 1. Open browser DevTools (F12)
 2. Toggle device toolbar (Ctrl+Shift+M or Cmd+Shift+M)
 3. Set custom dimensions for the current test size
-4. Navigate to: `https://tile-catalog-nexion.preview.emergentagent.com/login`
+4. Navigate to: `https://buildcon-preview.preview.emergentagent.com/login`
 5. Login with: owner@forge.app / Forge@2026
 6. Navigate to: `/(admin)/quotations/new`
 

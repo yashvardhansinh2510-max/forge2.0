@@ -5,7 +5,7 @@ Debug rate limit - check what IP the backend sees
 
 import requests
 
-BASE_URL = "https://tile-catalog-nexion.preview.emergentagent.com/api"
+BASE_URL = "https://buildcon-preview.preview.emergentagent.com/api"
 
 # Make a request and check headers
 response = requests.post(

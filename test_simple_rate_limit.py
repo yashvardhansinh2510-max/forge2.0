@@ -6,7 +6,7 @@ Simple rate limit test - just hammer with wrong password
 import requests
 import time
 
-BASE_URL = "https://tile-catalog-nexion.preview.emergentagent.com/api"
+BASE_URL = "https://buildcon-preview.preview.emergentagent.com/api"
 OWNER_EMAIL = "owner@forge.app"
 
 print("Simple rate limit test - 15 consecutive failed attempts")
