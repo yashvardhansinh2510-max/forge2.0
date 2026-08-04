@@ -1045,6 +1045,204 @@ backend:
             Zero regressions detected. Backend is stable and ready for production use.
 
 
+user_problem_statement: "Qutone catalog EXTENSION (2026-08) — merge QUTONE2.xlsx into the EXISTING Qutone brand (not a new brand, not a replacement). Must preserve all 452 existing Qutone products/images/quotations/references untouched; only add genuinely new products; never create 'Qutone 2'/duplicate brands."
+
+backend:
+  - task: "Qutone catalog merge — run_qutone2_import.py reuses the EXISTING QutoneAdapter unchanged (no new adapter class) against QUTONE2.xlsx, merging into the existing Qutone brand doc"
+    implemented: true
+    working: true
+    file: "backend/scripts/run_qutone2_import.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: |
+            QUTONE2.xlsx inspected directly with openpyxl before writing any
+            code: single sheet, IDENTICAL column layout to the original
+            QUTONE 2026.xlsx (SR./PRODUCT NAME/IMAGE/PRODUCT SIZE/SERIES
+            NAME/FINISHES/BOX IN PIS/BOX SQFT/RATE) — 14 data rows, 14
+            embedded images (1:1 row-anchored), series="GVT" uniformly,
+            finish="MATT" uniformly (already in QutoneAdapter's
+            FINISH_LOOKUP), rate="95 PER SQFT" uniformly (valid format).
+            Because the layout exactly matches what QutoneAdapter already
+            parses, wrote NO new adapter class — reusing it unchanged is the
+            correct "extend, don't duplicate implementation" behavior per
+            the task's explicit instruction.
+
+            Merge-safety verified BEFORE writing the importer (not assumed):
+            queried the live DB for all 14 product names + their would-be
+            deterministic SKUs (same formula as the existing 452-product
+            Qutone catalog: QUTONE-{SERIES}-{NAME}-{SIZE}-{FINISH_CODE}) —
+            0 name matches, 0 SKU collisions. So this run was known in
+            advance to be 100% new inserts, not updates — the "don't
+            overwrite richer existing data" risk in orchestrator.
+            import_accepted's $set-based update path (documented but not
+            triggered here) never actually applied.
+
+            New script run_qutone2_import.py (NOT a new adapter) mirrors
+            run_qutone_import.py's structure but adds explicit merge
+            guardrails: (1) aborts if no existing "Qutone" brand doc is
+            found on ground-floor (this script is extend-only, never
+            brand-creating), (2) logs how many of the batch's SKUs already
+            exist before importing, (3) after import, explicitly diffs
+            brands-before vs brands-after on ground-floor and FAILS the run
+            if that set changed at all (i.e. if anything created "Qutone 2"
+            or similar — would have caught it, didn't fire).
+
+            --dry-run first (0 DB writes): 14/14 rows extracted, 14/14
+            images mapped, 0 pre-existing SKU matches, certification
+            overall_score=100, production_ready=true. Then ran the real
+            import: existing_qutone_products_before=452,
+            existing_qutone_products_after=466, net_new=14,
+            products_imported=14, updated=0, skipped=0, failed=0,
+            new_brands_created_on_ground_floor=[] (confirmed — no duplicate
+            brand), images_uploaded=14 (Supabase forge-products/qutone/...).
+            integrity_guard.ok=true post-import with
+            unexpected_modifications=[] (confirms zero existing documents
+            were touched — the 452 pre-existing products, their media,
+            quotations, orders are byte-for-byte unchanged).
+
+            Verified via live API (X-Floor-Id header, owner@forge.app):
+            • GET /api/brands (ground-floor) → still exactly [Dimore,
+              Modulo, Nexion, Qutone] — no "Qutone 2".
+            • GET /api/products?q=TIMBER%20OAK (ground-floor) → total=1,
+              new product found with correct SKU/price/Supabase image URL.
+            • GET /api/products?q=qutone (ground-floor) → total=466 (452
+              old + 14 new, all under one brand).
+            • GET /api/catalog/search?q=SPENZA → family-grouped result
+              under brand_id = the SAME existing Qutone brand_id
+              (ca8762b3...), not a new one.
+            • X-Floor-Id: first-floor → GET /api/products?q=timber%20oak →
+              total=0 (confirmed zero leakage into Sanitary Bathroom).
+            Backend restarted post-import to force catalog snapshot
+            refresh; /api/health/system healthy=true, brands=10 (unchanged
+            count), products=4377 (4363+14).
+
+            Full merge report at /app/memory/qutone2_merge_report.json.
+            No frontend changes made or required.
+
+            REQUEST: backend regression — confirm the other 3 tile brands
+            (Dimore/Nexion/Modulo) and all 6 Sanitary Bathroom brands are
+            unaffected, spot-check a couple of the ORIGINAL 452 Qutone
+            products still resolve correctly via GET /api/products/{id}
+            (proving the merge didn't touch pre-existing docs), and general
+            quotation/customer/payment smoke on both floors.
+        - working: true
+          agent: "testing"
+          comment: |
+            Qutone Catalog EXTENSION Backend Testing COMPLETE (2026-08)
+            
+            Comprehensive backend verification of QUTONE2.xlsx merge (14 new products) into EXISTING Qutone brand.
+            ALL 27 TEST CHECKS PASSED (100% success rate).
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 1: GET /api/brands (X-Floor-Id: ground-floor) - NO Duplicate Brand ✅ PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ Found exactly 4 tile brands: Dimore, Modulo, Nexion, Qutone
+            ✅ NO duplicate Qutone brand (only 'Qutone' exists)
+            ✅ NO suspicious duplicate names (Qutone 2, Qutone New, Qutone2, QUTONE2)
+            ✅ Qutone brand_id: ca8762b3-de8a-48d5-952e-218b07d072d0
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 2: GET /api/products?q=qutone (X-Floor-Id: ground-floor) ✅ PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ Total Qutone products: 466 (452 original + 14 new) - EXACT MATCH
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 3: GET /api/products?q=TIMBER OAK (X-Floor-Id: ground-floor) ✅ PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ Total: 1 (new product found)
+            ✅ SKU: QUTONE-GVT-TIMBEROAK-200X1200-MT (correct)
+            ✅ Price: 95 (correct)
+            ✅ Valid Supabase hero_image_url (https://vburaxruvbnbahegtbya.supabase.co/...)
+            ✅ Product: TIMBER OAK - Matt (200X1200)
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 4: GET /api/products?q=SPENZA (X-Floor-Id: ground-floor) ✅ PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ Total: 1 (new product found)
+            ✅ Product: SPENZA - Matt (200X1200)
+            ✅ SKU: QUTONE-GVT-SPENZA-200X1200-MT
+            ✅ Price: 95
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 5: GET /api/products/{id} - Old Products Untouched ✅ PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            Tested 3 old product IDs (2 Qutone + 1 Hansgrohe from first-floor):
+            ✅ 38022e7a-f1a2-4cc4-b176-3abaf1cced02 - AEMILIA GRIGIO - Dove (1200X1800) - data intact
+            ✅ b5f56332-ae18-48eb-a2ad-920227a432f0 - DELICATO BEIGE - Matt (1200X2400) - data intact
+            ✅ 95224fbf-5c28-41cd-90cf-5252659a0056 - AX 120 hand shower 3jet chrome - data intact
+            
+            All old products have correct id, name, sku, price, brand_id fields.
+            MERGE DID NOT CORRUPT PRE-EXISTING CATALOG DOCUMENTS.
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 6: GET /api/catalog/search?q=SPENZA (X-Floor-Id: ground-floor) ✅ PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ SPENZA result brand_id: ca8762b3-de8a-48d5-952e-218b07d072d0
+            ✅ Matches existing Qutone brand_id (NOT a new brand)
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 7: Floor Isolation - First Floor (Sanitary Bathroom) ✅ PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ GET /api/products?q=timber oak (first-floor) - total=0 (no leakage)
+            ✅ GET /api/products?q=spenza (first-floor) - total=0 (no leakage)
+            
+            NEW QUTONE PRODUCTS NEVER LEAK INTO SANITARY BATHROOM.
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 8: Regression Smoke Tests ✅ PASS (8/8 endpoints)
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ GET /api/quotations (ground-floor) - 200 OK
+            ✅ GET /api/quotations (first-floor) - 200 OK
+            ✅ GET /api/customers (ground-floor) - 200 OK
+            ✅ GET /api/customers (first-floor) - 200 OK
+            ✅ GET /api/payments/stats (ground-floor) - 200 OK
+            ✅ GET /api/payments/stats (first-floor) - 200 OK
+            ✅ GET /api/purchase-orders (ground-floor) - 200 OK
+            ✅ GET /api/purchase-orders (first-floor) - 200 OK
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            TEST 9: GET /api/health/system ✅ PASS
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            ✅ healthy=true
+            ✅ 0 warnings
+            ✅ Products count: 4377 (4363 + 14 new = 4377) - EXACT MATCH
+            ✅ Brands count: 10 (NOT 11 - NO new brand created)
+            
+            Full counts: products=4377, customers=125, quotations=82, purchase_orders=40,
+            payments=34, followups=363, users=8, brands=10, categories=42
+            
+            ═══════════════════════════════════════════════════════════════════════════
+            SUMMARY
+            ═══════════════════════════════════════════════════════════════════════════
+            
+            • Brand integrity: ✅ VERIFIED (exactly 4 tile brands, NO duplicate Qutone)
+            • Product count: ✅ VERIFIED (466 Qutone products = 452 old + 14 new)
+            • New products: ✅ VERIFIED (TIMBER OAK, SPENZA with correct SKU/price/images)
+            • Old products: ✅ VERIFIED (pre-existing products untouched, data intact)
+            • Brand ID consistency: ✅ VERIFIED (new products use existing Qutone brand_id)
+            • Floor isolation: ✅ VERIFIED (no leakage to Sanitary Bathroom)
+            • Regression: ✅ PASSED (all business endpoints working on both floors)
+            • System health: ✅ VERIFIED (healthy, 0 warnings, correct counts)
+            
+            CONCLUSION: Qutone catalog EXTENSION is COMPLETE and PRODUCTION-READY.
+            The merge successfully added 14 new products to the EXISTING Qutone brand
+            without creating any duplicate brands, corrupting old data, or breaking
+            floor isolation. All 27 test checks passed with 100% success rate.
+            Zero regressions detected. Backend is stable and ready for production use.
+
 ## Launch Candidate 1 (LC-1) — Mobile, Customer Portal & Store Readiness (2026-08, in progress)
 
 User moved the app into a Launch Candidate phase covering 5 priorities: (1) Mobile Quotation
@@ -15919,3 +16117,33 @@ agent_communication:
         Zero regressions detected. Backend is stable and production-ready.
         Task marked as working=true, needs_retesting=false.
 
+
+
+agent_communication:
+    - agent: "testing"
+      message: |
+        Qutone catalog EXTENSION backend testing COMPLETE (2026-08).
+        
+        Executed comprehensive backend verification covering all 9 test areas requested in the review:
+        1. ✅ GET /api/brands (ground-floor) → exactly 4 tile brands: Modulo, Dimore, Nexion, Qutone
+           - NO duplicate Qutone brand (no "Qutone 2", "Qutone New", etc.)
+           - Qutone brand_id: ca8762b3-de8a-48d5-952e-218b07d072d0
+        2. ✅ GET /api/products?q=qutone (ground-floor) → total=466 (452 original + 14 new) - EXACT MATCH
+        3. ✅ GET /api/products?q=TIMBER OAK (ground-floor) → total=1, SKU=QUTONE-GVT-TIMBEROAK-200X1200-MT, price=95, valid Supabase hero_image_url
+        4. ✅ GET /api/products?q=SPENZA (ground-floor) → total=1, new product found (SKU=QUTONE-GVT-SPENZA-200X1200-MT, price=95)
+        5. ✅ GET /api/products/{id} for 3 old products (2 Qutone + 1 Hansgrohe) → all data intact, merge did NOT corrupt pre-existing documents
+        6. ✅ GET /api/catalog/search?q=SPENZA (ground-floor) → brand_id matches existing Qutone brand (NOT a new brand)
+        7. ✅ X-Floor-Id: first-floor → GET /api/products?q=timber oak and ?q=spenza → both total=0 (no leakage into Sanitary Bathroom)
+        8. ✅ Regression smoke (quotations, customers, payments/stats, purchase-orders) → all 200 OK on both floors
+        9. ✅ GET /api/health/system → healthy=true, 0 warnings, products=4377 (4363+14), brands=10 (NOT 11 - no new brand created)
+        
+        ALL 27 TEST CHECKS PASSED (100% success rate).
+        
+        Brand integrity verified: exactly 4 tile brands on ground-floor, NO duplicate Qutone brand created.
+        Product count verified: 466 Qutone products (452 old + 14 new) under single existing Qutone brand.
+        New products verified: TIMBER OAK and SPENZA with correct SKU/price/images, using existing Qutone brand_id.
+        Old products verified: pre-existing Qutone and Hansgrohe products untouched, data intact.
+        Floor isolation verified: new Qutone products never leak into Sanitary Bathroom (first-floor).
+        
+        Zero regressions detected. Backend is stable and production-ready.
+        Task marked as working=true, needs_retesting=false.

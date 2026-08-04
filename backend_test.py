@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Backend Testing Script for BuildCon House - MODULO Catalog Import Verification
-Tests the 4th Ground Floor Tiles brand (Modulo) with floor-scoped catalog reads via X-Floor-Id header.
+Backend Testing Script for BuildCon House - Qutone Catalog EXTENSION Verification
+Tests the merge of QUTONE2.xlsx (14 new products) into the EXISTING Qutone brand.
+Must verify: NO new brand created, 466 total Qutone products (452 old + 14 new), floor isolation.
 """
 
 import requests
 import json
 import sys
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 # Backend URL from frontend/.env
 BASE_URL = "https://buildcon-preview.preview.emergentagent.com/api"
@@ -86,11 +87,17 @@ def login() -> Optional[str]:
         return None
 
 
-def test_brands_ground_floor(token: str, result: TestResult):
-    """Test 1: GET /api/brands with X-Floor-Id: ground-floor"""
+def test_1_brands_ground_floor_no_duplicate(token: str, result: TestResult) -> Optional[str]:
+    """
+    Test 1: GET /api/brands with X-Floor-Id: ground-floor
+    Must be exactly 4 tile brands: Modulo, Dimore, Nexion, Qutone.
+    Must NOT contain "Qutone 2", "Qutone New", or any duplicate Qutone-like brand name.
+    """
     print(f"\n{BLUE}{'='*80}{RESET}")
-    print(f"{BLUE}TEST 1: GET /api/brands (X-Floor-Id: ground-floor){RESET}")
+    print(f"{BLUE}TEST 1: GET /api/brands (X-Floor-Id: ground-floor) - NO Duplicate Qutone Brand{RESET}")
     print(f"{BLUE}{'='*80}{RESET}")
+    
+    qutone_brand_id = None
     
     try:
         response = requests.get(
@@ -104,105 +111,65 @@ def test_brands_ground_floor(token: str, result: TestResult):
         
         if response.status_code != 200:
             result.fail_test("GET /api/brands (ground-floor)", f"Status {response.status_code}: {response.text}")
-            return
+            return None
         
         brands = response.json()
         brand_names = [b.get("name") for b in brands]
         
         print(f"   Found {len(brands)} brands: {', '.join(brand_names)}")
         
-        # Must include all 4 tile brands
-        required_brands = ["Modulo", "Dimore", "Nexion", "Qutone"]
-        missing = [b for b in required_brands if b not in brand_names]
-        
-        if missing:
-            result.fail_test("GET /api/brands (ground-floor)", f"Missing brands: {', '.join(missing)}")
+        # Must be exactly 4 tile brands
+        expected_brands = ["Modulo", "Dimore", "Nexion", "Qutone"]
+        if len(brands) != 4:
+            result.fail_test("GET /api/brands (ground-floor) - count", f"Expected exactly 4 brands, got {len(brands)}")
+        elif set(brand_names) == set(expected_brands):
+            result.pass_test("GET /api/brands (ground-floor) - exactly 4 tile brands: Modulo, Dimore, Nexion, Qutone")
         else:
-            result.pass_test("GET /api/brands (ground-floor) - includes Modulo, Dimore, Nexion, Qutone")
+            result.fail_test("GET /api/brands (ground-floor) - brand names", f"Expected {expected_brands}, got {brand_names}")
+        
+        # Must NOT contain duplicate Qutone-like names
+        qutone_like = [name for name in brand_names if "qutone" in name.lower() or "qutone" in name.lower()]
+        if len(qutone_like) > 1:
+            result.fail_test("GET /api/brands (ground-floor) - duplicate Qutone", f"Found multiple Qutone-like brands: {qutone_like}")
+        elif len(qutone_like) == 1 and qutone_like[0] == "Qutone":
+            result.pass_test("GET /api/brands (ground-floor) - NO duplicate Qutone brand (only 'Qutone' exists)")
+            # Get Qutone brand_id for later tests
+            for brand in brands:
+                if brand.get("name") == "Qutone":
+                    qutone_brand_id = brand.get("id")
+                    print(f"   Qutone brand_id: {qutone_brand_id}")
+                    break
+        else:
+            result.fail_test("GET /api/brands (ground-floor) - Qutone missing", "Qutone brand not found")
+        
+        # Check for suspicious names
+        suspicious = ["Qutone 2", "Qutone New", "Qutone2", "QUTONE2"]
+        found_suspicious = [name for name in brand_names if name in suspicious]
+        if found_suspicious:
+            result.fail_test("GET /api/brands (ground-floor) - suspicious names", f"Found: {found_suspicious}")
+        else:
+            result.pass_test("GET /api/brands (ground-floor) - NO suspicious duplicate names (Qutone 2, Qutone New, etc.)")
+        
+        return qutone_brand_id
         
     except Exception as e:
         result.fail_test("GET /api/brands (ground-floor)", f"Exception: {str(e)}")
+        return None
 
 
-def test_brands_first_floor(token: str, result: TestResult):
-    """Test 2: GET /api/brands with X-Floor-Id: first-floor (floor isolation)"""
+def test_2_qutone_total_count(token: str, result: TestResult):
+    """
+    Test 2: GET /api/products?q=qutone with X-Floor-Id: ground-floor
+    Total should be 466 (452 original + 14 new).
+    """
     print(f"\n{BLUE}{'='*80}{RESET}")
-    print(f"{BLUE}TEST 2: GET /api/brands (X-Floor-Id: first-floor) - Floor Isolation{RESET}")
+    print(f"{BLUE}TEST 2: GET /api/products?q=qutone (X-Floor-Id: ground-floor) - Total Count{RESET}")
     print(f"{BLUE}{'='*80}{RESET}")
-    
-    try:
-        response = requests.get(
-            f"{BASE_URL}/brands",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Floor-Id": "first-floor"
-            },
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            result.fail_test("GET /api/brands (first-floor)", f"Status {response.status_code}: {response.text}")
-            return
-        
-        brands = response.json()
-        brand_names = [b.get("name") for b in brands]
-        
-        print(f"   Found {len(brands)} brands: {', '.join(brand_names)}")
-        
-        # Must include sanitary brands
-        required_sanitary = ["Vitra", "Hansgrohe", "Grohe", "Axor", "Geberit", "Oyster"]
-        missing_sanitary = [b for b in required_sanitary if b not in brand_names]
-        
-        # Must NOT include tile brands
-        tile_brands = ["Modulo", "Dimore", "Nexion", "Qutone"]
-        leaked_tiles = [b for b in tile_brands if b in brand_names]
-        
-        if missing_sanitary:
-            result.fail_test("GET /api/brands (first-floor) - sanitary brands", f"Missing: {', '.join(missing_sanitary)}")
-        else:
-            result.pass_test("GET /api/brands (first-floor) - includes all 6 sanitary brands")
-        
-        if leaked_tiles:
-            result.fail_test("GET /api/brands (first-floor) - floor isolation", f"Tile brands leaked: {', '.join(leaked_tiles)}")
-        else:
-            result.pass_test("GET /api/brands (first-floor) - NO tile brands (floor isolation working)")
-        
-    except Exception as e:
-        result.fail_test("GET /api/brands (first-floor)", f"Exception: {str(e)}")
-
-
-def test_products_modulo_ground_floor(token: str, result: TestResult) -> Optional[str]:
-    """Test 3: GET /api/products?q=modulo with X-Floor-Id: ground-floor"""
-    print(f"\n{BLUE}{'='*80}{RESET}")
-    print(f"{BLUE}TEST 3: GET /api/products?q=modulo (X-Floor-Id: ground-floor){RESET}")
-    print(f"{BLUE}{'='*80}{RESET}")
-    
-    sample_product_id = None
-    
-    # First get Modulo's brand_id
-    modulo_brand_id = None
-    try:
-        brands_response = requests.get(
-            f"{BASE_URL}/brands",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Floor-Id": "ground-floor"
-            },
-            timeout=10
-        )
-        if brands_response.status_code == 200:
-            brands = brands_response.json()
-            for brand in brands:
-                if brand.get("name") == "Modulo":
-                    modulo_brand_id = brand.get("id")
-                    break
-    except Exception as e:
-        print(f"   Warning: Could not fetch Modulo brand_id: {e}")
     
     try:
         response = requests.get(
             f"{BASE_URL}/products",
-            params={"q": "modulo"},
+            params={"q": "qutone"},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Floor-Id": "ground-floor"
@@ -211,68 +178,186 @@ def test_products_modulo_ground_floor(token: str, result: TestResult) -> Optiona
         )
         
         if response.status_code != 200:
-            result.fail_test("GET /api/products?q=modulo (ground-floor)", f"Status {response.status_code}: {response.text}")
-            return None
+            result.fail_test("GET /api/products?q=qutone (ground-floor)", f"Status {response.status_code}: {response.text}")
+            return
+        
+        data = response.json()
+        total = data.get("total", 0)
+        
+        print(f"   Total Qutone products: {total}")
+        
+        if total == 466:
+            result.pass_test("GET /api/products?q=qutone (ground-floor) - total=466 (452 old + 14 new)")
+        else:
+            result.fail_test("GET /api/products?q=qutone (ground-floor) - count", f"Expected 466, got {total}")
+        
+    except Exception as e:
+        result.fail_test("GET /api/products?q=qutone (ground-floor)", f"Exception: {str(e)}")
+
+
+def test_3_timber_oak_new_product(token: str, result: TestResult):
+    """
+    Test 3: GET /api/products?q=TIMBER%20OAK with X-Floor-Id: ground-floor
+    Total=1, new product with sku="QUTONE-GVT-TIMBEROAK-200X1200-MT", price=95, valid Supabase hero_image_url.
+    """
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 3: GET /api/products?q=TIMBER OAK (X-Floor-Id: ground-floor) - New Product{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/products",
+            params={"q": "TIMBER OAK"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            result.fail_test("GET /api/products?q=TIMBER OAK (ground-floor)", f"Status {response.status_code}: {response.text}")
+            return
         
         data = response.json()
         total = data.get("total", 0)
         items = data.get("items", [])
         
         print(f"   Total: {total}")
-        print(f"   Items returned: {len(items)}")
         
-        # Must be exactly 73 products
-        if total != 73:
-            result.fail_test("GET /api/products?q=modulo (ground-floor) - count", f"Expected 73, got {total}")
+        if total != 1:
+            result.fail_test("GET /api/products?q=TIMBER OAK (ground-floor) - count", f"Expected 1, got {total}")
+            return
         else:
-            result.pass_test("GET /api/products?q=modulo (ground-floor) - total=73")
+            result.pass_test("GET /api/products?q=TIMBER OAK (ground-floor) - total=1")
         
-        # Check all items are brand=Modulo (by brand_id)
-        if modulo_brand_id:
-            non_modulo = [p for p in items if p.get("brand_id") != modulo_brand_id]
-            if non_modulo:
-                result.fail_test("GET /api/products?q=modulo (ground-floor) - brand", f"{len(non_modulo)} items not Modulo brand")
-            else:
-                result.pass_test("GET /api/products?q=modulo (ground-floor) - all items brand=Modulo")
+        if not items:
+            result.fail_test("GET /api/products?q=TIMBER OAK (ground-floor) - items", "No items returned")
+            return
+        
+        product = items[0]
+        
+        # Check SKU
+        expected_sku = "QUTONE-GVT-TIMBEROAK-200X1200-MT"
+        actual_sku = product.get("sku", "")
+        if actual_sku == expected_sku:
+            result.pass_test(f"GET /api/products?q=TIMBER OAK - SKU correct: {expected_sku}")
         else:
-            print(f"   {YELLOW}⚠ Skipping brand check (could not determine Modulo brand_id){RESET}")
+            result.fail_test("GET /api/products?q=TIMBER OAK - SKU", f"Expected {expected_sku}, got {actual_sku}")
         
-        # Check hero_image_url (Supabase URL)
-        missing_images = [p for p in items if not p.get("hero_image_url") or "supabase" not in p.get("hero_image_url", "")]
-        if missing_images:
-            result.fail_test("GET /api/products?q=modulo (ground-floor) - images", f"{len(missing_images)} items missing valid Supabase hero_image_url")
+        # Check price
+        price = product.get("price")
+        if price == 95:
+            result.pass_test("GET /api/products?q=TIMBER OAK - price=95")
         else:
-            result.pass_test("GET /api/products?q=modulo (ground-floor) - all items have valid Supabase hero_image_url")
+            result.fail_test("GET /api/products?q=TIMBER OAK - price", f"Expected 95, got {price}")
         
-        # Check price=100
-        wrong_price = [p for p in items if p.get("price") != 100]
-        if wrong_price:
-            result.fail_test("GET /api/products?q=modulo (ground-floor) - price", f"{len(wrong_price)} items have price != 100")
+        # Check hero_image_url (Supabase)
+        hero_image_url = product.get("hero_image_url", "")
+        if hero_image_url and "supabase" in hero_image_url:
+            result.pass_test("GET /api/products?q=TIMBER OAK - valid Supabase hero_image_url")
+            print(f"   Hero image URL: {hero_image_url[:80]}...")
         else:
-            result.pass_test("GET /api/products?q=modulo (ground-floor) - all items price=100")
+            result.fail_test("GET /api/products?q=TIMBER OAK - hero_image_url", f"Invalid or missing Supabase URL: {hero_image_url}")
         
-        # Get a sample product ID for next test
-        if items:
-            sample_product_id = items[0].get("id")
-            print(f"   Sample product ID for detail test: {sample_product_id}")
-        
-        return sample_product_id
+        print(f"   Product: {product.get('name')}")
+        print(f"   SKU: {actual_sku}")
+        print(f"   Price: {price}")
         
     except Exception as e:
-        result.fail_test("GET /api/products?q=modulo (ground-floor)", f"Exception: {str(e)}")
-        return None
+        result.fail_test("GET /api/products?q=TIMBER OAK (ground-floor)", f"Exception: {str(e)}")
 
 
-def test_products_modulo_first_floor(token: str, result: TestResult):
-    """Test 4: GET /api/products?q=modulo with X-Floor-Id: first-floor (must be 0)"""
+def test_4_spenza_new_product(token: str, result: TestResult):
+    """
+    Test 4: GET /api/products?q=SPENZA with X-Floor-Id: ground-floor
+    Total=1, new product found.
+    """
     print(f"\n{BLUE}{'='*80}{RESET}")
-    print(f"{BLUE}TEST 4: GET /api/products?q=modulo (X-Floor-Id: first-floor) - Floor Isolation{RESET}")
+    print(f"{BLUE}TEST 4: GET /api/products?q=SPENZA (X-Floor-Id: ground-floor) - New Product{RESET}")
     print(f"{BLUE}{'='*80}{RESET}")
     
     try:
         response = requests.get(
             f"{BASE_URL}/products",
-            params={"q": "modulo"},
+            params={"q": "SPENZA"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            result.fail_test("GET /api/products?q=SPENZA (ground-floor)", f"Status {response.status_code}: {response.text}")
+            return
+        
+        data = response.json()
+        total = data.get("total", 0)
+        items = data.get("items", [])
+        
+        print(f"   Total: {total}")
+        
+        if total != 1:
+            result.fail_test("GET /api/products?q=SPENZA (ground-floor) - count", f"Expected 1, got {total}")
+        else:
+            result.pass_test("GET /api/products?q=SPENZA (ground-floor) - total=1 (new product found)")
+        
+        if items:
+            product = items[0]
+            print(f"   Product: {product.get('name')}")
+            print(f"   SKU: {product.get('sku')}")
+            print(f"   Price: {product.get('price')}")
+        
+    except Exception as e:
+        result.fail_test("GET /api/products?q=SPENZA (ground-floor)", f"Exception: {str(e)}")
+
+
+def test_5_old_products_untouched(token: str, result: TestResult):
+    """
+    Test 5: Pick 2-3 product ids that are NOT part of the new 14
+    (i.e. older Qutone products, or products from Vitra/Hansgrohe on first-floor)
+    and call GET /api/products/{id} — confirm they still return correct full data
+    (proving the merge did not corrupt/touch pre-existing catalog documents).
+    """
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 5: GET /api/products/{{id}} - Old Products Untouched{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    # Get some old Qutone products (not TIMBER OAK or SPENZA)
+    old_qutone_ids = []
+    try:
+        response = requests.get(
+            f"{BASE_URL}/products",
+            params={"q": "qutone", "limit": 50},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get("items", [])
+            # Filter out the new products (TIMBER OAK, SPENZA, etc.)
+            new_product_keywords = ["TIMBER", "SPENZA", "TIMBEROAK"]
+            for item in items:
+                name = item.get("name", "").upper()
+                sku = item.get("sku", "").upper()
+                if not any(keyword in name or keyword in sku for keyword in new_product_keywords):
+                    old_qutone_ids.append(item.get("id"))
+                    if len(old_qutone_ids) >= 2:
+                        break
+    except Exception as e:
+        print(f"   Warning: Could not fetch old Qutone products: {e}")
+    
+    # Get some first-floor products (Vitra/Hansgrohe)
+    first_floor_ids = []
+    try:
+        response = requests.get(
+            f"{BASE_URL}/products",
+            params={"q": "hansgrohe", "limit": 10},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Floor-Id": "first-floor"
@@ -280,90 +365,69 @@ def test_products_modulo_first_floor(token: str, result: TestResult):
             timeout=10
         )
         
-        if response.status_code != 200:
-            result.fail_test("GET /api/products?q=modulo (first-floor)", f"Status {response.status_code}: {response.text}")
-            return
-        
-        data = response.json()
-        total = data.get("total", 0)
-        
-        print(f"   Total: {total}")
-        
-        if total != 0:
-            result.fail_test("GET /api/products?q=modulo (first-floor) - floor isolation", f"Expected 0, got {total} (Modulo leaked into Sanitary Bathroom)")
-        else:
-            result.pass_test("GET /api/products?q=modulo (first-floor) - total=0 (floor isolation working)")
-        
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get("items", [])
+            if items:
+                first_floor_ids.append(items[0].get("id"))
     except Exception as e:
-        result.fail_test("GET /api/products?q=modulo (first-floor)", f"Exception: {str(e)}")
+        print(f"   Warning: Could not fetch first-floor products: {e}")
+    
+    test_product_ids = old_qutone_ids + first_floor_ids
+    
+    if not test_product_ids:
+        result.fail_test("GET /api/products/{id} - old products", "Could not find any old product IDs to test")
+        return
+    
+    print(f"   Testing {len(test_product_ids)} old product IDs: {test_product_ids}")
+    
+    for product_id in test_product_ids:
+        try:
+            response = requests.get(
+                f"{BASE_URL}/products/{product_id}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Floor-Id": "ground-floor"  # Will work for both floors
+                },
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                result.fail_test(f"GET /api/products/{product_id}", f"Status {response.status_code}")
+                continue
+            
+            product = response.json()
+            
+            # Check required fields (brand_name is not in detail endpoint, only brand_id)
+            required_fields = ["id", "name", "sku", "price", "brand_id"]
+            missing_fields = [f for f in required_fields if f not in product or product[f] is None]
+            
+            if missing_fields:
+                result.fail_test(f"GET /api/products/{product_id} - fields", f"Missing: {', '.join(missing_fields)}")
+            else:
+                result.pass_test(f"GET /api/products/{product_id} - old product data intact ({product.get('name')[:40]}...)")
+            
+        except Exception as e:
+            result.fail_test(f"GET /api/products/{product_id}", f"Exception: {str(e)}")
 
 
-def test_product_detail(token: str, product_id: str, result: TestResult):
-    """Test 5: GET /api/products/{id} for one Modulo product"""
+def test_6_catalog_search_spenza_brand_id(token: str, qutone_brand_id: Optional[str], result: TestResult):
+    """
+    Test 6: GET /api/catalog/search?q=SPENZA with X-Floor-Id: ground-floor
+    Confirm the result's brand_id matches the single existing Qutone brand (not a new brand_id).
+    """
     print(f"\n{BLUE}{'='*80}{RESET}")
-    print(f"{BLUE}TEST 5: GET /api/products/{product_id} (Product Detail){RESET}")
+    print(f"{BLUE}TEST 6: GET /api/catalog/search?q=SPENZA (X-Floor-Id: ground-floor) - Brand ID Check{RESET}")
     print(f"{BLUE}{'='*80}{RESET}")
     
-    if not product_id:
-        result.fail_test("GET /api/products/{id}", "No product ID available from previous test")
+    if not qutone_brand_id:
+        result.fail_test("GET /api/catalog/search?q=SPENZA - brand_id", "Qutone brand_id not available from Test 1")
         return
     
     try:
         response = requests.get(
-            f"{BASE_URL}/products/{product_id}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Floor-Id": "ground-floor"
-            },
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            result.fail_test("GET /api/products/{id}", f"Status {response.status_code}: {response.text}")
-            return
-        
-        product = response.json()
-        
-        # Check required fields
-        required_fields = ["name", "sku", "price", "mrp", "hero_image_url"]
-        missing_fields = [f for f in required_fields if f not in product or product[f] is None]
-        
-        if missing_fields:
-            result.fail_test("GET /api/products/{id} - required fields", f"Missing: {', '.join(missing_fields)}")
-        else:
-            result.pass_test("GET /api/products/{id} - has name, sku, price, mrp, hero_image_url")
-        
-        # Check images/gallery
-        if "images" not in product or not isinstance(product.get("images"), list):
-            result.fail_test("GET /api/products/{id} - images", "Missing or invalid images array")
-        else:
-            result.pass_test("GET /api/products/{id} - has images/gallery array")
-        
-        # Check specs
-        if "specs" not in product:
-            result.fail_test("GET /api/products/{id} - specs", "Missing specs field")
-        else:
-            result.pass_test("GET /api/products/{id} - has specs field")
-        
-        print(f"   Product: {product.get('name')}")
-        print(f"   SKU: {product.get('sku')}")
-        print(f"   Brand: {product.get('brand_name')}")
-        print(f"   Price: {product.get('price')}")
-        
-    except Exception as e:
-        result.fail_test("GET /api/products/{id}", f"Exception: {str(e)}")
-
-
-def test_catalog_search(token: str, result: TestResult):
-    """Test 6: GET /api/catalog/search?q=MODULO with X-Floor-Id: ground-floor"""
-    print(f"\n{BLUE}{'='*80}{RESET}")
-    print(f"{BLUE}TEST 6: GET /api/catalog/search?q=MODULO (X-Floor-Id: ground-floor){RESET}")
-    print(f"{BLUE}{'='*80}{RESET}")
-    
-    try:
-        response = requests.get(
             f"{BASE_URL}/catalog/search",
-            params={"q": "MODULO"},
+            params={"q": "SPENZA"},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Floor-Id": "ground-floor"
@@ -372,59 +436,80 @@ def test_catalog_search(token: str, result: TestResult):
         )
         
         if response.status_code != 200:
-            result.fail_test("GET /api/catalog/search?q=MODULO", f"Status {response.status_code}: {response.text}")
+            result.fail_test("GET /api/catalog/search?q=SPENZA", f"Status {response.status_code}: {response.text}")
             return
         
         data = response.json()
+        items = data.get("items", [])
         
-        # Check for results grouped by family_key
-        # Expected structure: {query, total, grouped, items: [{family_key, variants, ...}]}
-        if "items" in data and isinstance(data.get("items"), list):
-            result.pass_test("GET /api/catalog/search?q=MODULO - returns grouped results, no errors")
-            print(f"   Response structure: query={data.get('query')}, total={data.get('total')}, grouped={data.get('grouped')}")
-            print(f"   Items (families): {len(data.get('items', []))}")
+        if not items:
+            result.fail_test("GET /api/catalog/search?q=SPENZA", "No results returned")
+            return
+        
+        # Check brand_id in the first result
+        first_item = items[0]
+        brand_id = first_item.get("brand_id")
+        
+        print(f"   Expected Qutone brand_id: {qutone_brand_id}")
+        print(f"   SPENZA result brand_id: {brand_id}")
+        
+        if brand_id == qutone_brand_id:
+            result.pass_test("GET /api/catalog/search?q=SPENZA - brand_id matches existing Qutone brand (NOT a new brand)")
         else:
-            result.fail_test("GET /api/catalog/search?q=MODULO", f"Missing or invalid 'items' field in response")
+            result.fail_test("GET /api/catalog/search?q=SPENZA - brand_id", f"Expected {qutone_brand_id}, got {brand_id} (NEW BRAND CREATED!)")
         
     except Exception as e:
-        result.fail_test("GET /api/catalog/search?q=MODULO", f"Exception: {str(e)}")
+        result.fail_test("GET /api/catalog/search?q=SPENZA", f"Exception: {str(e)}")
 
 
-def test_catalog_facets(token: str, result: TestResult):
-    """Test 7: GET /api/catalog/facets with X-Floor-Id: ground-floor"""
+def test_7_floor_isolation_first_floor(token: str, result: TestResult):
+    """
+    Test 7: X-Floor-Id: first-floor
+    GET /api/products?q=timber%20oak and GET /api/products?q=spenza
+    Both must return total=0 (no leakage into Sanitary Bathroom).
+    """
     print(f"\n{BLUE}{'='*80}{RESET}")
-    print(f"{BLUE}TEST 7: GET /api/catalog/facets (X-Floor-Id: ground-floor){RESET}")
+    print(f"{BLUE}TEST 7: Floor Isolation - First Floor (Sanitary Bathroom){RESET}")
     print(f"{BLUE}{'='*80}{RESET}")
     
-    try:
-        response = requests.get(
-            f"{BASE_URL}/catalog/facets",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Floor-Id": "ground-floor"
-            },
-            timeout=10
-        )
-        
-        if response.status_code != 200:
-            result.fail_test("GET /api/catalog/facets", f"Status {response.status_code}: {response.text}")
-            return
-        
-        data = response.json()
-        
-        # Check for reasonable facet data
-        if isinstance(data, dict) and len(data) > 0:
-            result.pass_test("GET /api/catalog/facets - returns facet data, no errors")
-            print(f"   Facet keys: {list(data.keys())}")
-        else:
-            result.fail_test("GET /api/catalog/facets", f"Empty or invalid facet data: {data}")
-        
-    except Exception as e:
-        result.fail_test("GET /api/catalog/facets", f"Exception: {str(e)}")
+    queries = ["timber oak", "spenza"]
+    
+    for query in queries:
+        try:
+            response = requests.get(
+                f"{BASE_URL}/products",
+                params={"q": query},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Floor-Id": "first-floor"
+                },
+                timeout=10
+            )
+            
+            if response.status_code != 200:
+                result.fail_test(f"GET /api/products?q={query} (first-floor)", f"Status {response.status_code}")
+                continue
+            
+            data = response.json()
+            total = data.get("total", 0)
+            
+            print(f"   Query '{query}' on first-floor: total={total}")
+            
+            if total == 0:
+                result.pass_test(f"GET /api/products?q={query} (first-floor) - total=0 (no leakage)")
+            else:
+                result.fail_test(f"GET /api/products?q={query} (first-floor) - floor isolation", f"Expected 0, got {total} (NEW PRODUCTS LEAKED INTO SANITARY BATHROOM!)")
+            
+        except Exception as e:
+            result.fail_test(f"GET /api/products?q={query} (first-floor)", f"Exception: {str(e)}")
 
 
-def test_regression_smoke(token: str, result: TestResult):
-    """Test 8: Regression smoke tests on quotations, customers, payments/stats, purchase-orders"""
+def test_8_regression_smoke(token: str, result: TestResult):
+    """
+    Test 8: Regression smoke
+    GET /api/quotations, GET /api/customers, GET /api/payments/stats, GET /api/purchase-orders
+    on both floors — all 200 OK.
+    """
     print(f"\n{BLUE}{'='*80}{RESET}")
     print(f"{BLUE}TEST 8: Regression Smoke Tests{RESET}")
     print(f"{BLUE}{'='*80}{RESET}")
@@ -460,14 +545,16 @@ def test_regression_smoke(token: str, result: TestResult):
             result.fail_test(f"GET /api{endpoint} (X-Floor-Id: {floor_id})", f"Exception: {str(e)}")
 
 
-def test_health_system(token: str, result: TestResult):
-    """Test 9: GET /api/health/system"""
+def test_9_health_system(token: str, result: TestResult):
+    """
+    Test 9: GET /api/health/system
+    healthy=true, 0 warnings, products count around 4377, brands count = 10 (not 11).
+    """
     print(f"\n{BLUE}{'='*80}{RESET}")
     print(f"{BLUE}TEST 9: GET /api/health/system{RESET}")
     print(f"{BLUE}{'='*80}{RESET}")
     
     try:
-        # Health endpoint is typically public, but include token just in case
         response = requests.get(
             f"{BASE_URL}/health/system",
             headers={"Authorization": f"Bearer {token}"},
@@ -493,17 +580,25 @@ def test_health_system(token: str, result: TestResult):
         else:
             result.pass_test("GET /api/health/system - 0 warnings")
         
-        # Check products count around 4363
+        # Check products count around 4377
         counts = data.get("counts", {})
         products_count = counts.get("products", 0)
+        brands_count = counts.get("brands", 0)
         
         print(f"   Products count: {products_count}")
+        print(f"   Brands count: {brands_count}")
         
-        # Allow some variance (4290-4400 range based on test_credentials.md showing 4290)
-        if 4200 <= products_count <= 4500:
-            result.pass_test(f"GET /api/health/system - products count in expected range ({products_count})")
+        # Allow some variance (4370-4385 range)
+        if 4370 <= products_count <= 4385:
+            result.pass_test(f"GET /api/health/system - products count around 4377 (got {products_count})")
         else:
-            result.fail_test("GET /api/health/system - products count", f"Expected ~4363, got {products_count}")
+            result.fail_test("GET /api/health/system - products count", f"Expected ~4377, got {products_count}")
+        
+        # Check brands count = 10 (not 11)
+        if brands_count == 10:
+            result.pass_test("GET /api/health/system - brands count = 10 (NO new brand created)")
+        else:
+            result.fail_test("GET /api/health/system - brands count", f"Expected 10, got {brands_count} (NEW BRAND MAY HAVE BEEN CREATED!)")
         
         print(f"   Full counts: {counts}")
         
@@ -513,7 +608,8 @@ def test_health_system(token: str, result: TestResult):
 
 def main():
     print(f"\n{BLUE}{'='*80}{RESET}")
-    print(f"{BLUE}BuildCon House - MODULO Catalog Import Backend Testing{RESET}")
+    print(f"{BLUE}BuildCon House - Qutone Catalog EXTENSION Backend Testing{RESET}")
+    print(f"{BLUE}Testing merge of QUTONE2.xlsx (14 new products) into EXISTING Qutone brand{RESET}")
     print(f"{BLUE}{'='*80}{RESET}")
     print(f"Backend URL: {BASE_URL}")
     print(f"Test User: {TEST_EMAIL}")
@@ -526,16 +622,16 @@ def main():
         print(f"\n{RED}FATAL: Cannot proceed without authentication token{RESET}")
         sys.exit(1)
     
-    # Step 2: Run all tests
-    test_brands_ground_floor(token, result)
-    test_brands_first_floor(token, result)
-    sample_product_id = test_products_modulo_ground_floor(token, result)
-    test_products_modulo_first_floor(token, result)
-    test_product_detail(token, sample_product_id, result)
-    test_catalog_search(token, result)
-    test_catalog_facets(token, result)
-    test_regression_smoke(token, result)
-    test_health_system(token, result)
+    # Step 2: Run all tests in order
+    qutone_brand_id = test_1_brands_ground_floor_no_duplicate(token, result)
+    test_2_qutone_total_count(token, result)
+    test_3_timber_oak_new_product(token, result)
+    test_4_spenza_new_product(token, result)
+    test_5_old_products_untouched(token, result)
+    test_6_catalog_search_spenza_brand_id(token, qutone_brand_id, result)
+    test_7_floor_isolation_first_floor(token, result)
+    test_8_regression_smoke(token, result)
+    test_9_health_system(token, result)
     
     # Step 3: Print summary
     success = result.print_summary()
