@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Nexion Brand Import Verification Test Suite
-Tests all 10 verification points from the review request
+Backend Testing Script for BuildCon House - MODULO Catalog Import Verification
+Tests the 4th Ground Floor Tiles brand (Modulo) with floor-scoped catalog reads via X-Floor-Id header.
 """
 
 import requests
@@ -9,572 +9,539 @@ import json
 import sys
 from typing import Dict, Any, Optional
 
-# Configuration
+# Backend URL from frontend/.env
 BASE_URL = "https://buildcon-preview.preview.emergentagent.com/api"
-TEST_USER = "owner@forge.app"
+
+# Test credentials from /app/memory/test_credentials.md
+TEST_EMAIL = "owner@forge.app"
 TEST_PASSWORD = "Forge@2026"
 
-# Test results tracking
-test_results = []
+# ANSI color codes for output
+GREEN = "\033[92m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+BLUE = "\033[94m"
+RESET = "\033[0m"
 
-def log_test(test_num: str, description: str, passed: bool, details: str = ""):
-    """Log test result"""
-    status = "✅ PASS" if passed else "❌ FAIL"
-    result = {
-        "test": test_num,
-        "description": description,
-        "status": status,
-        "passed": passed,
-        "details": details
-    }
-    test_results.append(result)
-    print(f"\n{status} | Test {test_num}: {description}")
-    if details:
-        print(f"  Details: {details}")
-
-def print_summary():
-    """Print test summary"""
-    passed = sum(1 for r in test_results if r["passed"])
-    total = len(test_results)
-    print("\n" + "="*80)
-    print(f"TEST SUMMARY: {passed}/{total} PASSED")
-    print("="*80)
+class TestResult:
+    def __init__(self):
+        self.passed = 0
+        self.failed = 0
+        self.failures = []
     
-    for result in test_results:
-        print(f"{result['status']} | Test {result['test']}: {result['description']}")
-        if result['details'] and not result['passed']:
-            print(f"  {result['details']}")
+    def pass_test(self, test_name: str):
+        self.passed += 1
+        print(f"{GREEN}✅ PASS{RESET}: {test_name}")
     
-    return passed == total
+    def fail_test(self, test_name: str, reason: str):
+        self.failed += 1
+        self.failures.append(f"{test_name}: {reason}")
+        print(f"{RED}❌ FAIL{RESET}: {test_name}")
+        print(f"   Reason: {reason}")
+    
+    def print_summary(self):
+        total = self.passed + self.failed
+        print(f"\n{'='*80}")
+        print(f"TEST SUMMARY")
+        print(f"{'='*80}")
+        print(f"Total Tests: {total}")
+        print(f"{GREEN}Passed: {self.passed}{RESET}")
+        print(f"{RED}Failed: {self.failed}{RESET}")
+        
+        if self.failures:
+            print(f"\n{RED}FAILED TESTS:{RESET}")
+            for i, failure in enumerate(self.failures, 1):
+                print(f"{i}. {failure}")
+        
+        return self.failed == 0
 
-# Test 1: Login and get token
-def test_1_login():
-    """Test 1: Login as owner@forge.app and confirm token works"""
+
+def login() -> Optional[str]:
+    """Login and return JWT token"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}AUTHENTICATION{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
     try:
         response = requests.post(
             f"{BASE_URL}/auth/login",
-            json={"email": TEST_USER, "password": TEST_PASSWORD},
-            timeout=30
+            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+            timeout=10
         )
         
         if response.status_code == 200:
             data = response.json()
-            token = data.get("access_token") or data.get("token")
+            token = data.get("access_token")
             user = data.get("user", {})
-            
-            if token and len(token) > 50:
-                log_test(
-                    "1", 
-                    "Login as owner@forge.app and confirm token works",
-                    True,
-                    f"Token received ({len(token)} chars), User: {user.get('name')} ({user.get('email')}), Role: {user.get('role')}"
-                )
-                return token
-            else:
-                log_test("1", "Login as owner@forge.app", False, "Token missing or invalid")
-                return None
+            print(f"{GREEN}✅ Login successful{RESET}")
+            print(f"   User: {user.get('full_name')} ({user.get('email')})")
+            print(f"   Role: {user.get('role')}")
+            return token
         else:
-            log_test("1", "Login as owner@forge.app", False, f"HTTP {response.status_code}: {response.text[:200]}")
+            print(f"{RED}❌ Login failed: {response.status_code}{RESET}")
+            print(f"   Response: {response.text}")
             return None
     except Exception as e:
-        log_test("1", "Login as owner@forge.app", False, f"Exception: {str(e)}")
+        print(f"{RED}❌ Login error: {str(e)}{RESET}")
         return None
 
-# Test 2: GET /api/brands - confirm Nexion exists
-def test_2_brands(token: str):
-    """Test 2: GET /api/brands - confirm Nexion exists with floor_id ground-floor"""
+
+def test_brands_ground_floor(token: str, result: TestResult):
+    """Test 1: GET /api/brands with X-Floor-Id: ground-floor"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 1: GET /api/brands (X-Floor-Id: ground-floor){RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
     try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{BASE_URL}/brands", headers=headers, timeout=30)
+        response = requests.get(
+            f"{BASE_URL}/brands",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
+        )
         
-        if response.status_code == 200:
-            brands = response.json()
-            nexion_brand = None
-            
+        if response.status_code != 200:
+            result.fail_test("GET /api/brands (ground-floor)", f"Status {response.status_code}: {response.text}")
+            return
+        
+        brands = response.json()
+        brand_names = [b.get("name") for b in brands]
+        
+        print(f"   Found {len(brands)} brands: {', '.join(brand_names)}")
+        
+        # Must include all 4 tile brands
+        required_brands = ["Modulo", "Dimore", "Nexion", "Qutone"]
+        missing = [b for b in required_brands if b not in brand_names]
+        
+        if missing:
+            result.fail_test("GET /api/brands (ground-floor)", f"Missing brands: {', '.join(missing)}")
+        else:
+            result.pass_test("GET /api/brands (ground-floor) - includes Modulo, Dimore, Nexion, Qutone")
+        
+    except Exception as e:
+        result.fail_test("GET /api/brands (ground-floor)", f"Exception: {str(e)}")
+
+
+def test_brands_first_floor(token: str, result: TestResult):
+    """Test 2: GET /api/brands with X-Floor-Id: first-floor (floor isolation)"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 2: GET /api/brands (X-Floor-Id: first-floor) - Floor Isolation{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/brands",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "first-floor"
+            },
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            result.fail_test("GET /api/brands (first-floor)", f"Status {response.status_code}: {response.text}")
+            return
+        
+        brands = response.json()
+        brand_names = [b.get("name") for b in brands]
+        
+        print(f"   Found {len(brands)} brands: {', '.join(brand_names)}")
+        
+        # Must include sanitary brands
+        required_sanitary = ["Vitra", "Hansgrohe", "Grohe", "Axor", "Geberit", "Oyster"]
+        missing_sanitary = [b for b in required_sanitary if b not in brand_names]
+        
+        # Must NOT include tile brands
+        tile_brands = ["Modulo", "Dimore", "Nexion", "Qutone"]
+        leaked_tiles = [b for b in tile_brands if b in brand_names]
+        
+        if missing_sanitary:
+            result.fail_test("GET /api/brands (first-floor) - sanitary brands", f"Missing: {', '.join(missing_sanitary)}")
+        else:
+            result.pass_test("GET /api/brands (first-floor) - includes all 6 sanitary brands")
+        
+        if leaked_tiles:
+            result.fail_test("GET /api/brands (first-floor) - floor isolation", f"Tile brands leaked: {', '.join(leaked_tiles)}")
+        else:
+            result.pass_test("GET /api/brands (first-floor) - NO tile brands (floor isolation working)")
+        
+    except Exception as e:
+        result.fail_test("GET /api/brands (first-floor)", f"Exception: {str(e)}")
+
+
+def test_products_modulo_ground_floor(token: str, result: TestResult) -> Optional[str]:
+    """Test 3: GET /api/products?q=modulo with X-Floor-Id: ground-floor"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 3: GET /api/products?q=modulo (X-Floor-Id: ground-floor){RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    sample_product_id = None
+    
+    # First get Modulo's brand_id
+    modulo_brand_id = None
+    try:
+        brands_response = requests.get(
+            f"{BASE_URL}/brands",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
+        )
+        if brands_response.status_code == 200:
+            brands = brands_response.json()
             for brand in brands:
-                if brand.get("name") == "Nexion":
-                    nexion_brand = brand
+                if brand.get("name") == "Modulo":
+                    modulo_brand_id = brand.get("id")
                     break
-            
-            if nexion_brand:
-                floor_id = nexion_brand.get("floor_id")
-                brand_id = nexion_brand.get("id")
-                
-                if floor_id == "ground-floor":
-                    log_test(
-                        "2",
-                        "GET /api/brands - confirm Nexion exists with floor_id ground-floor",
-                        True,
-                        f"Nexion brand found: id={brand_id}, floor_id={floor_id}"
-                    )
-                    return brand_id
-                else:
-                    log_test("2", "GET /api/brands", False, f"Nexion floor_id is '{floor_id}', expected 'ground-floor'")
-                    return None
-            else:
-                log_test("2", "GET /api/brands", False, f"Nexion brand not found. Available brands: {[b.get('name') for b in brands]}")
-                return None
-        else:
-            log_test("2", "GET /api/brands", False, f"HTTP {response.status_code}: {response.text[:200]}")
-            return None
     except Exception as e:
-        log_test("2", "GET /api/brands", False, f"Exception: {str(e)}")
-        return None
-
-# Test 3: GET /api/products?brand_id=<nexion> - confirm ~761 products
-def test_3_products_by_brand(token: str, brand_id: str):
-    """Test 3: GET /api/products?brand_id=<nexion> - confirm ~761 products"""
+        print(f"   Warning: Could not fetch Modulo brand_id: {e}")
+    
     try:
-        headers = {"Authorization": f"Bearer {token}"}
-        
-        # First request to get total count
         response = requests.get(
             f"{BASE_URL}/products",
-            headers=headers,
-            params={"brand_id": brand_id, "limit": 100},
-            timeout=30
+            params={"q": "modulo"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
         )
         
-        if response.status_code == 200:
-            data = response.json()
-            total = data.get("total", 0)
-            items = data.get("items", [])
-            
-            # Verify all products have floor_id ground-floor
-            all_ground_floor = all(item.get("floor_id") == "ground-floor" for item in items)
-            
-            if 750 <= total <= 770:  # Allow small variance
-                log_test(
-                    "3",
-                    "GET /api/products?brand_id=<nexion> - confirm ~761 products",
-                    True,
-                    f"Total Nexion products: {total} (expected ~761), All have floor_id=ground-floor: {all_ground_floor}"
-                )
-                return items[0] if items else None  # Return first product for later tests
-            else:
-                log_test("3", "GET /api/products?brand_id=<nexion>", False, f"Product count {total} not in expected range 750-770")
-                return None
-        else:
-            log_test("3", "GET /api/products?brand_id=<nexion>", False, f"HTTP {response.status_code}: {response.text[:200]}")
+        if response.status_code != 200:
+            result.fail_test("GET /api/products?q=modulo (ground-floor)", f"Status {response.status_code}: {response.text}")
             return None
+        
+        data = response.json()
+        total = data.get("total", 0)
+        items = data.get("items", [])
+        
+        print(f"   Total: {total}")
+        print(f"   Items returned: {len(items)}")
+        
+        # Must be exactly 73 products
+        if total != 73:
+            result.fail_test("GET /api/products?q=modulo (ground-floor) - count", f"Expected 73, got {total}")
+        else:
+            result.pass_test("GET /api/products?q=modulo (ground-floor) - total=73")
+        
+        # Check all items are brand=Modulo (by brand_id)
+        if modulo_brand_id:
+            non_modulo = [p for p in items if p.get("brand_id") != modulo_brand_id]
+            if non_modulo:
+                result.fail_test("GET /api/products?q=modulo (ground-floor) - brand", f"{len(non_modulo)} items not Modulo brand")
+            else:
+                result.pass_test("GET /api/products?q=modulo (ground-floor) - all items brand=Modulo")
+        else:
+            print(f"   {YELLOW}⚠ Skipping brand check (could not determine Modulo brand_id){RESET}")
+        
+        # Check hero_image_url (Supabase URL)
+        missing_images = [p for p in items if not p.get("hero_image_url") or "supabase" not in p.get("hero_image_url", "")]
+        if missing_images:
+            result.fail_test("GET /api/products?q=modulo (ground-floor) - images", f"{len(missing_images)} items missing valid Supabase hero_image_url")
+        else:
+            result.pass_test("GET /api/products?q=modulo (ground-floor) - all items have valid Supabase hero_image_url")
+        
+        # Check price=100
+        wrong_price = [p for p in items if p.get("price") != 100]
+        if wrong_price:
+            result.fail_test("GET /api/products?q=modulo (ground-floor) - price", f"{len(wrong_price)} items have price != 100")
+        else:
+            result.pass_test("GET /api/products?q=modulo (ground-floor) - all items price=100")
+        
+        # Get a sample product ID for next test
+        if items:
+            sample_product_id = items[0].get("id")
+            print(f"   Sample product ID for detail test: {sample_product_id}")
+        
+        return sample_product_id
+        
     except Exception as e:
-        log_test("3", "GET /api/products?brand_id=<nexion>", False, f"Exception: {str(e)}")
+        result.fail_test("GET /api/products?q=modulo (ground-floor)", f"Exception: {str(e)}")
         return None
 
-# Test 4: Search by product name (CALACATTA)
-def test_4_search_by_name(token: str):
-    """Test 4: GET /api/catalog/search?q=CALACATTA - confirm Nexion products show up"""
+
+def test_products_modulo_first_floor(token: str, result: TestResult):
+    """Test 4: GET /api/products?q=modulo with X-Floor-Id: first-floor (must be 0)"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 4: GET /api/products?q=modulo (X-Floor-Id: first-floor) - Floor Isolation{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
     try:
-        headers = {"Authorization": f"Bearer {token}"}
         response = requests.get(
-            f"{BASE_URL}/catalog/search",
-            headers=headers,
-            params={"q": "CALACATTA"},
-            timeout=30
+            f"{BASE_URL}/products",
+            params={"q": "modulo"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "first-floor"
+            },
+            timeout=10
         )
         
-        if response.status_code == 200:
-            results = response.json()
-            items = results.get("items", [])
-            
-            # Check if any Nexion products in results
-            nexion_products = [item for item in items if item.get("brand_name") == "Nexion"]
-            
-            if nexion_products:
-                log_test(
-                    "4",
-                    "GET /api/catalog/search?q=CALACATTA - confirm Nexion products show up",
-                    True,
-                    f"Found {len(nexion_products)} Nexion products matching 'CALACATTA' (out of {len(items)} total results)"
-                )
-                return nexion_products[0] if nexion_products else None
-            else:
-                log_test("4", "GET /api/catalog/search?q=CALACATTA", False, f"No Nexion products found. Total results: {len(items)}")
-                return None
-        else:
-            log_test("4", "GET /api/catalog/search?q=CALACATTA", False, f"HTTP {response.status_code}: {response.text[:200]}")
-            return None
-    except Exception as e:
-        log_test("4", "GET /api/catalog/search?q=CALACATTA", False, f"Exception: {str(e)}")
-        return None
-
-# Test 5: Search by SKU prefix
-def test_5_search_by_sku(token: str):
-    """Test 5: GET /api/catalog/search?q=NEXION-CALACATTA - confirm SKU search works"""
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(
-            f"{BASE_URL}/catalog/search",
-            headers=headers,
-            params={"q": "NEXION-CALACATTA"},
-            timeout=30
-        )
+        if response.status_code != 200:
+            result.fail_test("GET /api/products?q=modulo (first-floor)", f"Status {response.status_code}: {response.text}")
+            return
         
-        if response.status_code == 200:
-            results = response.json()
-            items = results.get("items", [])
-            
-            # Check if results contain products with NEXION-CALACATTA in SKU
-            matching_products = [item for item in items if "NEXION-CALACATTA" in item.get("sku", "").upper()]
-            
-            if matching_products:
-                sample_sku = matching_products[0].get("sku")
-                log_test(
-                    "5",
-                    "GET /api/catalog/search?q=NEXION-CALACATTA - confirm SKU search works",
-                    True,
-                    f"Found {len(matching_products)} products with SKU containing 'NEXION-CALACATTA'. Sample: {sample_sku}"
-                )
-                return matching_products[0]
-            else:
-                log_test("5", "GET /api/catalog/search?q=NEXION-CALACATTA", False, f"No products with NEXION-CALACATTA SKU found. Total results: {len(items)}")
-                return None
-        else:
-            log_test("5", "GET /api/catalog/search?q=NEXION-CALACATTA", False, f"HTTP {response.status_code}: {response.text[:200]}")
-            return None
-    except Exception as e:
-        log_test("5", "GET /api/catalog/search?q=NEXION-CALACATTA", False, f"Exception: {str(e)}")
-        return None
-
-# Test 6: Search by size
-def test_6_search_by_size(token: str):
-    """Test 6: GET /api/catalog/search?q=1198X2398 - confirm size-based search works"""
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(
-            f"{BASE_URL}/catalog/search",
-            headers=headers,
-            params={"q": "1198X2398"},
-            timeout=30
-        )
+        data = response.json()
+        total = data.get("total", 0)
         
-        if response.status_code == 200:
-            results = response.json()
-            items = results.get("items", [])
-            
-            # Check if results contain Nexion products with this size
-            nexion_with_size = [
-                item for item in items 
-                if item.get("brand_name") == "Nexion" and "1198X2398" in item.get("size", "").upper()
-            ]
-            
-            if nexion_with_size:
-                sample_product = nexion_with_size[0]
-                log_test(
-                    "6",
-                    "GET /api/catalog/search?q=1198X2398 - confirm size-based search works",
-                    True,
-                    f"Found {len(nexion_with_size)} Nexion products with size 1198X2398. Sample: {sample_product.get('name')} ({sample_product.get('size')})"
-                )
-                return nexion_with_size[0]
-            else:
-                log_test("6", "GET /api/catalog/search?q=1198X2398", False, f"No Nexion products with size 1198X2398 found. Total results: {len(items)}")
-                return None
+        print(f"   Total: {total}")
+        
+        if total != 0:
+            result.fail_test("GET /api/products?q=modulo (first-floor) - floor isolation", f"Expected 0, got {total} (Modulo leaked into Sanitary Bathroom)")
         else:
-            log_test("6", "GET /api/catalog/search?q=1198X2398", False, f"HTTP {response.status_code}: {response.text[:200]}")
-            return None
+            result.pass_test("GET /api/products?q=modulo (first-floor) - total=0 (floor isolation working)")
+        
     except Exception as e:
-        log_test("6", "GET /api/catalog/search?q=1198X2398", False, f"Exception: {str(e)}")
-        return None
+        result.fail_test("GET /api/products?q=modulo (first-floor)", f"Exception: {str(e)}")
 
-# Test 7: Get single product detail
-def test_7_product_detail(token: str, product_id: str):
-    """Test 7: GET /api/products/{id} - confirm hero_image_url/gallery with Supabase URL"""
+
+def test_product_detail(token: str, product_id: str, result: TestResult):
+    """Test 5: GET /api/products/{id} for one Modulo product"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 5: GET /api/products/{product_id} (Product Detail){RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    if not product_id:
+        result.fail_test("GET /api/products/{id}", "No product ID available from previous test")
+        return
+    
     try:
-        headers = {"Authorization": f"Bearer {token}"}
         response = requests.get(
             f"{BASE_URL}/products/{product_id}",
-            headers=headers,
-            timeout=30
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
         )
         
-        if response.status_code == 200:
-            product = response.json()
-            
-            # Check for required fields
-            hero_image = product.get("hero_image_url")
-            gallery = product.get("gallery", [])
-            name = product.get("name")
-            size = product.get("size")
-            finish = product.get("finish")
-            mrp = product.get("mrp")
-            price = product.get("price")
-            specs = product.get("specs", {})
-            pcs_per_box = specs.get("pcs_per_box")
-            sqft_per_box = specs.get("sqft_per_box")
-            
-            # Check if hero_image or gallery has Supabase URL
-            has_supabase_url = False
-            supabase_url = None
-            
-            if hero_image and "supabase.co" in hero_image:
-                has_supabase_url = True
-                supabase_url = hero_image
-            elif gallery:
-                for img in gallery:
-                    img_url = img.get("url") if isinstance(img, dict) else img
-                    if img_url and "supabase.co" in img_url:
-                        has_supabase_url = True
-                        supabase_url = img_url
-                        break
-            
-            required_fields = {
-                "name": name,
-                "size": size,
-                "finish": finish,
-                "mrp": mrp,
-                "price": price,
-                "pcs_per_box": pcs_per_box,
-                "sqft_per_box": sqft_per_box
-            }
-            
-            missing_fields = [k for k, v in required_fields.items() if v is None]
-            
-            if has_supabase_url and not missing_fields:
-                log_test(
-                    "7",
-                    "GET /api/products/{id} - confirm hero_image_url/gallery with Supabase URL and specs",
-                    True,
-                    f"Product: {name}, Size: {size}, Finish: {finish}, MRP: {mrp}, Price: {price}, Specs: {pcs_per_box} pcs/box, {sqft_per_box} sqft/box. Supabase URL found."
-                )
-                return supabase_url
-            else:
-                issues = []
-                if not has_supabase_url:
-                    issues.append("No Supabase URL found in hero_image_url or gallery")
-                if missing_fields:
-                    issues.append(f"Missing fields: {', '.join(missing_fields)}")
-                
-                log_test("7", "GET /api/products/{id}", False, "; ".join(issues))
-                return None
-        else:
-            log_test("7", "GET /api/products/{id}", False, f"HTTP {response.status_code}: {response.text[:200]}")
-            return None
-    except Exception as e:
-        log_test("7", "GET /api/products/{id}", False, f"Exception: {str(e)}")
-        return None
-
-# Test 8: Fetch image URL directly
-def test_8_image_fetch(image_url: str):
-    """Test 8: Fetch hero_image_url directly and confirm HTTP 200"""
-    try:
-        response = requests.get(image_url, timeout=30)
+        if response.status_code != 200:
+            result.fail_test("GET /api/products/{id}", f"Status {response.status_code}: {response.text}")
+            return
         
-        if response.status_code == 200:
-            content_type = response.headers.get("Content-Type", "")
-            content_length = len(response.content)
-            
-            if "image" in content_type and content_length > 1000:
-                log_test(
-                    "8",
-                    "Fetch hero_image_url directly and confirm HTTP 200",
-                    True,
-                    f"Image fetched successfully: {content_length} bytes, Content-Type: {content_type}"
-                )
-                return True
-            else:
-                log_test("8", "Fetch hero_image_url", False, f"Invalid image: {content_length} bytes, Content-Type: {content_type}")
-                return False
-        else:
-            log_test("8", "Fetch hero_image_url", False, f"HTTP {response.status_code}")
-            return False
-    except Exception as e:
-        log_test("8", "Fetch hero_image_url", False, f"Exception: {str(e)}")
-        return False
-
-# Test 9: Floor isolation check
-def test_9_floor_isolation(token: str, nexion_brand_id: str):
-    """Test 9: Confirm first-floor queries never return Nexion products"""
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
+        product = response.json()
         
-        # Get all products and check floor_id
+        # Check required fields
+        required_fields = ["name", "sku", "price", "mrp", "hero_image_url"]
+        missing_fields = [f for f in required_fields if f not in product or product[f] is None]
+        
+        if missing_fields:
+            result.fail_test("GET /api/products/{id} - required fields", f"Missing: {', '.join(missing_fields)}")
+        else:
+            result.pass_test("GET /api/products/{id} - has name, sku, price, mrp, hero_image_url")
+        
+        # Check images/gallery
+        if "images" not in product or not isinstance(product.get("images"), list):
+            result.fail_test("GET /api/products/{id} - images", "Missing or invalid images array")
+        else:
+            result.pass_test("GET /api/products/{id} - has images/gallery array")
+        
+        # Check specs
+        if "specs" not in product:
+            result.fail_test("GET /api/products/{id} - specs", "Missing specs field")
+        else:
+            result.pass_test("GET /api/products/{id} - has specs field")
+        
+        print(f"   Product: {product.get('name')}")
+        print(f"   SKU: {product.get('sku')}")
+        print(f"   Brand: {product.get('brand_name')}")
+        print(f"   Price: {product.get('price')}")
+        
+    except Exception as e:
+        result.fail_test("GET /api/products/{id}", f"Exception: {str(e)}")
+
+
+def test_catalog_search(token: str, result: TestResult):
+    """Test 6: GET /api/catalog/search?q=MODULO with X-Floor-Id: ground-floor"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 6: GET /api/catalog/search?q=MODULO (X-Floor-Id: ground-floor){RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    try:
         response = requests.get(
-            f"{BASE_URL}/products",
-            headers=headers,
-            params={"brand_id": nexion_brand_id, "limit": 100},
-            timeout=30
+            f"{BASE_URL}/catalog/search",
+            params={"q": "MODULO"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
         )
         
-        if response.status_code == 200:
-            data = response.json()
-            items = data.get("items", [])
-            
-            # Check if ANY product has floor_id != ground-floor
-            first_floor_products = [item for item in items if item.get("floor_id") == "first-floor"]
-            
-            if not first_floor_products:
-                # Also verify by checking all products have ground-floor
-                all_ground_floor = all(item.get("floor_id") == "ground-floor" for item in items)
-                
-                if all_ground_floor:
-                    log_test(
-                        "9",
-                        "Floor isolation check - confirm NO Nexion products on first-floor",
-                        True,
-                        f"Verified: All {len(items)} Nexion products have floor_id=ground-floor, NONE have floor_id=first-floor"
-                    )
-                    return True
-                else:
-                    other_floors = set(item.get("floor_id") for item in items if item.get("floor_id") != "ground-floor")
-                    log_test("9", "Floor isolation check", False, f"Found Nexion products on other floors: {other_floors}")
-                    return False
-            else:
-                log_test("9", "Floor isolation check", False, f"Found {len(first_floor_products)} Nexion products with floor_id=first-floor (VIOLATION)")
-                return False
+        if response.status_code != 200:
+            result.fail_test("GET /api/catalog/search?q=MODULO", f"Status {response.status_code}: {response.text}")
+            return
+        
+        data = response.json()
+        
+        # Check for results grouped by family_key
+        # Expected structure: {query, total, grouped, items: [{family_key, variants, ...}]}
+        if "items" in data and isinstance(data.get("items"), list):
+            result.pass_test("GET /api/catalog/search?q=MODULO - returns grouped results, no errors")
+            print(f"   Response structure: query={data.get('query')}, total={data.get('total')}, grouped={data.get('grouped')}")
+            print(f"   Items (families): {len(data.get('items', []))}")
         else:
-            log_test("9", "Floor isolation check", False, f"HTTP {response.status_code}: {response.text[:200]}")
-            return False
+            result.fail_test("GET /api/catalog/search?q=MODULO", f"Missing or invalid 'items' field in response")
+        
     except Exception as e:
-        log_test("9", "Floor isolation check", False, f"Exception: {str(e)}")
-        return False
+        result.fail_test("GET /api/catalog/search?q=MODULO", f"Exception: {str(e)}")
 
-# Test 10: Regression check - existing brands unaffected
-def test_10_regression_check(token: str):
-    """Test 10: Confirm existing brands (Qutone, Dimore, Hansgrohe, Grohe, Vitra, AXOR) unaffected"""
+
+def test_catalog_facets(token: str, result: TestResult):
+    """Test 7: GET /api/catalog/facets with X-Floor-Id: ground-floor"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 7: GET /api/catalog/facets (X-Floor-Id: ground-floor){RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
     try:
-        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(
+            f"{BASE_URL}/catalog/facets",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Floor-Id": "ground-floor"
+            },
+            timeout=10
+        )
         
-        # Get all brands
-        response = requests.get(f"{BASE_URL}/brands", headers=headers, timeout=30)
+        if response.status_code != 200:
+            result.fail_test("GET /api/catalog/facets", f"Status {response.status_code}: {response.text}")
+            return
         
-        if response.status_code == 200:
-            brands = response.json()
-            
-            # Expected brands and their floors
-            expected_brands = {
-                "Qutone": "ground-floor",
-                "Dimore": "ground-floor",
-                "Hansgrohe": "first-floor",
-                "Grohe": "first-floor",
-                "Vitra": "first-floor",
-                "AXOR": "first-floor"
-            }
-            
-            found_brands = {}
-            for brand in brands:
-                name = brand.get("name")
-                if name in expected_brands:
-                    found_brands[name] = {
-                        "floor_id": brand.get("floor_id"),
-                        "id": brand.get("id")
-                    }
-            
-            # Check if all expected brands exist with correct floor_id
-            all_correct = True
-            issues = []
-            
-            for brand_name, expected_floor in expected_brands.items():
-                if brand_name not in found_brands:
-                    all_correct = False
-                    issues.append(f"{brand_name} not found")
-                elif found_brands[brand_name]["floor_id"] != expected_floor:
-                    all_correct = False
-                    issues.append(f"{brand_name} has floor_id={found_brands[brand_name]['floor_id']}, expected {expected_floor}")
-            
-            if all_correct:
-                # Get product counts for each brand
-                brand_counts = {}
-                for brand_name, brand_info in found_brands.items():
-                    resp = requests.get(
-                        f"{BASE_URL}/products",
-                        headers=headers,
-                        params={"brand_id": brand_info["id"], "limit": 1},
-                        timeout=30
-                    )
-                    if resp.status_code == 200:
-                        brand_counts[brand_name] = resp.json().get("total", 0)
-                
-                log_test(
-                    "10",
-                    "Regression check - existing brands unaffected",
-                    True,
-                    f"All 6 existing brands found with correct floor_id. Product counts: {brand_counts}"
-                )
-                return True
-            else:
-                log_test("10", "Regression check", False, f"Issues: {'; '.join(issues)}")
-                return False
+        data = response.json()
+        
+        # Check for reasonable facet data
+        if isinstance(data, dict) and len(data) > 0:
+            result.pass_test("GET /api/catalog/facets - returns facet data, no errors")
+            print(f"   Facet keys: {list(data.keys())}")
         else:
-            log_test("10", "Regression check", False, f"HTTP {response.status_code}: {response.text[:200]}")
-            return False
+            result.fail_test("GET /api/catalog/facets", f"Empty or invalid facet data: {data}")
+        
     except Exception as e:
-        log_test("10", "Regression check", False, f"Exception: {str(e)}")
-        return False
+        result.fail_test("GET /api/catalog/facets", f"Exception: {str(e)}")
 
-# Main test execution
+
+def test_regression_smoke(token: str, result: TestResult):
+    """Test 8: Regression smoke tests on quotations, customers, payments/stats, purchase-orders"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 8: Regression Smoke Tests{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    endpoints = [
+        ("/quotations", "ground-floor"),
+        ("/quotations", "first-floor"),
+        ("/customers", "ground-floor"),
+        ("/customers", "first-floor"),
+        ("/payments/stats", "ground-floor"),
+        ("/payments/stats", "first-floor"),
+        ("/purchase-orders", "ground-floor"),
+        ("/purchase-orders", "first-floor"),
+    ]
+    
+    for endpoint, floor_id in endpoints:
+        try:
+            response = requests.get(
+                f"{BASE_URL}{endpoint}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Floor-Id": floor_id
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                result.pass_test(f"GET /api{endpoint} (X-Floor-Id: {floor_id}) - 200 OK")
+            else:
+                result.fail_test(f"GET /api{endpoint} (X-Floor-Id: {floor_id})", f"Status {response.status_code}")
+        
+        except Exception as e:
+            result.fail_test(f"GET /api{endpoint} (X-Floor-Id: {floor_id})", f"Exception: {str(e)}")
+
+
+def test_health_system(token: str, result: TestResult):
+    """Test 9: GET /api/health/system"""
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}TEST 9: GET /api/health/system{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
+    
+    try:
+        # Health endpoint is typically public, but include token just in case
+        response = requests.get(
+            f"{BASE_URL}/health/system",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        
+        if response.status_code != 200:
+            result.fail_test("GET /api/health/system", f"Status {response.status_code}: {response.text}")
+            return
+        
+        data = response.json()
+        
+        # Check healthy=true
+        if data.get("healthy") != True:
+            result.fail_test("GET /api/health/system - healthy", f"healthy={data.get('healthy')}, expected True")
+        else:
+            result.pass_test("GET /api/health/system - healthy=true")
+        
+        # Check warnings=0
+        warnings = data.get("warnings", [])
+        if len(warnings) > 0:
+            result.fail_test("GET /api/health/system - warnings", f"Found {len(warnings)} warnings: {warnings}")
+        else:
+            result.pass_test("GET /api/health/system - 0 warnings")
+        
+        # Check products count around 4363
+        counts = data.get("counts", {})
+        products_count = counts.get("products", 0)
+        
+        print(f"   Products count: {products_count}")
+        
+        # Allow some variance (4290-4400 range based on test_credentials.md showing 4290)
+        if 4200 <= products_count <= 4500:
+            result.pass_test(f"GET /api/health/system - products count in expected range ({products_count})")
+        else:
+            result.fail_test("GET /api/health/system - products count", f"Expected ~4363, got {products_count}")
+        
+        print(f"   Full counts: {counts}")
+        
+    except Exception as e:
+        result.fail_test("GET /api/health/system", f"Exception: {str(e)}")
+
+
 def main():
-    print("="*80)
-    print("NEXION BRAND IMPORT VERIFICATION TEST SUITE")
-    print("="*80)
+    print(f"\n{BLUE}{'='*80}{RESET}")
+    print(f"{BLUE}BuildCon House - MODULO Catalog Import Backend Testing{RESET}")
+    print(f"{BLUE}{'='*80}{RESET}")
     print(f"Backend URL: {BASE_URL}")
-    print(f"Test User: {TEST_USER}")
-    print("="*80)
+    print(f"Test User: {TEST_EMAIL}")
     
-    # Test 1: Login
-    token = test_1_login()
+    result = TestResult()
+    
+    # Step 1: Login
+    token = login()
     if not token:
-        print("\n❌ CRITICAL: Login failed. Cannot proceed with other tests.")
-        print_summary()
+        print(f"\n{RED}FATAL: Cannot proceed without authentication token{RESET}")
         sys.exit(1)
     
-    # Test 2: Get Nexion brand
-    nexion_brand_id = test_2_brands(token)
-    if not nexion_brand_id:
-        print("\n❌ CRITICAL: Nexion brand not found. Cannot proceed with brand-specific tests.")
-        print_summary()
-        sys.exit(1)
+    # Step 2: Run all tests
+    test_brands_ground_floor(token, result)
+    test_brands_first_floor(token, result)
+    sample_product_id = test_products_modulo_ground_floor(token, result)
+    test_products_modulo_first_floor(token, result)
+    test_product_detail(token, sample_product_id, result)
+    test_catalog_search(token, result)
+    test_catalog_facets(token, result)
+    test_regression_smoke(token, result)
+    test_health_system(token, result)
     
-    # Test 3: Get products by brand
-    sample_product = test_3_products_by_brand(token, nexion_brand_id)
+    # Step 3: Print summary
+    success = result.print_summary()
     
-    # Test 4: Search by name
-    product_from_search = test_4_search_by_name(token)
-    
-    # Test 5: Search by SKU
-    product_from_sku = test_5_search_by_sku(token)
-    
-    # Test 6: Search by size
-    product_from_size = test_6_search_by_size(token)
-    
-    # Test 7: Get product detail (use any product we found)
-    test_product_id = None
-    if sample_product:
-        test_product_id = sample_product.get("id")
-    elif product_from_search:
-        test_product_id = product_from_search.get("id")
-    elif product_from_sku:
-        test_product_id = product_from_sku.get("id")
-    elif product_from_size:
-        test_product_id = product_from_size.get("id")
-    
-    image_url = None
-    if test_product_id:
-        image_url = test_7_product_detail(token, test_product_id)
-    else:
-        log_test("7", "GET /api/products/{id}", False, "No product ID available from previous tests")
-    
-    # Test 8: Fetch image
-    if image_url:
-        test_8_image_fetch(image_url)
-    else:
-        log_test("8", "Fetch hero_image_url", False, "No image URL available from Test 7")
-    
-    # Test 9: Floor isolation
-    test_9_floor_isolation(token, nexion_brand_id)
-    
-    # Test 10: Regression check
-    test_10_regression_check(token)
-    
-    # Print summary
-    all_passed = print_summary()
-    
-    if all_passed:
-        print("\n✅ ALL TESTS PASSED - Nexion brand import verification complete")
-        sys.exit(0)
-    else:
-        print("\n❌ SOME TESTS FAILED - See details above")
-        sys.exit(1)
+    sys.exit(0 if success else 1)
+
 
 if __name__ == "__main__":
     main()

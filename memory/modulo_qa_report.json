@@ -1,0 +1,148 @@
+{
+  "mode": "import",
+  "source_file": "MODULO 2026.xlsx",
+  "extraction": {
+    "rows": 73,
+    "images_found": 73,
+    "images_mapped": 73,
+    "warnings": []
+  },
+  "total_rows": 73,
+  "accepted": 73,
+  "rejected_true_duplicates": 0,
+  "needs_manual_review": 0,
+  "needs_manual_review_detail": [],
+  "missing_images_in_source": 0,
+  "certification": {
+    "extraction_accuracy": 100.0,
+    "sku_accuracy": 100.0,
+    "price_accuracy": 100.0,
+    "category_accuracy": 100.0,
+    "variant_accuracy": 82.2,
+    "image_accuracy": 100.0,
+    "duplicate_score": 100.0,
+    "missing_data_score": 100.0,
+    "total_products": 73,
+    "products_ready": 73,
+    "products_needing_review": 0,
+    "families_detected": 20,
+    "duplicates_sku": 0,
+    "cross_family_skus": 0,
+    "duplicates_family": 0,
+    "missing_images": 0,
+    "missing_mrp": 0,
+    "missing_categories": 0,
+    "image_quality": {
+      "total": 73,
+      "excellent": 0,
+      "good": 0,
+      "acceptable": 0,
+      "poor": 73,
+      "by_source": {
+        "png": 73
+      },
+      "min_edge_px": 100,
+      "median_edge_px": 209,
+      "max_edge_px": 227,
+      "premium_pct": 0,
+      "verdict": "Supplier file only contains thumbnail-grade artwork (0% premium; median longest edge = 209px). Recommend sourcing official product photography separately."
+    },
+    "excellent_images": 0,
+    "good_images": 0,
+    "acceptable_images": 0,
+    "poor_images": 73,
+    "variant_conflicts": [
+      "Family 'modulo:modulo-cemento' has 2 rows for variant '250X250 \u00b7 Matt'",
+      "Family 'modulo:modulo-pearl' has 2 rows for variant '250X250 \u00b7 Matt'",
+      "Family 'modulo:modulo-bianco' has 2 rows for variant '250X250 \u00b7 Matt'",
+      "Family 'modulo:modulo-grey' has 2 rows for variant '250X250 \u00b7 Matt'",
+      "Family 'modulo:modulo-sand' has 2 rows for variant '250X250 \u00b7 Matt'",
+      "Family 'modulo:modulo-clay' has 2 rows for variant '250X250 \u00b7 Matt'",
+      "Family 'modulo:modulo-gold' has 2 rows for variant '250X250 \u00b7 Matt'",
+      "Family 'modulo:modulo-thunder' has 2 rows for variant '250X250 \u00b7 Matt'",
+      "Family 'modulo:modulo-dark' has 2 rows for variant '200X200 \u00b7 Matt'",
+      "Family 'modulo:modulo-beige' has 2 rows for variant '200X200 \u00b7 Matt'",
+      "Family 'modulo:modulo-gris' has 2 rows for variant '200X200 \u00b7 Matt'",
+      "Family 'modulo:modulo-cotto' has 2 rows for variant '200X200 \u00b7 Matt'",
+      "Family 'modulo:siena-beige' has 2 rows for variant '200X200 \u00b7 Matt'"
+    ],
+    "category_conflicts": [],
+    "warnings": [],
+    "overall_score": 97.8,
+    "production_ready": true
+  },
+  "runtime_s": 18.1,
+  "batch_result": "SUCCESS",
+  "categories_created_on_ground_floor": [],
+  "products_imported": 73,
+  "products_updated": 0,
+  "products_skipped": 0,
+  "products_failed": 0,
+  "duplicates_skipped": 0,
+  "import_errors": [],
+  "images_uploaded": 73,
+  "missing_images_final": 0,
+  "pre_import_snapshot": "backups/20260804_175421",
+  "post_import_snapshot": "backups/20260804_175737",
+  "integrity_guard": {
+    "total_products": 4363,
+    "total_media": 4235,
+    "total_brands": 10,
+    "total_categories": 42,
+    "same_brand_duplicate_skus": [],
+    "cross_brand_sku_collisions": [
+      {
+        "sku": "26455000",
+        "products": [
+          {
+            "id": "03907bd4-3ad3-4a46-b87f-6b922755659a",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG FixFit Square wall outlet DN15 ch.NRV"
+          },
+          {
+            "id": "b6627afc-dd37-488d-9c18-f3675dfe2567",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "ChromeEuphoria260SmartControlheadshower"
+          }
+        ]
+      },
+      {
+        "sku": "27704000",
+        "products": [
+          {
+            "id": "4e049e87-6a05-4de3-b49e-a8faf53dd7c3",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG Wall bar Unica Reno 720mm chrome"
+          },
+          {
+            "id": "dfe8bf4b-81af-424b-95f8-9fdc55d1c53d",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "EuphoriaCube wall union"
+          }
+        ]
+      },
+      {
+        "sku": "27477000",
+        "products": [
+          {
+            "id": "ed7f30ba-08d0-406a-975f-c6fcd3a2cdd2",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG Raindance Air ov.shower 240mm ceiling"
+          },
+          {
+            "id": "d8d876b8-229d-4092-9a32-8be7818cea62",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "Rainshower Cosmopolitan 310 Headshower"
+          }
+        ]
+      }
+    ],
+    "invalid_brand_refs": [],
+    "invalid_category_refs": [],
+    "orphaned_media": [],
+    "media_brand_mismatches": [],
+    "missing_images": 136,
+    "unexpected_modifications": [],
+    "ok": true
+  }
+}
