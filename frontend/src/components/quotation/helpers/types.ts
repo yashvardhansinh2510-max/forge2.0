@@ -17,7 +17,10 @@ export type Product = {
   // sync with these server-side, but components should prefer
   // `productImageList()` which reads all three consistently.
   hero_image_url?: string | null;
-  gallery?: { url: string; role?: string; source_type?: string; quality?: string }[] | null;
+  gallery?: {
+    url: string; role?: string; source_type?: string; quality?: string; family_key?: string | null;
+    width?: number | null; height?: number | null; is_primary?: boolean;
+  }[] | null;
   // Optional metadata used by the Assistant (family, brand name, series, stock).
   family_key?: string | null;
   brand_name?: string | null;

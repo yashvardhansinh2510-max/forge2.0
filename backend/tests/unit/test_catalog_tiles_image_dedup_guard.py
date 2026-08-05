@@ -33,9 +33,9 @@ def _product(pid: str, sku: str, family_key: str, floor_id: str, finish: str) ->
     }
 
 
-def _media(pid: str, sha1: str, floor_id: str) -> dict:
+def _media(pid: str, sha1: str, floor_id: str, family_key: str | None = None) -> dict:
     return {
-        "id": f"m-{pid}", "product_id": pid, "family_key": None, "brand_id": "b1",
+        "id": f"m-{pid}", "product_id": pid, "family_key": family_key, "brand_id": "b1",
         "floor_id": floor_id, "source_type": "supplier", "role": "gallery",
         "bucket": "forge-products", "storage_key": f"{pid}.jpg",
         "public_url": f"https://cdn.example/{pid}.jpg",
@@ -107,3 +107,16 @@ def test_first_floor_sanitaryware_duplicate_photo_guard_still_applies():
 
     assert out_white["hero_image_url"] == "https://cdn.example/p-white.jpg"
     assert out_matt_white["hero_image_url"] is None
+
+
+def test_product_gallery_exposes_media_family_identity_to_renderers():
+    """The UI must be able to reject a higher-quality image from another
+    family when supplier metadata accidentally attaches it to this product."""
+    fam = "geberit:omega:109.791"
+    product = _product("p-omega", "109.791.00.1", fam, "first-floor", None)
+    media = [_media("p-omega", "sha1-omega", "first-floor", family_key=fam)]
+    snapshot = _build_snapshot([product], media, [], [], [])
+
+    gallery = hydrate_product(product, snapshot)["gallery"]
+
+    assert gallery[0]["family_key"] == fam

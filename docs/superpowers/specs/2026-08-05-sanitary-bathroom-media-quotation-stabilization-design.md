@@ -10,7 +10,7 @@ Make the Sanitary Bathroom quotation workflow production-ready by normalizing pr
 - Reuses `Product`, `product_media`, Supabase Storage, MongoDB, the existing media service, cache, quotation builder, and ReportLab renderer.
 - Does not create a new image collection, alter historical quotations, manually edit catalog assets, or redesign the quotation model.
 - Phone navigation remains the existing bottom-bar experience; desktop-only sidebar collapse is added to the admin shell.
-- The renderer must preserve source aspect ratio, never stretch or crop important product content, center the image, and apply identical internal padding.
+- The renderer must preserve source aspect ratio, never stretch or crop important product content, center the image, and apply identical internal padding. Candidate ordering must preserve matching product-family identity before using quality/dimension metadata, so a higher-resolution sibling image cannot silently replace the selected product.
 
 ## Root causes confirmed
 
@@ -26,9 +26,9 @@ Make the Sanitary Bathroom quotation workflow production-ready by normalizing pr
 
 Add a pure media presentation helper next to the existing quotation media helper. It will expose:
 
-- ordered candidate resolution using the existing `hero_image_url`, `gallery`, and legacy `images` fields;
+- ordered candidate resolution using the existing `hero_image_url`, `gallery`, and legacy `images` fields, preferring matching `family_key` and then the best available quality/dimensions;
 - source-size-aware fit geometry for a normalized frame;
-- a shared `contain` presentation default with equal inset on all sides;
+- a shared `scale-down`/contain presentation default with equal inset on all sides;
 - no transform/rotation in either React Native or PDF rendering.
 
 The existing `ProductImage` remains the only UI image component. It will use the normalized contract by default, keep `cover` available only for explicitly intentional crops, and continue to use expo-image memory/disk caching, lazy loading, skeletons, and fallbacks. No source asset will be enlarged to fabricate detail; when a higher-resolution candidate is already available it remains first in the existing ordered list.

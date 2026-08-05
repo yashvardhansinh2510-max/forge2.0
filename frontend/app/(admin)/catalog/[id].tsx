@@ -26,6 +26,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ProductImage } from "@/src/components/ProductImage";
+import { productImageList } from "@/src/components/quotation/helpers/media";
 import { Button, Card, IconButton, PriceTag } from "@/src/components/ui";
 import { ProductEditor } from "@/src/components/catalog/ProductEditor";
 import { api } from "@/src/api/client";
@@ -46,7 +47,7 @@ type Product = {
   finish_code?: string | null; colour?: string | null;
   image_quality?: string | null;
   hero_image_url?: string | null;
-  gallery?: { url: string; role?: string; source_type?: string; quality?: string }[];
+  gallery?: { url: string; role?: string; source_type?: string; quality?: string; family_key?: string | null; width?: number | null; height?: number | null; is_primary?: boolean }[];
   specs?: Record<string, any>;
 };
 
@@ -160,12 +161,13 @@ export default function ProductDetail() {
     // one fetch round-trip — imperceptible on a same-origin API call.
     setAlternates([]); setImageIdx(0);
     loadProduct(id);
+    // loadProduct intentionally owns its request dependencies; re-running
+    // this effect is driven only by the route product id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const ownImageUrls = (item: Pick<Product, "gallery" | "hero_image_url" | "images">): string[] => {
-    if (item.gallery && item.gallery.length > 0) return item.gallery.map((g) => g.url).filter(Boolean);
-    if (item.hero_image_url) return [item.hero_image_url, ...(item.images || [])];
-    return item.images || [];
+    return productImageList(item);
   };
 
   // Some supplier rows ship a finish with no photo of its own — never leave
@@ -235,7 +237,7 @@ export default function ProductDetail() {
                   onPress={() => setImageIdx(i)}
                   style={[styles.thumb, imageIdx === i && { borderColor: colors.brand, borderWidth: 2 }]}
                 >
-                  <ProductImage source={[url]} style={StyleSheet.absoluteFill as any} contentFit="cover" fallbackLabel="" borderRadius={0} />
+                  <ProductImage source={[url]} style={StyleSheet.absoluteFill as any} contentFit="contain" fallbackLabel="" borderRadius={0} />
                 </Pressable>
               ))}
             </ScrollView>
@@ -510,7 +512,7 @@ export default function ProductDetail() {
                 >
                   <View style={{ aspectRatio: 1, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
                     <ProductImage
-                      source={(a as any).hero_image_url ? [(a as any).hero_image_url, ...(a.images || [])] : a.images}
+                      source={productImageList(a as any)}
                       style={StyleSheet.absoluteFill as any}
                       contentFit="contain"
                       fallbackLabel={a.sku}

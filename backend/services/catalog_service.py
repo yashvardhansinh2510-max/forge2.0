@@ -281,6 +281,7 @@ def _apply_media(product: dict, snapshot: CatalogSnapshot) -> None:
             continue
         gallery.append({
             "id": media.id,
+            "family_key": media.family_key,
             "url": media.public_url,
             "role": media.role,
             "source_type": media.source_type,

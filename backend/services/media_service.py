@@ -295,7 +295,7 @@ def _apply_media_to_product(product: dict, media: list[ProductMedia]) -> None:
         if not m.public_url:
             continue
         gallery.append({
-            "id": m.id, "url": m.public_url, "role": m.role,
+            "id": m.id, "family_key": m.family_key, "url": m.public_url, "role": m.role,
             "source_type": m.source_type, "width": m.width, "height": m.height,
             "quality": m.quality, "is_primary": m.is_primary,
         })
