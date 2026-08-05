@@ -397,7 +397,7 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
                 stage_history=[PurchaseStageEvent(from_stage=None, to_stage="order_in_company", by_user_id=event["actor_id"], by_user_name=event["actor_name"], note=f"Created from {quotation.get('number')}", action="create")],
                 # Tile Orders logistics (Task 5) — harmless no-op defaults
                 # on non-tile orders, real data on tiles orders.
-                series=raw.get("series"), size=raw.get("size"), pieces_per_box=raw.get("pcs_per_box"),
+                series=raw.get("series"), size=raw.get("size"), pieces_per_box=raw.get("pcs_per_box"), quantity_unit=raw.get("quantity_unit") or "Box",
                 boxes_ready=0, boxes_dispatched=0, boxes_pending=qty,
                 current_location="Pending", overall_status="Pending",
             ))
