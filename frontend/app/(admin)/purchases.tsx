@@ -310,12 +310,12 @@ export default function PurchasesScreen() {
     () => bulkResponse?.results.filter((result) => !result.ok).map((result) => result.item_id) || [],
     [bulkResponse],
   );
-  const bulkResultTone = bulkResponse == null ? null : bulkRefreshError ? "error" : bulkResponse.failed === 0 ? "success" : bulkResponse.succeeded > 0 ? "partial" : "error";
+  const bulkResultTone = bulkRefreshError ? "error" : bulkResponse == null ? null : bulkResponse.failed === 0 ? "success" : bulkResponse.succeeded > 0 ? "partial" : "error";
   const bulkResultMessage = useMemo(() => {
-    if (!bulkResponse) return "";
     if (bulkRefreshError) {
       return bulkRefreshError;
     }
+    if (!bulkResponse) return "";
     if (bulkResponse.failed === 0) {
       return `Moved ${bulkResponse.succeeded} item${bulkResponse.succeeded === 1 ? "" : "s"} successfully.`;
     }
@@ -397,7 +397,7 @@ export default function PurchasesScreen() {
           </View>
         </View>
 
-        {bulkResponse && bulkResultTone ? (
+        {bulkResultTone ? (
           <View
             style={[
               styles.bulkResultBanner,

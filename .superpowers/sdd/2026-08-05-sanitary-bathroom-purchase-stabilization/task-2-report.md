@@ -13,6 +13,7 @@
 - Cleared stale `bulkResponse` / `bulkRetryStage` at the start of each bulk request and on transport/server failure.
 - Invalidated bulk-result success messaging when the post-move refresh fails, and surfaced a recoverable refresh action instead of leaving a current-looking success/partial banner over stale rows.
 - Added a strict refresh path for post-bulk reloads so `loadItems` / `loadFacets` failures are observable after bulk move, while preserving the existing soft-fail behavior for initial and background loads.
+- Adjusted banner rendering so a strict post-move refresh failure still shows its persistent recoverable error banner and `bulk-refresh-retry` action even when `bulkResponse` is cleared.
 
 ## Concerns
 
