@@ -373,7 +373,9 @@ async def customer_workspace(
     products ordered, brand/stage breakdowns, POs, outstanding items, recent
     activity, and expected delivery. Everything here is derived live from the
     same PO/item documents the rest of Purchases uses — no separate cache to
-    go stale.
+    go stale. When `q`, `brand`, or `stage` filters are active, the summary
+    totals (`total_items`, values, outstanding counts/values, blocked counts,
+    delivered counts) are scoped to that filtered workspace item set.
     """
     customer = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0})
     if not customer:

@@ -118,10 +118,35 @@ class _Collection:
         return _Cursor(self._rows, self._calls, f"{self._find_key}.to_list")
 
 
+class _AggregatePurchaseOrders:
+    def __init__(self, aggregate_rows: list[dict], po_rows: list[dict], calls: dict[str, int]):
+        self._aggregate_rows = deepcopy(aggregate_rows)
+        self._po_rows = deepcopy(po_rows)
+        self._calls = calls
+        self.last_pipeline: list[dict] | None = None
+        self.last_find_query: dict | None = None
+
+    def aggregate(self, pipeline):
+        self.last_pipeline = deepcopy(pipeline)
+        self._calls["purchase_orders.aggregate"] = self._calls.get("purchase_orders.aggregate", 0) + 1
+        return _Cursor(self._aggregate_rows, self._calls, "purchase_orders.aggregate.to_list")
+
+    def find(self, query, *_args, **_kwargs):
+        self.last_find_query = deepcopy(query)
+        self._calls["purchase_orders.find"] = self._calls.get("purchase_orders.find", 0) + 1
+        return _Cursor(self._po_rows, self._calls, "purchase_orders.to_list")
+
+
 class _Db:
-    def __init__(self, calls: dict[str, int], *, pos: list[dict] | None = None):
+    def __init__(
+        self,
+        calls: dict[str, int],
+        *,
+        pos: list[dict] | None = None,
+        purchase_orders=None,
+    ):
         self.customers = _Collection([{"id": "cust-1", "name": "Aarav Residency"}], calls, "customers")
-        self.purchase_orders = _Collection(pos or [
+        self.purchase_orders = purchase_orders or _Collection(pos or [
             {"id": "po-1", "number": "PO-1", "status": "open", "brand_name": "Grohe", "supplier_name": "Supplier A", "grand_total": 3500, "created_at": "2026-08-01T10:00:00+00:00", "expected_delivery_at": "2026-08-07T10:00:00+00:00", "items": [{}, {}]},
             {"id": "po-2", "number": "PO-2", "status": "open", "brand_name": "Vitra", "supplier_name": "Supplier B", "grand_total": 10600, "created_at": "2026-08-02T10:00:00+00:00", "expected_delivery_at": "2026-08-08T10:00:00+00:00", "items": [{}, {}]},
             {"id": "po-3", "number": "PO-3", "status": "cancelled", "brand_name": "Geberit", "supplier_name": "Supplier C", "grand_total": 8000, "created_at": "2026-08-03T10:00:00+00:00", "expected_delivery_at": None, "items": [{}]},
@@ -222,6 +247,34 @@ def test_workspace_without_filters_preserves_existing_shape(monkeypatch):
     assert calls["iter_items.args"]["floor_ids"] == ["first-floor"]
 
 
+def test_workspace_unfiltered_compatibility_retains_legacy_response_keys(monkeypatch):
+    rows = _workspace_rows()
+    calls: dict[str, int] = {}
+    _set_common_patches(monkeypatch, rows, calls)
+
+    workspace = asyncio.run(tracker.customer_workspace("cust-1", user=_user()))
+
+    expected_keys = {
+        "customer",
+        "summary",
+        "shortages",
+        "payments",
+        "followups",
+        "products",
+        "brands",
+        "stages",
+        "purchase_orders",
+        "outstanding_items",
+        "recent_activity",
+        "expected_delivery",
+    }
+    assert expected_keys.issubset(workspace.keys())
+    assert {"total_items", "total_value", "outstanding_count", "outstanding_value", "blocked_count", "delivered_count"}.issubset(
+        workspace["summary"].keys()
+    )
+    assert {"next_at", "purchase_orders"}.issubset(workspace["expected_delivery"].keys())
+
+
 def test_workspace_brand_filter(monkeypatch):
     rows = _workspace_rows()
     calls: dict[str, int] = {}
@@ -292,36 +345,61 @@ def test_workspace_clearing_filters_matches_unfiltered(monkeypatch):
 
 
 def test_workspace_large_history_avoids_per_item_queries(monkeypatch):
-    rows = [
-        _row(
-            f"item-{idx}",
-            brand_id="grohe" if idx % 2 else "vitra",
-            brand_name="Grohe" if idx % 2 else "Vitra",
-            stage="order_in_company" if idx % 3 == 0 else "in_transit",
-            name=f"Bathroom Fixture {idx}",
-            sku=f"SKU-{idx}",
-            qty=1 + (idx % 4),
-            unit_cost=500 + idx,
-            blocked=idx % 7 == 0,
-            po_number=f"PO-{idx % 9}",
-        )
-        for idx in range(1, 301)
-    ]
     calls: dict[str, int] = {}
-    pos = [
+    po_rows = [
         {"id": f"po-{idx}", "number": f"PO-{idx}", "status": "open", "brand_name": "Grohe", "supplier_name": "Supplier", "grand_total": 1000 + idx, "created_at": "2026-08-01T10:00:00+00:00", "expected_delivery_at": None, "items": [{}, {}, {}]}
         for idx in range(1, 10)
     ]
-    monkeypatch.setattr(tracker, "db", _Db(calls, pos=pos))
-    monkeypatch.setattr(tracker, "_iter_items", _fake_iter_items_factory(rows, calls))
+
+    aggregate_rows: list[dict] = []
+    expected_rows: list[dict] = []
+    for idx in range(1, 301):
+        po_doc = {
+            "id": f"po-{idx % 9}",
+            "number": f"PO-{idx % 9}",
+            "customer_id": "cust-1",
+            "customer_name": "Aarav Residency",
+            "brand_id": "grohe" if idx % 2 else "vitra",
+            "brand_name": "Grohe" if idx % 2 else "Vitra",
+            "quotation_id": None,
+            "quotation_number": None,
+            "created_at": "2026-07-01T10:00:00+00:00",
+            "created_by_name": "Buyer",
+            "status": "open",
+            "supplier_id": "sup-1",
+            "supplier_name": "Supplier",
+            "expected_delivery_at": None,
+        }
+        item_doc = {
+            "id": f"item-{idx}",
+            "product_id": f"prod-{idx}",
+            "sku": f"SKU-{idx}",
+            "name": f"Bathroom Fixture {idx}",
+            "brand_id": po_doc["brand_id"],
+            "brand_name": po_doc["brand_name"],
+            "customer_id": "cust-1",
+            "customer_name": "Aarav Residency",
+            "stage": "order_in_company" if idx % 3 == 0 else "in_transit",
+            "qty": 1 + (idx % 4),
+            "unit_cost": 500 + idx,
+            "room": "Master Bath",
+            "last_moved_at": "2026-07-20T10:00:00+00:00" if idx % 3 == 0 else "2026-08-04T10:00:00+00:00",
+        }
+        aggregate_rows.append({**po_doc, "items": item_doc})
+        expected_rows.append(tracker._flatten_item(po_doc, item_doc, 7))
+    expected_rows.sort(key=lambda r: (r["stage"] == "delivered", -(r.get("age_days") or 0)))
+
+    purchase_orders = _AggregatePurchaseOrders(aggregate_rows, po_rows, calls)
+    monkeypatch.setattr(tracker, "db", _Db(calls, pos=po_rows, purchase_orders=purchase_orders))
     monkeypatch.setattr(tracker, "_load_settings", lambda: asyncio.sleep(0, result=tracker.TrackerSettings(sla_days=7)))
     monkeypatch.setattr(tracker, "timeline_for", lambda **kwargs: _fake_timeline_for_factory(calls, **kwargs))
     monkeypatch.setattr(payment_routes, "_paid_by_quotation", lambda ids: asyncio.sleep(0, result={quote_id: 0.0 for quote_id in ids}))
 
     workspace = asyncio.run(tracker.customer_workspace("cust-1", user=_user()))
 
-    _assert_workspace_matches_rows(workspace, rows)
-    assert calls["iter_items"] == 1
+    _assert_workspace_matches_rows(workspace, expected_rows)
+    assert calls["purchase_orders.aggregate"] == 1
+    assert calls["purchase_orders.aggregate.to_list"] == 1
     assert calls["customers.find_one"] == 1
     assert calls["purchase_orders.find"] == 1
     assert calls["purchase_orders.to_list"] == 1
@@ -334,3 +412,7 @@ def test_workspace_large_history_avoids_per_item_queries(monkeypatch):
     assert calls["followups.find"] == 1
     assert calls["followups.to_list"] == 1
     assert calls["timeline_for"] == 1
+    assert purchase_orders.last_pipeline is not None
+    assert purchase_orders.last_pipeline[0]["$match"]["floor_id"] == {"$in": ["first-floor"]}
+    assert purchase_orders.last_pipeline[1] == {"$unwind": "$items"}
+    assert purchase_orders.last_pipeline[2]["$project"]["items"] == 1
