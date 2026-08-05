@@ -23,7 +23,9 @@ The tracker does NOT concern itself with taxes — Forge uses final prices only.
 """
 from __future__ import annotations
 import asyncio
+import hashlib
 import io
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -37,7 +39,7 @@ from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 
 from auth import TILES_FLOOR_ID, floor_inherit, floor_query, floor_scope_ids, get_current_user, require_min_role
-from db import db
+from db import client, db
 from models import (
     Chalan, ChalanLineItem, PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
     PURCHASE_STAGES, PurchaseStage, Quotation, QuotationLineItem, UserPublic, now_iso,
@@ -46,6 +48,11 @@ from routes.purchase_routes import ALLOWED_TRANSITIONS, STATUS_LABELS
 from routes.quotation_routes import _next_number as _next_quotation_number, _pdf_branding
 from services.activity_log import log_event, timeline_for
 from services.chalan_stage import compute_order_stage, remaining_qty_by_item
+from services.domain_outbox import (
+    EVENT_PURCHASE_CHALAN_LIFECYCLE,
+    dispatch_event,
+    enqueue_after_primary_commit,
+)
 from services.followup_engine import reconcile_followups
 from services.notifications import notify
 from services.sequence import next_number
@@ -1495,6 +1502,7 @@ class GenerateChalanBody(BaseModel):
     reference_number: Optional[str] = None
     receiver_name: Optional[str] = None
     sender_name: Optional[str] = None
+    idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
 
 
 def _chalan_order_link(po: dict) -> str:
@@ -1502,6 +1510,55 @@ def _chalan_order_link(po: dict) -> str:
     if floor_inherit(po) == TILES_FLOOR_ID:
         return f"/tiles/orders/{po['id']}"
     return f"/purchase-orders/{po['id']}"
+
+
+def _generation_request_key(po_id: str, body: GenerateChalanBody) -> str:
+    if body.idempotency_key:
+        return body.idempotency_key.strip()
+    canonical = {
+        "po_id": po_id,
+        "items": sorted(
+            ({"po_item_id": item.po_item_id, "qty": float(item.qty)} for item in body.items),
+            key=lambda item: (item["po_item_id"], item["qty"]),
+        ),
+        "reference_number": body.reference_number or "",
+        "receiver_name": body.receiver_name or "",
+        "sender_name": body.sender_name or "",
+    }
+    digest = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return f"derived:{digest}"
+
+
+def _chalan_by_request_key(po: dict, request_key: str) -> dict | None:
+    return next((chalan for chalan in po.get("chalans", []) if chalan.get("request_key") == request_key), None)
+
+
+def _chalan_notifications(po: dict, *, title: str, body: str, automation_key: str | None = None) -> list[dict]:
+    return [
+        {
+            "user_id": recipient,
+            "title": title,
+            "body": body,
+            "kind": "success",
+            "link": _chalan_order_link(po),
+            **({"automation_key": f"{automation_key}:notification:{recipient}"} if automation_key else {}),
+        }
+        for recipient in sorted({po.get("created_by"), po.get("assigned_to")} - {None})
+    ]
+
+
+async def _dispatch_chalan_outbox(event: dict | None) -> None:
+    """Attempt immediate synchronization; the durable worker repairs failure."""
+    if not event:
+        return
+    try:
+        await dispatch_event(event["id"])
+    except Exception:  # noqa: BLE001 - committed outbox row remains retryable
+        logger.exception("Chalan outbox dispatch failed for %s; worker will retry", event.get("id"))
+
+
+class _ChalanCASConflict(Exception):
+    pass
 
 
 @router.post("/{po_id}/chalans")
@@ -1516,6 +1573,14 @@ async def generate_chalan(
     po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+
+    request_key = _generation_request_key(po_id, body)
+    event_key = f"purchase-chalan:{po_id}:generate:{request_key}"
+    existing = _chalan_by_request_key(po, request_key)
+    if existing:
+        event = await db.event_outbox.find_one({"idempotency_key": event_key}, {"_id": 0})
+        await _dispatch_chalan_outbox(event)
+        return {"po_id": po_id, "chalan": existing, "stage": compute_order_stage(po), "idempotent": True}
 
     items_by_id = {item["id"]: item for item in po.get("items", [])}
     remaining = remaining_qty_by_item(po)
@@ -1546,6 +1611,8 @@ async def generate_chalan(
         items=chalan_items, reference_number=body.reference_number,
         receiver_name=body.receiver_name, sender_name=body.sender_name,
     )
+    chalan_doc = chalan.dict()
+    chalan_doc["request_key"] = request_key
     now = now_iso()
     # Optimistic concurrency: the filter requires the chalans array to still
     # have the length we just validated `remaining` against. If another
@@ -1562,35 +1629,74 @@ async def generate_chalan(
         if chalan_count == 0
         else {"chalans": {"$size": chalan_count}}
     )
-    cas_result = await db.purchase_orders.update_one(
-        floor_query(user, {"id": po_id, **size_filter}),
-        {"$push": {"chalans": chalan.dict()}, "$set": {"updated_at": now}},
-    )
-    if cas_result.matched_count == 0:
+    projected = {**po, "chalans": [*(po.get("chalans") or []), chalan_doc]}
+    projected_stage = compute_order_stage(projected)
+    event: dict | None = None
+    try:
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                cas_result = await db.purchase_orders.update_one(
+                    floor_query(user, {
+                        "id": po_id,
+                        "items": po.get("items", []),
+                        **size_filter,
+                    }),
+                    {"$push": {"chalans": chalan_doc}, "$set": {"updated_at": now}},
+                    session=session,
+                )
+                if cas_result.matched_count == 0:
+                    raise _ChalanCASConflict()
+                event = await enqueue_after_primary_commit(
+                    event_type=EVENT_PURCHASE_CHALAN_LIFECYCLE,
+                    idempotency_key=event_key,
+                    payload={
+                        "activity_event_type": "purchase.chalan_generated",
+                        "po_id": po_id,
+                        "customer_id": po.get("customer_id"),
+                        "quotation_id": po.get("quotation_id"),
+                        "floor_id": floor_inherit(po),
+                        "chalan_id": chalan.id,
+                        "chalan_number": chalan.number,
+                        "request_key": request_key,
+                        "stage": projected_stage,
+                        "summary": f"Generated Chalan {chalan.number} · {len(chalan_items)} item(s)",
+                        "notifications": _chalan_notifications(
+                            po,
+                            title="Material released by the supplier",
+                            body=f"Chalan {chalan.number} generated for {po.get('customer_name')} · {po.get('number')}",
+                        ),
+                    },
+                    actor=user,
+                    session=session,
+                )
+    except _ChalanCASConflict:
+        fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+        replay = _chalan_by_request_key(fresh or {}, request_key)
+        if replay:
+            event = await db.event_outbox.find_one({"idempotency_key": event_key}, {"_id": 0})
+            await _dispatch_chalan_outbox(event)
+            return {"po_id": po_id, "chalan": replay, "stage": compute_order_stage(fresh), "idempotent": True}
         raise HTTPException(status_code=409, detail={
             "error": "concurrent_modification",
-            "message": "Material was just released against this order by someone else — refresh and try again",
+            "message": "Purchase items or released quantities changed concurrently — refresh and try again",
         })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+        replay = _chalan_by_request_key(fresh or {}, request_key)
+        if replay:
+            event = await db.event_outbox.find_one({"idempotency_key": event_key}, {"_id": 0})
+            await _dispatch_chalan_outbox(event)
+            return {"po_id": po_id, "chalan": replay, "stage": compute_order_stage(fresh), "idempotent": True}
+        raise HTTPException(status_code=500, detail=f"Could not journal Chalan generation: {exc}") from exc
+
+    await _dispatch_chalan_outbox(event)
     fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not fresh:
         raise HTTPException(status_code=409, detail="Purchase order changed after Chalan generation")
     stage = compute_order_stage(fresh)
-
-    await log_event(
-        event_type="purchase.chalan_generated",
-        entity_type="purchase", entity_id=po_id, actor=user,
-        customer_id=po.get("customer_id"), quotation_id=po.get("quotation_id"), purchase_id=po_id,
-        summary=f"Generated Chalan {chalan.number} · {len(chalan_items)} item(s)",
-        payload={"chalan_id": chalan.id, "chalan_number": chalan.number},
-        floor_id=floor_inherit(po),
-    )
-    for recipient in {po.get("created_by"), po.get("assigned_to")} - {None}:
-        await notify(
-            recipient, "Material released by the supplier",
-            body=f"Chalan {chalan.number} generated for {po.get('customer_name')} · {po.get('number')}",
-            kind="success", link=_chalan_order_link(po), floor_id=floor_inherit(po),
-        )
-    return {"po_id": po_id, "chalan": chalan.dict(), "stage": stage}
+    return {"po_id": po_id, "chalan": chalan_doc, "stage": stage, "idempotent": False}
 
 
 @router.post("/{po_id}/chalans/{chalan_id}/godown-received")
@@ -1608,6 +1714,12 @@ async def mark_chalan_godown_received(
     if not chalan:
         raise HTTPException(status_code=404, detail="Chalan not found")
     if chalan.get("stage") != "released":
+        if chalan.get("stage") == "at_godown":
+            existing_event = await db.event_outbox.find_one(
+                {"idempotency_key": f"purchase-chalan:{po_id}:{chalan_id}:godown-received"},
+                {"_id": 0},
+            )
+            await _dispatch_chalan_outbox(existing_event)
         raise HTTPException(status_code=400, detail=f"Chalan is already {chalan.get('stage')}")
 
     now = now_iso()
@@ -1617,33 +1729,60 @@ async def mark_chalan_godown_received(
     # serializes the two update_one calls — whichever lands first flips the
     # stage away from "released" and the second call's filter no longer
     # matches (matched_count == 0) instead of both silently writing.
-    cas_result = await db.purchase_orders.update_one(
-        floor_query(user, {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": "released"}}}),
-        {"$set": {
-            "chalans.$.stage": "at_godown",
-            "chalans.$.godown_received_at": now,
-            "chalans.$.godown_received_by": user.id,
-            "chalans.$.godown_received_by_name": user.full_name,
-            "updated_at": now,
-        }},
-    )
-    if cas_result.matched_count == 0:
+    event_key = f"purchase-chalan:{po_id}:{chalan_id}:godown-received"
+    event: dict | None = None
+    stage: str | None = None
+    try:
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                cas_result = await db.purchase_orders.update_one(
+                    floor_query(user, {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": "released"}}}),
+                    {"$set": {
+                        "chalans.$.stage": "at_godown",
+                        "chalans.$.godown_received_at": now,
+                        "chalans.$.godown_received_by": user.id,
+                        "chalans.$.godown_received_by_name": user.full_name,
+                        "updated_at": now,
+                    }},
+                    session=session,
+                )
+                if cas_result.matched_count == 0:
+                    raise _ChalanCASConflict()
+                fresh = await db.purchase_orders.find_one(
+                    floor_query(user, {"id": po_id}), {"_id": 0}, session=session,
+                )
+                if not fresh:
+                    raise _ChalanCASConflict()
+                stage = compute_order_stage(fresh)
+                event = await enqueue_after_primary_commit(
+                    event_type=EVENT_PURCHASE_CHALAN_LIFECYCLE,
+                    idempotency_key=event_key,
+                    payload={
+                        "activity_event_type": "purchase.chalan_godown_received",
+                        "po_id": po_id,
+                        "customer_id": po.get("customer_id"),
+                        "quotation_id": po.get("quotation_id"),
+                        "floor_id": floor_inherit(po),
+                        "chalan_id": chalan_id,
+                        "chalan_number": chalan.get("number"),
+                        "stage": stage,
+                        "summary": f"Chalan {chalan.get('number')} received at Godown",
+                        "notifications": [],
+                    },
+                    actor=user,
+                    session=session,
+                )
+    except _ChalanCASConflict:
         raise HTTPException(status_code=409, detail={
             "error": "concurrent_modification",
             "message": "This chalan's stage changed concurrently — refresh and try again",
         })
-    await log_event(
-        event_type="purchase.chalan_godown_received",
-        entity_type="purchase", entity_id=po_id, actor=user,
-        customer_id=po.get("customer_id"), quotation_id=po.get("quotation_id"), purchase_id=po_id,
-        summary=f"Chalan {chalan.get('number')} received at Godown",
-        payload={"chalan_id": chalan_id},
-        floor_id=floor_inherit(po),
-    )
-    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
-    if not fresh:
-        raise HTTPException(status_code=409, detail="Purchase order changed after Chalan transition")
-    return {"po_id": po_id, "chalan_id": chalan_id, "stage": compute_order_stage(fresh)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not journal Chalan transition: {exc}") from exc
+    await _dispatch_chalan_outbox(event)
+    return {"po_id": po_id, "chalan_id": chalan_id, "stage": stage}
 
 
 class DispatchChalanBody(BaseModel):
@@ -1667,6 +1806,10 @@ async def dispatch_chalan(
         raise HTTPException(status_code=404, detail="Chalan not found")
     chalan_stage = chalan.get("stage")
     if chalan_stage == "dispatched":
+        existing_event = await db.event_outbox.find_one(
+            {"idempotency_key": f"purchase-chalan:{po_id}:{chalan_id}:dispatch"}, {"_id": 0},
+        )
+        await _dispatch_chalan_outbox(existing_event)
         raise HTTPException(status_code=400, detail="Chalan is already dispatched")
     if chalan_stage not in {"released", "at_godown"}:
         raise HTTPException(status_code=400, detail=f"Chalan cannot be dispatched from {chalan_stage or 'unknown'}")
@@ -1676,45 +1819,92 @@ async def dispatch_chalan(
     # "at_godown" — dispatch can happen from either route), same reasoning as
     # the godown-received guard above: a second near-simultaneous dispatch
     # call can't land once the first has already flipped the stage.
-    cas_result = await db.purchase_orders.update_one(
-        floor_query(user, {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": chalan_stage}}}),
-        {"$set": {
-            "chalans.$.stage": "dispatched",
-            "chalans.$.dispatched_at": now,
-            "chalans.$.dispatched_by": user.id,
-            "chalans.$.dispatched_by_name": user.full_name,
-            "chalans.$.dispatch_note": body.dispatch_note,
-            "updated_at": now,
-        }},
-    )
-    if cas_result.matched_count == 0:
+    event_key = f"purchase-chalan:{po_id}:{chalan_id}:dispatch"
+    completion_key = f"purchase-chalan:{po_id}:completed"
+    event: dict | None = None
+    stage: str | None = None
+    try:
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                cas_result = await db.purchase_orders.update_one(
+                    floor_query(user, {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": chalan_stage}}}),
+                    {"$set": {
+                        "chalans.$.stage": "dispatched",
+                        "chalans.$.dispatched_at": now,
+                        "chalans.$.dispatched_by": user.id,
+                        "chalans.$.dispatched_by_name": user.full_name,
+                        "chalans.$.dispatch_note": body.dispatch_note,
+                        "updated_at": now,
+                    }},
+                    session=session,
+                )
+                if cas_result.matched_count == 0:
+                    raise _ChalanCASConflict()
+                fresh = await db.purchase_orders.find_one(
+                    floor_query(user, {"id": po_id}), {"_id": 0}, session=session,
+                )
+                if not fresh:
+                    raise _ChalanCASConflict()
+                stage = compute_order_stage(fresh)
+                owns_completion = False
+                if stage == "completed":
+                    completion_result = await db.purchase_orders.update_one(
+                        floor_query(user, {
+                            "id": po_id,
+                            "$or": [
+                                {"chalan_completion_event_key": {"$exists": False}},
+                                {"chalan_completion_event_key": None},
+                            ],
+                        }),
+                        {"$set": {
+                            "chalan_completion_event_key": completion_key,
+                            "chalan_completed_at": now,
+                            "updated_at": now,
+                        }},
+                        session=session,
+                    )
+                    owns_completion = bool(getattr(completion_result, "modified_count", 0))
+                notifications = (
+                    _chalan_notifications(
+                        po,
+                        title=(
+                            "Your tile order has been dispatched"
+                            if floor_inherit(po) == TILES_FLOOR_ID
+                            else "Your purchase order has been dispatched"
+                        ),
+                        body=f"{po.get('number')} for {po.get('customer_name')} is fully dispatched",
+                        automation_key=completion_key,
+                    )
+                    if owns_completion else []
+                )
+                event = await enqueue_after_primary_commit(
+                    event_type=EVENT_PURCHASE_CHALAN_LIFECYCLE,
+                    idempotency_key=event_key,
+                    payload={
+                        "activity_event_type": "purchase.chalan_dispatched",
+                        "po_id": po_id,
+                        "customer_id": po.get("customer_id"),
+                        "quotation_id": po.get("quotation_id"),
+                        "floor_id": floor_inherit(po),
+                        "chalan_id": chalan_id,
+                        "chalan_number": chalan.get("number"),
+                        "stage": stage,
+                        "summary": f"Chalan {chalan.get('number')} dispatched" + (f" · {body.dispatch_note}" if body.dispatch_note else ""),
+                        "notifications": notifications,
+                    },
+                    actor=user,
+                    session=session,
+                )
+    except _ChalanCASConflict:
         raise HTTPException(status_code=409, detail={
             "error": "concurrent_modification",
             "message": "This chalan's stage changed concurrently — refresh and try again",
         })
-    await log_event(
-        event_type="purchase.chalan_dispatched",
-        entity_type="purchase", entity_id=po_id, actor=user,
-        customer_id=po.get("customer_id"), quotation_id=po.get("quotation_id"), purchase_id=po_id,
-        summary=f"Chalan {chalan.get('number')} dispatched" + (f" · {body.dispatch_note}" if body.dispatch_note else ""),
-        payload={"chalan_id": chalan_id},
-        floor_id=floor_inherit(po),
-    )
-    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
-    if not fresh:
-        raise HTTPException(status_code=409, detail="Purchase order changed after Chalan transition")
-    stage = compute_order_stage(fresh)
-    if stage == "completed":
-        for recipient in {po.get("created_by"), po.get("assigned_to")} - {None}:
-            await notify(
-                recipient, (
-                    "Your tile order has been dispatched"
-                    if floor_inherit(po) == TILES_FLOOR_ID
-                    else "Your purchase order has been dispatched"
-                ),
-                body=f"{po.get('number')} for {po.get('customer_name')} is fully dispatched",
-                kind="success", link=_chalan_order_link(po), floor_id=floor_inherit(po),
-            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not journal Chalan dispatch: {exc}") from exc
+    await _dispatch_chalan_outbox(event)
     return {"po_id": po_id, "chalan_id": chalan_id, "stage": stage}
 
 

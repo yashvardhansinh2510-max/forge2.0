@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from auth import floor_inherit
 from db import client, db
-from models import ActivityEvent, Followup, Payment, PurchaseOrder, PurchaseOrderItem, PurchaseStageEvent, PurchaseStatusEvent, UserPublic
+from models import ActivityEvent, Followup, Notification, Payment, PurchaseOrder, PurchaseOrderItem, PurchaseStageEvent, PurchaseStatusEvent, UserPublic
 from models_tile_orders import TileCustomerOrder, TileCustomerOrderBrand, TileCustomerOrderDashboardSummary
 from services.notifications import notify
 from services.pricing import per_line_net_amounts
@@ -26,6 +26,7 @@ from pymongo import ReturnDocument
 EVENT_QUOTATION_GENERATED = "QuotationGenerated"
 EVENT_ORDER_PLACED = "OrderPlaced"
 EVENT_PURCHASE_TRANSFERRED = "PurchaseTransferred"
+EVENT_PURCHASE_CHALAN_LIFECYCLE = "PurchaseChalanLifecycle"
 
 
 def now_iso() -> str:
@@ -40,6 +41,7 @@ async def ensure_outbox_indexes() -> None:
     await db.payments.create_index("automation_key", unique=True, sparse=True, name="payment_automation_key")
     await db.payments.create_index("idempotency_key", unique=True, sparse=True, name="payment_idempotency_key")
     await db.activity_events.create_index("automation_key", unique=True, sparse=True, name="activity_automation_key")
+    await db.notifications.create_index("automation_key", unique=True, sparse=True, name="notification_automation_key")
     await db.followups.create_index("automation_key", unique=True, sparse=True, name="followup_automation_key")
 
 
@@ -154,6 +156,69 @@ async def _upsert_activity(*, key: str, event_type: str, entity_type: str, entit
     ).dict()
     event["automation_key"] = key
     await db.activity_events.update_one({"automation_key": key}, {"$setOnInsert": event}, upsert=True, session=session)
+
+
+async def _upsert_notification(*, key: str, user_id: str, title: str, body: str | None, kind: str, link: str | None, floor_id: str | None, session: Any) -> None:
+    notification = Notification(
+        user_id=user_id,
+        title=title,
+        body=body,
+        kind=kind,
+        link=link,
+        floor_id=floor_id,
+    ).dict()
+    notification["automation_key"] = key
+    await db.notifications.update_one(
+        {"automation_key": key},
+        {"$setOnInsert": notification},
+        upsert=True,
+        session=session,
+    )
+
+
+async def _handle_purchase_chalan_lifecycle(event: dict, session: Any) -> dict:
+    """Materialize one durable Chalan transition into shared read models.
+
+    Both activity and notifications use deterministic automation keys, so a
+    worker retry after an interrupted dispatch cannot duplicate either row.
+    """
+    payload = event["payload"]
+    key = event["idempotency_key"]
+    await _upsert_activity(
+        key=f"{key}:activity",
+        event_type=payload["activity_event_type"],
+        entity_type="purchase",
+        entity_id=payload["po_id"],
+        actor_id=event["actor_id"],
+        actor_name=event["actor_name"],
+        customer_id=payload.get("customer_id"),
+        quotation_id=payload.get("quotation_id"),
+        purchase_id=payload["po_id"],
+        summary=payload["summary"],
+        payload={
+            "chalan_id": payload["chalan_id"],
+            "chalan_number": payload.get("chalan_number"),
+            "request_key": payload.get("request_key"),
+        },
+        session=session,
+    )
+    for notification in payload.get("notifications") or []:
+        notification_key = notification.get("automation_key") or f"{key}:notification:{notification['user_id']}"
+        await _upsert_notification(
+            key=notification_key,
+            user_id=notification["user_id"],
+            title=notification["title"],
+            body=notification.get("body"),
+            kind=notification.get("kind", "info"),
+            link=notification.get("link"),
+            floor_id=payload.get("floor_id"),
+            session=session,
+        )
+    return {
+        "po_id": payload["po_id"],
+        "chalan_id": payload["chalan_id"],
+        "stage": payload.get("stage"),
+    }
 
 
 async def _upsert_followup(*, key: str, quotation: dict, reason: str, category: str, session: Any) -> None:
@@ -524,6 +589,8 @@ async def dispatch_event(event_id: str, *, claim_id: str | None = None) -> dict:
             elif current["event_type"] == EVENT_PURCHASE_TRANSFERRED:
                 from services.transfer_workflow import handle_purchase_transferred
                 result = await handle_purchase_transferred(current, session)
+            elif current["event_type"] == EVENT_PURCHASE_CHALAN_LIFECYCLE:
+                result = await _handle_purchase_chalan_lifecycle(current, session)
             else:
                 raise RuntimeError(f"Unsupported outbox event type {current['event_type']}")
             notification = result.pop("post_commit_notification", None)
@@ -551,6 +618,7 @@ _EVENT_COLLECTIONS: dict[str, tuple[str, ...]] = {
     EVENT_QUOTATION_GENERATED: ("quotations", "followups", "activity_events"),
     EVENT_ORDER_PLACED: ("quotations", "purchase_orders", "customer_orders", "payments", "followups", "activity_events"),
     EVENT_PURCHASE_TRANSFERRED: ("quotations", "purchase_orders", "payments", "followups", "activity_events"),
+    EVENT_PURCHASE_CHALAN_LIFECYCLE: ("purchase_orders", "activity_events", "notifications"),
 }
 
 

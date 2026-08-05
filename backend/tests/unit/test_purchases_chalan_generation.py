@@ -36,8 +36,38 @@ class _FakeUpdateResult:
     """Mirrors the one field (`matched_count`) generate_chalan's optimistic-
     concurrency check reads off pymongo's real UpdateResult."""
 
-    def __init__(self, matched_count: int):
+    def __init__(self, matched_count: int, modified_count: int | None = None):
         self.matched_count = matched_count
+        self.modified_count = matched_count if modified_count is None else modified_count
+
+
+class _AsyncContext:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+class _FakeSession(_AsyncContext):
+    def start_transaction(self):
+        return _AsyncContext()
+
+
+class _FakeClient:
+    async def start_session(self):
+        return _FakeSession()
+
+
+class _FakeEvents:
+    def __init__(self):
+        self.rows: list[dict] = []
+
+    async def find_one(self, query, *_args, **_kwargs):
+        return next((deepcopy(row) for row in self.rows if all(row.get(k) == v for k, v in query.items())), None)
+
+    async def insert_one(self, row, **_kwargs):
+        self.rows.append(deepcopy(row))
 
 
 class _FakePOs:
@@ -50,6 +80,7 @@ class _FakePOs:
         self._synchronize_initial_reads = synchronize_initial_reads
         self._initial_reads = 0
         self._initial_read_barrier = asyncio.Event()
+        self.replace_items_before_update: list[dict] | None = None
 
     @staticmethod
     def _clauses(query: dict):
@@ -74,10 +105,17 @@ class _FakePOs:
             await self._initial_read_barrier.wait()
         return snapshot
 
-    async def update_one(self, query, update):
+    async def update_one(self, query, update, **_kwargs):
         self.update_calls += 1
         self.update_queries.append(deepcopy(query))
+        if self.replace_items_before_update is not None:
+            self._po["items"] = deepcopy(self.replace_items_before_update)
+            self.replace_items_before_update = None
         if self._po is None or not self._matches_floor(query):
+            return _FakeUpdateResult(matched_count=0)
+        clauses = list(self._clauses(query))
+        expected_items = next((clause["items"] for clause in clauses if "items" in clause), None)
+        if expected_items is not None and self._po.get("items") != expected_items:
             return _FakeUpdateResult(matched_count=0)
 
         expected_size = None
@@ -99,6 +137,31 @@ class _FakePOs:
 class _FakeDb:
     def __init__(self, po: dict | None):
         self.purchase_orders = _FakePOs(po)
+        self.event_outbox = _FakeEvents()
+
+
+@pytest.fixture(autouse=True)
+def _durable_outbox_harness(monkeypatch):
+    monkeypatch.setattr(tracker, "client", _FakeClient())
+
+    async def _enqueue(*, event_type, idempotency_key, payload, actor, session):
+        event = {
+            "id": f"event-{len(tracker.db.event_outbox.rows) + 1}",
+            "event_type": event_type,
+            "idempotency_key": idempotency_key,
+            "payload": deepcopy(payload),
+            "actor_id": actor.id,
+            "actor_name": actor.full_name,
+            "status": "pending",
+        }
+        await tracker.db.event_outbox.insert_one(event, session=session)
+        return event
+
+    async def _dispatch(_event_id):
+        return {}
+
+    monkeypatch.setattr(tracker, "enqueue_after_primary_commit", _enqueue)
+    monkeypatch.setattr(tracker, "dispatch_event", _dispatch)
 
 
 async def _noop_log_event(**_kwargs):
@@ -205,37 +268,54 @@ def test_generate_chalan_partial_then_complete_never_exceeds_ordered_qty(monkeyp
     assert released == 10
 
 
-def test_generate_chalan_repeated_complete_release_has_no_second_mutation_or_events(monkeypatch):
+def test_generate_chalan_replayed_partial_request_returns_existing_without_duplicate_outbox(monkeypatch):
     fake_db = _FakeDb(_po(
         assigned_to="u-manager",
         items=[{"id": "item-1", "name": "Basin", "qty": 10}],
     ))
     monkeypatch.setattr(tracker, "db", fake_db)
     monkeypatch.setattr(tracker, "next_number", _fake_next_number)
-    events: list[dict] = []
-    notifications: list[tuple] = []
+    body = tracker.GenerateChalanBody(
+        items=[tracker.ChalanItemInput(po_item_id="item-1", qty=4)],
+        idempotency_key="release-request-1",
+    )
 
-    async def _capture_event(**kwargs):
-        events.append(kwargs)
+    first = asyncio.run(tracker.generate_chalan("po-1", body, user=_user()))
+    replay = asyncio.run(tracker.generate_chalan("po-1", body, user=_user()))
 
-    async def _capture_notification(*args, **kwargs):
-        notifications.append((args, kwargs))
-
-    monkeypatch.setattr(tracker, "log_event", _capture_event)
-    monkeypatch.setattr(tracker, "notify", _capture_notification)
-    body = tracker.GenerateChalanBody(items=[tracker.ChalanItemInput(po_item_id="item-1", qty=10)])
-
-    asyncio.run(tracker.generate_chalan("po-1", body, user=_user()))
-    with pytest.raises(Exception) as exc:
-        asyncio.run(tracker.generate_chalan("po-1", body, user=_user()))
-
-    assert getattr(exc.value, "status_code", None) == 400
+    assert first["chalan"]["id"] == replay["chalan"]["id"]
+    assert replay["idempotent"] is True
     assert fake_db.purchase_orders.update_calls == 1
-    assert len(events) == 1
-    assert len(notifications) == 2
-    assert {entry[0][0] for entry in notifications} == {"u-sales", "u-manager"}
-    assert all(entry[1]["floor_id"] == "first-floor" for entry in notifications)
-    assert all(entry[1]["link"] == "/purchase-orders/po-1" for entry in notifications)
+    assert len(fake_db.purchase_orders._po["chalans"]) == 1
+    assert len(fake_db.event_outbox.rows) == 1
+    assert len(fake_db.event_outbox.rows[0]["payload"]["notifications"]) == 2
+
+
+def test_generate_chalan_concurrent_partial_replay_without_client_key_is_idempotent(monkeypatch):
+    fake_db = _FakeDb(_po(items=[{"id": "item-1", "name": "Basin", "qty": 10}]))
+    fake_db.purchase_orders._synchronize_initial_reads = 2
+    monkeypatch.setattr(tracker, "db", fake_db)
+    monkeypatch.setattr(tracker, "next_number", _fake_next_number)
+    body = tracker.GenerateChalanBody(
+        items=[tracker.ChalanItemInput(po_item_id="item-1", qty=4)],
+        reference_number="supplier-release-1",
+    )
+
+    async def _race():
+        return await asyncio.gather(
+            tracker.generate_chalan("po-1", body, user=_user()),
+            tracker.generate_chalan("po-1", body, user=_user()),
+        )
+
+    results = asyncio.run(_race())
+
+    assert {result["idempotent"] for result in results} == {False, True}
+    assert results[0]["chalan"]["id"] == results[1]["chalan"]["id"]
+    assert len(fake_db.purchase_orders._po["chalans"]) == 1
+    assert len(fake_db.event_outbox.rows) == 1
+    assert fake_db.event_outbox.rows[0]["idempotency_key"].startswith(
+        "purchase-chalan:po-1:generate:derived:"
+    )
 
 
 def test_generate_chalan_concurrent_release_allows_one_winner_without_over_release(monkeypatch):
@@ -254,12 +334,17 @@ def test_generate_chalan_concurrent_release_allows_one_winner_without_over_relea
         return f"CH-{number:04d}"
 
     monkeypatch.setattr(tracker, "next_number", _next)
-    body = tracker.GenerateChalanBody(items=[tracker.ChalanItemInput(po_item_id="item-1", qty=7)])
+    first_body = tracker.GenerateChalanBody(
+        items=[tracker.ChalanItemInput(po_item_id="item-1", qty=7)], idempotency_key="request-a",
+    )
+    second_body = tracker.GenerateChalanBody(
+        items=[tracker.ChalanItemInput(po_item_id="item-1", qty=7)], idempotency_key="request-b",
+    )
 
     async def _race():
         return await asyncio.gather(
-            tracker.generate_chalan("po-1", body, user=_user()),
-            tracker.generate_chalan("po-1", body, user=_user()),
+            tracker.generate_chalan("po-1", first_body, user=_user()),
+            tracker.generate_chalan("po-1", second_body, user=_user()),
             return_exceptions=True,
         )
 
@@ -278,14 +363,6 @@ def test_generate_chalan_scopes_cas_fresh_read_and_event_to_source_floor(monkeyp
     fake_db = _FakeDb(_po())
     monkeypatch.setattr(tracker, "db", fake_db)
     monkeypatch.setattr(tracker, "next_number", _fake_next_number)
-    events: list[dict] = []
-
-    async def _capture_event(**kwargs):
-        events.append(kwargs)
-
-    monkeypatch.setattr(tracker, "log_event", _capture_event)
-    monkeypatch.setattr(tracker, "notify", _noop_notify)
-
     asyncio.run(tracker.generate_chalan(
         "po-1", tracker.GenerateChalanBody(items=[tracker.ChalanItemInput(po_item_id="item-1", qty=1)]),
         user=_user(),
@@ -294,9 +371,33 @@ def test_generate_chalan_scopes_cas_fresh_read_and_event_to_source_floor(monkeyp
     update_query = fake_db.purchase_orders.update_queries[0]
     assert {"floor_id": {"$in": ["first-floor"]}} in update_query["$and"]
     assert {"floor_id": {"$in": ["first-floor"]}} in fake_db.purchase_orders.find_queries[-1]["$and"]
-    assert events[0]["floor_id"] == "first-floor"
-    assert events[0]["purchase_id"] == "po-1"
-    assert events[0]["customer_id"] == "cust-1"
+    payload = fake_db.event_outbox.rows[0]["payload"]
+    assert payload["floor_id"] == "first-floor"
+    assert payload["po_id"] == "po-1"
+    assert payload["customer_id"] == "cust-1"
+
+
+def test_generate_chalan_rejects_concurrent_item_quantity_replacement(monkeypatch):
+    fake_db = _FakeDb(_po(items=[{"id": "item-1", "name": "Basin", "qty": 10}]))
+    fake_db.purchase_orders.replace_items_before_update = [
+        {"id": "item-1", "name": "Basin", "qty": 3},
+    ]
+    monkeypatch.setattr(tracker, "db", fake_db)
+    monkeypatch.setattr(tracker, "next_number", _fake_next_number)
+
+    with pytest.raises(Exception) as exc:
+        asyncio.run(tracker.generate_chalan(
+            "po-1",
+            tracker.GenerateChalanBody(
+                items=[tracker.ChalanItemInput(po_item_id="item-1", qty=7)],
+                idempotency_key="stale-items",
+            ),
+            user=_user(),
+        ))
+
+    assert getattr(exc.value, "status_code", None) == 409
+    assert fake_db.purchase_orders._po["chalans"] == []
+    assert fake_db.event_outbox.rows == []
 
 
 def test_generate_chalan_number_uses_hyphenated_prefix(monkeypatch):

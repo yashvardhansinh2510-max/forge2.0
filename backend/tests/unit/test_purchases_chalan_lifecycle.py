@@ -11,6 +11,7 @@ import pytest
 
 from models import UserPublic
 from routes import purchases_tracker as tracker
+from services import domain_outbox
 
 
 def _user() -> UserPublic:
@@ -37,8 +38,38 @@ class _FakeUpdateResult:
     """Mirrors the one field (`matched_count`) the godown-received/dispatch
     compare-and-swap checks read off pymongo's real UpdateResult."""
 
-    def __init__(self, matched_count: int):
+    def __init__(self, matched_count: int, modified_count: int | None = None):
         self.matched_count = matched_count
+        self.modified_count = matched_count if modified_count is None else modified_count
+
+
+class _AsyncContext:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+class _FakeSession(_AsyncContext):
+    def start_transaction(self):
+        return _AsyncContext()
+
+
+class _FakeClient:
+    async def start_session(self):
+        return _FakeSession()
+
+
+class _FakeEvents:
+    def __init__(self):
+        self.rows: list[dict] = []
+
+    async def find_one(self, query, *_args, **_kwargs):
+        return next((deepcopy(row) for row in self.rows if all(row.get(k) == v for k, v in query.items())), None)
+
+    async def insert_one(self, row, **_kwargs):
+        self.rows.append(deepcopy(row))
 
 
 class _FakePOsMulti:
@@ -78,13 +109,19 @@ class _FakePOsMulti:
             await self._initial_read_barrier.wait()
         return snapshot
 
-    async def update_one(self, query, update):
+    async def update_one(self, query, update, **_kwargs):
         self.update_calls += 1
         self.update_queries.append(deepcopy(query))
         if not self._matches_floor(query):
             return _FakeUpdateResult(matched_count=0)
         chalan_clause = next((c["chalans"] for c in self._clauses(query) if "chalans" in c), {})
         elem_match = chalan_clause.get("$elemMatch", {})
+        if not elem_match:
+            if self._po.get("chalan_completion_event_key") is not None:
+                return _FakeUpdateResult(matched_count=0, modified_count=0)
+            for key, value in update.get("$set", {}).items():
+                self._po[key] = value
+            return _FakeUpdateResult(matched_count=1, modified_count=1)
         chalan_id = elem_match.get("id")
         expected_stage = elem_match.get("stage")
         matched = next(
@@ -113,6 +150,31 @@ class _FakeDb:
     def __init__(self, po: dict):
         self.purchase_orders = _FakePOsMulti(po)
         self.customers = _FakeCustomers()
+        self.event_outbox = _FakeEvents()
+
+
+@pytest.fixture(autouse=True)
+def _durable_outbox_harness(monkeypatch):
+    monkeypatch.setattr(tracker, "client", _FakeClient())
+
+    async def _enqueue(*, event_type, idempotency_key, payload, actor, session):
+        event = {
+            "id": f"event-{len(tracker.db.event_outbox.rows) + 1}",
+            "event_type": event_type,
+            "idempotency_key": idempotency_key,
+            "payload": deepcopy(payload),
+            "actor_id": actor.id,
+            "actor_name": actor.full_name,
+            "status": "pending",
+        }
+        await tracker.db.event_outbox.insert_one(event, session=session)
+        return event
+
+    async def _dispatch(_event_id):
+        return {}
+
+    monkeypatch.setattr(tracker, "enqueue_after_primary_commit", _enqueue)
+    monkeypatch.setattr(tracker, "dispatch_event", _dispatch)
 
 
 async def _noop_log_event(**_kwargs):
@@ -133,22 +195,17 @@ def test_godown_received_transitions_stage(monkeypatch):
 def test_godown_received_logs_one_floor_scoped_event_and_repeat_does_not_duplicate(monkeypatch):
     fake_db = _FakeDb(_po_with_chalan("released"))
     monkeypatch.setattr(tracker, "db", fake_db)
-    events: list[dict] = []
-
-    async def _capture_event(**kwargs):
-        events.append(kwargs)
-
-    monkeypatch.setattr(tracker, "log_event", _capture_event)
 
     asyncio.run(tracker.mark_chalan_godown_received("po-1", "ch-1", user=_user()))
     with pytest.raises(Exception):
         asyncio.run(tracker.mark_chalan_godown_received("po-1", "ch-1", user=_user()))
 
-    assert len(events) == 1
-    assert events[0]["event_type"] == "purchase.chalan_godown_received"
-    assert events[0]["floor_id"] == "first-floor"
-    assert events[0]["purchase_id"] == "po-1"
-    assert events[0]["payload"]["chalan_id"] == "ch-1"
+    assert len(fake_db.event_outbox.rows) == 1
+    payload = fake_db.event_outbox.rows[0]["payload"]
+    assert payload["activity_event_type"] == "purchase.chalan_godown_received"
+    assert payload["floor_id"] == "first-floor"
+    assert payload["po_id"] == "po-1"
+    assert payload["chalan_id"] == "ch-1"
     assert {"floor_id": {"$in": ["first-floor"]}} in fake_db.purchase_orders.update_queries[0]["$and"]
     assert {"floor_id": {"$in": ["first-floor"]}} in fake_db.purchase_orders.find_queries[-1]["$and"]
 
@@ -167,32 +224,17 @@ def test_dispatch_completes_order_and_notifies_when_last_chalan(monkeypatch):
     po["assigned_to"] = "u-manager"
     fake_db = _FakeDb(po)
     monkeypatch.setattr(tracker, "db", fake_db)
-    events: list[dict] = []
-    notified: list[tuple] = []
-
-    async def _capture_event(**kwargs):
-        events.append(kwargs)
-
-    async def _capture_notify(*args, **kwargs):
-        notified.append((args, kwargs))
-
-    monkeypatch.setattr(tracker, "log_event", _capture_event)
-    monkeypatch.setattr(tracker, "notify", _capture_notify)
-
     body = tracker.DispatchChalanBody(dispatch_note="Delivered by hand")
     result = asyncio.run(tracker.dispatch_chalan("po-1", "ch-1", body, user=_user()))
 
     assert result["stage"] == "completed"
     assert fake_db.purchase_orders._po["chalans"][0]["stage"] == "dispatched"
-    assert len(events) == 1
-    assert events[0]["event_type"] == "purchase.chalan_dispatched"
-    assert events[0]["floor_id"] == "first-floor"
-    assert events[0]["purchase_id"] == "po-1"
-    assert len(notified) == 2
-    assert {entry[0][0] for entry in notified} == {"u-sales", "u-manager"}
-    assert all(entry[0][1] == "Your purchase order has been dispatched" for entry in notified)
-    assert all(entry[1]["floor_id"] == "first-floor" for entry in notified)
-    assert all(entry[1]["link"] == "/purchase-orders/po-1" for entry in notified)
+    payload = fake_db.event_outbox.rows[0]["payload"]
+    assert payload["activity_event_type"] == "purchase.chalan_dispatched"
+    assert payload["floor_id"] == "first-floor"
+    assert len(payload["notifications"]) == 2
+    assert {entry["user_id"] for entry in payload["notifications"]} == {"u-sales", "u-manager"}
+    assert all(entry["title"] == "Your purchase order has been dispatched" for entry in payload["notifications"])
 
 
 def test_dispatch_of_one_of_multiple_chalans_is_partial_and_does_not_notify(monkeypatch):
@@ -209,13 +251,6 @@ def test_dispatch_of_one_of_multiple_chalans_is_partial_and_does_not_notify(monk
     fake_db = _FakeDb(po)
     monkeypatch.setattr(tracker, "db", fake_db)
     monkeypatch.setattr(tracker, "log_event", _noop_log_event)
-    notified: list[tuple] = []
-
-    async def _capture_notify(*args, **kwargs):
-        notified.append((args, kwargs))
-
-    monkeypatch.setattr(tracker, "notify", _capture_notify)
-
     result = asyncio.run(tracker.dispatch_chalan(
         "po-1", "ch-1", tracker.DispatchChalanBody(), user=_user(),
     ))
@@ -223,7 +258,7 @@ def test_dispatch_of_one_of_multiple_chalans_is_partial_and_does_not_notify(monk
     assert result["stage"] == "dispatch"
     assert fake_db.purchase_orders._po["chalans"][0]["stage"] == "dispatched"
     assert fake_db.purchase_orders._po["chalans"][1]["stage"] == "released"
-    assert notified == []
+    assert fake_db.event_outbox.rows[0]["payload"]["notifications"] == []
 
 
 def test_repeated_dispatch_creates_exactly_one_event_and_notification_set(monkeypatch):
@@ -231,17 +266,6 @@ def test_repeated_dispatch_creates_exactly_one_event_and_notification_set(monkey
     po["assigned_to"] = "u-manager"
     fake_db = _FakeDb(po)
     monkeypatch.setattr(tracker, "db", fake_db)
-    events: list[dict] = []
-    notified: list[tuple] = []
-
-    async def _capture_event(**kwargs):
-        events.append(kwargs)
-
-    async def _capture_notify(*args, **kwargs):
-        notified.append((args, kwargs))
-
-    monkeypatch.setattr(tracker, "log_event", _capture_event)
-    monkeypatch.setattr(tracker, "notify", _capture_notify)
     body = tracker.DispatchChalanBody(dispatch_note="Delivered")
 
     asyncio.run(tracker.dispatch_chalan("po-1", "ch-1", body, user=_user()))
@@ -249,18 +273,127 @@ def test_repeated_dispatch_creates_exactly_one_event_and_notification_set(monkey
         asyncio.run(tracker.dispatch_chalan("po-1", "ch-1", body, user=_user()))
 
     assert getattr(exc.value, "status_code", None) == 400
-    assert fake_db.purchase_orders.update_calls == 1
-    assert len(events) == 1
-    assert len(notified) == 2
+    assert fake_db.purchase_orders.update_calls == 2  # dispatch + order completion claim
+    assert len(fake_db.event_outbox.rows) == 1
+    assert len(fake_db.event_outbox.rows[0]["payload"]["notifications"]) == 2
     # Activity feed, purchase timeline, and customer history are read models
     # over this same event. Its three identities must therefore all point at
     # the one successful embedded-Chalan transition.
-    event = events[0]
-    assert event["entity_id"] == "po-1"
-    assert event["purchase_id"] == "po-1"
-    assert event["customer_id"] == "cust-1"
-    assert event["floor_id"] == "first-floor"
-    assert event["payload"]["chalan_id"] == "ch-1"
+    payload = fake_db.event_outbox.rows[0]["payload"]
+    assert payload["po_id"] == "po-1"
+    assert payload["customer_id"] == "cust-1"
+    assert payload["floor_id"] == "first-floor"
+    assert payload["chalan_id"] == "ch-1"
+
+
+def test_concurrent_distinct_final_chalans_claim_completion_notification_once(monkeypatch):
+    po = _po_with_chalan("released")
+    po["assigned_to"] = "u-manager"
+    po["items"][0]["qty"] = 10
+    po["chalans"] = [
+        {"id": "ch-1", "number": "CH-0001", "stage": "released", "items": [
+            {"po_item_id": "item-1", "qty": 5, "name": "Basin", "unit": "PCS"},
+        ]},
+        {"id": "ch-2", "number": "CH-0002", "stage": "released", "items": [
+            {"po_item_id": "item-1", "qty": 5, "name": "Basin", "unit": "PCS"},
+        ]},
+    ]
+    fake_db = _FakeDb(po)
+    fake_db.purchase_orders._synchronize_initial_reads = 2
+    monkeypatch.setattr(tracker, "db", fake_db)
+
+    async def _race():
+        return await asyncio.gather(
+            tracker.dispatch_chalan("po-1", "ch-1", tracker.DispatchChalanBody(), user=_user()),
+            tracker.dispatch_chalan("po-1", "ch-2", tracker.DispatchChalanBody(), user=_user()),
+        )
+
+    results = asyncio.run(_race())
+    notifications = [
+        notification
+        for event in fake_db.event_outbox.rows
+        for notification in event["payload"]["notifications"]
+    ]
+
+    assert len(results) == 2
+    assert all(result["stage"] in {"dispatch", "completed"} for result in results)
+    assert fake_db.purchase_orders._po["chalan_completion_event_key"] == "purchase-chalan:po-1:completed"
+    assert len(notifications) == 2
+    assert {notification["user_id"] for notification in notifications} == {"u-sales", "u-manager"}
+
+
+def test_chalan_outbox_handler_persists_idempotent_activity_and_notifications(monkeypatch):
+    class _PurchaseOrders:
+        async def find_one(self, *_args, **_kwargs):
+            return {"id": "po-1", "floor_id": "first-floor"}
+
+    class _Upserts:
+        def __init__(self):
+            self.rows: dict[str, dict] = {}
+
+        async def update_one(self, query, update, *, upsert=False, **_kwargs):
+            assert upsert is True
+            self.rows.setdefault(query["automation_key"], deepcopy(update["$setOnInsert"]))
+
+    class _Outbox:
+        def __init__(self):
+            self.rows: list[dict] = []
+            self.sessions: list[object] = []
+
+        async def insert_one(self, row, *, session):
+            self.rows.append(deepcopy(row))
+            self.sessions.append(session)
+
+    activity = _Upserts()
+    notifications = _Upserts()
+    outbox = _Outbox()
+    fake_db = type("Db", (), {
+        "purchase_orders": _PurchaseOrders(),
+        "activity_events": activity,
+        "notifications": notifications,
+        "event_outbox": outbox,
+    })()
+    monkeypatch.setattr(domain_outbox, "db", fake_db)
+    monkeypatch.setattr(domain_outbox, "uuid4", lambda: "event-1")
+    session = object()
+    payload = {
+            "activity_event_type": "purchase.chalan_dispatched",
+            "po_id": "po-1",
+            "customer_id": "cust-1",
+            "quotation_id": None,
+            "floor_id": "first-floor",
+            "chalan_id": "ch-1",
+            "chalan_number": "CH-0001",
+            "stage": "completed",
+            "summary": "Chalan CH-0001 dispatched",
+            "notifications": [
+                {
+                    "user_id": "u-sales", "title": "Order dispatched", "kind": "success",
+                    "automation_key": "purchase-chalan:po-1:completed:notification:u-sales",
+                },
+            ],
+    }
+    event = asyncio.run(domain_outbox.enqueue_after_primary_commit(
+        event_type=domain_outbox.EVENT_PURCHASE_CHALAN_LIFECYCLE,
+        idempotency_key="purchase-chalan:po-1:ch-1:dispatch",
+        payload=payload,
+        actor=_user(),
+        session=session,
+    ))
+
+    asyncio.run(domain_outbox._handle_purchase_chalan_lifecycle(event, session=session))
+    asyncio.run(domain_outbox._handle_purchase_chalan_lifecycle(event, session=session))
+
+    assert len(outbox.rows) == 1
+    assert outbox.rows[0]["id"] == "event-1"
+    assert outbox.rows[0]["status"] == "pending"
+    assert outbox.rows[0]["idempotency_key"] == "purchase-chalan:po-1:ch-1:dispatch"
+    assert outbox.sessions == [session]
+    assert len(activity.rows) == 1
+    assert len(notifications.rows) == 1
+    assert set(activity.rows) == {"purchase-chalan:po-1:ch-1:dispatch:activity"}
+    assert set(notifications.rows) == {"purchase-chalan:po-1:completed:notification:u-sales"}
+    assert activity.rows["purchase-chalan:po-1:ch-1:dispatch:activity"]["floor_id"] == "first-floor"
 
 
 def test_concurrent_dispatch_has_one_winner_one_conflict_and_exactly_once_side_effects(monkeypatch):
@@ -269,17 +402,6 @@ def test_concurrent_dispatch_has_one_winner_one_conflict_and_exactly_once_side_e
     fake_db = _FakeDb(po)
     fake_db.purchase_orders._synchronize_initial_reads = 2
     monkeypatch.setattr(tracker, "db", fake_db)
-    events: list[dict] = []
-    notified: list[tuple] = []
-
-    async def _capture_event(**kwargs):
-        events.append(kwargs)
-
-    async def _capture_notify(*args, **kwargs):
-        notified.append((args, kwargs))
-
-    monkeypatch.setattr(tracker, "log_event", _capture_event)
-    monkeypatch.setattr(tracker, "notify", _capture_notify)
     body = tracker.DispatchChalanBody()
 
     async def _race():
@@ -293,20 +415,13 @@ def test_concurrent_dispatch_has_one_winner_one_conflict_and_exactly_once_side_e
 
     assert len([result for result in results if isinstance(result, dict)]) == 1
     assert len([result for result in results if getattr(result, "status_code", None) == 409]) == 1
-    assert len(events) == 1
-    assert len(notified) == 2
+    assert len(fake_db.event_outbox.rows) == 1
+    assert len(fake_db.event_outbox.rows[0]["payload"]["notifications"]) == 2
 
 
 def test_dispatch_rejects_unknown_stage_without_mutation_or_event(monkeypatch):
     fake_db = _FakeDb(_po_with_chalan("cancelled"))
     monkeypatch.setattr(tracker, "db", fake_db)
-    events: list[dict] = []
-
-    async def _capture_event(**kwargs):
-        events.append(kwargs)
-
-    monkeypatch.setattr(tracker, "log_event", _capture_event)
-
     with pytest.raises(Exception) as exc:
         asyncio.run(tracker.dispatch_chalan(
             "po-1", "ch-1", tracker.DispatchChalanBody(), user=_user(),
@@ -314,7 +429,7 @@ def test_dispatch_rejects_unknown_stage_without_mutation_or_event(monkeypatch):
 
     assert getattr(exc.value, "status_code", None) == 400
     assert fake_db.purchase_orders.update_calls == 0
-    assert events == []
+    assert fake_db.event_outbox.rows == []
 
 
 def test_dispatch_rejects_when_already_dispatched(monkeypatch):
