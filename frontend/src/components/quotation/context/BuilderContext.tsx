@@ -27,7 +27,7 @@ import { computeTotals, effectivePct } from "../helpers/pricing";
 import { productImageList } from "../helpers/media";
 import {
   Brand, BuilderRow, BuilderState, Category, Customer, DEFAULT_ROOMS, DescSheetState, DiscountSheetState,
-  INITIAL_BUILDER_STATE, Line, PickerTab, Product, ProductVariant, QuotationHeader,
+  INITIAL_BUILDER_STATE, Line, PickerTab, Product, ProductVariant,
   RecentQuotation, Referrer, RoomDiscount, RoomSheetState, SaveState, SwapSheetState,
 } from "../helpers/types";
 

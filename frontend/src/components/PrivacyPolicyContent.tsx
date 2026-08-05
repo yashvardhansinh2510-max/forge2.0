@@ -67,8 +67,8 @@ export function PrivacyPolicyContent() {
       <Section title="Your rights">
         <P>
           You can request a copy of the personal data this app holds about you, ask that
-          inaccurate data be corrected, or request deletion of your account (see "Requesting
-          deletion" below). Some records may be retained after a deletion request where retention
+          inaccurate data be corrected, or request deletion of your account (see &quot;Requesting
+          deletion&quot; below). Some records may be retained after a deletion request where retention
           is required for financial record-keeping or to resolve an open business transaction.
         </P>
       </Section>

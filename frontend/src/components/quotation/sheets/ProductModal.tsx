@@ -14,7 +14,7 @@ import { ProductImage } from "@/src/components/ProductImage";
 import { ProductEditor } from "@/src/components/catalog/ProductEditor";
 import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
-import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens";
+import { colors, money, radius, shadow, spacing } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { productImageList, resolveVariantImages } from "../helpers/media";
@@ -37,7 +37,6 @@ export function ProductModal() {
   const [notes, setNotes] = useState<string>("");
   const [alternates, setAlternates] = useState<Product[]>([]);
   const [completeSet, setCompleteSet] = useState<Product[]>([]);
-  const [loadingRel, setLoadingRel] = useState(false);
   const [zoomOpen, setZoomOpen] = useState(false);
   const [activeImageIdx, setActiveImageIdx] = useState(0);
 
@@ -51,7 +50,6 @@ export function ProductModal() {
     setAlternates([]);
     setCompleteSet([]);
     setActiveImageIdx(0);
-    setLoadingRel(true);
     (async () => {
       try {
         const [alt, set] = await Promise.all([
@@ -61,7 +59,6 @@ export function ProductModal() {
         setAlternates(alt.items || []);
         setCompleteSet(set.items || []);
       } catch {}
-      finally { setLoadingRel(false); }
     })();
   }, [product]);
 
@@ -85,9 +82,10 @@ export function ProductModal() {
     return resolveVariantImages(product, selectedVariant);
   }, [product, selectedVariant]);
 
+  const heroImageKey = heroImages.join("|");
   useEffect(() => {
     setActiveImageIdx(0);
-  }, [heroImages.join("|")]);
+  }, [heroImageKey]);
 
   const activeImage = heroImages[Math.min(activeImageIdx, Math.max(0, heroImages.length - 1))];
 

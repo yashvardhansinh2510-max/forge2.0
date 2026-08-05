@@ -19,7 +19,7 @@ export function TermsOfServiceContent() {
       <Section title="Agreement">
         <P>
           These Terms of Service govern access to and use of {brand.name}, operated by
-          [LEGAL_ENTITY_NAME], [REGISTERED_ADDRESS] ("we", "us"). By signing in, you agree to
+          [LEGAL_ENTITY_NAME], [REGISTERED_ADDRESS] (&quot;we&quot;, &quot;us&quot;). By signing in, you agree to
           these terms. Effective date: [EFFECTIVE_DATE].
         </P>
       </Section>
@@ -30,13 +30,13 @@ export function TermsOfServiceContent() {
           more floors/departments — you may not use a staff account outside the access your
           administrator has granted. Customer accounts are created by staff on your behalf and
           give you read-only access to your own quotations, orders, and payment status — you may
-          not use a customer account to access another customer's records.
+          not use a customer account to access another customer&apos;s records.
         </P>
       </Section>
 
       <Section title="Account responsibilities">
         <P>
-          You're responsible for keeping your login credentials confidential and for all activity
+          You&apos;re responsible for keeping your login credentials confidential and for all activity
           under your account. Tell your administrator immediately if you suspect unauthorized
           access. Temporary passwords issued by an administrator must be changed on first sign-in
           and expire if unused.
@@ -46,8 +46,8 @@ export function TermsOfServiceContent() {
       <Section title="Acceptable use">
         <P>
           Use {brand.name} only for its intended purpose: managing and viewing quotations,
-          purchase orders, payments, and related business records. Don't attempt to access data
-          outside your assigned role/floor scope, interfere with the app's operation, or use it to
+          purchase orders, payments, and related business records. Don&apos;t attempt to access data
+          outside your assigned role/floor scope, interfere with the app&apos;s operation, or use it to
           store or transmit unlawful content.
         </P>
       </Section>
@@ -55,7 +55,7 @@ export function TermsOfServiceContent() {
       <Section title="Content and ownership">
         <P>
           Quotations, purchase orders, and other documents you create or view through the app
-          remain the business records of {brand.name} and the customer they relate to. The app's
+          remain the business records of {brand.name} and the customer they relate to. The app&apos;s
           software, design, and branding are the property of [LEGAL_ENTITY_NAME] and may not be
           copied or redistributed outside normal use of the app.
         </P>
@@ -63,7 +63,7 @@ export function TermsOfServiceContent() {
 
       <Section title="Disclaimers and liability">
         <P>
-          The app is provided "as is." While we take reasonable care to keep quotation, order, and
+          The app is provided &quot;as is.&quot; While we take reasonable care to keep quotation, order, and
           payment data accurate, you should confirm pricing and order details through your normal
           business process before relying on them for a transaction. To the extent permitted by
           law, [LEGAL_ENTITY_NAME] is not liable for indirect or consequential loss arising from
