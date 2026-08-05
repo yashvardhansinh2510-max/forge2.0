@@ -125,11 +125,22 @@ Observed configuration:
 ## Blockers and disposition
 
 1. **Critical release blocker:** backend startup reports that `owner@forge.app` still uses the historical known default password. Rotate it through the established credential-rotation process before deployment; no rotation was performed here.
-2. **Verification blocker:** the exact repo-root full-suite command exits 3 because pytest collects root executable/network scripts, including `test_failfast.py` (import-time exit) and `pdf_image_test.py` (missing `PyPDF2`). The configured backend suite itself passes 876 tests at the isolated commit.
+2. **Verification blocker:** the exact repo-root full-suite command exits 3 because pytest collects root executable/network scripts, including `test_failfast.py` (import-time exit) and `pdf_image_test.py` (missing `PyPDF2`). The configured backend suite itself passes 878 tests at the latest feature commit.
 3. **Reproducibility blocker:** TypeScript passed only after ignored `.expo/types` had been generated locally; a clean snapshot needs that explicit prerequisite.
 4. **Acceptance blocker:** the mutating bulk movement, dispatch, retry/conflict, Chalan, activity, and notification UI matrix was not run against shared business data. Committed tests cover invalid movement/stage rejection and Chalan quantity constraints where applicable, but they are not live UI evidence.
 5. **Browser coverage blocker:** visual browser PDF download, detail/history, explicit empty/error, and end-to-end synchronization checks were not completed. Reviewer PDF text extraction and one-page rendering do not prove the browser download flow.
 6. **Environment blocker:** iOS Simulator tooling (`simctl`) is unavailable.
 7. **Scale follow-up:** verify/add appropriate purchase workspace indexes and bound embedded stage history before materially larger histories.
 
-No deliberate production fixture mutation or cleanup, deployment, store action, frontend change, or unrelated dirty-worktree modification was made. Startup and demo-auth write-capable side effects are disclosed above.
+No deliberate production fixture mutation or cleanup, deployment, or store action was made. Startup and demo-auth write-capable side effects are disclosed above. Unrelated tile/quotation dirty-worktree changes remain untouched.
+
+## Post-audit feature fixes
+
+After the initial audit, the following reviewed fixes were committed:
+
+- `4aca3d0` keeps user-driven customer search/brand/stage filters from being reset by stale URL parameters.
+- `fe71cc0` and `7c6ad85` add lifecycle-aware Sanitary Chalan generation, Godown receipt, dispatch, PDF download, transport, and remarks UI with recoverable errors.
+- `1679b62` preserves generated Chalan brand, size, finish, unit, rate, transport, and remarks into PDF output, and versions derived idempotency keys for later equal-sized releases.
+- `d42b85a`, `e48aaef`, and `51ca77a` persist quantity units through quotation → purchase-order creation so Pieces/Box labels survive into Chalans.
+
+Post-audit evidence: focused feature review approved; latest configured backend suite reported 878 passed; changed frontend files passed TypeScript/lint review. Live mutation, browser PDF download, native simulator, deployment, default-credential rotation, and root-suite collection limitations remain as listed above.
