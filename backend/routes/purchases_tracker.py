@@ -36,7 +36,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 
-from auth import floor_inherit, floor_query, floor_scope_ids, get_current_user, require_min_role
+from auth import TILES_FLOOR_ID, floor_inherit, floor_query, floor_scope_ids, get_current_user, require_min_role
 from db import db
 from models import (
     Chalan, ChalanLineItem, PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
@@ -1481,8 +1481,9 @@ async def dismiss_shortage(
 
 
 # =============================================================================
-# Chalan / material-release workflow (Ground Floor Tiles) — see design doc
-# docs/superpowers/specs/2026-07-22-ground-floor-tiles-purchase-workflow-design.md
+# Chalan / material-release workflow shared by floor-scoped purchase orders.
+# Sanitary Bathroom orders remain first-floor; embedded PO chalans are the
+# lifecycle source of truth for every floor.
 # =============================================================================
 class ChalanItemInput(BaseModel):
     po_item_id: str
@@ -1494,6 +1495,13 @@ class GenerateChalanBody(BaseModel):
     reference_number: Optional[str] = None
     receiver_name: Optional[str] = None
     sender_name: Optional[str] = None
+
+
+def _chalan_order_link(po: dict) -> str:
+    """Return the existing order-detail route for the PO's business unit."""
+    if floor_inherit(po) == TILES_FLOOR_ID:
+        return f"/tiles/orders/{po['id']}"
+    return f"/purchase-orders/{po['id']}"
 
 
 @router.post("/{po_id}/chalans")
@@ -1555,7 +1563,7 @@ async def generate_chalan(
         else {"chalans": {"$size": chalan_count}}
     )
     cas_result = await db.purchase_orders.update_one(
-        {"id": po_id, **size_filter},
+        floor_query(user, {"id": po_id, **size_filter}),
         {"$push": {"chalans": chalan.dict()}, "$set": {"updated_at": now}},
     )
     if cas_result.matched_count == 0:
@@ -1563,21 +1571,24 @@ async def generate_chalan(
             "error": "concurrent_modification",
             "message": "Material was just released against this order by someone else — refresh and try again",
         })
-    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not fresh:
+        raise HTTPException(status_code=409, detail="Purchase order changed after Chalan generation")
     stage = compute_order_stage(fresh)
 
     await log_event(
         event_type="purchase.chalan_generated",
         entity_type="purchase", entity_id=po_id, actor=user,
-        customer_id=po.get("customer_id"), purchase_id=po_id,
+        customer_id=po.get("customer_id"), quotation_id=po.get("quotation_id"), purchase_id=po_id,
         summary=f"Generated Chalan {chalan.number} · {len(chalan_items)} item(s)",
         payload={"chalan_id": chalan.id, "chalan_number": chalan.number},
+        floor_id=floor_inherit(po),
     )
     for recipient in {po.get("created_by"), po.get("assigned_to")} - {None}:
         await notify(
             recipient, "Material released by the supplier",
             body=f"Chalan {chalan.number} generated for {po.get('customer_name')} · {po.get('number')}",
-            kind="success", link=f"/tiles/orders/{po_id}", floor_id=floor_inherit(po),
+            kind="success", link=_chalan_order_link(po), floor_id=floor_inherit(po),
         )
     return {"po_id": po_id, "chalan": chalan.dict(), "stage": stage}
 
@@ -1607,7 +1618,7 @@ async def mark_chalan_godown_received(
     # stage away from "released" and the second call's filter no longer
     # matches (matched_count == 0) instead of both silently writing.
     cas_result = await db.purchase_orders.update_one(
-        {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": "released"}}},
+        floor_query(user, {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": "released"}}}),
         {"$set": {
             "chalans.$.stage": "at_godown",
             "chalans.$.godown_received_at": now,
@@ -1624,11 +1635,14 @@ async def mark_chalan_godown_received(
     await log_event(
         event_type="purchase.chalan_godown_received",
         entity_type="purchase", entity_id=po_id, actor=user,
-        customer_id=po.get("customer_id"), purchase_id=po_id,
+        customer_id=po.get("customer_id"), quotation_id=po.get("quotation_id"), purchase_id=po_id,
         summary=f"Chalan {chalan.get('number')} received at Godown",
         payload={"chalan_id": chalan_id},
+        floor_id=floor_inherit(po),
     )
-    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not fresh:
+        raise HTTPException(status_code=409, detail="Purchase order changed after Chalan transition")
     return {"po_id": po_id, "chalan_id": chalan_id, "stage": compute_order_stage(fresh)}
 
 
@@ -1651,8 +1665,11 @@ async def dispatch_chalan(
     chalan = next((c for c in po.get("chalans", []) if c.get("id") == chalan_id), None)
     if not chalan:
         raise HTTPException(status_code=404, detail="Chalan not found")
-    if chalan.get("stage") == "dispatched":
+    chalan_stage = chalan.get("stage")
+    if chalan_stage == "dispatched":
         raise HTTPException(status_code=400, detail="Chalan is already dispatched")
+    if chalan_stage not in {"released", "at_godown"}:
+        raise HTTPException(status_code=400, detail=f"Chalan cannot be dispatched from {chalan_stage or 'unknown'}")
 
     now = now_iso()
     # Compare-and-swap on the stage we just read (either "released" or
@@ -1660,7 +1677,7 @@ async def dispatch_chalan(
     # the godown-received guard above: a second near-simultaneous dispatch
     # call can't land once the first has already flipped the stage.
     cas_result = await db.purchase_orders.update_one(
-        {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": chalan.get("stage")}}},
+        floor_query(user, {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": chalan_stage}}}),
         {"$set": {
             "chalans.$.stage": "dispatched",
             "chalans.$.dispatched_at": now,
@@ -1678,18 +1695,25 @@ async def dispatch_chalan(
     await log_event(
         event_type="purchase.chalan_dispatched",
         entity_type="purchase", entity_id=po_id, actor=user,
-        customer_id=po.get("customer_id"), purchase_id=po_id,
+        customer_id=po.get("customer_id"), quotation_id=po.get("quotation_id"), purchase_id=po_id,
         summary=f"Chalan {chalan.get('number')} dispatched" + (f" · {body.dispatch_note}" if body.dispatch_note else ""),
         payload={"chalan_id": chalan_id},
+        floor_id=floor_inherit(po),
     )
-    fresh = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+    if not fresh:
+        raise HTTPException(status_code=409, detail="Purchase order changed after Chalan transition")
     stage = compute_order_stage(fresh)
     if stage == "completed":
         for recipient in {po.get("created_by"), po.get("assigned_to")} - {None}:
             await notify(
-                recipient, "Your tile order has been dispatched",
+                recipient, (
+                    "Your tile order has been dispatched"
+                    if floor_inherit(po) == TILES_FLOOR_ID
+                    else "Your purchase order has been dispatched"
+                ),
                 body=f"{po.get('number')} for {po.get('customer_name')} is fully dispatched",
-                kind="success", link=f"/tiles/orders/{po_id}", floor_id=floor_inherit(po),
+                kind="success", link=_chalan_order_link(po), floor_id=floor_inherit(po),
             )
     return {"po_id": po_id, "chalan_id": chalan_id, "stage": stage}
 
@@ -1702,7 +1726,10 @@ async def chalan_pdf(po_id: str, chalan_id: str, user: UserPublic = Depends(get_
     chalan = next((c for c in po.get("chalans", []) if c.get("id") == chalan_id), None)
     if not chalan:
         raise HTTPException(status_code=404, detail="Chalan not found")
-    customer = await db.customers.find_one({"id": po.get("customer_id")}, {"_id": 0, "password_hash": 0}) or {}
+    customer = await db.customers.find_one(
+        floor_query(user, {"id": po.get("customer_id")}),
+        {"_id": 0, "password_hash": 0},
+    ) or {}
     from pdf_chalan import build_chalan_pdf, chalan_pdf_filename
     pdf_bytes = build_chalan_pdf(chalan, po, customer, await _pdf_branding())
     filename = chalan_pdf_filename(chalan, po.get("customer_name") or "")
