@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { ProductImage } from "@/src/components/ProductImage";
+import { productImageList } from "@/src/components/quotation/helpers/media";
 import { BottomSheet } from "@/src/components/BottomSheet";
 import { Chip, EmptyState, IconButton, PriceTag, ScreenTitle, SegmentedControl, Skeleton, Button } from "@/src/components/ui";
 import { catalogReferences, fetchCatalogPage } from "@/src/services/catalogService";
@@ -45,6 +46,8 @@ type Product = {
   price: number; mrp: number; finish?: string | null; images: string[]; stock: number;
   image_quality?: string | null;
   hero_image_url?: string | null;
+  gallery?: { url: string; role?: string; source_type?: string; quality?: string; family_key?: string | null; width?: number | null; height?: number | null; is_primary?: boolean }[] | null;
+  family_key?: string | null;
   colour?: string | null;
   floor_id?: string | null;
 };
@@ -620,7 +623,7 @@ function ProductCard({ product: p, brandName, onPress }: { product: Product; bra
     >
       <View style={[styles.imageWrap, p.floor_id === "ground-floor" && styles.imageWrapTile]}>
         <ProductImage
-          source={p.hero_image_url ? [p.hero_image_url, ...(p.images || [])] : p.images}
+          source={productImageList(p as any)}
           style={StyleSheet.absoluteFill as any}
           contentFit="contain"
           fallbackLabel={p.sku}

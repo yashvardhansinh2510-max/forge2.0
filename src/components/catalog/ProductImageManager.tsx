@@ -12,11 +12,12 @@
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import { api, getToken } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { Badge, Button, ConfirmDialog, EmptyState, Sheet } from "@/src/components/ds";
+import { ProductImage } from "@/src/components/ProductImage";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 import { uriToBlob } from "@/src/utils/uriToBlob";
 
@@ -132,7 +133,7 @@ export function ProductImageManagerBody({
         <View style={styles.previewWrap}>
           <Text style={type.overline}>Preview</Text>
           <View style={styles.previewImage}>
-            <Image source={{ uri: pending.uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+            <ProductImage source={pending.uri} style={{ width: "100%", height: "100%" }} contentFit="contain" fallbackLabel="" borderRadius={0} />
           </View>
           <Text style={[type.caption, { textAlign: "center" }]}>
             {pending.replaceId
@@ -167,7 +168,7 @@ export function ProductImageManagerBody({
                 <View key={m.id} style={[styles.tile, { width: cols === 2 ? "47%" : "31%" }]} testID={`media-tile-${m.id}`}>
                   <View style={styles.thumbWrap}>
                     {m.public_url ? (
-                      <Image source={{ uri: m.public_url }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+                      <ProductImage source={m.public_url} style={{ width: "100%", height: "100%" }} contentFit="contain" fallbackLabel="" borderRadius={0} disableSkeleton />
                     ) : (
                       <Feather name="image" size={22} color={colors.onSurfaceMuted} />
                     )}
