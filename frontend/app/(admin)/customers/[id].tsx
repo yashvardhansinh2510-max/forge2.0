@@ -176,12 +176,16 @@ export default function CustomerDetail() {
     }
   }, [id]);
 
-  const loadWorkspace = useCallback(async (filters: WorkspaceServerFilters) => {
-    if (!id) return;
+  const beginWorkspaceReload = useCallback(() => {
     const requestId = ++workspaceRequestIdRef.current;
     setWorkspaceLoading(true);
     setWorkspaceError(null);
     setWorkspace(null);
+    return requestId;
+  }, []);
+
+  const loadWorkspace = useCallback(async (filters: WorkspaceServerFilters, requestId = beginWorkspaceReload()) => {
+    if (!id) return;
     try {
       const params = new URLSearchParams();
       if (filters.productSearch) params.set("q", filters.productSearch);
@@ -202,7 +206,7 @@ export default function CustomerDetail() {
     } finally {
       if (requestId === workspaceRequestIdRef.current) setWorkspaceLoading(false);
     }
-  }, [id]);
+  }, [beginWorkspaceReload, id]);
 
   const reloadAll = useCallback(async () => {
     await Promise.all([
@@ -213,9 +217,11 @@ export default function CustomerDetail() {
 
   useEffect(() => { loadCore(); }, [loadCore]);
   useEffect(() => {
-    const t = setTimeout(() => { void loadWorkspace(workspaceFilters); }, 220);
+    if (!id) return;
+    const requestId = beginWorkspaceReload();
+    const t = setTimeout(() => { void loadWorkspace(workspaceFilters, requestId); }, 220);
     return () => clearTimeout(t);
-  }, [loadWorkspace, workspaceFilters]);
+  }, [beginWorkspaceReload, id, loadWorkspace, workspaceFilters]);
 
   const createWalkInFollowup = useCallback(async (payload: any) => {
     try {
@@ -287,6 +293,8 @@ export default function CustomerDetail() {
     () => availableStages.filter((stage) => stage.count > 0 || stage.key === stageFilter),
     [availableStages, stageFilter],
   );
+  const hasServerFilteredEmpty = Boolean(workspace && hasServerFilters && workspace.products.length === 0);
+  const hasClientFilteredEmpty = Boolean(workspace && workspace.products.length > 0 && visibleProducts.length === 0);
 
   const totalRevenue = useMemo(
     () => quotations.filter((q) => ["won", "ordered"].includes(q.status)).reduce((s, q) => s + q.grand_total, 0),
@@ -725,27 +733,34 @@ export default function CustomerDetail() {
                 {visibleProducts.length === 0 ? (
                   <View style={{ padding: spacing.lg, paddingTop: 0 }}>
                     <EmptyState
-                      icon={hasServerFilters ? "search" : productFilter === "all" ? "shopping-cart" : "filter"}
+                      icon={hasServerFilteredEmpty ? "search" : productFilter === "all" ? "shopping-cart" : "filter"}
                       title={
-                        hasServerFilters
+                        hasServerFilteredEmpty
                           ? "No products match these filters"
                           : productFilter === "all"
                             ? "No products ordered yet"
                             : "No products in this view"
                       }
                       subtitle={
-                        hasServerFilters
+                        hasServerFilteredEmpty
                           ? "Try removing search, brand, or stage filters to widen the workspace."
                           : productFilter === "all"
                             ? "Products will appear here once purchase orders are created for this customer."
-                            : "Switch back to All or clear a server filter to see more products."
+                            : "Outstanding and Delayed only narrow the current workspace. Switch back to All to see every filtered product."
                       }
-                      action={hasServerFilters ? (
+                      action={hasServerFilteredEmpty ? (
                         <Button
                           label="Clear filters"
                           variant="secondary"
                           onPress={clearServerFilters}
                           testID="customer-workspace-empty-clear"
+                        />
+                      ) : hasClientFilteredEmpty ? (
+                        <Button
+                          label="Show all"
+                          variant="secondary"
+                          onPress={() => setProductFilter("all")}
+                          testID="customer-workspace-empty-show-all"
                         />
                       ) : undefined}
                     />
