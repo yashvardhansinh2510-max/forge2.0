@@ -181,6 +181,8 @@ type GenerateChalanPayload = {
   reference_number?: string;
   receiver_name?: string;
   sender_name?: string;
+  transport?: string;
+  remarks?: string;
 };
 
 type ChalanTransition = { kind: "godown" | "dispatch"; chalan: Chalan };
@@ -1096,6 +1098,8 @@ function GenerateChalanModal({
   const [referenceNumber, setReferenceNumber] = useState("");
   const [receiverName, setReceiverName] = useState("");
   const [senderName, setSenderName] = useState("");
+  const [transport, setTransport] = useState("");
+  const [remarks, setRemarks] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1122,6 +1126,8 @@ function GenerateChalanModal({
       reference_number: referenceNumber.trim() || undefined,
       receiver_name: receiverName.trim() || undefined,
       sender_name: senderName.trim() || undefined,
+      transport: transport.trim() || undefined,
+      remarks: remarks.trim() || undefined,
     }, requestKey);
     setSubmitting(false);
     if (message) setError(message);
@@ -1164,6 +1170,8 @@ function GenerateChalanModal({
                 <ChalanTextField label="Reference number" placeholder="Optional" value={referenceNumber} onChangeText={setReferenceNumber} testID="sanitary-chalan-reference" />
                 <ChalanTextField label="Receiver name" placeholder="Site contact" value={receiverName} onChangeText={setReceiverName} testID="sanitary-chalan-receiver" />
                 <ChalanTextField label="Supplier representative" placeholder="Sender name" value={senderName} onChangeText={setSenderName} testID="sanitary-chalan-sender" />
+                <ChalanTextField label="Transport" placeholder="Transport details" value={transport} onChangeText={setTransport} testID="sanitary-chalan-transport" />
+                <ChalanTextField label="Remarks" placeholder="Optional remarks" value={remarks} onChangeText={setRemarks} testID="sanitary-chalan-remarks" />
               </View>
 
               {error ? (
