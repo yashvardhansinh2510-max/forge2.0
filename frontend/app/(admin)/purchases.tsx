@@ -178,7 +178,7 @@ export default function PurchasesScreen() {
   // -----------------------------------
   // Data loaders
   // -----------------------------------
-  const loadFacets = useCallback(async () => {
+  const loadFacets = useCallback(async ({ throwOnError = false }: { throwOnError?: boolean } = {}) => {
     try {
       const [b, s, c] = await Promise.all([
         api.get<{ all: number; brands: BrandFacet[] }>("/purchases/brands"),
@@ -186,10 +186,13 @@ export default function PurchasesScreen() {
         api.get<CustomerFacet[]>("/purchases/customers"),
       ]);
       setBrands(b.brands); setBrandsTotal(b.all); setStages(s); setCustomers(c);
-    } catch { /* Purchases remains usable when a secondary facet cannot load. */ }
+    } catch (e) {
+      if (throwOnError) throw e;
+      /* Purchases remains usable when a secondary facet cannot load. */
+    }
   }, []);
 
-  const loadItems = useCallback(async () => {
+  const loadItems = useCallback(async ({ throwOnError = false }: { throwOnError?: boolean } = {}) => {
     setLoading(true);
     try {
       const qs = new URLSearchParams({ view });
@@ -208,6 +211,7 @@ export default function PurchasesScreen() {
         return next;
       });
     } catch (e: any) {
+      if (throwOnError) throw e;
       toast.error(e?.detail || "Could not load items");
     } finally { setLoading(false); }
   }, [view, brand, q, stage]);
@@ -219,8 +223,11 @@ export default function PurchasesScreen() {
     return () => clearTimeout(t);
   }, [loadItems]);
 
-  const refreshPurchases = useCallback(async () => {
-    await Promise.all([loadItems(), loadFacets()]);
+  const refreshPurchases = useCallback(async ({ strict = false }: { strict?: boolean } = {}) => {
+    await Promise.all([
+      loadItems({ throwOnError: strict }),
+      loadFacets({ throwOnError: strict }),
+    ]);
   }, [loadItems, loadFacets]);
 
   // -----------------------------------
@@ -252,7 +259,7 @@ export default function PurchasesScreen() {
       setShowMoveMenu(false);
       setBulkRetryStage(failedIds.length > 0 ? toStage : null);
       try {
-        await refreshPurchases();
+        await refreshPurchases({ strict: true });
         setBulkResponse(r);
         if (r.failed === 0) {
           toast.success(`Moved ${r.succeeded} item${r.succeeded === 1 ? "" : "s"}`);
@@ -262,7 +269,7 @@ export default function PurchasesScreen() {
           toast.error(`Bulk move failed for ${r.failed} item${r.failed === 1 ? "" : "s"}`);
         }
       } catch (refreshError: any) {
-        setBulkResponse(r);
+        setBulkResponse(null);
         setBulkRefreshError(refreshError?.detail || "Move completed, but the follow-up refresh failed. Data may be stale until you refresh.");
         toast.error(refreshError?.detail || "Move completed, but refresh failed");
       }
@@ -419,7 +426,7 @@ export default function PurchasesScreen() {
                     if (bulkBusy) return;
                     setBulkBusy(true);
                     try {
-                      await refreshPurchases();
+                      await refreshPurchases({ strict: true });
                       setBulkRefreshError(null);
                     } catch (e: any) {
                       setBulkRefreshError(e?.detail || "Refresh failed. Please try again.");
