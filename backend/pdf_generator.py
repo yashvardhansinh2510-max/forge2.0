@@ -94,42 +94,69 @@ def _remote_image_bytes(url: str) -> bytes | None:
         return None
 
 
-def _landscape_bytes(data: bytes) -> bytes:
-    """Rotate a portrait product photo 90° so it prints landscape.
+def _prepare_image_bytes(data: bytes) -> bytes:
+    """Normalize EXIF orientation without rotating images lacking EXIF data."""
+    from PIL import Image as PILImage, ImageOps
 
-    Every image cell in the quotation grids is a wide rectangle; a portrait
-    source photo (the common case for a phone-shot tile swatch) would
-    otherwise render as a narrow sliver in the middle of that cell instead of
-    filling it. Rotation happens once per cached image, not per placement."""
-    from PIL import Image as PILImage
     try:
         img = PILImage.open(BytesIO(data))
-        img.load()
-        if img.height <= img.width:
-            return data
         fmt = img.format or "PNG"
-        rotated = img.rotate(-90, expand=True)
-        if fmt.upper() in ("JPEG", "JPG") and rotated.mode in ("RGBA", "P"):
-            rotated = rotated.convert("RGB")
+        normalized = ImageOps.exif_transpose(img)
+        if normalized is img and not img.getexif():
+            return data
+        normalized.load()
+        if fmt.upper() in ("JPEG", "JPG") and normalized.mode in ("RGBA", "P"):
+            normalized = normalized.convert("RGB")
         out = BytesIO()
-        rotated.save(out, format=fmt)
+        normalized.save(out, format=fmt)
         return out.getvalue()
     except Exception:
         return data
 
 
+def contain_box(
+    source_width: float,
+    source_height: float,
+    box_width: float,
+    box_height: float,
+    inset: float = 0,
+) -> tuple[float, float, float, float]:
+    """Return a centered aspect-preserving box inside a target rectangle."""
+    inner_width = max(0.0, box_width - (inset * 2))
+    inner_height = max(0.0, box_height - (inset * 2))
+    if source_width <= 0 or source_height <= 0 or inner_width <= 0 or inner_height <= 0:
+        return inset, inset, 0.0, 0.0
+    scale = min(inner_width / source_width, inner_height / source_height)
+    width = source_width * scale
+    height = source_height * scale
+    return (
+        inset + (inner_width - width) / 2,
+        inset + (inner_height - height) / 2,
+        width,
+        height,
+    )
+
+
 def _img(url: str | None, width_mm: float = 13, height_mm: float = 13) -> Flowable:
     """Render the supplied product image inside the official narrow image cell.
 
-    Sized to the largest dimension that still fits inside the item row without
-    ever stretching/distorting (kind="proportional" preserves aspect ratio;
-    the row height itself is sized to comfortably fit this image — see
-    ITEM_ROW_MM below)."""
+    Sized to the largest centered contain box that fits inside the item row
+    without stretching, cropping, or changing source orientation. The row
+    height itself is sized to comfortably fit this image — see ITEM_ROW_MM.
+    """
     if url and str(url).startswith(("https://", "http://")):
         data = _remote_image_bytes(str(url))
         if data:
             try:
-                image = Image(BytesIO(_landscape_bytes(data)), width=width_mm * mm, height=height_mm * mm, kind="proportional")
+                prepared = _prepare_image_bytes(data)
+                reader = ImageReader(BytesIO(prepared))
+                source_width, source_height = reader.getSize()
+                _, _, image_width, image_height = contain_box(
+                    source_width, source_height, width_mm, height_mm, inset=1.25,
+                )
+                image = Image(
+                    BytesIO(prepared), width=image_width * mm, height=image_height * mm,
+                )
                 image.hAlign = "CENTER"
                 return image
             except Exception:

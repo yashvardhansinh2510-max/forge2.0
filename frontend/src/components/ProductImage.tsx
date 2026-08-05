@@ -21,7 +21,7 @@ import { Image as ExpoImage, ImageContentFit } from "expo-image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, View, ViewStyle } from "react-native";
 
-import { colors, radius } from "@/src/theme/tokens";
+import { colors, radius, spacing } from "@/src/theme/tokens";
 
 export type ProductImageProps = {
   // Accept either a single URL/data-URL or an ordered list of fallback candidates.
@@ -30,6 +30,9 @@ export type ProductImageProps = {
   style?: ViewStyle | ViewStyle[];
   // "cover" | "contain" | "fill" | "scale-down" — passed through to expo-image.
   contentFit?: ImageContentFit;
+  // Uniform breathing room inside the product frame. Set to 0 only for an
+  // explicitly intentional edge-to-edge crop.
+  frameInset?: number;
   // Optional testID for e2e testing.
   testID?: string;
   // Optional accessible name; falls back to "Product image".
@@ -50,7 +53,8 @@ const BLURHASH = "L6PZfSjE.AyE_3t7t7R**0o#DgR4";
 export function ProductImage({
   source,
   style,
-  contentFit = "cover",
+  contentFit = "contain",
+  frameInset = spacing.s4,
   testID,
   accessibilityLabel = "Product image",
   disableSkeleton = false,
@@ -97,32 +101,34 @@ export function ProductImage({
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="image"
     >
-      {failed || !current ? (
-        <FallbackGlyph label={fallbackLabel} />
-      ) : (
-        <>
-          {!loaded && !disableSkeleton ? <Skeleton /> : null}
-          <ExpoImage
-            source={{ uri: current }}
-            style={[StyleSheet.absoluteFill, { borderRadius: finalRadius }]}
-            contentFit={contentFit}
-            cachePolicy={CACHE_POLICY}
-            placeholder={{ blurhash: BLURHASH }}
-            transition={220}
-            recyclingKey={current}
-            onLoad={() => setLoaded(true)}
-            onError={() => {
-              // Advance to next candidate, or give up.
-              if (idx + 1 < sanitizedCandidates.length) {
-                setIdx(idx + 1);
-                setLoaded(false);
-              } else {
-                setFailed(true);
-              }
-            }}
-          />
-        </>
-      )}
+      <View style={[styles.inner, { margin: Math.max(0, frameInset), borderRadius: Math.max(0, finalRadius - frameInset) }]}>
+        {failed || !current ? (
+          <FallbackGlyph label={fallbackLabel} />
+        ) : (
+          <>
+            {!loaded && !disableSkeleton ? <Skeleton /> : null}
+            <ExpoImage
+              source={{ uri: current }}
+              style={[StyleSheet.absoluteFill, { borderRadius: Math.max(0, finalRadius - frameInset) }]}
+              contentFit={contentFit}
+              cachePolicy={CACHE_POLICY}
+              placeholder={{ blurhash: BLURHASH }}
+              transition={220}
+              recyclingKey={current}
+              onLoad={() => setLoaded(true)}
+              onError={() => {
+                // Advance to next candidate, or give up.
+                if (idx + 1 < sanitizedCandidates.length) {
+                  setIdx(idx + 1);
+                  setLoaded(false);
+                } else {
+                  setFailed(true);
+                }
+              }}
+            />
+          </>
+        )}
+      </View>
     </View>
   );
 }
@@ -203,6 +209,14 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
+  },
+  inner: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    alignSelf: "stretch",
+    overflow: "hidden",
+    backgroundColor: colors.surfaceTertiary,
   },
   skeleton: {
     backgroundColor: colors.surfaceTertiary,

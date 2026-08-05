@@ -47,7 +47,7 @@ def test_contain_box_preserves_portrait_orientation_and_centers_it():
     box = contain_box(600, 1200, 180, 90, 6)
     assert box.width == 39
     assert box.height == 78
-    assert box.x == 76.5
+    assert box.x == 70.5
     assert box.y == 6
 
 def test_pdf_image_bytes_do_not_rotate_portrait_sources():
@@ -95,13 +95,13 @@ Expected: PASS with no portrait rotation regression.
 - Produce a shared `ProductImageFrame` contract with `contentFit`, `aspectRatio`, and uniform `inset` values consumed by quotation callers.
 - Keep `productImageList()` and `resolveVariantImages()` as the only candidate-ordering paths.
 
-- [ ] **Step 1: Add a focused executable regression check for the pure candidate/frame helpers**
+- [ ] **Step 1: Add a focused executable regression check for the pure candidate/layout helpers**
 
-Because the frontend has no test runner, add a small TypeScript-safe helper test module under `frontend/src/components/quotation/helpers/__tests__/media.test.ts` and run it through the repository's available TypeScript/lint validation. The test must assert that hero URL wins, gallery/images deduplicate, and frame policy is contain/centered with equal inset.
+Because the frontend has no test runner, add `frontend/scripts/test-quotation-media.mjs` and execute the real TypeScript helpers through Node's bundled `--experimental-strip-types` support. The test must assert that hero URL wins, gallery/images deduplicate, and the measured layout policy never returns more than two columns.
 
 - [ ] **Step 2: Run the check before implementation**
 
-Run: `cd forge2.0/frontend && npx tsc --noEmit`
+Run: `cd forge2.0/frontend && node --experimental-strip-types --no-warnings scripts/test-quotation-media.mjs`
 
 Expected: FAIL on the new frame contract until it is implemented.
 
@@ -215,8 +215,8 @@ Write exact commands, pass/fail output, screenshots/artifact paths, and any unav
 
 ## Self-review checklist
 
-- [ ] Every workstream maps to a task: media audit/root cause (Tasks 1–3), universal standard/padding/consistency (Task 3), responsive layout/performance (Task 4), sidebar (Task 5), PDF orientation/parity (Task 2), regression verification (Task 6).
-- [ ] No schema, product-record, or parallel-storage changes are proposed.
-- [ ] No frontend test command is claimed unless it exists or is explicitly recorded as unavailable.
-- [ ] All new pure geometry behavior has a failing test before implementation.
-- [ ] Existing unrelated tile changes are excluded from the file scope.
+- [x] Every workstream maps to a task: media audit/root cause (Tasks 1–3), universal standard/padding/consistency (Task 3), responsive layout/performance (Task 4), sidebar (Task 5), PDF orientation/parity (Task 2), regression verification (Task 6).
+- [x] No schema, product-record, or parallel-storage changes are proposed.
+- [x] No frontend test command is claimed unless it exists or is explicitly recorded as unavailable.
+- [x] All new pure geometry behavior has a failing test before implementation.
+- [x] Existing unrelated tile changes are excluded from the file scope.

@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Feather } from "@expo/vector-icons";
 import { Slot, useRouter, useSegments } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -19,6 +19,7 @@ import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
+import { storage } from "@/src/utils/storage";
 import { SANITARY_FLOOR_ID, TILES_FLOOR_ID } from "@/src/constants/floors";
 
 type NavItem = {
@@ -73,7 +74,7 @@ function Wordmark({ compact }: { compact?: boolean }) {
 }
 
 // ── Sidebar item — the brass bar is the only accent in the chrome. ─────────
-function SideItem({ item, active, onPress }: { item: NavItem; active: boolean; onPress: () => void }) {
+function SideItem({ item, active, onPress, compact = false }: { item: NavItem; active: boolean; onPress: () => void; compact?: boolean }) {
   return (
     <Pressable
       testID={`nav-${item.match}`}
@@ -83,13 +84,14 @@ function SideItem({ item, active, onPress }: { item: NavItem; active: boolean; o
       accessibilityState={{ selected: active }}
       style={({ pressed, hovered }: any) => [
         styles.sideItem,
+        compact && styles.sideItemCompact,
         { backgroundColor: active ? color.sunken : pressed || hovered ? color.hoverWash : "transparent" },
         Platform.OS === "web" ? ({ cursor: "pointer" } as any) : null,
       ]}
     >
       <View style={[styles.brassBar, { backgroundColor: active ? color.brass : "transparent" }]} />
       <Feather name={item.icon} size={16} color={active ? color.ink : color.inkSoft} />
-      <Text
+      {!compact ? <Text
         style={{
           fontFamily: active ? font.semibold : font.medium,
           fontWeight: active ? "600" : "500",
@@ -98,7 +100,7 @@ function SideItem({ item, active, onPress }: { item: NavItem; active: boolean; o
         }}
       >
         {item.label}
-      </Text>
+      </Text> : null}
     </Pressable>
   );
 }
@@ -215,27 +217,42 @@ function useVisibleNav() {
 }
 
 // ── Desktop sidebar ─────────────────────────────────────────────────────────
-function Sidebar() {
+function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const router = useRouter();
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
   const visible = useVisibleNav();
   const hasAccess = useModuleAccess();
   const tilesNav = useTilesNav();
+  const palette = usePalette();
   const isActive = (m: string) => segments.includes(m);
 
   return (
     <SafeAreaView edges={["top", "left", "bottom"]} style={styles.sidebar}>
-      <View style={{ paddingHorizontal: space.x4, paddingTop: space.x5, paddingBottom: space.x4 }}>
-        <Wordmark />
+      <View style={{ paddingHorizontal: collapsed ? space.x3 : space.x4, paddingTop: space.x5, paddingBottom: space.x4, alignItems: collapsed ? "center" : "stretch", gap: space.x3 }}>
+        <Wordmark compact={collapsed} />
+        <Pressable
+          testID="admin-sidebar-collapse-toggle"
+          accessibilityRole="button"
+          accessibilityLabel={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          onPress={onToggle}
+          style={[styles.sidebarToggle, collapsed && { alignSelf: "center" }]}
+        >
+          <Feather name={collapsed ? "chevrons-right" : "chevrons-left"} size={14} color={color.inkMid} />
+          {!collapsed ? <Text style={styles.sidebarToggleLabel}>Collapse</Text> : null}
+        </Pressable>
       </View>
-      <View style={{ paddingHorizontal: space.x3, paddingBottom: space.x3 }}><FloorSwitcher /></View>
-      <View style={{ paddingHorizontal: space.x3, paddingBottom: space.x3 }}>
-        <SearchTrigger />
+      <View style={{ paddingHorizontal: space.x3, paddingBottom: space.x3, alignItems: collapsed ? "center" : "stretch" }}><FloorSwitcher compact={collapsed} /></View>
+      <View style={{ paddingHorizontal: space.x3, paddingBottom: space.x3, alignItems: collapsed ? "center" : "stretch" }}>
+        {collapsed ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Search" onPress={palette.open} style={styles.railItem}>
+            <Feather name="search" size={18} color={color.inkSoft} />
+          </Pressable>
+        ) : <SearchTrigger />}
       </View>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: space.x3, gap: 1 }} showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: space.x3, gap: 1, alignItems: collapsed ? "center" : "stretch" }} showsVerticalScrollIndicator={false}>
         {visible(PRIMARY).map((n) => (
-          <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} />
+          <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} compact={collapsed} />
         ))}
         {hasAccess("quotations") && tilesNav.items.map((n) => (
           <SideItem
@@ -243,15 +260,16 @@ function Sidebar() {
             item={n}
             active={n.match === "orders" ? segments.includes("orders") : segments.includes("tiles") && !segments.includes("orders")}
             onPress={() => { void tilesNav.open(n); }}
+            compact={collapsed}
           />
         ))}
         <View style={{ height: space.x5 }} />
         {visible(SECONDARY).map((n) => (
-          <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} />
+          <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} compact={collapsed} />
         ))}
       </ScrollView>
 
-      <View style={{ padding: space.x3, gap: space.x3 }}>
+      <View style={{ padding: space.x3, gap: space.x3, alignItems: collapsed ? "center" : "stretch" }}>
         <Hairline />
         <Menu
           align="left"
@@ -260,17 +278,17 @@ function Sidebar() {
             onPress: async () => { await logout(); router.replace("/(auth)/login"); },
           }]}
         >
-          <View style={styles.userRow}>
+          <View style={[styles.userRow, collapsed && { justifyContent: "center" }]}>
             <Avatar name={staff?.full_name} size={32} />
-            <View style={{ flex: 1, minWidth: 0 }}>
+            {!collapsed ? <View style={{ flex: 1, minWidth: 0 }}>
               <Text numberOfLines={1} style={{ fontFamily: font.medium, fontWeight: "500", fontSize: 13, color: color.ink }}>
                 {staff?.full_name}
               </Text>
               <Text numberOfLines={1} style={{ fontFamily: font.regular, fontSize: 11.5, color: color.inkSoft }}>
                 {roleLabel[staff?.role || ""] || staff?.role}
               </Text>
-            </View>
-            <Feather name="more-horizontal" size={15} color={color.inkFaint} />
+            </View> : null}
+            {!collapsed ? <Feather name="more-horizontal" size={15} color={color.inkFaint} /> : null}
           </View>
         </Menu>
       </View>
@@ -541,6 +559,21 @@ function PhoneBar() {
 export default function AdminLayout() {
   const { isPhone, isTablet } = useBp();
   const insets = useSafeAreaInsets();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    void storage.getItem<boolean>("forge.admin.sidebar.collapsed.v1", false).then((value) => {
+      setSidebarCollapsed(value === true);
+    });
+  }, []);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      void storage.setItem("forge.admin.sidebar.collapsed.v1", next);
+      return next;
+    });
+  };
 
   if (isPhone) {
     return (
@@ -561,10 +594,11 @@ export default function AdminLayout() {
     <PaletteProvider>
       <View style={{ flex: 1, flexDirection: "row", backgroundColor: color.canvas }}>
         <View style={{
-          width: isTablet ? layout.rail : layout.sidebar,
+          width: isTablet ? layout.rail : sidebarCollapsed ? layout.rail : layout.sidebar,
           borderRightWidth: layout.hairline, borderRightColor: color.line,
+          ...(Platform.OS === "web" ? ({ transition: "width 200ms cubic-bezier(0.2, 0, 0, 1)" } as any) : {}),
         }}>
-          {isTablet ? <Rail /> : <Sidebar />}
+          {isTablet ? <Rail /> : <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />}
         </View>
         <View style={{ flex: 1 }}>
           <Slot />
@@ -590,6 +624,15 @@ const styles = StyleSheet.create({
     height: 36, borderRadius: radius.sm, paddingLeft: 10, paddingRight: 10,
     overflow: "hidden",
   },
+  sideItemCompact: {
+    width: 42, justifyContent: "center", paddingLeft: 0, paddingRight: 0,
+  },
+  sidebarToggle: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6,
+    minHeight: 30, borderRadius: radius.sm, paddingHorizontal: 8,
+    backgroundColor: color.sunken,
+  },
+  sidebarToggleLabel: { fontFamily: font.medium, fontSize: 11.5, color: color.inkMid },
   brassBar: {
     position: "absolute", left: 0, top: 8, bottom: 8, width: 2.5, borderRadius: 2,
   },

@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { KeyboardAvoidingView, LayoutChangeEvent, Platform, StyleSheet, View } from "react-native";
 
 import { colors } from "@/src/theme/tokens";
+import { storage } from "@/src/utils/storage";
 
 import { useBuilder } from "../context/BuilderContext";
 import { BrandRail } from "../catalog/BrandRail";
@@ -36,6 +37,20 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
   const b = useBuilder();
   const [w, setW] = useState(0);
   const [railCollapsed, setRailCollapsed] = useState(false);
+
+  useEffect(() => {
+    void storage.getItem<boolean>("forge.builder.brandRail.collapsed.v1", false).then((value) => {
+      setRailCollapsed(value === true);
+    });
+  }, []);
+
+  const toggleRail = () => {
+    setRailCollapsed((current) => {
+      const next = !current;
+      void storage.setItem("forge.builder.brandRail.collapsed.v1", next);
+      return next;
+    });
+  };
 
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
 
@@ -78,7 +93,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       ) : threePane ? (
         <View style={{ flex: 1, flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
           <View style={{ width: railW, overflow: "hidden" }}>
-            <BrandRail collapsed={railCollapsed} onToggleCollapsed={() => setRailCollapsed((v) => !v)} compact={false} />
+            <BrandRail collapsed={railCollapsed} onToggleCollapsed={toggleRail} compact={false} />
           </View>
           <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
             <ProductExplorer />
@@ -90,7 +105,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
       ) : twoPane ? (
         <View style={{ flex: 1, flexDirection: "row", minHeight: 0, overflow: "hidden" }}>
           <View style={{ width: railCollapsed ? 56 : 220, overflow: "hidden" }}>
-            <BrandRail collapsed={railCollapsed} onToggleCollapsed={() => setRailCollapsed((v) => !v)} compact />
+            <BrandRail collapsed={railCollapsed} onToggleCollapsed={toggleRail} compact />
           </View>
           <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
             <QuotationPane compact={compactCatalog} />

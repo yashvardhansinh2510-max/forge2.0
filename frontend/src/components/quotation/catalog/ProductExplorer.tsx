@@ -7,7 +7,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, FlatList, LayoutChangeEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { EmptyState } from "@/src/components/ui";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -44,10 +44,9 @@ const SORT_OPTIONS: { k: SortKey; label: string; icon: React.ComponentProps<type
 
 export function ProductExplorer() {
   const b = useBuilder();
-  const { width: windowWidth } = useWindowDimensions();
-  const isPhone = windowWidth < PHONE_BREAKPOINT;
-
-  const numCols = quotationGridColumns(windowWidth);
+  const [paneWidth, setPaneWidth] = useState(0);
+  const isPhone = paneWidth > 0 ? paneWidth < PHONE_BREAKPOINT : true;
+  const numCols = quotationGridColumns(paneWidth);
   const brandName = useMemo(() => {
     if (!b.selectedBrandId) return "All brands";
     return b.brands.find((x) => x.id === b.selectedBrandId)?.name || "Brand";
@@ -91,7 +90,13 @@ export function ProductExplorer() {
   );
 
   return (
-    <View style={styles.panel}>
+    <View
+      style={styles.panel}
+      onLayout={(event: LayoutChangeEvent) => {
+        const next = Math.round(event.nativeEvent.layout.width);
+        if (next !== paneWidth) setPaneWidth(next);
+      }}
+    >
       <View style={styles.head}>
         <View style={styles.crumbs}>
           <Text style={styles.crumb}>{brandName}</Text>
