@@ -201,24 +201,21 @@ export default function CustomerDetail() {
   }, [syncInvalidateWorkspace]);
 
   useLayoutEffect(() => {
-    if (productSearch === routeSearch) return;
     syncInvalidateWorkspace();
     setProductSearch(routeSearch);
-  }, [productSearch, routeSearch, syncInvalidateWorkspace]);
+  }, [routeSearch, syncInvalidateWorkspace]);
 
   useLayoutEffect(() => {
     const nextBrand = routeBrand || null;
-    if (brandFilter === nextBrand) return;
     syncInvalidateWorkspace();
     setBrandFilter(nextBrand);
-  }, [brandFilter, routeBrand, syncInvalidateWorkspace]);
+  }, [routeBrand, syncInvalidateWorkspace]);
 
   useLayoutEffect(() => {
     const nextStage = routeStage || null;
-    if (stageFilter === nextStage) return;
     syncInvalidateWorkspace();
     setStageFilter(nextStage);
-  }, [routeStage, stageFilter, syncInvalidateWorkspace]);
+  }, [routeStage, syncInvalidateWorkspace]);
 
   const loadWorkspace = useCallback(async (filters: WorkspaceServerFilters, requestId = invalidateWorkspace()) => {
     if (!id) return;
