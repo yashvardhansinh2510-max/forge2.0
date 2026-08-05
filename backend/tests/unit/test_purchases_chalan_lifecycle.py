@@ -8,6 +8,7 @@ import asyncio
 from copy import deepcopy
 
 import pytest
+from pymongo.errors import OperationFailure
 
 from models import UserPublic
 from routes import purchases_tracker as tracker
@@ -51,14 +52,110 @@ class _AsyncContext:
         return False
 
 
+class _FakeTransactionContext(_AsyncContext):
+    def __init__(self, session):
+        self._session = session
+
+    async def __aexit__(self, exc_type, *_args):
+        if exc_type is None:
+            await self._session.commit_transaction()
+        else:
+            await self._session.abort_transaction()
+        return False
+
+
 class _FakeSession(_AsyncContext):
+    def __init__(self):
+        self.in_transaction = False
+
     def start_transaction(self):
-        return _AsyncContext()
+        self.in_transaction = True
+        return _FakeTransactionContext(self)
+
+    async def commit_transaction(self):
+        self.in_transaction = False
+
+    async def abort_transaction(self):
+        self.in_transaction = False
 
 
 class _FakeClient:
     async def start_session(self):
         return _FakeSession()
+
+
+class _TransientCommitConflictSession(_FakeSession):
+    def __init__(self, fake_db):
+        super().__init__()
+        self._db = fake_db
+        self._conflicts_remaining = 1
+        self._snapshot: tuple[dict, list[dict]] | None = None
+        self.transaction_attempts = 0
+        self.commit_attempts = 0
+
+    def start_transaction(self):
+        self.transaction_attempts += 1
+        self._snapshot = (
+            deepcopy(self._db.purchase_orders._po),
+            deepcopy(self._db.event_outbox.rows),
+        )
+        return super().start_transaction()
+
+    async def commit_transaction(self):
+        self.commit_attempts += 1
+        self.in_transaction = False
+        if self._conflicts_remaining:
+            self._conflicts_remaining -= 1
+            assert self._snapshot is not None
+            self._db.purchase_orders._po = deepcopy(self._snapshot[0])
+            self._db.event_outbox.rows = deepcopy(self._snapshot[1])
+            raise OperationFailure(
+                "transaction commit conflicted",
+                code=112,
+                details={
+                    "code": 112,
+                    "codeName": "WriteConflict",
+                    "errorLabels": ["TransientTransactionError"],
+                },
+            )
+
+
+class _TransientCommitConflictClient:
+    def __init__(self, fake_db):
+        self.session = _TransientCommitConflictSession(fake_db)
+
+    async def start_session(self):
+        return self.session
+
+
+class _UnknownCommitResultSession(_FakeSession):
+    def __init__(self):
+        super().__init__()
+        self._unknown_results_remaining = 1
+        self.transaction_attempts = 0
+        self.commit_attempts = 0
+
+    def start_transaction(self):
+        self.transaction_attempts += 1
+        return super().start_transaction()
+
+    async def commit_transaction(self):
+        self.commit_attempts += 1
+        if self._unknown_results_remaining:
+            self._unknown_results_remaining -= 1
+            raise OperationFailure(
+                "commit acknowledgement was lost",
+                details={"errorLabels": ["UnknownTransactionCommitResult"]},
+            )
+        await super().commit_transaction()
+
+
+class _UnknownCommitResultClient:
+    def __init__(self):
+        self.session = _UnknownCommitResultSession()
+
+    async def start_session(self):
+        return self.session
 
 
 class _FakeEvents:
@@ -318,8 +415,81 @@ def test_concurrent_distinct_final_chalans_claim_completion_notification_once(mo
     assert len(results) == 2
     assert all(result["stage"] in {"dispatch", "completed"} for result in results)
     assert fake_db.purchase_orders._po["chalan_completion_event_key"] == "purchase-chalan:po-1:completed"
+    assert len(fake_db.event_outbox.rows) == 2
+    assert {event["idempotency_key"] for event in fake_db.event_outbox.rows} == {
+        "purchase-chalan:po-1:ch-1:dispatch",
+        "purchase-chalan:po-1:ch-2:dispatch",
+    }
+    assert {event["payload"]["chalan_id"] for event in fake_db.event_outbox.rows} == {"ch-1", "ch-2"}
+    assert len([event for event in fake_db.event_outbox.rows if event["payload"]["notifications"]]) == 1
     assert len(notifications) == 2
     assert {notification["user_id"] for notification in notifications} == {"u-sales", "u-manager"}
+
+
+def test_transient_commit_conflict_retries_without_duplicate_dispatch_or_completion_claim(monkeypatch):
+    po = _po_with_chalan("released")
+    po["assigned_to"] = "u-manager"
+    po["items"][0]["qty"] = 10
+    po["chalans"] = [
+        {"id": "ch-1", "number": "CH-0001", "stage": "released", "items": [
+            {"po_item_id": "item-1", "qty": 5, "name": "Basin", "unit": "PCS"},
+        ]},
+        {"id": "ch-2", "number": "CH-0002", "stage": "released", "items": [
+            {"po_item_id": "item-1", "qty": 5, "name": "Basin", "unit": "PCS"},
+        ]},
+    ]
+    fake_db = _FakeDb(po)
+    monkeypatch.setattr(tracker, "db", fake_db)
+
+    first = asyncio.run(tracker.dispatch_chalan(
+        "po-1", "ch-1", tracker.DispatchChalanBody(), user=_user(),
+    ))
+    retrying_client = _TransientCommitConflictClient(fake_db)
+    monkeypatch.setattr(tracker, "client", retrying_client)
+    second = asyncio.run(tracker.dispatch_chalan(
+        "po-1", "ch-2", tracker.DispatchChalanBody(), user=_user(),
+    ))
+
+    notification_events = [
+        event for event in fake_db.event_outbox.rows if event["payload"]["notifications"]
+    ]
+    assert first["stage"] == "dispatch"
+    assert second["stage"] == "completed"
+    assert retrying_client.session.transaction_attempts == 2
+    assert retrying_client.session.commit_attempts == 2
+    assert [chalan["stage"] for chalan in fake_db.purchase_orders._po["chalans"]] == [
+        "dispatched", "dispatched",
+    ]
+    assert fake_db.purchase_orders._po["chalan_completion_event_key"] == "purchase-chalan:po-1:completed"
+    assert len(fake_db.event_outbox.rows) == 2
+    assert {event["idempotency_key"] for event in fake_db.event_outbox.rows} == {
+        "purchase-chalan:po-1:ch-1:dispatch",
+        "purchase-chalan:po-1:ch-2:dispatch",
+    }
+    assert {event["payload"]["chalan_id"] for event in fake_db.event_outbox.rows} == {"ch-1", "ch-2"}
+    assert len(notification_events) == 1
+    assert len(notification_events[0]["payload"]["notifications"]) == 2
+
+
+def test_unknown_commit_result_retries_commit_without_replaying_dispatch(monkeypatch):
+    po = _po_with_chalan("released")
+    po["assigned_to"] = "u-manager"
+    fake_db = _FakeDb(po)
+    retrying_client = _UnknownCommitResultClient()
+    monkeypatch.setattr(tracker, "db", fake_db)
+    monkeypatch.setattr(tracker, "client", retrying_client)
+
+    result = asyncio.run(tracker.dispatch_chalan(
+        "po-1", "ch-1", tracker.DispatchChalanBody(), user=_user(),
+    ))
+
+    assert result["stage"] == "completed"
+    assert retrying_client.session.transaction_attempts == 1
+    assert retrying_client.session.commit_attempts == 2
+    assert fake_db.purchase_orders.update_calls == 2  # dispatch + completion claim
+    assert len(fake_db.event_outbox.rows) == 1
+    assert fake_db.event_outbox.rows[0]["idempotency_key"] == "purchase-chalan:po-1:ch-1:dispatch"
+    assert len(fake_db.event_outbox.rows[0]["payload"]["notifications"]) == 2
 
 
 def test_chalan_outbox_handler_persists_idempotent_activity_and_notifications(monkeypatch):

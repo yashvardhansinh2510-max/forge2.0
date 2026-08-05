@@ -28,7 +28,7 @@ import io
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Awaitable, Callable, Optional, TypeVar
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -1561,6 +1561,110 @@ class _ChalanCASConflict(Exception):
     pass
 
 
+_TransactionResult = TypeVar("_TransactionResult")
+_CHALAN_TRANSACTION_ATTEMPTS = 3
+_CHALAN_COMMIT_ATTEMPTS = 3
+_MONGO_WRITE_CONFLICT_CODE = 112
+
+
+class _ChalanTransactionRetryExhausted(Exception):
+    def __init__(self, cause: Exception, *, outcome_unknown: bool = False):
+        super().__init__(str(cause))
+        self.cause = cause
+        self.outcome_unknown = outcome_unknown
+
+
+def _has_mongo_error_label(exc: Exception, label: str) -> bool:
+    has_error_label = getattr(exc, "has_error_label", None)
+    if not callable(has_error_label):
+        return False
+    try:
+        return bool(has_error_label(label))
+    except Exception:  # noqa: BLE001 - malformed third-party exception metadata
+        return False
+
+
+def _is_transient_transaction_error(exc: Exception) -> bool:
+    if _has_mongo_error_label(exc, "TransientTransactionError"):
+        return True
+    raw_details = getattr(exc, "details", None)
+    details = raw_details if isinstance(raw_details, dict) else {}
+    return (
+        getattr(exc, "code", None) == _MONGO_WRITE_CONFLICT_CODE
+        or details.get("code") == _MONGO_WRITE_CONFLICT_CODE
+        or details.get("codeName") == "WriteConflict"
+    )
+
+
+def _is_unknown_commit_result(exc: Exception) -> bool:
+    return _has_mongo_error_label(exc, "UnknownTransactionCommitResult")
+
+
+async def _abort_transaction_quietly(session: Any) -> None:
+    try:
+        await session.abort_transaction()
+    except Exception:  # noqa: BLE001 - transaction may already be aborted by Mongo
+        pass
+
+
+async def _run_chalan_transaction_with_retry(
+    operation: Callable[[Any], Awaitable[_TransactionResult]],
+) -> _TransactionResult:
+    """Run a Chalan transaction with bounded MongoDB-recommended retries.
+
+    Unknown commit results retry the same commit because the transaction may
+    already be durable. Transient transaction errors and write conflicts
+    restart the complete operation; its CAS writes, completion claim, and
+    deterministic outbox key make that replay safe.
+    """
+    async with await client.start_session() as session:
+        last_error: Exception | None = None
+        for transaction_attempt in range(_CHALAN_TRANSACTION_ATTEMPTS):
+            session.start_transaction()
+            try:
+                result = await operation(session)
+            except Exception as exc:
+                await _abort_transaction_quietly(session)
+                if not _is_transient_transaction_error(exc):
+                    raise
+                last_error = exc
+                if transaction_attempt + 1 == _CHALAN_TRANSACTION_ATTEMPTS:
+                    raise _ChalanTransactionRetryExhausted(exc) from exc
+                continue
+
+            commit_outcome_unknown = False
+            for commit_attempt in range(_CHALAN_COMMIT_ATTEMPTS):
+                try:
+                    await session.commit_transaction()
+                    return result
+                except Exception as exc:
+                    last_error = exc
+                    if _is_unknown_commit_result(exc):
+                        commit_outcome_unknown = True
+                        if commit_attempt + 1 < _CHALAN_COMMIT_ATTEMPTS:
+                            continue
+                        raise _ChalanTransactionRetryExhausted(
+                            exc, outcome_unknown=True,
+                        ) from exc
+                    if commit_outcome_unknown:
+                        # Once Mongo says a commit result is unknown, never
+                        # replay the callback: the first commit may have
+                        # succeeded. Reconcile its durable identities instead.
+                        raise _ChalanTransactionRetryExhausted(
+                            exc, outcome_unknown=True,
+                        ) from exc
+                    if _is_transient_transaction_error(exc):
+                        await _abort_transaction_quietly(session)
+                        break
+                    raise
+
+            if transaction_attempt + 1 == _CHALAN_TRANSACTION_ATTEMPTS:
+                assert last_error is not None
+                raise _ChalanTransactionRetryExhausted(last_error) from last_error
+
+    raise RuntimeError("Chalan transaction retry loop exited unexpectedly")
+
+
 @router.post("/{po_id}/chalans")
 async def generate_chalan(
     po_id: str, body: GenerateChalanBody,
@@ -1823,83 +1927,109 @@ async def dispatch_chalan(
     completion_key = f"purchase-chalan:{po_id}:completed"
     event: dict | None = None
     stage: str | None = None
+
+    async def _dispatch_transaction(session: Any) -> tuple[dict, str]:
+        cas_result = await db.purchase_orders.update_one(
+            floor_query(user, {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": chalan_stage}}}),
+            {"$set": {
+                "chalans.$.stage": "dispatched",
+                "chalans.$.dispatched_at": now,
+                "chalans.$.dispatched_by": user.id,
+                "chalans.$.dispatched_by_name": user.full_name,
+                "chalans.$.dispatch_note": body.dispatch_note,
+                "updated_at": now,
+            }},
+            session=session,
+        )
+        if cas_result.matched_count == 0:
+            raise _ChalanCASConflict()
+        fresh = await db.purchase_orders.find_one(
+            floor_query(user, {"id": po_id}), {"_id": 0}, session=session,
+        )
+        if not fresh:
+            raise _ChalanCASConflict()
+        transaction_stage = compute_order_stage(fresh)
+        owns_completion = False
+        if transaction_stage == "completed":
+            completion_result = await db.purchase_orders.update_one(
+                floor_query(user, {
+                    "id": po_id,
+                    "$or": [
+                        {"chalan_completion_event_key": {"$exists": False}},
+                        {"chalan_completion_event_key": None},
+                    ],
+                }),
+                {"$set": {
+                    "chalan_completion_event_key": completion_key,
+                    "chalan_completed_at": now,
+                    "updated_at": now,
+                }},
+                session=session,
+            )
+            owns_completion = bool(getattr(completion_result, "modified_count", 0))
+        notifications = (
+            _chalan_notifications(
+                po,
+                title=(
+                    "Your tile order has been dispatched"
+                    if floor_inherit(po) == TILES_FLOOR_ID
+                    else "Your purchase order has been dispatched"
+                ),
+                body=f"{po.get('number')} for {po.get('customer_name')} is fully dispatched",
+                automation_key=completion_key,
+            )
+            if owns_completion else []
+        )
+        transaction_event = await enqueue_after_primary_commit(
+            event_type=EVENT_PURCHASE_CHALAN_LIFECYCLE,
+            idempotency_key=event_key,
+            payload={
+                "activity_event_type": "purchase.chalan_dispatched",
+                "po_id": po_id,
+                "customer_id": po.get("customer_id"),
+                "quotation_id": po.get("quotation_id"),
+                "floor_id": floor_inherit(po),
+                "chalan_id": chalan_id,
+                "chalan_number": chalan.get("number"),
+                "stage": transaction_stage,
+                "summary": f"Chalan {chalan.get('number')} dispatched" + (f" · {body.dispatch_note}" if body.dispatch_note else ""),
+                "notifications": notifications,
+            },
+            actor=user,
+            session=session,
+        )
+        return transaction_event, transaction_stage
+
     try:
-        async with await client.start_session() as session:
-            async with session.start_transaction():
-                cas_result = await db.purchase_orders.update_one(
-                    floor_query(user, {"id": po_id, "chalans": {"$elemMatch": {"id": chalan_id, "stage": chalan_stage}}}),
-                    {"$set": {
-                        "chalans.$.stage": "dispatched",
-                        "chalans.$.dispatched_at": now,
-                        "chalans.$.dispatched_by": user.id,
-                        "chalans.$.dispatched_by_name": user.full_name,
-                        "chalans.$.dispatch_note": body.dispatch_note,
-                        "updated_at": now,
-                    }},
-                    session=session,
-                )
-                if cas_result.matched_count == 0:
-                    raise _ChalanCASConflict()
-                fresh = await db.purchase_orders.find_one(
-                    floor_query(user, {"id": po_id}), {"_id": 0}, session=session,
-                )
-                if not fresh:
-                    raise _ChalanCASConflict()
-                stage = compute_order_stage(fresh)
-                owns_completion = False
-                if stage == "completed":
-                    completion_result = await db.purchase_orders.update_one(
-                        floor_query(user, {
-                            "id": po_id,
-                            "$or": [
-                                {"chalan_completion_event_key": {"$exists": False}},
-                                {"chalan_completion_event_key": None},
-                            ],
-                        }),
-                        {"$set": {
-                            "chalan_completion_event_key": completion_key,
-                            "chalan_completed_at": now,
-                            "updated_at": now,
-                        }},
-                        session=session,
-                    )
-                    owns_completion = bool(getattr(completion_result, "modified_count", 0))
-                notifications = (
-                    _chalan_notifications(
-                        po,
-                        title=(
-                            "Your tile order has been dispatched"
-                            if floor_inherit(po) == TILES_FLOOR_ID
-                            else "Your purchase order has been dispatched"
-                        ),
-                        body=f"{po.get('number')} for {po.get('customer_name')} is fully dispatched",
-                        automation_key=completion_key,
-                    )
-                    if owns_completion else []
-                )
-                event = await enqueue_after_primary_commit(
-                    event_type=EVENT_PURCHASE_CHALAN_LIFECYCLE,
-                    idempotency_key=event_key,
-                    payload={
-                        "activity_event_type": "purchase.chalan_dispatched",
-                        "po_id": po_id,
-                        "customer_id": po.get("customer_id"),
-                        "quotation_id": po.get("quotation_id"),
-                        "floor_id": floor_inherit(po),
-                        "chalan_id": chalan_id,
-                        "chalan_number": chalan.get("number"),
-                        "stage": stage,
-                        "summary": f"Chalan {chalan.get('number')} dispatched" + (f" · {body.dispatch_note}" if body.dispatch_note else ""),
-                        "notifications": notifications,
-                    },
-                    actor=user,
-                    session=session,
-                )
+        event, stage = await _run_chalan_transaction_with_retry(_dispatch_transaction)
     except _ChalanCASConflict:
         raise HTTPException(status_code=409, detail={
             "error": "concurrent_modification",
             "message": "This chalan's stage changed concurrently — refresh and try again",
         })
+    except _ChalanTransactionRetryExhausted as exc:
+        # Every successful transaction commits the embedded transition and
+        # outbox row atomically. If all commit acknowledgements were unknown,
+        # reconcile by those two durable identities before asking the caller
+        # to retry; this avoids reporting a 500 after a successful commit.
+        detail = {
+            "error": "transaction_outcome_unknown" if exc.outcome_unknown else "transaction_retry_exhausted",
+            "message": "Could not confirm Chalan dispatch; retrying this request is safe",
+        }
+        try:
+            fresh = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
+            committed_chalan = next(
+                (candidate for candidate in (fresh or {}).get("chalans", []) if candidate.get("id") == chalan_id),
+                None,
+            )
+            existing_event = await db.event_outbox.find_one({"idempotency_key": event_key}, {"_id": 0})
+        except Exception as reconciliation_error:
+            raise HTTPException(status_code=503, detail=detail) from reconciliation_error
+        if committed_chalan and committed_chalan.get("stage") == "dispatched" and existing_event:
+            event = existing_event
+            stage = compute_order_stage(fresh)
+        else:
+            raise HTTPException(status_code=503, detail=detail) from exc.cause
     except HTTPException:
         raise
     except Exception as exc:
