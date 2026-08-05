@@ -887,6 +887,26 @@ async def move_item(
     return await _apply_stage_change(item_id, body.stage, user, body.note, body.qty)
 
 
+def _bulk_move_error_payload(exc: HTTPException) -> dict:
+    code_map = {
+        403: "forbidden",
+        404: "not_found",
+        409: "conflict",
+    }
+    error_code = code_map.get(exc.status_code, "validation" if 400 <= exc.status_code < 500 else "error")
+
+    detail = exc.detail
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail") or detail.get("error") or "Request failed"
+        payload = {"error": message, "error_code": error_code}
+        for key, value in detail.items():
+            if key not in {"message", "detail", "error"}:
+                payload[key] = value
+        return payload
+
+    return {"error": str(detail), "error_code": error_code}
+
+
 @router.post("/items/bulk-move")
 async def bulk_move(
     body: BulkMoveBody,
@@ -897,13 +917,21 @@ async def bulk_move(
     if not body.item_ids:
         raise HTTPException(status_code=400, detail="No items selected")
     results: list[dict] = []
+    succeeded = 0
     for iid in body.item_ids:
         try:
             r = await _apply_stage_change(iid, body.stage, user, body.note)
             results.append({"item_id": iid, "ok": True, **r})
+            succeeded += 1
         except HTTPException as e:
-            results.append({"item_id": iid, "ok": False, "error": e.detail})
-    return {"count": len(results), "results": results}
+            results.append({"item_id": iid, "ok": False, **_bulk_move_error_payload(e)})
+    failed = len(results) - succeeded
+    return {
+        "count": len(results),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    }
 
 
 async def _next_po_number() -> str:
