@@ -717,6 +717,7 @@ class PurchaseOrderItem(BaseModel):
     series: Optional[str] = None
     size: Optional[str] = None
     pieces_per_box: Optional[str] = None   # free text, printed as-is — mirrors ChalanLineItem.unit convention
+    quantity_unit: Literal["Box", "Pieces"] = "Box"
     # Box-counter invariant: qty == boxes_ready + boxes_godown + boxes_dispatched + boxes_pending
     # UI vocabulary (Tile Orders workflow redesign, 2026-08): boxes_ready is
     # shown to staff as "Released" (Brand/Supplier released this many boxes
