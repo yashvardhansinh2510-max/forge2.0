@@ -1502,6 +1502,8 @@ class GenerateChalanBody(BaseModel):
     reference_number: Optional[str] = None
     receiver_name: Optional[str] = None
     sender_name: Optional[str] = None
+    transport: Optional[str] = None
+    remarks: Optional[str] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=200)
 
 
@@ -1512,7 +1514,7 @@ def _chalan_order_link(po: dict) -> str:
     return f"/purchase-orders/{po['id']}"
 
 
-def _generation_request_key(po_id: str, body: GenerateChalanBody) -> str:
+def _generation_request_key(po_id: str, body: GenerateChalanBody, *, lifecycle_version: int) -> str:
     if body.idempotency_key:
         return body.idempotency_key.strip()
     canonical = {
@@ -1524,6 +1526,13 @@ def _generation_request_key(po_id: str, body: GenerateChalanBody) -> str:
         "reference_number": body.reference_number or "",
         "receiver_name": body.receiver_name or "",
         "sender_name": body.sender_name or "",
+        "transport": body.transport or "",
+        "remarks": body.remarks or "",
+        # Embedded chalans are append-only for release accounting, so their
+        # count is the PO's release-lifecycle version. Concurrent replays read
+        # the same version and deduplicate; a later identical-sized release
+        # reads the next version and receives a new derived key.
+        "lifecycle_version": lifecycle_version,
     }
     digest = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return f"derived:{digest}"
@@ -1531,6 +1540,14 @@ def _generation_request_key(po_id: str, body: GenerateChalanBody) -> str:
 
 def _chalan_by_request_key(po: dict, request_key: str) -> dict | None:
     return next((chalan for chalan in po.get("chalans", []) if chalan.get("request_key") == request_key), None)
+
+
+def _first_item_value(item: dict, *keys: str, default: Any = None) -> Any:
+    """Resolve a populated PO-item value while preserving numeric zero."""
+    return next(
+        (item.get(key) for key in keys if item.get(key) is not None and item.get(key) != ""),
+        default,
+    )
 
 
 def _chalan_notifications(po: dict, *, title: str, body: str, automation_key: str | None = None) -> list[dict]:
@@ -1678,7 +1695,7 @@ async def generate_chalan(
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
 
-    request_key = _generation_request_key(po_id, body)
+    request_key = _generation_request_key(po_id, body, lifecycle_version=len(po.get("chalans") or []))
     event_key = f"purchase-chalan:{po_id}:generate:{request_key}"
     existing = _chalan_by_request_key(po, request_key)
     if existing:
@@ -1705,8 +1722,16 @@ async def generate_chalan(
             )
         remaining[entry.po_item_id] = available - entry.qty
         chalan_items.append(ChalanLineItem(
-            po_item_id=entry.po_item_id, name=source.get("name", ""),
-            size=source.get("finish"), qty=entry.qty, unit="Box",
+            po_item_id=entry.po_item_id,
+            name=source.get("name", ""),
+            brand_name=_first_item_value(
+                source, "brand_name", "brand", default=po.get("brand_name") or po.get("brand"),
+            ),
+            size=source.get("size"),
+            finish=source.get("finish"),
+            qty=entry.qty,
+            unit=_first_item_value(source, "unit", "quantity_unit", default="Box"),
+            rate=_first_item_value(source, "rate", "unit_rate", "unit_cost"),
         ))
 
     chalan = Chalan(
@@ -1714,6 +1739,7 @@ async def generate_chalan(
         created_by=user.id, created_by_name=user.full_name,
         items=chalan_items, reference_number=body.reference_number,
         receiver_name=body.receiver_name, sender_name=body.sender_name,
+        transport=body.transport, remarks=body.remarks,
     )
     chalan_doc = chalan.dict()
     chalan_doc["request_key"] = request_key

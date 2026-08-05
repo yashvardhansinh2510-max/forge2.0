@@ -769,9 +769,12 @@ class ChalanLineItem(BaseModel):
     (or all) of a PurchaseOrderItem's quantity."""
     po_item_id: str          # references PurchaseOrderItem.id this batch covers
     name: str
+    brand_name: Optional[str] = None
     size: Optional[str] = None
+    finish: Optional[str] = None
     qty: float
     unit: str = "Box"        # "Box" | "PCS" — free text, printed as-is
+    rate: Optional[float] = None
 
 
 ChalanStage = Literal["released", "at_godown", "dispatched"]
@@ -791,6 +794,8 @@ class Chalan(BaseModel):
     reference_number: Optional[str] = None
     receiver_name: Optional[str] = None
     sender_name: Optional[str] = None        # "Supplier Representative"
+    transport: Optional[str] = None
+    remarks: Optional[str] = None
     stage: ChalanStage = "released"
     godown_received_at: Optional[str] = None
     godown_received_by: Optional[str] = None

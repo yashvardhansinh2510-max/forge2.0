@@ -168,7 +168,7 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
             Paragraph(_escape(_first_value(item.get("size"), source.get("size"))), styles["cell"]),
             Paragraph(_escape(_first_value(item.get("finish"), source.get("finish"))), styles["cell"]),
             Paragraph(_escape(_quantity(qty_value)), styles["cellRight"]),
-            Paragraph(_escape(_first_value(item.get("unit"), source.get("quantity_unit"), default="Box")), styles["cell"]),
+            Paragraph(_escape(_first_value(item.get("unit"), source.get("unit"), source.get("quantity_unit"), default="Box")), styles["cell"]),
             Paragraph(_escape(_money(rate)), styles["cellRight"]),
             Paragraph(_escape(_money(line_total)), styles["cellRight"]),
         ])

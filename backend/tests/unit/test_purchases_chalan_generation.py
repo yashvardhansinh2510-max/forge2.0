@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
+from io import BytesIO
 
 import pytest
+from pypdf import PdfReader
 
 from models import UserPublic
+from pdf_chalan import build_chalan_pdf
 from routes import purchases_tracker as tracker
 from services import sequence as sequence_service
 
@@ -266,6 +269,79 @@ def test_generate_chalan_partial_then_complete_never_exceeds_ordered_qty(monkeyp
     assert partial["stage"] == "order"
     assert complete["stage"] == "material_released"
     assert released == 10
+
+
+def test_generate_chalan_allows_later_equal_sized_release_without_client_key(monkeypatch):
+    fake_db = _FakeDb(_po(items=[{"id": "item-1", "name": "Basin", "qty": 8}]))
+    monkeypatch.setattr(tracker, "db", fake_db)
+    numbers = iter(["CH-0001", "CH-0002"])
+
+    async def _next(*_args, **_kwargs):
+        return next(numbers)
+
+    monkeypatch.setattr(tracker, "next_number", _next)
+    body = tracker.GenerateChalanBody(items=[tracker.ChalanItemInput(po_item_id="item-1", qty=4)])
+
+    first = asyncio.run(tracker.generate_chalan("po-1", body, user=_user()))
+    second = asyncio.run(tracker.generate_chalan("po-1", body, user=_user()))
+
+    assert first["idempotent"] is False
+    assert second["idempotent"] is False
+    assert first["chalan"]["id"] != second["chalan"]["id"]
+    assert [chalan["number"] for chalan in fake_db.purchase_orders._po["chalans"]] == ["CH-0001", "CH-0002"]
+    assert sum(chalan["items"][0]["qty"] for chalan in fake_db.purchase_orders._po["chalans"]) == 8
+
+
+def test_generated_chalan_persists_po_snapshot_and_renders_it_to_pdf(monkeypatch):
+    fake_db = _FakeDb(_po(
+        brand_name="PO fallback brand",
+        supplier_name="Jaqu Distribution",
+        items=[{
+            "id": "item-1",
+            "name": "Artize Tailwater Basin",
+            "brand_name": "Artize",
+            "size": "620 x 420 x 150 mm",
+            "finish": "Matte Black",
+            "qty": 2,
+            "quantity_unit": "Pieces",
+            "unit_cost": 4321.25,
+        }],
+    ))
+    monkeypatch.setattr(tracker, "db", fake_db)
+    monkeypatch.setattr(tracker, "next_number", _fake_next_number)
+    body = tracker.GenerateChalanBody(
+        items=[tracker.ChalanItemInput(po_item_id="item-1", qty=2)],
+        transport="Patel Logistics - insured delivery",
+        remarks="Keep upright and call before unloading.",
+    )
+
+    asyncio.run(tracker.generate_chalan("po-1", body, user=_user()))
+    persisted = fake_db.purchase_orders._po["chalans"][0]
+    line = persisted["items"][0]
+
+    assert line == {
+        "po_item_id": "item-1",
+        "name": "Artize Tailwater Basin",
+        "brand_name": "Artize",
+        "size": "620 x 420 x 150 mm",
+        "finish": "Matte Black",
+        "qty": 2.0,
+        "unit": "Pieces",
+        "rate": 4321.25,
+    }
+    assert persisted["transport"] == "Patel Logistics - insured delivery"
+    assert persisted["remarks"] == "Keep upright and call before unloading."
+
+    pdf = build_chalan_pdf(persisted, fake_db.purchase_orders._po, {})
+    text = " ".join(
+        " ".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf)).pages).split()
+    )
+    for expected in (
+        "Artize", "Artize Tailwater Basin", "620 x 420 x 150 mm", "Matte Black",
+        "Pieces", "4,321.25", "8,642.50", "Patel Logistics - insured delivery",
+        "Keep upright and call before unloading.",
+    ):
+        assert expected in text
 
 
 def test_generate_chalan_replayed_partial_request_returns_existing_without_duplicate_outbox(monkeypatch):
