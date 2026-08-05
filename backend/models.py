@@ -446,6 +446,7 @@ class QuotationLineItem(BaseModel):
     pcs_per_box: Optional[str] = None      # free text — reference docs print "BOX"
     box_sqft: Optional[float] = Field(default=None, ge=0)  # sqft covered by one box — rate_sqft x box_sqft auto-derives unit_price (rate/box)
     offer_rate: Optional[float] = Field(default=None, ge=0)  # quotation-only: manually-typed special rate/box, shown alongside unit_price — informational, does not feed totals
+    quantity_unit: Literal["Box", "Pieces"] = "Box"
 
     @property
     def net(self) -> float:
