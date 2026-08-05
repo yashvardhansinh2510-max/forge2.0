@@ -11,7 +11,7 @@ import { useRouter } from "expo-router";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator, Linking, Modal, Platform, Pressable,
-  ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View,
+  ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -67,6 +67,18 @@ type Item = {
 };
 
 type ItemsResp = { sla_days: number; count: number; blocked_count: number; items: Item[] };
+type BulkMoveResult = {
+  item_id: string;
+  ok: boolean;
+  error?: string | null;
+  error_code?: string | null;
+};
+type BulkMoveResponse = {
+  count: number;
+  succeeded: number;
+  failed: number;
+  results: BulkMoveResult[];
+};
 
 type Shortage = {
   id: string; customer_id: string; customer_name: string; sku: string; name: string; image?: string | null;
@@ -136,6 +148,9 @@ export default function PurchasesScreen() {
 
   // Selection (for bulk move)
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResponse, setBulkResponse] = useState<BulkMoveResponse | null>(null);
+  const [bulkRetryStage, setBulkRetryStage] = useState<Stage | null>(null);
 
   // Modals
   const [showMoveMenu, setShowMoveMenu] = useState(false);
@@ -206,19 +221,41 @@ export default function PurchasesScreen() {
   // -----------------------------------
   // Mutations
   // -----------------------------------
-  const bulkMove = useCallback(async (toStage: Stage) => {
-    if (selected.size === 0) { toast.error("Select at least one item"); return; }
+  const bulkMove = useCallback(async (toStage: Stage, itemIds?: string[]) => {
+    const targetIds = itemIds?.length ? itemIds : Array.from(selected);
+    if (targetIds.length === 0) { toast.error("Select at least one item"); return; }
+    if (bulkBusy) return;
+    setBulkBusy(true);
     try {
-      const r = await api.post<{ count: number }>(`/purchases/items/bulk-move`, {
-        item_ids: Array.from(selected),
+      const r = await api.post<BulkMoveResponse>(`/purchases/items/bulk-move`, {
+        item_ids: targetIds,
         stage: toStage,
       });
-      toast.success(`Moved ${r.count} item${r.count === 1 ? "" : "s"}`);
-      setSelected(new Set());
+      const succeededIds = r.results.filter((result) => result.ok).map((result) => result.item_id);
+      const failedIds = r.results.filter((result) => !result.ok).map((result) => result.item_id);
+      setBulkResponse(r);
+      setBulkRetryStage(failedIds.length > 0 ? toStage : null);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        succeededIds.forEach((id) => next.delete(id));
+        failedIds.forEach((id) => next.add(id));
+        return next;
+      });
       setShowMoveMenu(false);
+      if (r.failed === 0) {
+        toast.success(`Moved ${r.succeeded} item${r.succeeded === 1 ? "" : "s"}`);
+      } else if (r.succeeded > 0) {
+        toast.success(`Moved ${r.succeeded} item${r.succeeded === 1 ? "" : "s"} · ${r.failed} failed`);
+      } else {
+        toast.error(`Bulk move failed for ${r.failed} item${r.failed === 1 ? "" : "s"}`);
+      }
       await Promise.all([loadItems(), loadFacets()]);
-    } catch (e: any) { toast.error(e?.detail || "Bulk move failed"); }
-  }, [selected, loadItems, loadFacets]);
+    } catch (e: any) {
+      toast.error(e?.detail || "Bulk move failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [selected, bulkBusy, loadItems, loadFacets]);
 
   const doExport = useCallback(async () => {
     const qs = new URLSearchParams({ view });
@@ -243,6 +280,21 @@ export default function PurchasesScreen() {
   // Derived
   // -----------------------------------
   const blockedRows = useMemo(() => items.filter((i) => i.blocked), [items]);
+  const bulkFailedIds = useMemo(
+    () => bulkResponse?.results.filter((result) => !result.ok).map((result) => result.item_id) || [],
+    [bulkResponse],
+  );
+  const bulkResultTone = bulkResponse == null ? null : bulkResponse.failed === 0 ? "success" : bulkResponse.succeeded > 0 ? "partial" : "error";
+  const bulkResultMessage = useMemo(() => {
+    if (!bulkResponse) return "";
+    if (bulkResponse.failed === 0) {
+      return `Moved ${bulkResponse.succeeded} item${bulkResponse.succeeded === 1 ? "" : "s"} successfully.`;
+    }
+    if (bulkResponse.succeeded > 0) {
+      return `Moved ${bulkResponse.succeeded} item${bulkResponse.succeeded === 1 ? "" : "s"}; ${bulkResponse.failed} item${bulkResponse.failed === 1 ? "" : "s"} failed and remain selected.`;
+    }
+    return `No items moved. ${bulkResponse.failed} item${bulkResponse.failed === 1 ? "" : "s"} failed and remain selected.`;
+  }, [bulkResponse]);
 
   const activeStageCount = stages.reduce((acc, s) => acc + s.count, 0);
 
@@ -297,11 +349,11 @@ export default function PurchasesScreen() {
             <Pressable
               testID="move-material-btn"
               onPress={() => setShowMoveMenu(true)}
-              disabled={selected.size === 0}
-              style={({ pressed }) => [styles.iconAction, selected.size === 0 && { opacity: 0.5 }, pressed && { opacity: 0.85 }]}
+              disabled={selected.size === 0 || bulkBusy}
+              style={({ pressed }) => [styles.iconAction, (selected.size === 0 || bulkBusy) && { opacity: 0.5 }, pressed && { opacity: 0.85 }]}
             >
               <Text style={{ color: colors.onSurface, fontWeight: "600", fontSize: 13 }}>
-                Move Material {selected.size > 0 ? `(${selected.size})` : ""}
+                {bulkBusy ? "Moving…" : `Move Material ${selected.size > 0 ? `(${selected.size})` : ""}`}
               </Text>
               <Feather name="chevron-down" size={14} color={colors.onSurfaceMuted} />
             </Pressable>
@@ -315,6 +367,34 @@ export default function PurchasesScreen() {
             </Pressable>
           </View>
         </View>
+
+        {bulkResponse && bulkResultTone ? (
+          <View
+            style={[
+              styles.bulkResultBanner,
+              bulkResultTone === "success" && styles.bulkResultBannerSuccess,
+              bulkResultTone === "partial" && styles.bulkResultBannerPartial,
+              bulkResultTone === "error" && styles.bulkResultBannerError,
+            ]}
+          >
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.bulkResultTitle}>
+                {bulkResultTone === "success" ? "Bulk move completed" : bulkResultTone === "partial" ? "Bulk move partially completed" : "Bulk move failed"}
+              </Text>
+              <Text style={styles.bulkResultText}>{bulkResultMessage}</Text>
+            </View>
+            {bulkFailedIds.length > 0 && bulkRetryStage ? (
+              <Pressable
+                testID="bulk-move-retry"
+                onPress={() => bulkMove(bulkRetryStage, bulkFailedIds)}
+                disabled={bulkBusy}
+                style={({ pressed }) => [styles.bulkRetryBtn, bulkBusy && { opacity: 0.6 }, pressed && { opacity: 0.85 }]}
+              >
+                {bulkBusy ? <ActivityIndicator size="small" color={colors.onBrand} /> : <Text style={styles.bulkRetryText}>Retry failed ({bulkFailedIds.length})</Text>}
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Body — left rail + main table */}
         <View style={[styles.body, !isDesktop && { flexDirection: "column", alignItems: "stretch" }]}>
@@ -453,6 +533,7 @@ export default function PurchasesScreen() {
         onClose={() => setShowMoveMenu(false)}
         onPick={(s) => bulkMove(s)}
         title={selected.size > 0 ? `Move ${selected.size} item${selected.size === 1 ? "" : "s"}` : "Bulk move"}
+        busy={bulkBusy}
       />
       <MoveStageSheet
         visible={!!rowMoveTarget}
@@ -818,26 +899,26 @@ function BulkChk({ checked, onToggle }: { checked: boolean; onToggle: () => void
 // -----------------------------------------------------------------------------
 // Modals
 // -----------------------------------------------------------------------------
-function MoveMenu({ visible, stages, onClose, onPick, title, currentStage }: {
+function MoveMenu({ visible, stages, onClose, onPick, title, currentStage, busy = false }: {
   visible: boolean; stages: StageMeta[]; onClose: () => void;
-  onPick: (s: Stage) => void; title: string; currentStage?: Stage;
+  onPick: (s: Stage) => void; title: string; currentStage?: Stage; busy?: boolean;
 }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.modalBackdrop} onPress={onClose}>
         <View style={styles.menuCard}>
           <Text style={{ fontSize: 14, fontWeight: "700", marginBottom: 4 }}>{title}</Text>
-          <Text style={type.caption}>Move to any stage</Text>
+          <Text style={type.caption}>{busy ? "Moving selected items…" : "Move to any stage"}</Text>
           <View style={{ marginTop: 10, gap: 4 }}>
             {stages.map((s) => (
               <Pressable
                 key={s.key}
                 testID={`move-to-${s.key}`}
                 onPress={() => onPick(s.key)}
-                disabled={s.key === currentStage}
+                disabled={s.key === currentStage || busy}
                 style={({ pressed }) => [
                   styles.menuItem, pressed && { backgroundColor: colors.surfaceTertiary },
-                  s.key === currentStage && { opacity: 0.4 },
+                  (s.key === currentStage || busy) && { opacity: 0.4 },
                 ]}
               >
                 <View style={[styles.stageDot, { backgroundColor: STAGE_TONE[s.key]?.fg || s.tone.fg }]} />
@@ -850,7 +931,8 @@ function MoveMenu({ visible, stages, onClose, onPick, title, currentStage }: {
             <Pressable
               testID="move-to-last-stage"
               onPress={() => onPick("delivered")}
-              style={({ pressed }) => [styles.menuItem, pressed && { backgroundColor: colors.surfaceTertiary }]}
+              disabled={busy}
+              style={({ pressed }) => [styles.menuItem, busy && { opacity: 0.4 }, pressed && { backgroundColor: colors.surfaceTertiary }]}
             >
               <Feather name="fast-forward" size={12} color={colors.brand} />
               <Text style={{ fontSize: 13, color: colors.brand, fontWeight: "700" }}>Move to Last Stage (Delivered)</Text>
@@ -1013,6 +1095,20 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
     paddingHorizontal: 12, height: 36, backgroundColor: colors.surfaceSecondary,
   },
+  bulkResultBanner: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    borderWidth: 1, borderRadius: radius.md, padding: spacing.md,
+  },
+  bulkResultBannerSuccess: { backgroundColor: ds.okTint, borderColor: "rgba(38,110,76,0.24)" },
+  bulkResultBannerPartial: { backgroundColor: ds.warnTint, borderColor: "rgba(168,120,44,0.24)" },
+  bulkResultBannerError: { backgroundColor: ds.riskTint, borderColor: "rgba(174,74,61,0.24)" },
+  bulkResultTitle: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  bulkResultText: { marginTop: 2, fontSize: 12, color: colors.onSurfaceSecondary },
+  bulkRetryBtn: {
+    minHeight: 36, paddingHorizontal: 12, borderRadius: radius.pill,
+    backgroundColor: colors.brand, alignItems: "center", justifyContent: "center",
+  },
+  bulkRetryText: { color: colors.onBrand, fontSize: 12, fontWeight: "700" },
 
   // Body split
   body: { flexDirection: "row", gap: spacing.lg, alignItems: "flex-start" },
