@@ -74,7 +74,7 @@ export function RowList({
             testID={`${testID}-see-all`}
           >
             <Text style={[type.captionStrong, { color: colors.brand }]}>
-              See all {total} in Today's Priorities →
+              See all {total} in Today&apos;s Priorities →
             </Text>
           </Pressable>
         ) : null}

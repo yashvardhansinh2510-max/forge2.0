@@ -13,8 +13,8 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { api } from "@/src/api/client";
-import { colors, radius, spacing, type } from "@/src/theme/tokens";
-import { color as ds, font as dsFont } from "@/src/design/tokens";
+import { colors, radius, spacing } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
 import { supplierLogoFor } from "@/src/design/BrandLogo";
 import { useBuilder } from "../context/BuilderContext";
 import { RecentQuotationsPanel } from "../panes/RecentQuotationsPanel";
@@ -304,4 +304,3 @@ const styles = StyleSheet.create({
   quickActionLabel: { flex: 1, fontSize: 12, color: ds.ink, fontWeight: "500" },
   kbHint: { fontSize: 10, color: ds.inkSoft, fontWeight: "600" },
 });
-
