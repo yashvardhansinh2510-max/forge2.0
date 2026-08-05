@@ -9,6 +9,7 @@
 - `cd frontend && npm run lint` — exit 0; 0 errors and 14 repository warnings, none from the stabilization implementation.
 - `cd frontend && npx eslint 'app/(admin)/_layout.tsx' 'src/components/ProductImage.tsx' 'src/components/quotation/catalog/ProductExplorer.tsx' 'src/components/quotation/helpers/responsive.ts' 'src/components/quotation/layout/BuilderShell.tsx'` — 0 errors, 0 new warnings after cleanup.
 - `cd frontend && npx expo export --platform web --output-dir /tmp/forge2-web-stabilization-final` — exit 0; Metro bundled 1,994 modules.
+- Temporary isolated Playwright audit against a production web export — 8 viewport sizes (1280, 1440, 1920, 768, 1024, 375, 390, 430); public login route reached at every size with 0 console errors and `scrollWidth === clientWidth`.
 - `git diff --check` — exit 0.
 
 ## PDF artifact evidence
@@ -26,4 +27,4 @@ Visual inspection confirmed the portrait source remains upright, centered, and a
 
 ## Verification limitation
 
-The full `npm run lint` command now initializes after restoring the missing optional resolver packages and exits with no errors; its 14 remaining warnings are outside the stabilization implementation. The optional-package repair updated `frontend/package-lock.json`; no application dependency or runtime code was added. Live authenticated browser checks against Supabase/MongoDB were not run in this environment, so the requested viewport matrix remains an artifact/static-build verification gap rather than an asserted pass.
+The full `npm run lint` command now initializes after restoring the missing optional resolver packages and exits with no errors; its 14 remaining warnings are outside the stabilization implementation. The optional-package repair updated `frontend/package-lock.json`; no application dependency or runtime code was added. The public-shell viewport matrix is covered by the isolated browser audit, but authenticated quotation-builder checks against Supabase/MongoDB were not run in this environment, so builder interaction, sidebar persistence, live product media, and editor/PDF comparison remain unasserted.
