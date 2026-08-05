@@ -223,7 +223,10 @@ const styles = StyleSheet.create({
   },
   back: { flexDirection: "row", alignItems: "center", gap: 3 },
   backLabel: { fontSize: 13, fontWeight: "500", color: colors.onSurface },
-  titleCol: { gap: 2 },
+  // The mobile topbar keeps the action icons visible, so the title block must
+  // be allowed to give up intrinsic width instead of pushing undo/redo past
+  // the viewport edge.
+  titleCol: { flex: 1, minWidth: 0, gap: 2 },
   numPill: {
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: colors.surfaceTertiary,
   },

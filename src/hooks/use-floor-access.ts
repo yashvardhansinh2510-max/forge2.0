@@ -12,6 +12,8 @@ export type FloorAccess = { all_floors: boolean; floors: Floor[]; floor_ids: str
 const SELECTED_FLOOR_KEY = "forge.active-floor";
 let cache: FloorAccess | null = null;
 let inflight: Promise<FloorAccess> | null = null;
+let selectedFloorCache: string | null = null;
+const selectedFloorListeners = new Set<(floorId: string) => void>();
 
 async function loadAccess() {
   if (cache) return cache;
@@ -29,19 +31,28 @@ async function loadAccess() {
 }
 
 export async function getSelectedFloorId() {
-  return (await storage.getItem<string>(SELECTED_FLOOR_KEY, "")) || "";
+  if (selectedFloorCache !== null) return selectedFloorCache;
+  const saved = (await storage.getItem<string>(SELECTED_FLOOR_KEY, "")) || "";
+  selectedFloorCache = saved;
+  return saved;
 }
 
 export async function setSelectedFloorId(id: string) {
+  selectedFloorCache = id;
+  selectedFloorListeners.forEach((listener) => listener(id));
   await storage.setItem(SELECTED_FLOOR_KEY, id);
 }
 
 export function useFloorAccess() {
   const [access, setAccess] = useState<FloorAccess | null>(cache);
-  const [selectedFloorId, setSelectedFloorIdState] = useState("");
+  const [selectedFloorId, setSelectedFloorIdState] = useState(selectedFloorCache || "");
 
   useEffect(() => {
     let alive = true;
+    const onSelectedFloorChange = (floorId: string) => {
+      if (alive) setSelectedFloorIdState(floorId);
+    };
+    selectedFloorListeners.add(onSelectedFloorChange);
     Promise.all([loadAccess(), getSelectedFloorId()]).then(([value, saved]) => {
       if (!alive) return;
       setAccess(value);
@@ -55,7 +66,10 @@ export function useFloorAccess() {
       setSelectedFloorIdState(valid);
       if (valid !== saved) void setSelectedFloorId(valid);
     }).catch(() => { if (alive) setAccess(null); });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      selectedFloorListeners.delete(onSelectedFloorChange);
+    };
   }, []);
 
   const selectFloor = useCallback(async (id: string) => {
@@ -63,7 +77,6 @@ export function useFloorAccess() {
     // unscoped-default note above).
     if (!access?.floor_ids.includes(id)) return;
     await setSelectedFloorId(id);
-    setSelectedFloorIdState(id);
   }, [access]);
 
   return { access, floors: access?.floors || [], selectedFloorId, selectFloor };
@@ -77,7 +90,7 @@ export function useFloorAccess() {
  * point at another business unit while its records were being written
  * (that is how tile documents ended up stamped `first-floor`). */
 export function useRequireFloorAccess(floorId: string) {
-  const { access } = useFloorAccess();
+  const { access, selectedFloorId, selectFloor } = useFloorAccess();
   const router = useRouter();
   useEffect(() => {
     if (!access) return; // still loading — nothing to enforce yet
@@ -87,8 +100,9 @@ export function useRequireFloorAccess(floorId: string) {
       router.replace("/(admin)/dashboard" as any);
       return;
     }
-    void getSelectedFloorId().then((current) => {
-      if (current !== floorId) void setSelectedFloorId(floorId);
-    });
-  }, [access, floorId, router]);
+    // Update both persistence and the live shell state. Persisting only here
+    // left the direct-link quotation builder mounted under the previous floor
+    // until a later remount, so its nav and request scope could disagree.
+    if (selectedFloorId !== floorId) void selectFloor(floorId);
+  }, [access, floorId, router, selectedFloorId, selectFloor]);
 }
