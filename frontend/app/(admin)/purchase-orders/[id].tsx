@@ -13,18 +13,21 @@ import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
 import { useBp } from "@/src/design/responsive";
-import { Badge, Button, Card, IconButton } from "@/src/components/ui";
+import { Badge, Button, Card, ErrorState, IconButton, LoadingState } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { api } from "@/src/api/client";
 import { colors, money, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import {
   HistorySheet, MovableItem, MoveStageSheet, TransferSheet,
 } from "@/src/components/purchases/MovementEngine";
+import { useRoles } from "@/src/hooks/use-roles";
+import { useAuth } from "@/src/state/auth";
+import { downloadApiFile } from "@/src/utils/downloadFile";
 
 type PoStatus =
   | "draft" | "awaiting_review" | "ordered" | "awaiting_supplier"
@@ -40,7 +43,37 @@ type PoItem = {
   qty: number;
   qty_received: number;
   unit_cost: number;
+  finish?: string | null;
   stage?: string;
+};
+
+type ChalanStage = "released" | "at_godown" | "dispatched";
+type ChalanOrderStage = "order" | "material_released" | "godown" | "dispatch" | "completed";
+
+type ChalanLine = {
+  po_item_id: string;
+  name: string;
+  size?: string | null;
+  qty: number;
+  unit: string;
+};
+
+type Chalan = {
+  id: string;
+  number: string;
+  created_at: string;
+  created_by_name?: string | null;
+  items: ChalanLine[];
+  reference_number?: string | null;
+  receiver_name?: string | null;
+  sender_name?: string | null;
+  request_key?: string | null;
+  stage: ChalanStage;
+  godown_received_at?: string | null;
+  godown_received_by_name?: string | null;
+  dispatched_at?: string | null;
+  dispatched_by_name?: string | null;
+  dispatch_note?: string | null;
 };
 
 type StatusEvent = {
@@ -71,6 +104,7 @@ type PO = {
   quotation_number?: string | null;
   customer_id: string;
   customer_name: string;
+  customer_phone?: string | null;
   project_name?: string | null;
   brand_id?: string | null;
   brand_name?: string | null;
@@ -86,6 +120,9 @@ type PO = {
   grand_total: number;
   created_at: string;
   created_by_name: string;
+  stage: ChalanOrderStage;
+  chalans: Chalan[];
+  remaining_qty_by_item: Record<string, number>;
 };
 
 type StatusConfig = {
@@ -119,15 +156,64 @@ const STAGE_TONE: Record<string, { bg: string; fg: string }> = {
   delivered: { bg: "#E8F5EA", fg: colors.success },
 };
 
+const CHALAN_STAGE_LABEL: Record<ChalanStage, string> = {
+  released: "Released",
+  at_godown: "At Godown",
+  dispatched: "Dispatched",
+};
+
+const CHALAN_STAGE_BADGE: Record<ChalanStage, "info" | "warning" | "success"> = {
+  released: "info",
+  at_godown: "warning",
+  dispatched: "success",
+};
+
+const CHALAN_ORDER_STAGE_LABEL: Record<ChalanOrderStage, string> = {
+  order: "Awaiting material release",
+  material_released: "Material released",
+  godown: "At Godown",
+  dispatch: "Partially dispatched",
+  completed: "Fully dispatched",
+};
+
+type GenerateChalanPayload = {
+  items: { po_item_id: string; qty: number }[];
+  reference_number?: string;
+  receiver_name?: string;
+  sender_name?: string;
+};
+
+type ChalanTransition = { kind: "godown" | "dispatch"; chalan: Chalan };
+
+function apiErrorMessage(error: any, fallback: string): string {
+  const detail = error?.detail;
+  if (typeof detail !== "string" || !detail) return fallback;
+  try {
+    const parsed = JSON.parse(detail);
+    return parsed?.message || parsed?.detail || detail;
+  } catch {
+    return detail;
+  }
+}
+
+function generationKey(poId: string): string {
+  return `sanitary-chalan:${poId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
 export default function PurchaseOrderDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { isPhone, isDesktop } = useBp();
+  const { staff } = useAuth();
+  const { roles, loading: rolesLoading, error: rolesError, refresh: refreshRoles } = useRoles();
   const isTablet = !isPhone;
 
   const [po, setPo] = useState<PO | null>(null);
   const [config, setConfig] = useState<StatusConfig | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
@@ -136,6 +222,10 @@ export default function PurchaseOrderDetail() {
   const [moveItem, setMoveItem] = useState<PoItem | null>(null);
   const [transferItem, setTransferItem] = useState<PoItem | null>(null);
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
+  const [chalanFormKey, setChalanFormKey] = useState<string | null>(null);
+  const [chalanTransition, setChalanTransition] = useState<ChalanTransition | null>(null);
+  const [pdfBusyId, setPdfBusyId] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<{ chalan: Chalan; message: string } | null>(null);
 
   const toMovable = useCallback((it: PoItem): MovableItem => ({
     item_id: it.id, sku: it.sku, name: it.name, image: it.image, qty: it.qty,
@@ -145,18 +235,154 @@ export default function PurchaseOrderDetail() {
   }), [po]);
 
   const load = useCallback(async () => {
-    const [d, cfg, tl] = await Promise.all([
-      api.get<PO>(`/purchase-orders/${id}`),
-      api.get<StatusConfig>("/purchase-orders/config/statuses"),
-      api.get<TimelineEvent[]>(`/activity/purchase/${id}`),
-    ]);
-    setPo(d);
-    setConfig(cfg);
-    setTimeline(tl);
-    setNotesDraft(d.internal_notes || "");
+    if (!id) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [d, cfg, tl] = await Promise.all([
+        api.get<PO>(`/purchases/${id}/order-detail`),
+        api.get<StatusConfig>("/purchase-orders/config/statuses"),
+        api.get<TimelineEvent[]>(`/activity/purchase/${id}`),
+      ]);
+      setPo(d);
+      setConfig(cfg);
+      setTimeline(tl);
+      setNotesDraft(d.internal_notes || "");
+      setRefreshError(null);
+    } catch (e: any) {
+      setLoadError(apiErrorMessage(e, "Could not load purchase order"));
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  const refreshPersistedOrder = useCallback(async (): Promise<PO | null> => {
+    if (!id) return null;
+    try {
+      const fresh = await api.get<PO>(`/purchases/${id}/order-detail`);
+      setPo(fresh);
+      setRefreshError(null);
+      api.get<TimelineEvent[]>(`/activity/purchase/${id}`).then(setTimeline).catch(() => {});
+      return fresh;
+    } catch (e: any) {
+      setRefreshError(apiErrorMessage(e, "Latest persisted Chalan state could not be loaded"));
+      return null;
+    }
+  }, [id]);
+
+  const warehouseLevel = roles.find((role) => role.role === "warehouse")?.level;
+  const staffLevel = roles.find((role) => role.role === staff?.role)?.level;
+  const canManageChalans = warehouseLevel !== undefined && staffLevel !== undefined && staffLevel >= warehouseLevel;
+
+  const applyGeneratedChalan = useCallback((chalan: Chalan, stage: ChalanOrderStage, items: GenerateChalanPayload["items"]) => {
+    setPo((current) => {
+      if (!current) return current;
+      const exists = current.chalans.some((candidate) => candidate.id === chalan.id);
+      const remaining = { ...current.remaining_qty_by_item };
+      items.forEach((item) => {
+        remaining[item.po_item_id] = Math.max(0, (remaining[item.po_item_id] || 0) - item.qty);
+      });
+      return {
+        ...current,
+        stage,
+        chalans: exists ? current.chalans : [...current.chalans, chalan],
+        remaining_qty_by_item: remaining,
+      };
+    });
+  }, []);
+
+  const generateChalan = useCallback(async (payload: GenerateChalanPayload, requestKey: string): Promise<string | null> => {
+    if (!id) return "Purchase order is unavailable";
+    try {
+      const result = await api.post<{ chalan: Chalan; stage: ChalanOrderStage; idempotent?: boolean }>(
+        `/purchases/${id}/chalans`,
+        { ...payload, idempotency_key: requestKey },
+      );
+      applyGeneratedChalan(result.chalan, result.stage, payload.items);
+      toast.success(result.idempotent ? "Chalan already generated" : "Chalan generated");
+      setChalanFormKey(null);
+      await refreshPersistedOrder();
+      return null;
+    } catch (e: any) {
+      // A timed-out response may still have committed. Re-read the source of
+      // truth and match the stable request key before offering a safe retry.
+      const fresh = await refreshPersistedOrder();
+      if (fresh?.chalans.some((chalan) => chalan.request_key === requestKey)) {
+        toast.success("Chalan generated");
+        setChalanFormKey(null);
+        return null;
+      }
+      return apiErrorMessage(e, "Could not generate Chalan");
+    }
+  }, [applyGeneratedChalan, id, refreshPersistedOrder]);
+
+  const runChalanTransition = useCallback(async (
+    transition: ChalanTransition,
+    dispatchNote?: string,
+  ): Promise<string | null> => {
+    if (!id) return "Purchase order is unavailable";
+    const { chalan, kind } = transition;
+    const targetStage: ChalanStage = kind === "godown" ? "at_godown" : "dispatched";
+    const path = kind === "godown"
+      ? `/purchases/${id}/chalans/${chalan.id}/godown-received`
+      : `/purchases/${id}/chalans/${chalan.id}/dispatch`;
+    try {
+      const result = await api.post<{ stage: ChalanOrderStage }>(
+        path,
+        kind === "dispatch" ? { dispatch_note: dispatchNote || undefined } : undefined,
+      );
+      // The response means the transition is committed. Reflect only that
+      // persisted acknowledgement while the canonical order is reloaded.
+      setPo((current) => current ? {
+        ...current,
+        stage: result.stage,
+        chalans: current.chalans.map((candidate) => candidate.id === chalan.id
+          ? { ...candidate, stage: targetStage, dispatch_note: kind === "dispatch" ? dispatchNote : candidate.dispatch_note }
+          : candidate),
+      } : current);
+      toast.success(kind === "godown" ? "Marked received at Godown" : "Chalan dispatched");
+      setChalanTransition(null);
+      await refreshPersistedOrder();
+      return null;
+    } catch (e: any) {
+      // Both lifecycle routes are identity-addressed. If the write committed
+      // but its response was lost, the persisted stage wins and no duplicate
+      // action is presented to the operator.
+      const fresh = await refreshPersistedOrder();
+      const persisted = fresh?.chalans.find((candidate) => candidate.id === chalan.id);
+      const reachedTarget = kind === "godown"
+        ? persisted?.stage === "at_godown" || persisted?.stage === "dispatched"
+        : persisted?.stage === "dispatched";
+      if (reachedTarget) {
+        toast.success(kind === "godown" ? "Marked received at Godown" : "Chalan dispatched");
+        setChalanTransition(null);
+        return null;
+      }
+      return apiErrorMessage(e, "Could not update Chalan");
+    }
+  }, [id, refreshPersistedOrder]);
+
+  const downloadChalanPdf = useCallback(async (chalan: Chalan) => {
+    if (!id || !po) return;
+    setPdfBusyId(chalan.id);
+    setPdfError(null);
+    const stamp = new Date(chalan.created_at);
+    const validStamp = !Number.isNaN(stamp.getTime());
+    const date = validStamp
+      ? `${String(stamp.getDate()).padStart(2, "0")}-${String(stamp.getMonth() + 1).padStart(2, "0")}-${stamp.getFullYear()}`
+      : "Chalan";
+    const filename = `${chalan.number} ${po.customer_name} ${date}.pdf`;
+    try {
+      const opened = await downloadApiFile(`/purchases/${id}/chalans/${chalan.id}/pdf`, filename, "Chalan PDF");
+      if (!opened) setPdfError({ chalan, message: "Could not download the Chalan PDF. You can retry safely." });
+    } catch (e: any) {
+      setPdfError({ chalan, message: apiErrorMessage(e, "Could not download the Chalan PDF") });
+    } finally {
+      setPdfBusyId(null);
+    }
+  }, [id, po]);
 
   const allowedNext = useMemo(
     () => (po && config ? (config.transitions[po.status] || []).filter((s) => s !== po.status) : []),
@@ -258,7 +484,24 @@ export default function PurchaseOrderDetail() {
     }
   };
 
-  if (!po || !config) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
+  if (loading && (!po || !config)) {
+    return (
+      <SafeAreaView style={styles.centeredState} edges={["top"]}>
+        <LoadingState label="Loading purchase order…" />
+      </SafeAreaView>
+    );
+  }
+
+  if (loadError || !po || !config) {
+    return (
+      <SafeAreaView style={styles.centeredState} edges={["top"]}>
+        <ErrorState title="Could not load purchase order" subtitle={loadError || "Purchase order not found"} onRetry={load} />
+        <Button label="Back to Purchases" icon="arrow-left" variant="ghost" onPress={() => router.back()} />
+      </SafeAreaView>
+    );
+  }
+
+  const hasRemainingChalanQty = Object.values(po.remaining_qty_by_item || {}).some((qty) => qty > 1e-6);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -276,6 +519,14 @@ export default function PurchaseOrderDetail() {
           ) : null}
         </View>
       </View>
+
+      {refreshError ? (
+        <View style={styles.refreshBanner} testID="sanitary-chalan-refresh-error">
+          <Feather name="alert-triangle" size={15} color={colors.error} />
+          <Text style={[type.bodySm, { color: colors.error, flex: 1 }]}>{refreshError}</Text>
+          <Button label="Retry" size="sm" variant="secondary" onPress={() => refreshPersistedOrder()} testID="sanitary-chalan-refresh-retry" />
+        </View>
+      ) : null}
 
       <ScrollView
         contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, flexDirection: isTablet ? "row" : "column" }}
@@ -396,6 +647,133 @@ export default function PurchaseOrderDetail() {
                 </View>
               </View>
             </View>
+          </Card>
+
+          {/* Sanitary material release / Chalan lifecycle */}
+          <Card testID="sanitary-chalan-section">
+            <View style={styles.chalanHeader}>
+              <View style={{ flex: 1, minWidth: 180 }}>
+                <Text style={type.overline}>Sanitary Chalans</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  <Badge
+                    label={CHALAN_ORDER_STAGE_LABEL[po.stage] || po.stage}
+                    tone={po.stage === "completed" ? "success" : po.stage === "order" ? "neutral" : "info"}
+                    testID="sanitary-chalan-order-stage"
+                  />
+                  <Text style={type.caption}>
+                    {po.chalans.length} Chalan{po.chalans.length === 1 ? "" : "s"}
+                  </Text>
+                </View>
+              </View>
+              {canManageChalans && hasRemainingChalanQty ? (
+                <Button
+                  label="Generate Chalan"
+                  icon="file-plus"
+                  size="sm"
+                  onPress={() => setChalanFormKey(generationKey(po.id))}
+                  testID="sanitary-generate-chalan"
+                />
+              ) : null}
+            </View>
+
+            {rolesLoading ? (
+              <View style={styles.permissionState} testID="sanitary-chalan-permissions-loading">
+                <ActivityIndicator size="small" color={colors.brand} />
+                <Text style={type.caption}>Checking Chalan action permissions…</Text>
+              </View>
+            ) : rolesError ? (
+              <View style={[styles.inlineNotice, { backgroundColor: colors.errorBg, borderColor: colors.errorBorder }]} testID="sanitary-chalan-permissions-error">
+                <Text style={[type.bodySm, { color: colors.error, flex: 1 }]}>Could not confirm Chalan action permissions.</Text>
+                <Button label="Retry" size="sm" variant="secondary" onPress={refreshRoles} testID="sanitary-chalan-permissions-retry" />
+              </View>
+            ) : !canManageChalans ? (
+              <Text style={[type.caption, { marginTop: spacing.sm }]}>Your role has read-only access to Chalans.</Text>
+            ) : !hasRemainingChalanQty ? (
+              <Text style={[type.caption, { marginTop: spacing.sm }]}>All ordered quantities are covered by persisted Chalans.</Text>
+            ) : null}
+
+            {po.chalans.length === 0 ? (
+              <View style={styles.chalanEmpty}>
+                <Feather name="file-text" size={20} color={colors.onSurfaceMuted} />
+                <Text style={type.bodyMuted}>No material has been released on a Chalan yet.</Text>
+              </View>
+            ) : (
+              <View style={{ gap: spacing.sm, marginTop: spacing.md }}>
+                {po.chalans.slice().reverse().map((chalan) => (
+                  <View key={chalan.id} style={styles.chalanCard} testID={`sanitary-chalan-${chalan.id}`}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.sm }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={type.titleMd}>{chalan.number}</Text>
+                        <Text style={type.caption}>
+                          {new Date(chalan.created_at).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          {chalan.created_by_name ? ` · ${chalan.created_by_name}` : ""}
+                        </Text>
+                      </View>
+                      <Badge label={CHALAN_STAGE_LABEL[chalan.stage]} tone={CHALAN_STAGE_BADGE[chalan.stage]} testID={`sanitary-chalan-stage-${chalan.id}`} />
+                    </View>
+
+                    <View style={styles.chalanLines}>
+                      {chalan.items.map((line, index) => (
+                        <View key={`${line.po_item_id}-${index}`} style={styles.chalanLine}>
+                          <Text style={[type.bodySm, { flex: 1 }]} numberOfLines={2}>
+                            {line.name}{line.size ? ` · ${line.size}` : ""}
+                          </Text>
+                          <Text style={[type.mono, { fontSize: 12 }]}>{line.qty} {line.unit}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    {(chalan.reference_number || chalan.receiver_name || chalan.sender_name || chalan.dispatch_note) ? (
+                      <View style={styles.chalanMeta}>
+                        {chalan.reference_number ? <Text style={type.caption}>Reference · {chalan.reference_number}</Text> : null}
+                        {chalan.receiver_name ? <Text style={type.caption}>Receiver · {chalan.receiver_name}</Text> : null}
+                        {chalan.sender_name ? <Text style={type.caption}>Supplier representative · {chalan.sender_name}</Text> : null}
+                        {chalan.dispatch_note ? <Text style={type.caption}>Dispatch note · {chalan.dispatch_note}</Text> : null}
+                      </View>
+                    ) : null}
+
+                    <View style={styles.chalanActions}>
+                      <Button
+                        label="Download PDF"
+                        icon="download"
+                        variant="secondary"
+                        size="sm"
+                        loading={pdfBusyId === chalan.id}
+                        disabled={pdfBusyId !== null && pdfBusyId !== chalan.id}
+                        onPress={() => downloadChalanPdf(chalan)}
+                        testID={`sanitary-chalan-download-${chalan.id}`}
+                      />
+                      {canManageChalans && chalan.stage === "released" ? (
+                        <Button
+                          label="Received at Godown"
+                          icon="archive"
+                          variant="secondary"
+                          size="sm"
+                          onPress={() => setChalanTransition({ kind: "godown", chalan })}
+                          testID={`sanitary-chalan-godown-${chalan.id}`}
+                        />
+                      ) : null}
+                      {canManageChalans && (chalan.stage === "released" || chalan.stage === "at_godown") ? (
+                        <Button
+                          label="Dispatch"
+                          icon="truck"
+                          size="sm"
+                          onPress={() => setChalanTransition({ kind: "dispatch", chalan })}
+                          testID={`sanitary-chalan-dispatch-${chalan.id}`}
+                        />
+                      ) : null}
+                    </View>
+
+                    {pdfError?.chalan.id === chalan.id ? (
+                      <View style={[styles.inlineNotice, { backgroundColor: colors.errorBg, borderColor: colors.errorBorder }]} testID={`sanitary-chalan-download-error-${chalan.id}`}>
+                        <Text style={[type.bodySm, { color: colors.error, flex: 1 }]}>{pdfError.message}</Text>
+                        <Button label="Retry" size="sm" variant="secondary" onPress={() => downloadChalanPdf(pdfError.chalan)} />
+                      </View>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            )}
           </Card>
 
           {/* Internal notes */}
@@ -527,6 +905,21 @@ export default function PurchaseOrderDetail() {
         itemId={historyItemId}
         onClose={() => setHistoryItemId(null)}
       />
+      {chalanFormKey ? (
+        <GenerateChalanModal
+          po={po}
+          requestKey={chalanFormKey}
+          onClose={() => setChalanFormKey(null)}
+          onSubmit={generateChalan}
+        />
+      ) : null}
+      {chalanTransition ? (
+        <ChalanTransitionModal
+          transition={chalanTransition}
+          onClose={() => setChalanTransition(null)}
+          onSubmit={runChalanTransition}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -688,6 +1081,208 @@ function ReceiveModal({
   );
 }
 
+function GenerateChalanModal({
+  po, requestKey, onClose, onSubmit,
+}: {
+  po: PO;
+  requestKey: string;
+  onClose: () => void;
+  onSubmit: (payload: GenerateChalanPayload, requestKey: string) => Promise<string | null>;
+}) {
+  const releasable = po.items.filter((item) => (po.remaining_qty_by_item[item.id] || 0) > 1e-6);
+  const [qtyById, setQtyById] = useState<Record<string, string>>(() => Object.fromEntries(
+    releasable.map((item) => [item.id, String(po.remaining_qty_by_item[item.id])]),
+  ));
+  const [referenceNumber, setReferenceNumber] = useState("");
+  const [receiverName, setReceiverName] = useState("");
+  const [senderName, setSenderName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const entries = releasable.map((item) => ({
+      po_item_id: item.id,
+      qty: Number(qtyById[item.id] || 0),
+      maximum: po.remaining_qty_by_item[item.id] || 0,
+      name: item.name,
+    })).filter((entry) => entry.qty > 0);
+    if (entries.length === 0) {
+      setError("Enter a quantity for at least one item.");
+      return;
+    }
+    const invalid = entries.find((entry) => !Number.isFinite(entry.qty) || entry.qty > entry.maximum + 1e-6);
+    if (invalid) {
+      setError(`${invalid.name} has only ${invalid.maximum} remaining to release.`);
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    const message = await onSubmit({
+      items: entries.map(({ po_item_id, qty }) => ({ po_item_id, qty })),
+      reference_number: referenceNumber.trim() || undefined,
+      receiver_name: receiverName.trim() || undefined,
+      sender_name: senderName.trim() || undefined,
+    }, requestKey);
+    setSubmitting(false);
+    if (message) setError(message);
+  };
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={() => { if (!submitting) onClose(); }}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <View style={styles.sheetScrim}>
+          <View style={styles.chalanSheet} testID="sanitary-generate-chalan-modal">
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flex: 1 }}>
+                <Text style={type.titleLg}>Generate Chalan</Text>
+                <Text style={type.bodyMuted}>Release all or part of the remaining sanitary material.</Text>
+              </View>
+              <IconButton icon="x" size={34} disabled={submitting} onPress={onClose} accessibilityLabel="Close generate Chalan form" />
+            </View>
+
+            <ScrollView style={{ maxHeight: 430, marginTop: spacing.md }} contentContainerStyle={{ gap: spacing.md }} keyboardShouldPersistTaps="handled">
+              {releasable.map((item) => (
+                <View key={item.id} style={styles.chalanFormItem}>
+                  <View style={{ flex: 1, minWidth: 150 }}>
+                    <Text style={type.bodyStrong}>{item.name}</Text>
+                    <Text style={type.caption}>
+                      {[item.sku, item.finish].filter(Boolean).join(" · ")} · {po.remaining_qty_by_item[item.id]} remaining
+                    </Text>
+                  </View>
+                  <TextInput
+                    value={qtyById[item.id] || ""}
+                    onChangeText={(value) => setQtyById((current) => ({ ...current, [item.id]: value.replace(/[^0-9.]/g, "") }))}
+                    keyboardType="numeric"
+                    style={styles.chalanQtyInput}
+                    testID={`sanitary-chalan-qty-${item.id}`}
+                    accessibilityLabel={`Quantity for ${item.name}`}
+                  />
+                </View>
+              ))}
+
+              <View style={styles.chalanFieldGrid}>
+                <ChalanTextField label="Reference number" placeholder="Optional" value={referenceNumber} onChangeText={setReferenceNumber} testID="sanitary-chalan-reference" />
+                <ChalanTextField label="Receiver name" placeholder="Site contact" value={receiverName} onChangeText={setReceiverName} testID="sanitary-chalan-receiver" />
+                <ChalanTextField label="Supplier representative" placeholder="Sender name" value={senderName} onChangeText={setSenderName} testID="sanitary-chalan-sender" />
+              </View>
+
+              {error ? (
+                <View style={[styles.inlineNotice, { backgroundColor: colors.errorBg, borderColor: colors.errorBorder }]} testID="sanitary-generate-chalan-error">
+                  <Feather name="alert-triangle" size={14} color={colors.error} />
+                  <Text style={[type.bodySm, { color: colors.error, flex: 1 }]}>{error}</Text>
+                </View>
+              ) : null}
+            </ScrollView>
+
+            <View style={styles.sheetActions}>
+              <Button label="Cancel" variant="ghost" disabled={submitting} onPress={onClose} />
+              <Button
+                label={error ? "Retry Generate" : "Generate Chalan"}
+                icon="file-plus"
+                loading={submitting}
+                onPress={submit}
+                testID="sanitary-generate-chalan-confirm"
+              />
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function ChalanTextField({
+  label, placeholder, value, onChangeText, testID,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  testID: string;
+}) {
+  return (
+    <View style={{ flex: 1, minWidth: 180 }}>
+      <Text style={type.caption}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={colors.onSurfaceMuted}
+        style={styles.chalanTextInput}
+        testID={testID}
+      />
+    </View>
+  );
+}
+
+function ChalanTransitionModal({
+  transition, onClose, onSubmit,
+}: {
+  transition: ChalanTransition;
+  onClose: () => void;
+  onSubmit: (transition: ChalanTransition, dispatchNote?: string) => Promise<string | null>;
+}) {
+  const [dispatchNote, setDispatchNote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isDispatch = transition.kind === "dispatch";
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError(null);
+    const message = await onSubmit(transition, dispatchNote.trim() || undefined);
+    setSubmitting(false);
+    if (message) setError(message);
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={() => { if (!submitting) onClose(); }}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <Pressable style={styles.modalScrim} onPress={() => { if (!submitting) onClose(); }}>
+          <Pressable style={styles.modalCard} onPress={() => {}} testID="sanitary-chalan-transition-modal">
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <Text style={type.titleMd}>{isDispatch ? "Dispatch Chalan" : "Confirm Godown receipt"}</Text>
+              <IconButton icon="x" size={30} disabled={submitting} onPress={onClose} />
+            </View>
+            <Text style={[type.bodyMuted, { marginTop: spacing.xs }]}>
+              {isDispatch
+                ? `${transition.chalan.number} will be marked dispatched from ${transition.chalan.stage === "at_godown" ? "the Godown" : "the supplier"}.`
+                : `${transition.chalan.number} will move from Released to At Godown.`}
+            </Text>
+            {isDispatch ? (
+              <TextInput
+                value={dispatchNote}
+                onChangeText={setDispatchNote}
+                placeholder="Dispatch note (optional)"
+                placeholderTextColor={colors.onSurfaceMuted}
+                multiline
+                style={[styles.notesInput, { minHeight: 64, marginTop: spacing.md }]}
+                testID="sanitary-chalan-dispatch-note"
+              />
+            ) : null}
+            {error ? (
+              <View style={[styles.inlineNotice, { backgroundColor: colors.errorBg, borderColor: colors.errorBorder, marginTop: spacing.md }]} testID="sanitary-chalan-transition-error">
+                <Feather name="alert-triangle" size={14} color={colors.error} />
+                <Text style={[type.bodySm, { color: colors.error, flex: 1 }]}>{error}</Text>
+              </View>
+            ) : null}
+            <View style={styles.sheetActions}>
+              <Button label="Cancel" variant="ghost" disabled={submitting} onPress={onClose} />
+              <Button
+                label={error ? "Retry" : isDispatch ? "Confirm Dispatch" : "Confirm Receipt"}
+                icon={isDispatch ? "truck" : "archive"}
+                loading={submitting}
+                onPress={submit}
+                testID="sanitary-chalan-transition-confirm"
+              />
+            </View>
+          </Pressable>
+        </Pressable>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 function FooterRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
   return (
     <View style={{ flexDirection: "row", justifyContent: "space-between", gap: spacing.sm }}>
@@ -698,11 +1293,19 @@ function FooterRow({ label, value, bold }: { label: string; value: string; bold?
 }
 
 const styles = StyleSheet.create({
+  centeredState: {
+    flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", padding: spacing.lg,
+  },
   topbar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: spacing.lg, paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface,
+  },
+  refreshBanner: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingHorizontal: spacing.lg, paddingVertical: spacing.sm,
+    backgroundColor: colors.errorBg, borderBottomWidth: 1, borderBottomColor: colors.errorBorder,
   },
   statusPill: {
     flexDirection: "row", alignItems: "center", gap: 6,
@@ -734,6 +1337,58 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surfaceTertiary,
     borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md,
+  },
+  chalanHeader: {
+    flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.md,
+  },
+  permissionState: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.sm,
+  },
+  inlineNotice: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    borderWidth: 1, borderRadius: radius.md, padding: spacing.sm, marginTop: spacing.sm,
+  },
+  chalanEmpty: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md,
+    backgroundColor: colors.surfaceTertiary,
+  },
+  chalanCard: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    padding: spacing.md, backgroundColor: colors.surface, gap: spacing.sm,
+  },
+  chalanLines: {
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.sm,
+  },
+  chalanLine: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingHorizontal: spacing.sm, paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+  },
+  chalanMeta: { gap: 2 },
+  chalanActions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  sheetScrim: { flex: 1, backgroundColor: colors.overlay, justifyContent: "flex-end" },
+  chalanSheet: {
+    backgroundColor: colors.surfaceSecondary, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
+    padding: spacing.xl, maxHeight: "90%", ...shadow.lifted,
+  },
+  chalanFormItem: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    padding: spacing.sm, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    borderRadius: radius.md, backgroundColor: colors.surface,
+  },
+  chalanQtyInput: {
+    width: 84, textAlign: "right", fontVariant: ["tabular-nums"],
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    padding: 9, fontSize: 14, color: colors.onSurface, backgroundColor: colors.surface,
+  },
+  chalanFieldGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  chalanTextInput: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    padding: 10, marginTop: 3, fontSize: 14, color: colors.onSurface, backgroundColor: colors.surface,
+  },
+  sheetActions: {
+    flexDirection: "row", justifyContent: "flex-end", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.lg,
   },
   notesInput: {
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
