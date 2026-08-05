@@ -3,7 +3,7 @@
 // unified list row, Avatar. Business logic preserved.
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View,
 } from "react-native";
@@ -59,18 +59,11 @@ type Workspace = {
 };
 
 type Tab = "overview" | "quotations" | "purchases" | "timeline";
-
-// Safe fallback so a failed/slow /workspace fetch can never blank the whole
-// page — every `workspace.foo.bar` access below stays valid (all zeros/empty)
-// instead of throwing "Cannot read properties of null" when the workspace
-// request errors. That render crash (silent — surfaces as an uncaught
-// pageerror, not a console.error) was the root cause behind the previous
-// "Customer Detail completely blank on phone" report.
-const EMPTY_WORKSPACE: Workspace = {
-  customer: { id: "", name: "", tier: "retail" } as Customer,
-  summary: { total_items: 0, total_value: 0, outstanding_value: 0, outstanding_count: 0, open_pos: 0, blocked_count: 0, delivered_count: 0, shortage_count: 0 },
-  shortages: [], products: [], brands: [], stages: [], purchase_orders: [], outstanding_items: [], recent_activity: [],
-  expected_delivery: { next_at: null, purchase_orders: [] },
+type ProductFilter = "all" | "outstanding" | "blocked";
+type WorkspaceServerFilters = {
+  productSearch: string;
+  brandFilter: string | null;
+  stageFilter: string | null;
 };
 
 const WALK_IN_DAY_OPTIONS = [2, 4, 7, 14];
@@ -120,9 +113,18 @@ function WalkInFollowupSheet({ visible, onClose, customer, onCreate }: {
 }
 
 export default function CustomerDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id: rawId, q: rawQ, brand: rawBrand, stage: rawStage } = useLocalSearchParams<{
+    id?: string | string[];
+    q?: string | string[];
+    brand?: string | string[];
+    stage?: string | string[];
+  }>();
   const router = useRouter();
   const { isDesktop } = useBp();
+  const id = firstParam(rawId) || "";
+  const routeSearch = firstParam(rawQ) || "";
+  const routeBrand = firstParam(rawBrand);
+  const routeStage = firstParam(rawStage);
 
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -130,35 +132,90 @@ export default function CustomerDetail() {
   const [purchases, setPurchases] = useState<PO[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [availableBrands, setAvailableBrands] = useState<Workspace["brands"]>([]);
+  const [availableStages, setAvailableStages] = useState<Workspace["stages"]>([]);
   const [tab, setTab] = useState<Tab>("overview");
-  const [productFilter, setProductFilter] = useState<"all" | "outstanding" | "blocked">("all");
+  const [productFilter, setProductFilter] = useState<ProductFilter>("all");
+  const [productSearch, setProductSearch] = useState(routeSearch);
+  const [brandFilter, setBrandFilter] = useState<string | null>(routeBrand || null);
+  const [stageFilter, setStageFilter] = useState<string | null>(routeStage || null);
   const [moveItem, setMoveItem] = useState<WorkspaceProduct | null>(null);
   const [transferItem, setTransferItem] = useState<WorkspaceProduct | null>(null);
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
   const [walkInSheet, setWalkInSheet] = useState(false);
+  const workspaceRequestIdRef = useRef(0);
 
-  const load = useCallback(async () => {
+  useEffect(() => { setProductSearch(routeSearch); }, [routeSearch]);
+  useEffect(() => { setBrandFilter(routeBrand || null); }, [routeBrand]);
+  useEffect(() => { setStageFilter(routeStage || null); }, [routeStage]);
+
+  const workspaceFilters = useMemo<WorkspaceServerFilters>(() => ({
+    productSearch: productSearch.trim(),
+    brandFilter,
+    stageFilter,
+  }), [brandFilter, productSearch, stageFilter]);
+
+  const loadCore = useCallback(async () => {
     if (!id) return;
     setLoadError(null);
     try {
-      const [c, qs, pos, tl, ws] = await Promise.all([
+      const [c, qs, pos, tl] = await Promise.all([
         api.get<Customer>(`/customers/${id}`),
         api.get<Quotation[]>(`/quotations`).then((all) => all.filter((q: any) => q.customer_id === id)).catch(() => []),
         api.get<PO[]>(`/purchase-orders?customer_id=${id}`).catch(() => []),
         api.get<TimelineEvent[]>(`/activity/customer/${id}`).catch(() => []),
-        api.get<Workspace>(`/purchases/customers/${id}/workspace`).catch(() => EMPTY_WORKSPACE),
       ]);
       setCustomer(c);
       setQuotations(qs);
       setPurchases(pos);
       setTimeline(tl);
-      setWorkspace(ws);
     } catch (e: any) {
       setLoadError(e?.detail || "Could not load this customer. Check your connection and try again.");
     }
   }, [id]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadWorkspace = useCallback(async (filters: WorkspaceServerFilters) => {
+    if (!id) return;
+    const requestId = ++workspaceRequestIdRef.current;
+    setWorkspaceLoading(true);
+    setWorkspaceError(null);
+    setWorkspace(null);
+    try {
+      const params = new URLSearchParams();
+      if (filters.productSearch) params.set("q", filters.productSearch);
+      if (filters.brandFilter) params.set("brand", filters.brandFilter);
+      if (filters.stageFilter) params.set("stage", filters.stageFilter);
+      const query = params.toString();
+      const nextWorkspace = await api.get<Workspace>(
+        `/purchases/customers/${id}/workspace${query ? `?${query}` : ""}`,
+      );
+      if (requestId !== workspaceRequestIdRef.current) return;
+      setWorkspace(nextWorkspace);
+      setAvailableBrands(nextWorkspace.brands);
+      setAvailableStages(nextWorkspace.stages);
+    } catch (e: any) {
+      if (requestId !== workspaceRequestIdRef.current) return;
+      setWorkspace(null);
+      setWorkspaceError(e?.detail || "Could not load these purchase filters. Try again.");
+    } finally {
+      if (requestId === workspaceRequestIdRef.current) setWorkspaceLoading(false);
+    }
+  }, [id]);
+
+  const reloadAll = useCallback(async () => {
+    await Promise.all([
+      loadCore(),
+      loadWorkspace(workspaceFilters),
+    ]);
+  }, [loadCore, loadWorkspace, workspaceFilters]);
+
+  useEffect(() => { loadCore(); }, [loadCore]);
+  useEffect(() => {
+    const t = setTimeout(() => { void loadWorkspace(workspaceFilters); }, 220);
+    return () => clearTimeout(t);
+  }, [loadWorkspace, workspaceFilters]);
 
   const createWalkInFollowup = useCallback(async (payload: any) => {
     try {
@@ -182,7 +239,7 @@ export default function CustomerDetail() {
     try {
       const r = await api.post<{ po_number: string }>(`/purchases/shortages/${s.id}/create-po`);
       toast.success(`Reorder PO ${r.po_number} created`);
-      await load();
+      await reloadAll();
     } catch (e: any) {
       toast.error(e?.detail || "Could not create PO");
     } finally { setShortageBusy(null); }
@@ -192,7 +249,7 @@ export default function CustomerDetail() {
     try {
       await api.post(`/purchases/shortages/${s.id}/dismiss`, {});
       toast.success("Shortage dismissed");
-      await load();
+      await reloadAll();
     } catch (e: any) {
       toast.error(e?.detail || "Could not dismiss");
     } finally { setShortageBusy(null); }
@@ -204,6 +261,32 @@ export default function CustomerDetail() {
     if (productFilter === "blocked") return workspace.products.filter((p) => p.blocked);
     return workspace.products;
   }, [workspace, productFilter]);
+
+  const hasServerFilters = useMemo(
+    () => Boolean(workspaceFilters.productSearch || workspaceFilters.brandFilter || workspaceFilters.stageFilter),
+    [workspaceFilters],
+  );
+  const selectedBrand = useMemo(
+    () => availableBrands.find((brand) => brand.id === brandFilter) || null,
+    [availableBrands, brandFilter],
+  );
+  const selectedStage = useMemo(
+    () => availableStages.find((stage) => stage.key === stageFilter) || null,
+    [availableStages, stageFilter],
+  );
+  const clearServerFilters = useCallback(() => {
+    setProductSearch("");
+    setBrandFilter(null);
+    setStageFilter(null);
+  }, []);
+  const brandOptions = useMemo(
+    () => availableBrands.filter((brand) => !!brand.id),
+    [availableBrands],
+  );
+  const stageOptions = useMemo(
+    () => availableStages.filter((stage) => stage.count > 0 || stage.key === stageFilter),
+    [availableStages, stageFilter],
+  );
 
   const totalRevenue = useMemo(
     () => quotations.filter((q) => ["won", "ordered"].includes(q.status)).reduce((s, q) => s + q.grand_total, 0),
@@ -220,7 +303,7 @@ export default function CustomerDetail() {
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md }}>
           <EmptyState icon="alert-triangle" title="Couldn't load this customer" subtitle={loadError} />
-          <Button label="Try again" icon="refresh-cw" onPress={() => { setLoadError(null); load(); }} testID="customer-detail-retry" />
+          <Button label="Try again" icon="refresh-cw" onPress={() => { setLoadError(null); void loadCore(); }} testID="customer-detail-retry" />
           <Button label="Back" variant="ghost" onPress={() => router.back()} />
         </View>
       </SafeAreaView>
@@ -402,12 +485,115 @@ export default function CustomerDetail() {
             </Card>
           )
         ) : tab === "purchases" ? (
-          !workspace ? (
+          <View style={{ gap: spacing.lg }}>
             <Card>
-              <EmptyState icon="shopping-cart" title="No purchase activity" subtitle="Orders will appear here after placement." />
+              <View style={{ gap: spacing.md }}>
+                <Text style={type.overline}>Purchase filters</Text>
+                <TextField
+                  value={productSearch}
+                  onChangeText={setProductSearch}
+                  placeholder="Search product, SKU, PO, or brand"
+                  leftIcon="search"
+                  rightIcon={productSearch ? "x" : undefined}
+                  onRightPress={productSearch ? () => setProductSearch("") : undefined}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  testID="customer-workspace-search"
+                />
+                <View style={{ gap: spacing.sm }}>
+                  <Text style={type.caption}>Brands</Text>
+                  <View style={styles.serverFilterWrap}>
+                    {brandOptions.map((brand) => (
+                      <Chip
+                        key={brand.id}
+                        label={brand.name}
+                        count={brand.count}
+                        active={brandFilter === brand.id}
+                        onPress={() => setBrandFilter((current) => current === brand.id ? null : brand.id)}
+                        testID={`customer-workspace-brand-${brand.id}`}
+                      />
+                    ))}
+                  </View>
+                </View>
+                <View style={{ gap: spacing.sm }}>
+                  <Text style={type.caption}>Stages</Text>
+                  <View style={styles.serverFilterWrap}>
+                    {stageOptions.map((stage) => (
+                      <Chip
+                        key={stage.key}
+                        label={stage.label}
+                        count={stage.count}
+                        active={stageFilter === stage.key}
+                        onPress={() => setStageFilter((current) => current === stage.key ? null : stage.key)}
+                        testID={`customer-workspace-stage-${stage.key}`}
+                      />
+                    ))}
+                  </View>
+                </View>
+                {hasServerFilters ? (
+                  <View style={styles.serverFilterWrap}>
+                    {workspaceFilters.productSearch ? (
+                      <Chip
+                        label={`Search: ${workspaceFilters.productSearch}`}
+                        active
+                        icon="x"
+                        onPress={() => setProductSearch("")}
+                        testID="customer-workspace-clear-search"
+                      />
+                    ) : null}
+                    {brandFilter ? (
+                      <Chip
+                        label={`Brand: ${selectedBrand?.name || brandFilter}`}
+                        active
+                        icon="x"
+                        onPress={() => setBrandFilter(null)}
+                        testID="customer-workspace-clear-brand"
+                      />
+                    ) : null}
+                    {stageFilter ? (
+                      <Chip
+                        label={`Stage: ${selectedStage?.label || stageFilter}`}
+                        active
+                        icon="x"
+                        onPress={() => setStageFilter(null)}
+                        testID="customer-workspace-clear-stage"
+                      />
+                    ) : null}
+                    <Button
+                      label="Clear filters"
+                      variant="ghost"
+                      size="sm"
+                      onPress={clearServerFilters}
+                      testID="customer-workspace-clear-all"
+                    />
+                  </View>
+                ) : null}
+              </View>
             </Card>
-          ) : (
-            <View style={{ gap: spacing.lg }}>
+
+            {workspaceLoading ? (
+              <Card>
+                <EmptyState
+                  icon="refresh-cw"
+                  title="Loading filtered purchases"
+                  subtitle="Refreshing products, facets, and totals for these filters."
+                />
+              </Card>
+            ) : workspaceError ? (
+              <Card>
+                <EmptyState
+                  icon="alert-triangle"
+                  title="Couldn’t refresh these purchases"
+                  subtitle={workspaceError}
+                  action={<Button label="Retry" variant="secondary" icon="refresh-cw" onPress={() => { void loadWorkspace(workspaceFilters); }} testID="customer-workspace-retry" />}
+                />
+              </Card>
+            ) : !workspace ? (
+              <Card>
+                <EmptyState icon="shopping-cart" title="No purchase activity" subtitle="Orders will appear here after placement." />
+              </Card>
+            ) : (
+              <>
               {/* Shortage / reorder alerts — raised automatically when a transfer left this
                   customer under-fulfilled against their original order. */}
               {workspace.shortages.length > 0 ? (
@@ -524,7 +710,12 @@ export default function CustomerDetail() {
               {/* Products ordered */}
               <Card padding={0}>
                 <View style={{ padding: spacing.lg, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                  <Text style={type.overline}>Products ordered</Text>
+                  <View style={{ flex: 1, minWidth: 220, gap: 4 }}>
+                    <Text style={type.overline}>Products ordered</Text>
+                    <Text style={type.caption}>
+                      {hasServerFilters ? "Server filters are applied before the chips below." : "Use All, Outstanding, or Delayed on the filtered workspace."}
+                    </Text>
+                  </View>
                   <View style={{ flexDirection: "row", gap: 6 }}>
                     <FilterChip label={`All ${workspace.products.length}`} active={productFilter === "all"} onPress={() => setProductFilter("all")} />
                     <FilterChip label={`Outstanding ${workspace.outstanding_items.length}`} active={productFilter === "outstanding"} onPress={() => setProductFilter("outstanding")} />
@@ -532,8 +723,32 @@ export default function CustomerDetail() {
                   </View>
                 </View>
                 {visibleProducts.length === 0 ? (
-                  <View style={{ padding: spacing.lg }}>
-                    <Text style={type.caption}>No products in this filter.</Text>
+                  <View style={{ padding: spacing.lg, paddingTop: 0 }}>
+                    <EmptyState
+                      icon={hasServerFilters ? "search" : productFilter === "all" ? "shopping-cart" : "filter"}
+                      title={
+                        hasServerFilters
+                          ? "No products match these filters"
+                          : productFilter === "all"
+                            ? "No products ordered yet"
+                            : "No products in this view"
+                      }
+                      subtitle={
+                        hasServerFilters
+                          ? "Try removing search, brand, or stage filters to widen the workspace."
+                          : productFilter === "all"
+                            ? "Products will appear here once purchase orders are created for this customer."
+                            : "Switch back to All or clear a server filter to see more products."
+                      }
+                      action={hasServerFilters ? (
+                        <Button
+                          label="Clear filters"
+                          variant="secondary"
+                          onPress={clearServerFilters}
+                          testID="customer-workspace-empty-clear"
+                        />
+                      ) : undefined}
+                    />
                   </View>
                 ) : visibleProducts.map((p, i) => (
                   <View
@@ -616,8 +831,9 @@ export default function CustomerDetail() {
                 <Text style={[type.overline, { marginBottom: spacing.md }]}>Recent activity</Text>
                 <ActivityTimeline events={workspace.recent_activity} dense emptyLabel="No activity yet" />
               </Card>
-            </View>
-          )
+              </>
+            )}
+          </View>
         ) : (
           <Card>
             <ActivityTimeline events={timeline} emptyLabel="Nothing yet" />
@@ -629,13 +845,13 @@ export default function CustomerDetail() {
         visible={!!moveItem}
         item={moveItem ? toMovable(moveItem) : null}
         onClose={() => setMoveItem(null)}
-        onMoved={async () => { await load(); }}
+        onMoved={async () => { await reloadAll(); }}
       />
       <TransferSheet
         visible={!!transferItem}
         item={transferItem ? toMovable(transferItem) : null}
         onClose={() => setTransferItem(null)}
-        onSuccess={async () => { await load(); }}
+        onSuccess={async () => { await reloadAll(); }}
       />
       <HistorySheet
         visible={!!historyItemId}
@@ -683,6 +899,12 @@ function fmtDate(iso: string): string {
   } catch { return "—"; }
 }
 
+function firstParam(value?: string | string[]): string | null {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value[0] || null;
+  return null;
+}
+
 const styles = StyleSheet.create({
   statsRow: { flexDirection: "row", gap: spacing.md },
   statsRowMobile: { flexWrap: "wrap" },
@@ -722,6 +944,11 @@ const styles = StyleSheet.create({
   filterChip: {
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999,
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  serverFilterWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   awaitingReorderPill: {
     alignSelf: "flex-start", marginTop: 6,
