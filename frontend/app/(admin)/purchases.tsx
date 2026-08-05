@@ -151,6 +151,7 @@ export default function PurchasesScreen() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkResponse, setBulkResponse] = useState<BulkMoveResponse | null>(null);
   const [bulkRetryStage, setBulkRetryStage] = useState<Stage | null>(null);
+  const [bulkRefreshError, setBulkRefreshError] = useState<string | null>(null);
 
   // Modals
   const [showMoveMenu, setShowMoveMenu] = useState(false);
@@ -218,6 +219,10 @@ export default function PurchasesScreen() {
     return () => clearTimeout(t);
   }, [loadItems]);
 
+  const refreshPurchases = useCallback(async () => {
+    await Promise.all([loadItems(), loadFacets()]);
+  }, [loadItems, loadFacets]);
+
   // -----------------------------------
   // Mutations
   // -----------------------------------
@@ -226,6 +231,9 @@ export default function PurchasesScreen() {
     if (targetIds.length === 0) { toast.error("Select at least one item"); return; }
     if (bulkBusy) return;
     setBulkBusy(true);
+    setBulkResponse(null);
+    setBulkRetryStage(null);
+    setBulkRefreshError(null);
     try {
       const r = await api.post<BulkMoveResponse>(`/purchases/items/bulk-move`, {
         item_ids: targetIds,
@@ -242,20 +250,31 @@ export default function PurchasesScreen() {
         return next;
       });
       setShowMoveMenu(false);
-      if (r.failed === 0) {
-        toast.success(`Moved ${r.succeeded} item${r.succeeded === 1 ? "" : "s"}`);
-      } else if (r.succeeded > 0) {
-        toast.success(`Moved ${r.succeeded} item${r.succeeded === 1 ? "" : "s"} · ${r.failed} failed`);
-      } else {
-        toast.error(`Bulk move failed for ${r.failed} item${r.failed === 1 ? "" : "s"}`);
+      setBulkRetryStage(failedIds.length > 0 ? toStage : null);
+      try {
+        await refreshPurchases();
+        setBulkResponse(r);
+        if (r.failed === 0) {
+          toast.success(`Moved ${r.succeeded} item${r.succeeded === 1 ? "" : "s"}`);
+        } else if (r.succeeded > 0) {
+          toast.success(`Moved ${r.succeeded} item${r.succeeded === 1 ? "" : "s"} · ${r.failed} failed`);
+        } else {
+          toast.error(`Bulk move failed for ${r.failed} item${r.failed === 1 ? "" : "s"}`);
+        }
+      } catch (refreshError: any) {
+        setBulkResponse(r);
+        setBulkRefreshError(refreshError?.detail || "Move completed, but the follow-up refresh failed. Data may be stale until you refresh.");
+        toast.error(refreshError?.detail || "Move completed, but refresh failed");
       }
-      await Promise.all([loadItems(), loadFacets()]);
     } catch (e: any) {
+      setBulkResponse(null);
+      setBulkRetryStage(null);
+      setBulkRefreshError(null);
       toast.error(e?.detail || "Bulk move failed");
     } finally {
       setBulkBusy(false);
     }
-  }, [selected, bulkBusy, loadItems, loadFacets]);
+  }, [selected, bulkBusy, refreshPurchases]);
 
   const doExport = useCallback(async () => {
     const qs = new URLSearchParams({ view });
@@ -284,9 +303,12 @@ export default function PurchasesScreen() {
     () => bulkResponse?.results.filter((result) => !result.ok).map((result) => result.item_id) || [],
     [bulkResponse],
   );
-  const bulkResultTone = bulkResponse == null ? null : bulkResponse.failed === 0 ? "success" : bulkResponse.succeeded > 0 ? "partial" : "error";
+  const bulkResultTone = bulkResponse == null ? null : bulkRefreshError ? "error" : bulkResponse.failed === 0 ? "success" : bulkResponse.succeeded > 0 ? "partial" : "error";
   const bulkResultMessage = useMemo(() => {
     if (!bulkResponse) return "";
+    if (bulkRefreshError) {
+      return bulkRefreshError;
+    }
     if (bulkResponse.failed === 0) {
       return `Moved ${bulkResponse.succeeded} item${bulkResponse.succeeded === 1 ? "" : "s"} successfully.`;
     }
@@ -294,7 +316,7 @@ export default function PurchasesScreen() {
       return `Moved ${bulkResponse.succeeded} item${bulkResponse.succeeded === 1 ? "" : "s"}; ${bulkResponse.failed} item${bulkResponse.failed === 1 ? "" : "s"} failed and remain selected.`;
     }
     return `No items moved. ${bulkResponse.failed} item${bulkResponse.failed === 1 ? "" : "s"} failed and remain selected.`;
-  }, [bulkResponse]);
+  }, [bulkResponse, bulkRefreshError]);
 
   const activeStageCount = stages.reduce((acc, s) => acc + s.count, 0);
 
@@ -379,20 +401,50 @@ export default function PurchasesScreen() {
           >
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.bulkResultTitle}>
-                {bulkResultTone === "success" ? "Bulk move completed" : bulkResultTone === "partial" ? "Bulk move partially completed" : "Bulk move failed"}
+                {bulkRefreshError
+                  ? "Refresh needed"
+                  : bulkResultTone === "success"
+                    ? "Bulk move completed"
+                    : bulkResultTone === "partial"
+                      ? "Bulk move partially completed"
+                      : "Bulk move failed"}
               </Text>
               <Text style={styles.bulkResultText}>{bulkResultMessage}</Text>
             </View>
-            {bulkFailedIds.length > 0 && bulkRetryStage ? (
-              <Pressable
-                testID="bulk-move-retry"
-                onPress={() => bulkMove(bulkRetryStage, bulkFailedIds)}
-                disabled={bulkBusy}
-                style={({ pressed }) => [styles.bulkRetryBtn, bulkBusy && { opacity: 0.6 }, pressed && { opacity: 0.85 }]}
-              >
-                {bulkBusy ? <ActivityIndicator size="small" color={colors.onBrand} /> : <Text style={styles.bulkRetryText}>Retry failed ({bulkFailedIds.length})</Text>}
-              </Pressable>
-            ) : null}
+            <View style={styles.bulkBannerActions}>
+              {bulkRefreshError ? (
+                <Pressable
+                  testID="bulk-refresh-retry"
+                  onPress={async () => {
+                    if (bulkBusy) return;
+                    setBulkBusy(true);
+                    try {
+                      await refreshPurchases();
+                      setBulkRefreshError(null);
+                    } catch (e: any) {
+                      setBulkRefreshError(e?.detail || "Refresh failed. Please try again.");
+                      toast.error(e?.detail || "Refresh failed");
+                    } finally {
+                      setBulkBusy(false);
+                    }
+                  }}
+                  disabled={bulkBusy}
+                  style={({ pressed }) => [styles.bulkGhostBtn, bulkBusy && { opacity: 0.6 }, pressed && { opacity: 0.85 }]}
+                >
+                  {bulkBusy ? <ActivityIndicator size="small" color={colors.onSurface} /> : <Text style={styles.bulkGhostText}>Refresh data</Text>}
+                </Pressable>
+              ) : null}
+              {bulkFailedIds.length > 0 && bulkRetryStage ? (
+                <Pressable
+                  testID="bulk-move-retry"
+                  onPress={() => bulkMove(bulkRetryStage, bulkFailedIds)}
+                  disabled={bulkBusy}
+                  style={({ pressed }) => [styles.bulkRetryBtn, bulkBusy && { opacity: 0.6 }, pressed && { opacity: 0.85 }]}
+                >
+                  {bulkBusy ? <ActivityIndicator size="small" color={colors.onBrand} /> : <Text style={styles.bulkRetryText}>Retry failed ({bulkFailedIds.length})</Text>}
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         ) : null}
 
@@ -1109,6 +1161,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand, alignItems: "center", justifyContent: "center",
   },
   bulkRetryText: { color: colors.onBrand, fontSize: 12, fontWeight: "700" },
+  bulkBannerActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" },
+  bulkGhostBtn: {
+    minHeight: 36, paddingHorizontal: 12, borderRadius: radius.pill,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,
+    alignItems: "center", justifyContent: "center",
+  },
+  bulkGhostText: { color: colors.onSurface, fontSize: 12, fontWeight: "700" },
 
   // Body split
   body: { flexDirection: "row", gap: spacing.lg, alignItems: "flex-start" },

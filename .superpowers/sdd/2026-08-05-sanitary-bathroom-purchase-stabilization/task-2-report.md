@@ -1,12 +1,17 @@
 # Task 2 Report — Sanitary Bathroom Purchase Stabilization
 
 - Status: completed
-- Commit: `2e7f4d2` (`fix: surface partial purchase bulk-move results`)
+- Commit: `fix: handle stale purchase bulk-move refresh state`
 
 ## Tests
 
 - `cd frontend && npx tsc --noEmit` ✅
 - `cd frontend && npx eslint app/'(admin)'/purchases.tsx` ✅
+
+## Review follow-up
+
+- Cleared stale `bulkResponse` / `bulkRetryStage` at the start of each bulk request and on transport/server failure.
+- Invalidated bulk-result success messaging when the post-move refresh fails, and surfaced a recoverable refresh action instead of leaving a current-looking success/partial banner over stale rows.
 
 ## Concerns
 
