@@ -165,6 +165,25 @@ def test_build_chalan_pdf_handles_missing_optional_fields_with_safe_fallbacks():
     assert "None" not in text
 
 
+def test_build_chalan_pdf_does_not_present_partial_subtotal_as_grand_total():
+    chalan = _chalan()
+    chalan["items"] = [
+        {"po_item_id": "priced", "name": "Priced Basin", "qty": 2, "unit": "PCS"},
+        {"po_item_id": "missing-rate", "name": "Unpriced Tap", "qty": 1, "unit": "PCS"},
+    ]
+    po = _po()
+    po["items"] = [
+        {"id": "priced", "name": "Priced Basin", "unit_cost": 100},
+        {"id": "missing-rate", "name": "Unpriced Tap"},
+    ]
+
+    text = _normalized(_pdf_text(build_chalan_pdf(chalan, po, _customer())))
+    grand_total_text = text.split("GRAND TOTAL", 1)[1].split("TRANSPORT", 1)[0]
+
+    assert "INCOMPLETE" in grand_total_text
+    assert "200.00" not in grand_total_text
+
+
 def test_chalan_pdf_filename_format():
     filename = chalan_pdf_filename(_chalan(), "Nileshbhai Pokiya")
     assert filename == "CH-1052 Nileshbhai Pokiya 22-07-2026.pdf"

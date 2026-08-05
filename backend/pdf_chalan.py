@@ -146,6 +146,7 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
     rows: list[list[object]] = [head]
     po_items = {item.get("id"): item for item in (po.get("items") or []) if item.get("id")}
     grand_total: Decimal | None = None
+    has_incomplete_pricing = False
     for index, item in enumerate(chalan.get("items") or [], 1):
         source = po_items.get(item.get("po_item_id"), {})
         qty_value = _first_value(item.get("qty"), item.get("quantity"), default=None)
@@ -156,6 +157,8 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
         ))
         explicit_total = _decimal(_first_value(item.get("total"), item.get("line_total"), default=None))
         line_total = explicit_total if explicit_total is not None else (qty * rate if qty is not None and rate is not None else None)
+        if rate is None or line_total is None:
+            has_incomplete_pricing = True
         if line_total is not None:
             grand_total = (grand_total or Decimal("0")) + line_total
         rows.append([
@@ -171,7 +174,9 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
         ])
     if len(rows) == 1:
         rows.append([Paragraph("No products listed", styles["cellLeft"]), "", "", "", "", "", "", "", ""])
-    rows.append(["", "", "", "", "", "", "", Paragraph("GRAND TOTAL", styles["tableTotal"]), Paragraph(_money(grand_total), styles["tableTotal"])])
+    grand_total_label = "GRAND TOTAL (INCOMPLETE)" if has_incomplete_pricing else "GRAND TOTAL"
+    grand_total_value = None if has_incomplete_pricing else grand_total
+    rows.append(["", "", "", "", "", "", "", Paragraph(grand_total_label, styles["tableTotal"]), Paragraph(_money(grand_total_value), styles["tableTotal"])])
     table = Table(
         rows,
         colWidths=[8 * mm, 18 * mm, 43 * mm, 18 * mm, 18 * mm, 13 * mm, 13 * mm, 25 * mm, 30 * mm],
