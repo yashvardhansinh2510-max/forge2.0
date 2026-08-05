@@ -7,6 +7,7 @@ quotation PDFs are generated on demand with nothing persisted to storage
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from reportlab.lib import colors
@@ -21,6 +22,43 @@ from pdf_tiles import DEFAULT_ADDRESS, DEFAULT_EMAIL, DEFAULT_MOBILE, _logo_flow
 INK = colors.HexColor("#111111")
 GRID_BLACK = colors.HexColor("#000000")
 HEADER_GREY = colors.HexColor("#D3D3D3")
+
+
+def _first_value(*values: object, default: object = "—") -> object:
+    """Return the first populated snapshot without discarding numeric zero."""
+    return next((value for value in values if value is not None and value != ""), default)
+
+
+def _decimal(value: object) -> Decimal | None:
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return number if number.is_finite() else None
+
+
+def _quantity(value: object) -> str:
+    number = _decimal(value)
+    if number is None:
+        return "—"
+    return f"{number:,.3f}".rstrip("0").rstrip(".")
+
+
+def _money(value: object) -> str:
+    number = _decimal(value)
+    return f"{number:,.2f}" if number is not None else "—"
+
+
+def _display_date(*values: object) -> str:
+    for value in values:
+        if value is None or value == "":
+            continue
+        raw = str(value)
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).strftime("%d-%m-%Y")
+        except ValueError:
+            return raw[:10] or "—"
+    return "—"
 
 
 def chalan_pdf_filename(chalan: dict, customer_name: str) -> str:
@@ -46,85 +84,172 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
     )
     base = getSampleStyleSheet()
     styles = {
+        "title": ParagraphStyle("chalanTitle", parent=base["Title"], fontName="Helvetica-Bold", fontSize=16, leading=19, textColor=INK, alignment=1),
         "label": ParagraphStyle("label", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=9.5, leading=13, textColor=INK),
         "value": ParagraphStyle("value", parent=base["Normal"], fontName="Helvetica", fontSize=9.5, leading=13, textColor=INK),
-        "tableHead": ParagraphStyle("tableHead", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=9, leading=11, textColor=INK, alignment=1),
-        "cell": ParagraphStyle("cell", parent=base["Normal"], fontName="Helvetica", fontSize=9, leading=11, textColor=INK, alignment=1),
-        "cellLeft": ParagraphStyle("cellLeft", parent=base["Normal"], fontName="Helvetica", fontSize=9, leading=11, textColor=INK),
+        "section": ParagraphStyle("chalanSection", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=9.5, leading=12, textColor=INK, spaceAfter=2),
+        "tableHead": ParagraphStyle("tableHead", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=6.7, leading=8, textColor=INK, alignment=1),
+        "cell": ParagraphStyle("cell", parent=base["Normal"], fontName="Helvetica", fontSize=7.2, leading=8.6, textColor=INK, alignment=1),
+        "cellLeft": ParagraphStyle("cellLeft", parent=base["Normal"], fontName="Helvetica", fontSize=7.2, leading=8.6, textColor=INK),
+        "cellRight": ParagraphStyle("cellRight", parent=base["Normal"], fontName="Helvetica", fontSize=7.2, leading=8.6, textColor=INK, alignment=2),
+        "tableTotal": ParagraphStyle("tableTotal", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=7.5, leading=9, textColor=INK, alignment=2),
         "footerLabel": ParagraphStyle("footerLabel", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=9, leading=12, textColor=INK),
+        "signature": ParagraphStyle("chalanSignature", parent=base["Normal"], fontName="Helvetica", fontSize=8.5, leading=13, textColor=INK),
         "footerNote": ParagraphStyle("footerNote", parent=base["Normal"], fontName="Helvetica", fontSize=7.6, leading=10, textColor=colors.HexColor("#555555"), alignment=1),
     }
 
     story: list[Flowable] = []
     story.append(_logo_flowable(60))
-    story.append(Spacer(1, 4 * mm))
-    story.append(HRFlowable(width="100%", thickness=1.2, color=INK, spaceAfter=4 * mm))
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph("CHALAN", styles["title"]))
+    story.append(HRFlowable(width="100%", thickness=1.2, color=INK, spaceBefore=1 * mm, spaceAfter=3 * mm))
+
+    customer_name = _first_value(
+        po.get("customer_name"), customer.get("company"), customer.get("name"), default="Customer",
+    )
+    customer_address = ", ".join(
+        str(value).strip()
+        for value in (
+            customer.get("address"), customer.get("city"), customer.get("state"), customer.get("pincode"),
+        )
+        if value is not None and str(value).strip()
+    ) or str(_first_value(po.get("customer_address"), po.get("address_snapshot"), default="—"))
+    dispatch_date = _display_date(chalan.get("dispatched_at"), chalan.get("dispatch_date"), chalan.get("created_at"))
 
     header_rows = [
-        [Paragraph("CHALAN NO:", styles["label"]), Paragraph(_escape(chalan.get("number") or ""), styles["value"]),
-         Paragraph("DATE:", styles["label"]), Paragraph(_escape((chalan.get("created_at") or "")[:10]), styles["value"])],
-        [Paragraph("CUSTOMER:", styles["label"]), Paragraph(_escape(po.get("customer_name") or ""), styles["value"]),
-         Paragraph("SUPPLIER:", styles["label"]), Paragraph(_escape(po.get("supplier_name") or ""), styles["value"])],
-        [Paragraph("PHONE:", styles["label"]), Paragraph(_escape(customer.get("phone") or ""), styles["value"]),
-         Paragraph("REFERENCE:", styles["label"]), Paragraph(_escape(chalan.get("reference_number") or ""), styles["value"])],
+        [Paragraph("CHALAN NO.", styles["label"]), Paragraph(_escape(_first_value(chalan.get("number"))), styles["value"]),
+         Paragraph("DISPATCH DATE", styles["label"]), Paragraph(_escape(dispatch_date), styles["value"])],
+        [Paragraph("ORDER NO.", styles["label"]), Paragraph(_escape(_first_value(po.get("number"), po.get("order_number"))), styles["value"]),
+         Paragraph("REFERENCE", styles["label"]), Paragraph(_escape(_first_value(chalan.get("reference_number"))), styles["value"])],
+        [Paragraph("CUSTOMER", styles["label"]), Paragraph(_escape(customer_name), styles["value"]),
+         Paragraph("SUPPLIER", styles["label"]), Paragraph(_escape(_first_value(po.get("supplier_name"))), styles["value"])],
+        [Paragraph("ADDRESS", styles["label"]), Paragraph(_escape(customer_address), styles["value"]), "", ""],
+        [Paragraph("PHONE", styles["label"]), Paragraph(_escape(_first_value(customer.get("phone"), po.get("customer_phone"))), styles["value"]), "", ""],
     ]
-    header = Table(header_rows, colWidths=[28 * mm, 62 * mm, 28 * mm, 62 * mm], rowHeights=[8 * mm] * 3)
+    header = Table(header_rows, colWidths=[28 * mm, 65 * mm, 28 * mm, 65 * mm])
     header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-    ]))
-    story.extend([header, Spacer(1, 6 * mm)])
-
-    head = [
-        Paragraph("SR NO.", styles["tableHead"]), Paragraph("TILE NAME", styles["tableHead"]),
-        Paragraph("SIZE", styles["tableHead"]), Paragraph("QUANTITY", styles["tableHead"]),
-        Paragraph("UNIT", styles["tableHead"]),
-    ]
-    rows: list[list[object]] = [head]
-    for index, item in enumerate(chalan.get("items") or [], 1):
-        rows.append([
-            Paragraph(str(index), styles["cell"]),
-            Paragraph(_escape(item.get("name") or ""), styles["cellLeft"]),
-            Paragraph(_escape(item.get("size") or ""), styles["cell"]),
-            Paragraph(f"{float(item.get('qty') or 0):g}", styles["cell"]),
-            Paragraph(_escape(item.get("unit") or "Box"), styles["cell"]),
-        ])
-    table = Table(rows, colWidths=[18 * mm, 72 * mm, 30 * mm, 30 * mm, 30 * mm], repeatRows=1)
-    table.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.9, GRID_BLACK),
-        ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("SPAN", (1, 3), (3, 3)), ("SPAN", (1, 4), (3, 4)),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.35, colors.HexColor("#BBBBBB")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]))
-    story.extend([table, Spacer(1, 14 * mm)])
+    story.extend([header, Spacer(1, 5 * mm)])
 
-    receiver_rows = [
-        [Paragraph("Receiver Name:", styles["footerLabel"]), Paragraph(_escape(chalan.get("receiver_name") or ""), styles["value"])],
-        [Paragraph("Receiver Signature:", styles["footerLabel"]), HRFlowable(width="60%", thickness=0.8, color=INK)],
+    head = [
+        Paragraph("SR", styles["tableHead"]), Paragraph("BRAND", styles["tableHead"]),
+        Paragraph("PRODUCT", styles["tableHead"]), Paragraph("SIZE", styles["tableHead"]),
+        Paragraph("FINISH", styles["tableHead"]), Paragraph("QTY", styles["tableHead"]),
+        Paragraph("UNIT", styles["tableHead"]), Paragraph("RATE (INR)", styles["tableHead"]),
+        Paragraph("TOTAL (INR)", styles["tableHead"]),
     ]
-    receiver = Table(receiver_rows, colWidths=[85 * mm, 85 * mm], rowHeights=[8 * mm, 14 * mm])
-    receiver.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
-    story.append(receiver)
-    story.append(Spacer(1, 10 * mm))
+    rows: list[list[object]] = [head]
+    po_items = {item.get("id"): item for item in (po.get("items") or []) if item.get("id")}
+    grand_total: Decimal | None = None
+    for index, item in enumerate(chalan.get("items") or [], 1):
+        source = po_items.get(item.get("po_item_id"), {})
+        qty_value = _first_value(item.get("qty"), item.get("quantity"), default=None)
+        qty = _decimal(qty_value)
+        rate = _decimal(_first_value(
+            item.get("rate"), item.get("unit_rate"), item.get("unit_cost"),
+            source.get("rate"), source.get("unit_rate"), source.get("unit_cost"), default=None,
+        ))
+        explicit_total = _decimal(_first_value(item.get("total"), item.get("line_total"), default=None))
+        line_total = explicit_total if explicit_total is not None else (qty * rate if qty is not None and rate is not None else None)
+        if line_total is not None:
+            grand_total = (grand_total or Decimal("0")) + line_total
+        rows.append([
+            Paragraph(str(index), styles["cell"]),
+            Paragraph(_escape(_first_value(item.get("brand"), item.get("brand_name"), source.get("brand"), source.get("brand_name"), po.get("brand_name"))), styles["cellLeft"]),
+            Paragraph(_escape(_first_value(item.get("name"), item.get("product_name"), source.get("name"), source.get("product_name"))), styles["cellLeft"]),
+            Paragraph(_escape(_first_value(item.get("size"), source.get("size"))), styles["cell"]),
+            Paragraph(_escape(_first_value(item.get("finish"), source.get("finish"))), styles["cell"]),
+            Paragraph(_escape(_quantity(qty_value)), styles["cellRight"]),
+            Paragraph(_escape(_first_value(item.get("unit"), source.get("quantity_unit"), default="Box")), styles["cell"]),
+            Paragraph(_escape(_money(rate)), styles["cellRight"]),
+            Paragraph(_escape(_money(line_total)), styles["cellRight"]),
+        ])
+    if len(rows) == 1:
+        rows.append([Paragraph("No products listed", styles["cellLeft"]), "", "", "", "", "", "", "", ""])
+    rows.append(["", "", "", "", "", "", "", Paragraph("GRAND TOTAL", styles["tableTotal"]), Paragraph(_money(grand_total), styles["tableTotal"])])
+    table = Table(
+        rows,
+        colWidths=[8 * mm, 18 * mm, 43 * mm, 18 * mm, 18 * mm, 13 * mm, 13 * mm, 25 * mm, 30 * mm],
+        repeatRows=1,
+    )
+    table_commands = [
+        ("GRID", (0, 0), (-1, -1), 0.9, GRID_BLACK),
+        ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
+        ("SPAN", (0, -1), (6, -1)),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#EEEEEE")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    if not (chalan.get("items") or []):
+        table_commands.append(("SPAN", (0, 1), (8, 1)))
+    table.setStyle(TableStyle(table_commands))
+    story.extend([table, Spacer(1, 5 * mm)])
 
-    sender_rows = [
-        [Paragraph("Supplier Representative:", styles["footerLabel"]), Paragraph(_escape(chalan.get("sender_name") or ""), styles["value"])],
-        [Paragraph("Sender Signature:", styles["footerLabel"]), HRFlowable(width="60%", thickness=0.8, color=INK)],
-    ]
-    sender = Table(sender_rows, colWidths=[85 * mm, 85 * mm], rowHeights=[8 * mm, 14 * mm])
-    sender.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "BOTTOM"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
-    story.append(sender)
-    story.append(Spacer(1, 10 * mm))
+    vehicle = chalan.get("vehicle_number") or po.get("vehicle_number")
+    driver = chalan.get("driver_name") or po.get("driver_name")
+    vehicle_details = " · ".join(
+        part for part in (
+            f"Vehicle: {vehicle}" if vehicle else "",
+            f"Driver: {driver}" if driver else "",
+        ) if part
+    )
+    transport = _first_value(
+        chalan.get("transport"), chalan.get("transport_details"), chalan.get("transportation"),
+        po.get("transport"), po.get("transport_details"), po.get("transportation"),
+        vehicle_details, default="—",
+    )
+    remarks = _first_value(chalan.get("remarks"), chalan.get("notes"), chalan.get("dispatch_note"), po.get("internal_notes"))
+    details = Table([
+        [Paragraph("TRANSPORT", styles["footerLabel"]), Paragraph(_escape(transport), styles["value"])],
+        [Paragraph("REMARKS", styles["footerLabel"]), Paragraph(_escape(remarks), styles["value"])],
+    ], colWidths=[28 * mm, 158 * mm])
+    details.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.6, GRID_BLACK), ("INNERGRID", (0, 0), (-1, -1), 0.35, GRID_BLACK),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.extend([details, Spacer(1, 6 * mm)])
+
+    signatures = Table([[
+        Paragraph(
+            f"<b>RECEIVER NAME / SIGNATURE</b><br/>{_escape(_first_value(chalan.get('receiver_name'), chalan.get('receiver_signature_name')))}<br/><br/>Signature: ____________________",
+            styles["signature"],
+        ),
+        Paragraph(
+            f"<b>SUPPLIER REPRESENTATIVE / SIGNATURE</b><br/>{_escape(_first_value(chalan.get('sender_name'), chalan.get('sender_signature_name')))}<br/><br/>Signature: ____________________",
+            styles["signature"],
+        ),
+    ]], colWidths=[93 * mm, 93 * mm])
+    signatures.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.7, GRID_BLACK), ("INNERGRID", (0, 0), (-1, -1), 0.5, GRID_BLACK),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.extend([signatures, Spacer(1, 5 * mm)])
 
     story.append(HRFlowable(width="100%", thickness=0.9, color=INK, spaceAfter=2 * mm))
     address_line = b.get("company_address") or DEFAULT_ADDRESS
     email = b.get("footer_email") or DEFAULT_EMAIL
     mobile = b.get("footer_phone") or DEFAULT_MOBILE
+    company_name = b.get("footer_company_name") or "Buildcon House"
+    story.append(Paragraph("COMPANY DETAILS", styles["section"]))
     story.append(Paragraph(
-        f"{_escape(b.get('footer_company_name') or 'Buildcon House')} &middot; {_escape(address_line)} &middot; {_escape(email)} &middot; {_escape(mobile)}",
+        f"{_escape(company_name)} &middot; {_escape(address_line)} &middot; {_escape(email)} &middot; {_escape(mobile)}",
         styles["footerNote"],
     ))
+    if b.get("signature_name") or b.get("signature_title"):
+        signature_line = ", ".join(
+            _escape(value) for value in (b.get("signature_name"), b.get("signature_title")) if value
+        )
+        story.append(Paragraph(f"For {_escape(company_name)} — {signature_line}", styles["footerNote"]))
 
     doc.build(story)
     return buf.getvalue()
