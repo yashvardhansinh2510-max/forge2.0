@@ -3,7 +3,7 @@
 // unified list row, Avatar. Business logic preserved.
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View,
 } from "react-native";
@@ -146,10 +146,7 @@ export default function CustomerDetail() {
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
   const [walkInSheet, setWalkInSheet] = useState(false);
   const workspaceRequestIdRef = useRef(0);
-
-  useEffect(() => { setProductSearch(routeSearch); }, [routeSearch]);
-  useEffect(() => { setBrandFilter(routeBrand || null); }, [routeBrand]);
-  useEffect(() => { setStageFilter(routeStage || null); }, [routeStage]);
+  const scheduledWorkspaceRequestIdRef = useRef<number | null>(null);
 
   const workspaceFilters = useMemo<WorkspaceServerFilters>(() => ({
     productSearch: productSearch.trim(),
@@ -176,7 +173,7 @@ export default function CustomerDetail() {
     }
   }, [id]);
 
-  const beginWorkspaceReload = useCallback(() => {
+  const invalidateWorkspace = useCallback(() => {
     const requestId = ++workspaceRequestIdRef.current;
     setWorkspaceLoading(true);
     setWorkspaceError(null);
@@ -184,7 +181,46 @@ export default function CustomerDetail() {
     return requestId;
   }, []);
 
-  const loadWorkspace = useCallback(async (filters: WorkspaceServerFilters, requestId = beginWorkspaceReload()) => {
+  const syncInvalidateWorkspace = useCallback(() => {
+    scheduledWorkspaceRequestIdRef.current = invalidateWorkspace();
+  }, [invalidateWorkspace]);
+
+  const setProductSearchFilter = useCallback((value: string) => {
+    syncInvalidateWorkspace();
+    setProductSearch(value);
+  }, [syncInvalidateWorkspace]);
+
+  const setBrandWorkspaceFilter = useCallback((value: string | null | ((current: string | null) => string | null)) => {
+    syncInvalidateWorkspace();
+    setBrandFilter(value);
+  }, [syncInvalidateWorkspace]);
+
+  const setStageWorkspaceFilter = useCallback((value: string | null | ((current: string | null) => string | null)) => {
+    syncInvalidateWorkspace();
+    setStageFilter(value);
+  }, [syncInvalidateWorkspace]);
+
+  useLayoutEffect(() => {
+    if (productSearch === routeSearch) return;
+    syncInvalidateWorkspace();
+    setProductSearch(routeSearch);
+  }, [productSearch, routeSearch, syncInvalidateWorkspace]);
+
+  useLayoutEffect(() => {
+    const nextBrand = routeBrand || null;
+    if (brandFilter === nextBrand) return;
+    syncInvalidateWorkspace();
+    setBrandFilter(nextBrand);
+  }, [brandFilter, routeBrand, syncInvalidateWorkspace]);
+
+  useLayoutEffect(() => {
+    const nextStage = routeStage || null;
+    if (stageFilter === nextStage) return;
+    syncInvalidateWorkspace();
+    setStageFilter(nextStage);
+  }, [routeStage, stageFilter, syncInvalidateWorkspace]);
+
+  const loadWorkspace = useCallback(async (filters: WorkspaceServerFilters, requestId = invalidateWorkspace()) => {
     if (!id) return;
     try {
       const params = new URLSearchParams();
@@ -206,7 +242,7 @@ export default function CustomerDetail() {
     } finally {
       if (requestId === workspaceRequestIdRef.current) setWorkspaceLoading(false);
     }
-  }, [beginWorkspaceReload, id]);
+  }, [id, invalidateWorkspace]);
 
   const reloadAll = useCallback(async () => {
     await Promise.all([
@@ -218,10 +254,11 @@ export default function CustomerDetail() {
   useEffect(() => { loadCore(); }, [loadCore]);
   useEffect(() => {
     if (!id) return;
-    const requestId = beginWorkspaceReload();
+    const requestId = scheduledWorkspaceRequestIdRef.current ?? invalidateWorkspace();
+    scheduledWorkspaceRequestIdRef.current = null;
     const t = setTimeout(() => { void loadWorkspace(workspaceFilters, requestId); }, 220);
     return () => clearTimeout(t);
-  }, [beginWorkspaceReload, id, loadWorkspace, workspaceFilters]);
+  }, [id, invalidateWorkspace, loadWorkspace, workspaceFilters]);
 
   const createWalkInFollowup = useCallback(async (payload: any) => {
     try {
@@ -281,10 +318,11 @@ export default function CustomerDetail() {
     [availableStages, stageFilter],
   );
   const clearServerFilters = useCallback(() => {
+    syncInvalidateWorkspace();
     setProductSearch("");
     setBrandFilter(null);
     setStageFilter(null);
-  }, []);
+  }, [syncInvalidateWorkspace]);
   const brandOptions = useMemo(
     () => availableBrands.filter((brand) => !!brand.id),
     [availableBrands],
@@ -499,11 +537,11 @@ export default function CustomerDetail() {
                 <Text style={type.overline}>Purchase filters</Text>
                 <TextField
                   value={productSearch}
-                  onChangeText={setProductSearch}
+                  onChangeText={setProductSearchFilter}
                   placeholder="Search product, SKU, PO, or brand"
                   leftIcon="search"
                   rightIcon={productSearch ? "x" : undefined}
-                  onRightPress={productSearch ? () => setProductSearch("") : undefined}
+                  onRightPress={productSearch ? () => setProductSearchFilter("") : undefined}
                   autoCapitalize="none"
                   autoCorrect={false}
                   testID="customer-workspace-search"
@@ -517,7 +555,7 @@ export default function CustomerDetail() {
                         label={brand.name}
                         count={brand.count}
                         active={brandFilter === brand.id}
-                        onPress={() => setBrandFilter((current) => current === brand.id ? null : brand.id)}
+                        onPress={() => setBrandWorkspaceFilter((current) => current === brand.id ? null : brand.id)}
                         testID={`customer-workspace-brand-${brand.id}`}
                       />
                     ))}
@@ -532,7 +570,7 @@ export default function CustomerDetail() {
                         label={stage.label}
                         count={stage.count}
                         active={stageFilter === stage.key}
-                        onPress={() => setStageFilter((current) => current === stage.key ? null : stage.key)}
+                        onPress={() => setStageWorkspaceFilter((current) => current === stage.key ? null : stage.key)}
                         testID={`customer-workspace-stage-${stage.key}`}
                       />
                     ))}
@@ -545,7 +583,7 @@ export default function CustomerDetail() {
                         label={`Search: ${workspaceFilters.productSearch}`}
                         active
                         icon="x"
-                        onPress={() => setProductSearch("")}
+                        onPress={() => setProductSearchFilter("")}
                         testID="customer-workspace-clear-search"
                       />
                     ) : null}
@@ -554,7 +592,7 @@ export default function CustomerDetail() {
                         label={`Brand: ${selectedBrand?.name || brandFilter}`}
                         active
                         icon="x"
-                        onPress={() => setBrandFilter(null)}
+                        onPress={() => setBrandWorkspaceFilter(null)}
                         testID="customer-workspace-clear-brand"
                       />
                     ) : null}
@@ -563,7 +601,7 @@ export default function CustomerDetail() {
                         label={`Stage: ${selectedStage?.label || stageFilter}`}
                         active
                         icon="x"
-                        onPress={() => setStageFilter(null)}
+                        onPress={() => setStageWorkspaceFilter(null)}
                         testID="customer-workspace-clear-stage"
                       />
                     ) : null}
