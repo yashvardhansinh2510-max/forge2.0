@@ -1,7 +1,7 @@
 // Responsive helpers for the Quotation Builder product grid.
-// Keeps the visual contract explicit: desktop 3 columns, tablet 2, phone 1.
-export function quotationGridColumns(width: number): number {
-  if (width >= 1040) return 3;
-  if (width >= 640) return 2;
+// The explorer uses two cards at most so the normalized product frame remains
+// large enough to inspect. The caller must pass its measured pane width.
+export function quotationGridColumns(width: number): 1 | 2 {
+  if (width >= 768) return 2;
   return 1;
 }
