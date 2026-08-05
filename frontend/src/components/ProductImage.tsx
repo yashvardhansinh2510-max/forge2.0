@@ -19,7 +19,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image as ExpoImage, ImageContentFit } from "expo-image";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, View, ViewStyle } from "react-native";
+import { Animated, Easing, StyleSheet, Text, View, ViewStyle } from "react-native";
 
 import { colors, radius, spacing } from "@/src/theme/tokens";
 
@@ -83,13 +83,14 @@ export function ProductImage({
   const [idx, setIdx] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(sanitizedCandidates.length === 0);
+  const candidateKey = sanitizedCandidates.join("|");
 
   // Reset when the candidate list changes (e.g. product swap).
   useEffect(() => {
     setIdx(0);
     setLoaded(false);
     setFailed(sanitizedCandidates.length === 0);
-  }, [sanitizedCandidates.join("|")]);
+  }, [candidateKey, sanitizedCandidates.length]);
 
   const current = sanitizedCandidates[idx];
   const finalRadius = typeof borderRadius === "number" ? borderRadius : radius.md;
@@ -187,7 +188,6 @@ function FallbackGlyph({ label }: { label?: string | null }) {
 }
 
 function FallbackLabel({ label }: { label: string }) {
-  const { Text } = require("react-native");
   return (
     <Text
       numberOfLines={1}

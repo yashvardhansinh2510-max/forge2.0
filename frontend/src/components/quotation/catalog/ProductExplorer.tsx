@@ -12,7 +12,7 @@ import { ActivityIndicator, FlatList, LayoutChangeEvent, Platform, Pressable, Sc
 import { EmptyState } from "@/src/components/ui";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, money, radius, spacing } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { supplierLogoFor } from "@/src/design/BrandLogo";
 import { storage } from "@/src/utils/storage";

@@ -6,6 +6,7 @@
 - `cd backend && .venv/bin/pytest tests/unit -q` — 842 passed, 238 pre-existing deprecation warnings.
 - `cd frontend && npm run test:quotation-media` — 5 assertions passed.
 - `cd frontend && npx tsc --noEmit` — exit 0.
+- `cd frontend && npx eslint 'app/(admin)/_layout.tsx' 'src/components/ProductImage.tsx' 'src/components/quotation/catalog/ProductExplorer.tsx' 'src/components/quotation/helpers/responsive.ts' 'src/components/quotation/layout/BuilderShell.tsx'` — 0 errors, 0 new warnings after cleanup.
 - `cd frontend && npx expo export --platform web --output-dir /tmp/forge2-web-stabilization` — exit 0; Metro bundled 2,004 modules.
 - `git diff --check` — exit 0.
 
@@ -24,4 +25,4 @@ Visual inspection confirmed the portrait source remains upright, centered, and a
 
 ## Verification limitation
 
-The full `npm run lint` command could not initialize because the existing `frontend/node_modules` installation has no `unrs-resolver` native binding; ESLint aborts before reporting source diagnostics. This was independently reproduced with `npm ls unrs-resolver` showing an empty tree. The web export and TypeScript checks still complete successfully. Live authenticated browser checks against Supabase/MongoDB were not run in this environment, so the requested viewport matrix remains an artifact/static-build verification gap rather than an asserted pass.
+The full `npm run lint` command now initializes after restoring the missing optional resolver packages, but reports 14 pre-existing errors in unrelated privacy/terms/analytics files and 26 warnings across the repository. The changed-file lint command is clean. The optional-package repair updated `frontend/package-lock.json`; no application dependency or runtime code was added. Live authenticated browser checks against Supabase/MongoDB were not run in this environment, so the requested viewport matrix remains an artifact/static-build verification gap rather than an asserted pass.

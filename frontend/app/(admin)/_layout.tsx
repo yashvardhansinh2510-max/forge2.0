@@ -10,11 +10,11 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-n
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
-  Avatar, FeatherName, Hairline, KeyCap, Menu, Sheet, Txt, usePalette,
+  Avatar, FeatherName, Hairline, KeyCap, Menu, Sheet, usePalette,
 } from "@/src/design/components";
 import { PaletteProvider } from "@/src/design/CommandPalette";
 import { useBp } from "@/src/design/responsive";
-import { brand, color, font, layout, radius, space } from "@/src/design/tokens";
+import { color, font, layout, radius, space } from "@/src/design/tokens";
 import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
