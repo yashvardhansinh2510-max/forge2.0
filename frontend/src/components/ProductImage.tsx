@@ -53,7 +53,10 @@ const BLURHASH = "L6PZfSjE.AyE_3t7t7R**0o#DgR4";
 export function ProductImage({
   source,
   style,
-  contentFit = "contain",
+  // `scale-down` preserves the normalized frame for good assets but refuses
+  // to enlarge thumbnail-grade sources, which is the only honest way to keep
+  // low-resolution supplier artwork from looking artificially blurry.
+  contentFit = "scale-down",
   frameInset = spacing.s4,
   testID,
   accessibilityLabel = "Product image",
