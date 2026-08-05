@@ -362,7 +362,13 @@ async def customer_facets(user: UserPublic = Depends(get_current_user)):
 
 
 @router.get("/customers/{customer_id}/workspace")
-async def customer_workspace(customer_id: str, user: UserPublic = Depends(get_current_user)):
+async def customer_workspace(
+    customer_id: str,
+    q: Optional[str] = None,
+    brand: Optional[str] = None,
+    stage: Optional[str] = None,
+    user: UserPublic = Depends(get_current_user),
+):
     """One-call aggregate powering the Customer Purchase Workspace: summary,
     products ordered, brand/stage breakdowns, POs, outstanding items, recent
     activity, and expected delivery. Everything here is derived live from the
@@ -375,7 +381,7 @@ async def customer_workspace(customer_id: str, user: UserPublic = Depends(get_cu
 
     settings = await _load_settings()
     rows = await _iter_items(
-        "stock", None, customer_id, None, None, settings.sla_days, limit=2000,
+        "stock", brand, customer_id, stage, q, settings.sla_days, limit=2000,
         floor_ids=floor_scope_ids(user),
     )
     pos = await db.purchase_orders.find(floor_query(user, {"customer_id": customer_id}), {"_id": 0}).sort("created_at", -1).to_list(200)
