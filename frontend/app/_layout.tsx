@@ -2,9 +2,10 @@ import { Stack, useRootNavigationState, useRouter, useSegments } from "expo-rout
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
-import { LogBox, Text, View } from "react-native";
+import { LogBox, Platform, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { Analytics } from "@vercel/analytics/react";
 
 import { useAppFonts } from "@/src/hooks/use-app-fonts";
 import { AuthProvider, useAuth } from "@/src/state/auth";
@@ -105,6 +106,7 @@ export default function RootLayout() {
             </AuthGate>
             <ToastHost />
           </AuthProvider>
+          {Platform.OS === "web" && <Analytics />}
         </View>
       </SafeAreaProvider>
     </GestureHandlerRootView>
