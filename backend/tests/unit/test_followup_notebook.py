@@ -5,11 +5,72 @@ from services.followup_notebook import (
     QUOTATION_FIELDS,
     NotebookValidationError,
     normalize_mobile,
+    notebook_query,
     notebook_search_query,
+    patch_notebook_row,
+    resolve_or_create_customer,
     serialize_notebook_row,
     timeline_event_for_field,
     validate_notebook_patch,
 )
+
+
+class _Cursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def to_list(self, _limit):
+        return list(self.rows)
+
+
+class _Result:
+    def __init__(self, matched_count):
+        self.matched_count = matched_count
+
+
+class _Collection:
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
+
+    @staticmethod
+    def _matches(row, query):
+        if "$and" in query:
+            return all(_Collection._matches(row, part) for part in query["$and"])
+        for key, value in query.items():
+            if isinstance(value, dict) and "$exists" in value:
+                if (key in row) != value["$exists"]:
+                    return False
+            elif isinstance(value, dict) and "$in" in value:
+                if row.get(key) not in value["$in"]:
+                    return False
+            elif row.get(key) != value:
+                return False
+        return True
+
+    async def find_one(self, query, _projection=None):
+        for row in self.rows:
+            if self._matches(row, query):
+                return dict(row)
+        return None
+
+    def find(self, query, _projection=None):
+        return _Cursor([dict(row) for row in self.rows if self._matches(row, query)])
+
+    async def insert_one(self, document):
+        self.rows.append(dict(document))
+
+    async def update_one(self, query, update):
+        for index, row in enumerate(self.rows):
+            if self._matches(row, query):
+                self.rows[index] = {**row, **update.get("$set", {})}
+                return _Result(1)
+        return _Result(0)
+
+
+class _Db:
+    def __init__(self, *, customers=None, followups=None):
+        self.customers = _Collection(customers)
+        self.followups = _Collection(followups)
 
 
 def test_normalize_mobile_accepts_indian_formatting():
@@ -78,3 +139,31 @@ def test_timeline_event_names_are_stable():
     assert timeline_event_for_field("notebook_status", "new", "won")[0] == "project_followup.status_changed"
     assert timeline_event_for_field("quotation_price", None, 100)[0] == "project_followup.quotation_updated"
 
+
+@pytest.mark.asyncio
+async def test_resolve_or_create_customer_reuses_floor_scoped_mobile(monkeypatch):
+    monkeypatch.setattr("services.followup_notebook.floor_query", lambda _user, base: base)
+    db = _Db(customers=[{"id": "c1", "name": "Existing", "phone": "+91 9909906652", "floor_id": "second-floor"}])
+    user = object()
+    customer = await resolve_or_create_customer(
+        db, user=user, floor_id="second-floor", name="New Name", phone="9909906652", address=None,
+    )
+    assert customer["id"] == "c1"
+    assert len(db.customers.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_patch_notebook_row_updates_only_one_field_and_revision(monkeypatch):
+    monkeypatch.setattr("services.followup_notebook.floor_query", lambda _user, base: base)
+    db = _Db(followups=[{
+        "id": "f1", "floor_id": "second-floor", "notebook_key": "second-floor:c1",
+        "customer_name": "A", "customer_phone": "9909906652", "kitchen_type": "GI",
+        "notebook_status": "new", "notes": "", "updated_at": "v1", "is_converted": False,
+    }])
+    row = await patch_notebook_row(
+        db, user=object(), floor_id="second-floor", row_id="f1",
+        patch={"notes": "Call tomorrow"}, expected_updated_at="v1",
+    )
+    assert row["notes"] == "Call tomorrow"
+    assert db.followups.rows[0]["customer_name"] == "A"
+    assert db.followups.rows[0]["updated_at"] != "v1"

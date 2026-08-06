@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from uuid import uuid4
 
-from models import NotebookField, NotebookStatus
+from pymongo.errors import DuplicateKeyError
+
+from auth import floor_query
+from models import NotebookField, NotebookStatus, now_iso
 
 
 NOTEBOOK_STATUSES: frozenset[str] = frozenset({"new", "pending", "won", "lost"})
@@ -30,6 +34,15 @@ SEARCH_FIELDS: tuple[str, ...] = (
 
 class NotebookValidationError(ValueError):
     """Raised when a notebook write violates its public contract."""
+
+
+class NotebookConflictError(RuntimeError):
+    """Raised when a row changed after the client read its revision."""
+
+    def __init__(self, row: dict[str, Any], changed_fields: list[str] | None = None):
+        self.row = row
+        self.changed_fields = changed_fields or []
+        super().__init__("Notebook row changed by another user")
 
 
 def normalize_mobile(value: str) -> str:
@@ -157,3 +170,75 @@ def notebook_search_query(query: str) -> dict[str, Any] | None:
     escaped = re.escape(query.strip())
     term = {"$regex": escaped, "$options": "i"}
     return {"$or": [{field: term} for field in SEARCH_FIELDS]}
+
+
+def notebook_query(user: Any, floor_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build a floor-scoped query for notebook rows."""
+    base = {"floor_id": floor_id, "notebook_key": {"$exists": True}}
+    if extra:
+        base.update(extra)
+    return floor_query(user, base)
+
+
+async def resolve_or_create_customer(
+    db: Any, *, user: Any, floor_id: str, name: str, phone: str, address: str | None,
+) -> dict[str, Any]:
+    """Find or create one floor-scoped customer for a notebook row."""
+    normalized = normalize_mobile(phone)
+    if not normalized:
+        raise NotebookValidationError("customer_phone is required")
+    query = floor_query(user, {"floor_id": floor_id, "phone_normalized": normalized})
+    customer = await db.customers.find_one(query, {"_id": 0})
+    if not customer:
+        # Compatibility fallback for customers written before the normalized
+        # field existed. The migration backfills it for indexed lookups.
+        cursor = db.customers.find(floor_query(user, {"floor_id": floor_id}), {"_id": 0})
+        for candidate in await cursor.to_list(10000):
+            if normalize_mobile(candidate.get("phone") or "") == normalized:
+                customer = candidate
+                break
+    if customer:
+        return customer
+
+    now = now_iso()
+    document = {
+        "id": str(uuid4()), "name": name.strip(), "phone": phone.strip(),
+        "phone_normalized": normalized, "address": address, "tier": "retail",
+        "floor_id": floor_id, "created_at": now, "updated_at": now,
+        "portal_enabled": False, "tags": [],
+    }
+    try:
+        await db.customers.insert_one(document)
+    except DuplicateKeyError:
+        customer = await db.customers.find_one(query, {"_id": 0})
+        if customer:
+            return customer
+        raise
+    return document
+
+
+async def patch_notebook_row(
+    db: Any, *, user: Any, floor_id: str, row_id: str, patch: dict[str, Any], expected_updated_at: str,
+) -> dict[str, Any]:
+    """Atomically apply one notebook patch against the observed revision."""
+    query = notebook_query(user, floor_id, {"id": row_id})
+    current = await db.followups.find_one(query, {"_id": 0})
+    if not current:
+        raise KeyError("Notebook row not found")
+    if current.get("updated_at") != expected_updated_at:
+        raise NotebookConflictError(serialize_notebook_row(current))
+    clean = validate_notebook_patch(
+        patch, converted=bool(current.get("is_converted")), current=current,
+    )
+    if not clean:
+        return serialize_notebook_row(current)
+    now = now_iso()
+    result = await db.followups.update_one(
+        {**query, "updated_at": expected_updated_at},
+        {"$set": {**clean, "updated_at": now}},
+    )
+    if not result.matched_count:
+        changed = await db.followups.find_one(query, {"_id": 0})
+        raise NotebookConflictError(serialize_notebook_row(changed or current))
+    updated = await db.followups.find_one(query, {"_id": 0})
+    return serialize_notebook_row(updated)
