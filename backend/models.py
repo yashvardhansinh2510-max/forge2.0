@@ -1123,59 +1123,6 @@ class NotebookConversionPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-# ---------- Project-workspace follow-ups (Kitchen / Furniture) ----------
-ProjectFollowupStatus = Literal[
-    "new", "pending", "contacted", "site_visit_scheduled",
-    "site_visit_completed", "won", "lost", "quotation_created",
-]
-ProjectStage = Literal[
-    "quotation_followup", "revision", "approved", "production",
-    "installation", "completed",
-]
-
-
-class ProjectFollowupCreate(BaseModel):
-    customer_id: Optional[str] = None
-    customer_name: str
-    mobile_number: Optional[str] = None
-    address: Optional[str] = None
-    business_type: str
-    referred_by: Optional[str] = None
-    architect_interior_designer: Optional[str] = None
-    notes: Optional[str] = None
-    followup_date: Optional[str] = None
-    next_followup: Optional[str] = None
-    status: ProjectFollowupStatus = "new"
-
-
-class ProjectFollowupUpdate(BaseModel):
-    customer_name: Optional[str] = None
-    mobile_number: Optional[str] = None
-    address: Optional[str] = None
-    business_type: Optional[str] = None
-    referred_by: Optional[str] = None
-    architect_interior_designer: Optional[str] = None
-    notes: Optional[str] = None
-    followup_date: Optional[str] = None
-    next_followup: Optional[str] = None
-    status: Optional[ProjectFollowupStatus] = None
-    estimated_budget: Optional[float] = None
-    quotation_version: Optional[int] = None
-    revision_count: Optional[int] = None
-    quotation_amount: Optional[float] = None
-    discount: Optional[float] = None
-    expected_closing: Optional[str] = None
-    current_stage: Optional[ProjectStage] = None
-    payment_terms: Optional[str] = None
-    installation_date: Optional[str] = None
-    remarks: Optional[str] = None
-    lost_reason: Optional[str] = None
-
-
-class ProjectLostReason(BaseModel):
-    reason: str
-
-
 class FollowupSavedView(TimestampedModel):
     """A persisted filter configuration for the Follow-ups workspace."""
     user_id: str
