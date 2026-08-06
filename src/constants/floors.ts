@@ -11,3 +11,9 @@
 // unset.
 export const TILES_FLOOR_ID = "ground-floor";
 export const SANITARY_FLOOR_ID = "first-floor";
+export const KITCHEN_FLOOR_ID = "second-floor";
+export const FURNITURE_FLOOR_ID = "third-floor";
+export const NOTEBOOK_FLOOR_LABELS: Record<string, string> = {
+  [KITCHEN_FLOOR_ID]: "Kitchen Floor",
+  [FURNITURE_FLOOR_ID]: "Furniture Floor",
+};
