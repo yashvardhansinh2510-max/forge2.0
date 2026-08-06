@@ -177,7 +177,7 @@ def notebook_query(user: Any, floor_id: str, extra: dict[str, Any] | None = None
     base = {"floor_id": floor_id, "notebook_key": {"$exists": True}}
     if extra:
         base.update(extra)
-    return floor_query(user, base)
+    return floor_query(user, base) if user is not None else base
 
 
 async def resolve_or_create_customer(
@@ -187,12 +187,13 @@ async def resolve_or_create_customer(
     normalized = normalize_mobile(phone)
     if not normalized:
         raise NotebookValidationError("customer_phone is required")
-    query = floor_query(user, {"floor_id": floor_id, "phone_normalized": normalized})
+    scope = floor_query if user is not None else lambda _user, base: base
+    query = scope(user, {"floor_id": floor_id, "phone_normalized": normalized})
     customer = await db.customers.find_one(query, {"_id": 0})
     if not customer:
         # Compatibility fallback for customers written before the normalized
         # field existed. The migration backfills it for indexed lookups.
-        cursor = db.customers.find(floor_query(user, {"floor_id": floor_id}), {"_id": 0})
+        cursor = db.customers.find(scope(user, {"floor_id": floor_id}), {"_id": 0})
         for candidate in await cursor.to_list(10000):
             if normalize_mobile(candidate.get("phone") or "") == normalized:
                 customer = candidate
