@@ -11,6 +11,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "test:quotation-media": "node --experimental-strip-types --no-warnings scripts/test-quotation-media.mjs",
+    "test:quotation-contract": "node --experimental-strip-types --no-warnings scripts/test-quotation-contract.mjs",
     "test:notebook": "node --experimental-strip-types --no-warnings scripts/test-notebook.mjs"
   },
   "dependencies": {

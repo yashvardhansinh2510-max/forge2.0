@@ -24,6 +24,7 @@ import { playAddProductSound } from "@/src/services/soundService";
 import { openApiFile } from "@/src/utils/downloadFile";
 
 import { computeTotals, effectivePct } from "../helpers/pricing";
+import { enqueueQuotationPersist } from "../helpers/autosave";
 import { productImageList } from "../helpers/media";
 import {
   Brand, BuilderRow, BuilderState, Category, Customer, DEFAULT_ROOMS, DescSheetState, DiscountSheetState,
@@ -456,9 +457,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         return null;
       }
     };
-    const queued = persistQueue.current.then(run, run);
-    persistQueue.current = queued.then(() => null, () => null);
-    return queued;
+    return enqueueQuotationPersist(persistQueue, run);
   }, [s, quotationId, selectedBrandId, selectedCategoryId, sortKey]);
 
   useEffect(() => {
