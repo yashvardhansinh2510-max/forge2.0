@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import React from "react";
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
@@ -59,4 +59,3 @@ const styles = StyleSheet.create({
   searchWrap: { flexDirection: "row", alignItems: "center", gap: 6, minWidth: 220, height: 38, paddingHorizontal: 10, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary },
   search: { flex: 1, ...type.bodySm, color: colors.onSurface, paddingVertical: 0 },
 });
-
