@@ -238,7 +238,7 @@ function useTilesDoc(docType: TilesDocType) {
           rateSqft: it.rate_sqft != null ? String(it.rate_sqft) : "",
           boxSqft: it.box_sqft != null ? String(it.box_sqft) : "",
           offerRate: it.offer_rate != null ? String(it.offer_rate) : (it.rate_sqft != null ? String(it.rate_sqft) : ""),
-          rateBox: it.unit_price ? String(it.unit_price) : "",
+          rateBox: it.rate_box != null ? String(it.rate_box) : (it.unit_price != null ? String(it.unit_price) : ""),
           totalBox: it.qty ? String(it.qty) : "",
           pcsBox: it.pcs_per_box || "",
           quantityUnit: it.quantity_unit === "Pieces" ? "Pieces" : "Box",
@@ -341,14 +341,18 @@ function useTilesDoc(docType: TilesDocType) {
       .map((row, index) => {
         const qty = num(row.totalBox) || 1;
         const manualTotal = num(row.total);
-        const unitPrice = row.totalEdited && manualTotal > 0 && qty > 0
-          ? Math.round((manualTotal / qty) * 100) / 100
+        const pcs = num(row.pcsBox);
+        const rateBox = row.totalEdited && manualTotal > 0 && qty > 0
+          ? Math.round((manualTotal / qty) * (row.quantityUnit === "Pieces" && pcs > 0 ? pcs : 1) * 100) / 100
           : num(row.rateBox);
+        const unitPrice = row.quantityUnit === "Pieces" && pcs > 0
+          ? Math.round(rateBox / pcs * 100) / 100
+          : rateBox;
         const item: any = {
           product_id: row.productId, sku: row.sku, name: row.name.trim(),
           image: row.image, category_id: row.categoryId,
           room: row.area.trim() || null,
-          qty, unit_price: unitPrice,
+          qty, unit_price: unitPrice, rate_box: rateBox,
           mrp: row.mrp,
           size: row.size.trim() || null,
           rate_sqft: row.rateSqft.trim() ? num(row.rateSqft) : null,
@@ -369,8 +373,10 @@ function useTilesDoc(docType: TilesDocType) {
     const lines = rows.flatMap((row) => {
       if (!row.productId || !row.name.trim()) return [];
       const qty = num(row.totalBox) || 1;
-      const rateBox = num(row.rateBox) || (num(row.rateSqft) * num(row.boxSqft));
-      const lineTotal = row.totalEdited && num(row.total) > 0 ? num(row.total) : qty * rateBox;
+      const rateBox = num(row.rateBox);
+      const pcs = num(row.pcsBox);
+      const unitRate = row.quantityUnit === "Pieces" && pcs > 0 ? rateBox / pcs : rateBox;
+      const lineTotal = row.totalEdited && num(row.total) > 0 ? num(row.total) : qty * unitRate;
       return [{ qty: 1, unitPrice: lineTotal }];
     });
     const transportation = docType === "tiles_quotation" ? num(header.transportationFee) : 0;
@@ -453,7 +459,7 @@ function useTilesDoc(docType: TilesDocType) {
             rateSqft: item.rate_sqft != null ? String(item.rate_sqft) : "",
             boxSqft: item.box_sqft != null ? String(item.box_sqft) : "",
             offerRate: item.offer_rate != null ? String(item.offer_rate) : (item.rate_sqft != null ? String(item.rate_sqft) : ""),
-            rateBox: item.unit_price != null ? String(item.unit_price) : "",
+            rateBox: item.rate_box != null ? String(item.rate_box) : (item.unit_price != null ? String(item.unit_price) : ""),
             totalBox: item.qty != null ? String(item.qty) : "",
             pcsBox: item.pcs_per_box || "",
             quantityUnit: item.quantity_unit === "Pieces" ? "Pieces" : "Box",
@@ -1114,7 +1120,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
           ))}
         </View>
         {doc.rows.map((row, index) => (
-          <View key={row.key} style={[quoStyles.tr, { minHeight: 68 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
+          <View key={row.key} style={[quoStyles.tr, { minHeight: 96 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
             <View style={[quoStyles.td, flex(0)]}><Text style={quoStyles.cellText}>{index + 1}</Text></View>
             <View style={[quoStyles.td, flex(1), { padding: 2 }]}>
               {row.image ? <TileImageCell uri={row.image} /> : null}
@@ -1202,7 +1208,7 @@ const quoStyles = StyleSheet.create({
   tr: { flexDirection: "row", borderTopWidth: 1, borderColor: "#111", alignItems: "stretch", backgroundColor: "#fff" },
   td: {
     borderRightWidth: 1, borderColor: "#111",
-    alignItems: "center", justifyContent: "center", paddingHorizontal: 3, paddingVertical: 4,
+    alignItems: "center", justifyContent: "center", paddingHorizontal: 6, paddingVertical: 8,
   },
   th: { fontSize: 10.2, fontWeight: "700", color: "#111", textAlign: "center" },
   cellText: { fontSize: 12, color: "#111" },
@@ -1238,7 +1244,7 @@ const MOBILE_FIELDS: Record<TilesDocType, MobileFieldDef[]> = {
     { key: "offerRate", label: "Offer Rate", numeric: true },
     { key: "rateBox", label: "Rate / Box", numeric: true },
     { key: "totalBox", label: "Qty (Boxes)", numeric: true },
-    { key: "pcsBox", label: "Quantity Unit" },
+    { key: "pcsBox", label: "Pcs / Box" },
     { key: "total", label: "Line Total (Rs.)", numeric: true },
   ],
 };
