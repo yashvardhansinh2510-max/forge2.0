@@ -8,6 +8,7 @@
 //   amount  — a flat ₹ off the ROOM's subtotal, allocated proportionally across
 //             that room's (non-product-overridden) lines for itemised display.
 import type { Line, RoomDiscount } from "./types";
+import { computeQuotationTotals } from "./totals";
 
 export function effectivePct(
   l: Line,
@@ -92,11 +93,10 @@ export function computeTotals(
   const rows = computeLineBreakdown(lines, projectDiscount, categoryDiscounts, roomDiscounts);
   let sub = 0, disc = 0;
   for (const r of rows) { sub += r.gross; disc += r.discountAmount; }
-  return {
-    subtotal: Math.round(sub * 100) / 100,
-    discount: Math.round(disc * 100) / 100,
-    grand: Math.round((sub - disc) * 100) / 100,
-  };
+  const totals = computeQuotationTotals(
+    [{ qty: 1, unitPrice: sub, discountAmount: disc }],
+  );
+  return { subtotal: totals.subtotal, discount: totals.discount, grand: totals.grandTotal };
 }
 
 // Joins whichever of finish/size/color are present into one display

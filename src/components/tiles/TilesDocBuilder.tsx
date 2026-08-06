@@ -41,6 +41,8 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { ProductImage } from "@/src/components/ProductImage";
 import { productImageList } from "@/src/components/quotation/helpers/media";
+import { enqueueQuotationPersist } from "@/src/components/quotation/helpers/autosave";
+import { computeQuotationTotals } from "@/src/components/quotation/helpers/totals";
 import type { Customer, Product } from "@/src/components/quotation/helpers/types";
 import { Button, Card, Dropdown, TextField } from "@/src/components/ds";
 import { BuildConLogo } from "@/src/design/BrandLogo";
@@ -360,18 +362,19 @@ function useTilesDoc(docType: TilesDocType) {
   // Show the same subtotal/transport/grand-total relationship immediately
   // while the debounced autosave round-trip is in flight.
   const previewTotals = useMemo(() => {
-    const subtotal = rows.reduce((sum, row) => {
-      if (!row.productId || !row.name.trim()) return sum;
+    const lines = rows.flatMap((row) => {
+      if (!row.productId || !row.name.trim()) return [];
       const qty = num(row.totalBox) || 1;
       const rateBox = num(row.rateBox) || (num(row.rateSqft) * num(row.boxSqft));
       const lineTotal = row.totalEdited && num(row.total) > 0 ? num(row.total) : qty * rateBox;
-      return sum + lineTotal;
-    }, 0);
+      return [{ qty: 1, unitPrice: lineTotal }];
+    });
     const transportation = docType === "tiles_quotation" ? num(header.transportationFee) : 0;
+    const totals = computeQuotationTotals(lines, transportation);
     return {
-      subtotal: Math.round(subtotal * 100) / 100,
-      transportation,
-      grandTotal: Math.round((subtotal + transportation) * 100) / 100,
+      subtotal: totals.subtotal,
+      transportation: totals.transportation,
+      grandTotal: totals.grandTotal,
     };
   }, [rows, header.transportationFee, docType]);
 
@@ -464,9 +467,7 @@ function useTilesDoc(docType: TilesDocType) {
         return null;
       }
     };
-    const queued = persistQueue.current.then(run, run);
-    persistQueue.current = queued.then(() => null, () => null);
-    return queued;
+    return enqueueQuotationPersist(persistQueue, run);
   }, [header, customerId, customerSnapshot, docId, docType, buildItems, router]);
   persistRef.current = () => persist({ silent: true });
 
