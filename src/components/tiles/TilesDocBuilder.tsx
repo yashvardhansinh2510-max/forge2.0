@@ -308,6 +308,9 @@ function useTilesDoc(docType: TilesDocType) {
       if (row.key !== key) return row;
       const boxSqft = history?.box_sqft != null ? String(history.box_sqft) : (specNum("sqft_per_box", "box_sqft") || row.boxSqft);
       const rateSqft = history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft);
+      const derivedRateBox = num(rateSqft) > 0 && num(boxSqft) > 0
+        ? String(Math.round(num(rateSqft) * num(boxSqft) * 100) / 100)
+        : row.rateBox;
       const next: TileRow = {
         ...row,
         productId: product.id,
@@ -319,9 +322,10 @@ function useTilesDoc(docType: TilesDocType) {
         size: history?.size || product.size || product.dimensions || row.size,
         rateSqft,
         boxSqft,
-        rateBox: history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox),
+        rateBox: history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox || derivedRateBox),
         offerRate: history?.rate_sqft != null ? String(history.rate_sqft) : (row.offerRate || rateSqft),
         pcsBox: history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox,
+        totalBox: row.totalBox || "1",
         totalEdited: false,
       };
       return next;
@@ -471,12 +475,15 @@ function useTilesDoc(docType: TilesDocType) {
   }, [header, customerId, customerSnapshot, docId, docType, buildItems, router]);
   persistRef.current = () => persist({ silent: true });
 
-  // Autosave: once the document exists, silently persist edits.
+  // Autosave: create the document on the first meaningful edit, then silently
+  // persist every subsequent edit. A new Tiles document used to wait for an
+  // explicit workflow/PDF action before it acquired an id, which made the
+  // Save-free editor lose a first draft if the tab was closed early.
   useEffect(() => {
-    if (!docId || !dirtyRef.current) return;
+    if (!dirtyRef.current || !header.customerName.trim()) return;
     const timer = setTimeout(() => { void persistRef.current(); }, 900);
     return () => clearTimeout(timer);
-  }, [docId, header, rows]);
+  }, [header, rows, docId]);
 
   const generatePdf = useCallback(async () => {
     setBusy("pdf");
