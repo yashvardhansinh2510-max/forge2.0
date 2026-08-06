@@ -1,7 +1,7 @@
 # Kitchen/Furniture notebook verification
 
 Date: 2026-08-06
-Commit: pending final verification commit (migration applied to the configured database)
+Commit: `2abd91c` (pushed to `origin/main`; migration applied to the configured database)
 
 ## Automated checks
 
