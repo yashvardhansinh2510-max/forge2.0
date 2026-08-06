@@ -148,6 +148,17 @@ def validate_notebook_patch(
     for field in QUOTATION_FIELDS:
         if field in clean and not converted:
             raise NotebookValidationError("quotation fields require conversion")
+    for field in ("quotation_price", "estimated_value"):
+        if field in clean and clean[field] is not None:
+            try:
+                if float(clean[field]) < 0:
+                    raise NotebookValidationError(f"{field} cannot be negative")
+            except (TypeError, ValueError):
+                raise NotebookValidationError(f"{field} must be a number")
+    if "quotation_date" in clean and clean["quotation_date"]:
+        date_value = str(clean["quotation_date"])
+        if not re.fullmatch(r"(?:\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})", date_value):
+            raise NotebookValidationError("quotation_date must be dd/mm/yyyy")
     return clean
 
 
@@ -237,6 +248,31 @@ async def patch_notebook_row(
     result = await db.followups.update_one(
         {**query, "updated_at": expected_updated_at},
         {"$set": {**clean, "updated_at": now}},
+    )
+    if not result.matched_count:
+        changed = await db.followups.find_one(query, {"_id": 0})
+        raise NotebookConflictError(serialize_notebook_row(changed or current))
+    updated = await db.followups.find_one(query, {"_id": 0})
+    return serialize_notebook_row(updated)
+
+
+async def convert_notebook_row(
+    db: Any, *, user: Any, floor_id: str, row_id: str, patch: dict[str, Any], expected_updated_at: str,
+) -> dict[str, Any]:
+    """Convert a row in place, or return the existing conversion on retry."""
+    query = notebook_query(user, floor_id, {"id": row_id})
+    current = await db.followups.find_one(query, {"_id": 0})
+    if not current:
+        raise KeyError("Notebook row not found")
+    if current.get("is_converted"):
+        return serialize_notebook_row(current)
+    if current.get("updated_at") != expected_updated_at:
+        raise NotebookConflictError(serialize_notebook_row(current))
+    clean = validate_notebook_patch(patch, converted=True, current=current)
+    now = now_iso()
+    result = await db.followups.update_one(
+        {**query, "updated_at": expected_updated_at},
+        {"$set": {**clean, "is_converted": True, "updated_at": now}},
     )
     if not result.matched_count:
         changed = await db.followups.find_one(query, {"_id": 0})

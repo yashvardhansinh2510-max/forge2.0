@@ -1,10 +1,10 @@
 """Pydantic models for Forge. Every persisted doc uses a UUID id string."""
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 Role = Literal[
@@ -991,7 +991,7 @@ FollowupOutcome = Literal["interested", "call_back", "no_answer", "rejected", "c
 NotebookStatus = Literal["new", "pending", "won", "lost"]
 NotebookField = Literal[
     "customer_name", "customer_phone", "address", "kitchen_type",
-    "referred_by", "architect_interior_designer", "notebook_status", "notes",
+    "referred_by", "architect_interior_designer", "status", "notes",
     "quotation_price", "estimated_value", "quotation_date",
 ]
 
@@ -1092,6 +1092,35 @@ class FollowupCallOutcomePayload(BaseModel):
 
 class FollowupContactPayload(BaseModel):
     channel: FollowupChannel
+
+
+class NotebookFollowupCreatePayload(BaseModel):
+    customer_name: str
+    customer_phone: str
+    address: Optional[str] = None
+    kitchen_type: str
+    referred_by: Optional[str] = None
+    architect_interior_designer: Optional[str] = None
+    notes: Optional[str] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NotebookCellPatchPayload(BaseModel):
+    field: NotebookField
+    value: Any = None
+    updated_at: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NotebookConversionPayload(BaseModel):
+    quotation_price: Optional[float] = None
+    estimated_value: Optional[float] = None
+    quotation_date: Optional[str] = None
+    updated_at: str
+
+    model_config = ConfigDict(extra="forbid")
 
 
 # ---------- Project-workspace follow-ups (Kitchen / Furniture) ----------

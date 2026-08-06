@@ -10,8 +10,10 @@ No new business logic is duplicated — this module is orchestration + reads.
 from __future__ import annotations
 
 import asyncio
+import base64
 import csv
 import io
+import json
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -24,12 +26,13 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
-from auth import floor_for_write, floor_inherit, floor_query, get_current_user, require_min_role
+from auth import floor_for_write, floor_inherit, floor_query, get_current_user, require_floor_access, require_min_role
 from db import db
 from models import (
     AutomationRuleUpdate, Followup, FollowupCallOutcomePayload, FollowupCompletePayload,
     FollowupContactPayload, FollowupCreate, FollowupSavedView,
     FollowupSavedViewCreate, FollowupSnoozePayload, FollowupUpdate,
+    NotebookCellPatchPayload, NotebookConversionPayload, NotebookFollowupCreatePayload,
     UserPublic, now_iso,
 )
 from services import automation_rules, workflow_transitions
@@ -38,6 +41,11 @@ from services.followup_engine import (
     RULE_DEFINITIONS, _followup_sort_key, age_days,
     compute_bucket, ist_day_bounds_utc, money_short, parse_iso,
     reason_factors_for, reconcile_followups, score_followup,
+)
+from services.followup_notebook import (
+    NotebookConflictError, NotebookValidationError, convert_notebook_row,
+    notebook_query, notebook_search_query, normalize_mobile, patch_notebook_row,
+    serialize_notebook_row, validate_notebook_patch, resolve_or_create_customer,
 )
 
 router = APIRouter(prefix="/followups", tags=["followups"])
@@ -74,6 +82,27 @@ async def _rule_counts(user: UserPublic) -> dict[str, int]:
 
 def _get(d: dict, key: str, default=None):
     return d.get(key, default)
+
+
+def _encode_notebook_cursor(updated_at: str, row_id: str) -> str:
+    raw = json.dumps({"updated_at": updated_at, "id": row_id}, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode()
+
+
+def _decode_notebook_cursor(cursor: str) -> dict:
+    try:
+        value = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+        if not value.get("updated_at") or not value.get("id"):
+            raise ValueError
+        return value
+    except (ValueError, TypeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid notebook cursor")
+
+
+def _notebook_conflict(error: NotebookConflictError) -> HTTPException:
+    return HTTPException(status_code=409, detail={
+        "message": str(error), "row": error.row, "changed_fields": error.changed_fields,
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -404,6 +433,180 @@ async def list_followups(
 
     docs.sort(key=lambda d: _followup_sort_key(d, user.id))
     return docs[:limit]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Kitchen/Furniture digital notebook — same followups collection, narrow DTO.
+# Literal notebook paths precede /{followup_id} below.
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get("/notebook/{floor_id}")
+async def list_notebook(
+    floor_id: str,
+    view: str = Query("followups", pattern="^(followups|quotation)$"),
+    status: Optional[str] = Query(None, pattern="^(all|new|pending|won|lost)$"),
+    q: Optional[str] = None,
+    cursor: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=250),
+    user: UserPublic = Depends(get_current_user),
+):
+    require_floor_access(floor_id, user)
+    query = notebook_query(user, floor_id, {"is_converted": view == "quotation"})
+    if status and status != "all":
+        query["notebook_status"] = status
+    search = notebook_search_query(q or "")
+    if search:
+        query["$or"] = search["$or"]
+    if cursor:
+        after = _decode_notebook_cursor(cursor)
+        query = {"$and": [query, {"$or": [
+            {"updated_at": {"$lt": after["updated_at"]}},
+            {"updated_at": after["updated_at"], "id": {"$lt": after["id"]}},
+        ]}]}
+    projection = {
+        "_id": 0, **({
+            "id": 1, "customer_name": 1, "customer_phone": 1, "address": 1,
+            "kitchen_type": 1, "referred_by": 1, "architect_interior_designer": 1,
+            "notebook_status": 1, "notes": 1, "is_converted": 1, "updated_at": 1,
+            "quotation_price": 1, "estimated_value": 1, "quotation_date": 1,
+        }),
+    }
+    rows = await db.followups.find(query, projection).sort([("updated_at", -1), ("id", -1)]).limit(limit + 1).to_list(limit + 1)
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "rows": [serialize_notebook_row(row) for row in rows],
+        "next_cursor": _encode_notebook_cursor(rows[-1]["updated_at"], rows[-1]["id"]) if has_more and rows else None,
+    }
+
+
+@router.post("/notebook/{floor_id}")
+async def create_notebook_row(
+    floor_id: str,
+    body: NotebookFollowupCreatePayload,
+    user: UserPublic = Depends(get_current_user),
+):
+    require_floor_access(floor_id, user)
+    patch = body.dict(exclude_none=True)
+    patch["notebook_status"] = "new"
+    try:
+        clean = validate_notebook_patch(patch, converted=False, current={}, creating=True)
+    except NotebookValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    customer = await resolve_or_create_customer(
+        db, user=user, floor_id=floor_id, name=clean["customer_name"],
+        phone=clean["customer_phone"], address=clean.get("address"),
+    )
+    notebook_key = f"{floor_id}:{customer['id']}"
+    existing = await db.followups.find_one(notebook_query(user, floor_id, {"notebook_key": notebook_key}), {"_id": 0})
+    if existing:
+        return serialize_notebook_row(existing)
+    now = now_iso()
+    row = Followup(
+        floor_id=floor_id, notebook_key=notebook_key, source_key=f"notebook:{notebook_key}",
+        rule_type="manual", category="sales", customer_id=customer["id"],
+        customer_name=clean["customer_name"], customer_phone=clean["customer_phone"],
+        customer_tier=customer.get("tier", "retail"), reason="Notebook follow-up",
+        next_action="Call customer", next_action_reason="Notebook customer follow-up",
+        suggested_channel="call", priority_score=0, priority_level="medium", due_at=now,
+        is_automated=False, is_converted=False, notebook_status="new",
+        address=clean.get("address"), kitchen_type=clean["kitchen_type"],
+        referred_by=clean.get("referred_by"),
+        architect_interior_designer=clean.get("architect_interior_designer"),
+        notes=clean.get("notes"),
+    )
+    await db.followups.insert_one(row.dict())
+    await log_event(
+        event_type="project_followup.created", entity_type="followup", entity_id=row.id,
+        actor=user, customer_id=row.customer_id, floor_id=floor_id,
+        summary="Notebook follow-up created",
+    )
+    return serialize_notebook_row(row.dict())
+
+
+@router.get("/notebook/{floor_id}/{row_id}")
+async def get_notebook_row(floor_id: str, row_id: str, user: UserPublic = Depends(get_current_user)):
+    require_floor_access(floor_id, user)
+    row = await db.followups.find_one(notebook_query(user, floor_id, {"id": row_id}), {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook row not found")
+    return serialize_notebook_row(row)
+
+
+@router.patch("/notebook/{floor_id}/{row_id}")
+async def patch_notebook(
+    floor_id: str, row_id: str, body: NotebookCellPatchPayload,
+    user: UserPublic = Depends(get_current_user),
+):
+    require_floor_access(floor_id, user)
+    field = "notebook_status" if body.field == "status" else body.field
+    if field == "customer_phone" and body.value is not None:
+        value = normalize_mobile(str(body.value))
+    else:
+        value = body.value
+    before = await db.followups.find_one(notebook_query(user, floor_id, {"id": row_id}), {"_id": 0})
+    if not before:
+        raise HTTPException(status_code=404, detail="Notebook row not found")
+    try:
+        row = await patch_notebook_row(
+            db, user=user, floor_id=floor_id, row_id=row_id,
+            patch={field: value}, expected_updated_at=body.updated_at,
+        )
+    except NotebookConflictError as error:
+        raise _notebook_conflict(error)
+    except NotebookValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    event_type = "project_followup.status_changed" if field == "notebook_status" else "project_followup.edited"
+    summary = f"{field.replace('_', ' ').title()} updated"
+    if field == "notebook_status" and value == "won":
+        event_type, summary = "project_followup.won", "Won"
+    elif field == "notebook_status" and value == "lost":
+        event_type, summary = "project_followup.lost", "Lost"
+    await log_event(
+        event_type=event_type, entity_type="followup", entity_id=row_id, actor=user,
+        customer_id=before.get("customer_id"), floor_id=floor_id, payload={"field": field, "value": value}, summary=summary,
+    )
+    if field == "notebook_status" and value == "lost":
+        await log_event(
+            event_type="project_followup.lost_note", entity_type="followup", entity_id=row_id, actor=user,
+            customer_id=before.get("customer_id"), floor_id=floor_id,
+            payload={"note": row.get("notes")}, summary="Lost note recorded",
+        )
+    return row
+
+
+@router.post("/notebook/{floor_id}/{row_id}/convert")
+async def convert_notebook(
+    floor_id: str, row_id: str, body: NotebookConversionPayload,
+    user: UserPublic = Depends(get_current_user),
+):
+    require_floor_access(floor_id, user)
+    before = await db.followups.find_one(notebook_query(user, floor_id, {"id": row_id}), {"_id": 0})
+    if not before:
+        raise HTTPException(status_code=404, detail="Notebook row not found")
+    try:
+        row = await convert_notebook_row(
+            db, user=user, floor_id=floor_id, row_id=row_id,
+            patch=body.dict(exclude={"updated_at"}, exclude_none=True), expected_updated_at=body.updated_at,
+        )
+    except NotebookConflictError as error:
+        raise _notebook_conflict(error)
+    except NotebookValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    await log_event(
+        event_type="project_followup.converted", entity_type="followup", entity_id=row_id, actor=user,
+        customer_id=before.get("customer_id"), floor_id=floor_id,
+        summary="Converted to quotation follow-up",
+    )
+    return row
+
+
+@router.get("/notebook/{floor_id}/{row_id}/timeline")
+async def notebook_timeline(floor_id: str, row_id: str, user: UserPublic = Depends(get_current_user)):
+    require_floor_access(floor_id, user)
+    row = await db.followups.find_one(notebook_query(user, floor_id, {"id": row_id}), {"_id": 0, "id": 1})
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook row not found")
+    return await timeline_for(entity_type="followup", entity_id=row_id, limit=200, floor_ids=[floor_id])
 
 
 _ASSIGNMENT_STATUS_RANK = {"open": 0, "snoozed": 1, "done": 2, "dismissed": 2}

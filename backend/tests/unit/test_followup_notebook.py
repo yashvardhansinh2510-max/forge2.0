@@ -1,9 +1,11 @@
 import pytest
+from types import SimpleNamespace
 
 from services.followup_notebook import (
     NOTEBOOK_FIELDS,
     QUOTATION_FIELDS,
     NotebookValidationError,
+    convert_notebook_row,
     normalize_mobile,
     notebook_query,
     notebook_search_query,
@@ -36,12 +38,17 @@ class _Collection:
     def _matches(row, query):
         if "$and" in query:
             return all(_Collection._matches(row, part) for part in query["$and"])
+        if "$or" in query:
+            return any(_Collection._matches(row, part) for part in query["$or"])
         for key, value in query.items():
             if isinstance(value, dict) and "$exists" in value:
                 if (key in row) != value["$exists"]:
                     return False
             elif isinstance(value, dict) and "$in" in value:
                 if row.get(key) not in value["$in"]:
+                    return False
+            elif isinstance(value, dict) and "$regex" in value:
+                if value["$regex"].lower() not in str(row.get(key) or "").lower():
                     return False
             elif row.get(key) != value:
                 return False
@@ -140,6 +147,39 @@ def test_timeline_event_names_are_stable():
     assert timeline_event_for_field("quotation_price", None, 100)[0] == "project_followup.quotation_updated"
 
 
+class _ChainCursor(_Cursor):
+    def sort(self, _fields):
+        return self
+
+    def limit(self, _size):
+        return self
+
+
+@pytest.mark.asyncio
+async def test_notebook_list_is_floor_scoped_and_search_excludes_quote_fields(monkeypatch):
+    from routes import followup_routes
+
+    class _FollowupCollection(_Collection):
+        def find(self, query, _projection=None):
+            return _ChainCursor([dict(row) for row in self.rows if self._matches(row, query)])
+
+    followups = _FollowupCollection([
+        {"id": "k1", "floor_id": "second-floor", "notebook_key": "second-floor:c1", "is_converted": False,
+         "customer_name": "Kitchen", "notebook_status": "new", "updated_at": "2"},
+        {"id": "f1", "floor_id": "third-floor", "notebook_key": "third-floor:c2", "is_converted": False,
+         "customer_name": "Furniture", "notebook_status": "new", "updated_at": "1"},
+    ])
+    monkeypatch.setattr(followup_routes, "db", SimpleNamespace(followups=followups))
+    user = SimpleNamespace(active_floor_id="second-floor", floor_ids=["second-floor"], role="sales")
+    result = await followup_routes.list_notebook(
+        "second-floor", view="followups", status=None, q="Kitchen", cursor=None, limit=10, user=user,
+    )
+    assert [row["id"] for row in result["rows"]] == ["k1"]
+    assert result["next_cursor"] is None
+    query = notebook_search_query("Kitchen")
+    assert all("quotation" not in str(item).lower() for item in query["$or"])
+
+
 @pytest.mark.asyncio
 async def test_resolve_or_create_customer_reuses_floor_scoped_mobile(monkeypatch):
     monkeypatch.setattr("services.followup_notebook.floor_query", lambda _user, base: base)
@@ -167,3 +207,25 @@ async def test_patch_notebook_row_updates_only_one_field_and_revision(monkeypatc
     assert row["notes"] == "Call tomorrow"
     assert db.followups.rows[0]["customer_name"] == "A"
     assert db.followups.rows[0]["updated_at"] != "v1"
+
+
+@pytest.mark.asyncio
+async def test_conversion_updates_same_row_and_is_idempotent(monkeypatch):
+    monkeypatch.setattr("services.followup_notebook.floor_query", lambda _user, base: base)
+    db = _Db(followups=[{
+        "id": "f1", "floor_id": "second-floor", "notebook_key": "second-floor:c1",
+        "customer_name": "A", "customer_phone": "9909906652", "kitchen_type": "GI",
+        "notebook_status": "new", "notes": "Ready", "updated_at": "v1", "is_converted": False,
+    }])
+    row = await convert_notebook_row(
+        db, user=object(), floor_id="second-floor", row_id="f1",
+        patch={"quotation_price": 100, "estimated_value": 125, "quotation_date": "06/08/2026"},
+        expected_updated_at="v1",
+    )
+    assert row["is_converted"] is True
+    assert db.followups.rows[0]["id"] == "f1"
+    retry = await convert_notebook_row(
+        db, user=object(), floor_id="second-floor", row_id="f1",
+        patch={}, expected_updated_at="stale",
+    )
+    assert retry["id"] == "f1" and retry["quotation_price"] == 100
