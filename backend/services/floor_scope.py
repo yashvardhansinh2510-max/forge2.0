@@ -5,12 +5,13 @@ from models import now_iso
 DEFAULT_FLOORS = (
     ("ground-floor", "Ground floor"),
     ("first-floor", "The Sanitary Bathroom"),
-    ("second-floor", "Second floor"),
+    ("second-floor", "Kitchen Floor"),
+    ("third-floor", "Furniture Floor"),
 )
 
 SCOPED_COLLECTIONS = (
     "customers", "products", "quotations", "suppliers", "purchase_orders",
-    "payments", "followups", "product_media",
+    "payments", "followups", "project_followups", "product_media",
 )
 
 
@@ -21,13 +22,13 @@ async def ensure_floor_scope() -> None:
     is deliberately migrated there. New records receive a floor from the
     authenticated user's assignment.
     """
-    if await db.floors.count_documents({}) == 0:
-        now = now_iso()
-        await db.floors.insert_many([
-            {"id": slug, "name": name, "slug": slug, "active": True,
-             "created_at": now, "updated_at": now}
-            for slug, name in DEFAULT_FLOORS
-        ])
+    now = now_iso()
+    for slug, name in DEFAULT_FLOORS:
+        await db.floors.update_one(
+            {"id": slug},
+            {"$setOnInsert": {"id": slug, "name": name, "slug": slug, "active": True, "created_at": now, "updated_at": now}},
+            upsert=True,
+        )
     for collection in SCOPED_COLLECTIONS:
         await db[collection].update_many(
             {"floor_id": {"$exists": False}},

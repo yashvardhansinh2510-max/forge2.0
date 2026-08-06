@@ -26,6 +26,10 @@ import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type ReleaseItem = PurchaseOrderDetail["items"][number];
 
+function qtyUnit(item: ReleaseItem): string {
+  return item.quantity_unit === "Pieces" ? "pieces" : "boxes";
+}
+
 const webCursor = Platform.OS === "web" ? ({ cursor: "pointer" } as any) : null;
 
 const LINE_TONE = {
@@ -92,13 +96,14 @@ export default function BrandOrderDetailScreen() {
   const releaseOne = useCallback(async (itemId: string, remaining: number) => {
     const qty = Number(releaseQty[itemId] || 0) || remaining;
     if (qty <= 0 || qty > remaining) {
-      toast.error(`Enter between 1 and ${remaining} boxes`);
+      toast.error(`Enter between 1 and ${remaining} ${qtyUnit(order?.items.find((item) => item.id === itemId) || ({ quantity_unit: "Box" } as ReleaseItem))}`);
       return;
     }
     setSubmitting(true);
     try {
       await tileOrdersApi.releaseMaterial(order?.id || poId!, [{ po_item_id: itemId, qty }]);
-      toast.success(`${qty} box${qty === 1 ? "" : "es"} released`);
+      const releasedUnit = qtyUnit(order?.items.find((item) => item.id === itemId) || ({ quantity_unit: "Box" } as ReleaseItem));
+      toast.success(`${qty} ${releasedUnit} released`);
       setReleaseQty((current) => ({ ...current, [itemId]: "" }));
       setSelected((current) => ({ ...current, [itemId]: false }));
       await load();
@@ -147,11 +152,11 @@ export default function BrandOrderDetailScreen() {
       key: "finish", label: "FINISH", width: 130,
       render: (item) => <CellText muted>{item.finish || "—"}</CellText>,
     },
-    { key: "ordered", label: "ORDERED", width: 104, align: "right", render: (i) => <CellNumber value={i.qty} /> },
-    { key: "released", label: "RELEASED", width: 108, align: "right", render: (i) => <CellNumber value={i.boxes_ready} /> },
+    { key: "ordered", label: "ORDERED", width: 104, align: "right", render: (i) => <CellNumber value={`${i.qty} ${qtyUnit(i)}`} /> },
+    { key: "released", label: "RELEASED", width: 108, align: "right", render: (i) => <CellNumber value={`${i.boxes_ready} ${qtyUnit(i)}`} /> },
     {
       key: "remaining", label: "REMAINING", width: 116, align: "right",
-      render: (i) => <CellNumber value={i.boxes_pending} dim={i.boxes_pending === 0} />,
+      render: (i) => <CellNumber value={`${i.boxes_pending} ${qtyUnit(i)}`} dim={i.boxes_pending === 0} />,
     },
     {
       key: "qty", label: "RELEASE QTY", width: 156,
@@ -164,7 +169,7 @@ export default function BrandOrderDetailScreen() {
             value={releaseQty[item.id] || ""}
             onChangeText={(value) => setQuantity(item.id, value)}
             keyboardType="number-pad"
-            placeholder={selectable ? `Max ${item.boxes_pending}` : "Complete"}
+            placeholder={selectable ? `Max ${item.boxes_pending} ${qtyUnit(item)}` : "Complete"}
             placeholderTextColor={colors.onSurfaceSubtle}
             style={[styles.qtyInput, !selectable ? styles.qtyInputDisabled : null]}
           />
@@ -280,7 +285,7 @@ export default function BrandOrderDetailScreen() {
         <ActionBar testID="tile-release-action-bar">
           <Text style={styles.footerMeta}>
             {anyPending
-              ? `${selectedItems.length} line${selectedItems.length === 1 ? "" : "s"} selected · ${selectedBoxes} box${selectedBoxes === 1 ? "" : "es"} to release`
+              ? `${selectedItems.length} line${selectedItems.length === 1 ? "" : "s"} selected · ${selectedBoxes} units to release`
               : "All material has been released for this brand order."}
           </Text>
           {anyPending ? (
@@ -319,9 +324,9 @@ export default function BrandOrderDetailScreen() {
       <Section>
         <StatRow testID="tile-release-totals">
           <Stat label="Product lines" value={order.items.length} />
-          <Stat label="Boxes ordered" value={totals.ordered} />
-          <Stat label="Boxes released" value={totals.released} tone="brand" />
-          <Stat label="Boxes remaining" value={totals.remaining} tone={totals.remaining > 0 ? "warn" : "default"} />
+          <Stat label="Units ordered" value={totals.ordered} />
+          <Stat label="Units released" value={totals.released} tone="brand" />
+          <Stat label="Units remaining" value={totals.remaining} tone={totals.remaining > 0 ? "warn" : "default"} />
         </StatRow>
       </Section>
 

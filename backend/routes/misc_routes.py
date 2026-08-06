@@ -25,14 +25,19 @@ FORGE_VERSION = "1.0.0"
 DEFAULT_FLOORS = [
     {"id": "ground-floor", "name": "Ground floor", "slug": "ground-floor"},
     {"id": "first-floor", "name": "The Sanitary Bathroom", "slug": "first-floor"},
-    {"id": "second-floor", "name": "Second floor", "slug": "second-floor"},
+    {"id": "second-floor", "name": "Kitchen Floor", "slug": "second-floor"},
+    {"id": "third-floor", "name": "Furniture Floor", "slug": "third-floor"},
 ]
 
 
 async def _ensure_default_floors() -> None:
-    if await db.floors.count_documents({}) == 0:
-        now = now_iso()
-        await db.floors.insert_many([{**floor, "active": True, "created_at": now, "updated_at": now} for floor in DEFAULT_FLOORS])
+    now = now_iso()
+    for floor in DEFAULT_FLOORS:
+        await db.floors.update_one(
+            {"id": floor["id"]},
+            {"$setOnInsert": {**floor, "active": True, "created_at": now, "updated_at": now}},
+            upsert=True,
+        )
 
 
 @router.post("/downloads/token")

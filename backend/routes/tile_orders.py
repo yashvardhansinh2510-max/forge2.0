@@ -19,6 +19,7 @@ from models import UserPublic, now_iso
 from models_tile_orders import TileChalan, TileChalanItem, TileDispatch, TileDispatchLineConsumed, TileReadyBatch
 from pdf_chalan import build_tile_chalan_pdf, tile_chalan_pdf_filename
 from services.activity_log import log_event
+from services.export import export_response
 from services.sequence import next_number
 from services.tile_movement_log import record_movement
 from services.tile_order_status import (
@@ -117,7 +118,7 @@ async def mark_items_ready(
                     supplier_id=po.get("supplier_id"),
                     supplier_name=po.get("supplier_name") or "Unassigned", customer_id=po.get("customer_id"),
                     customer_name=po.get("customer_name") or "", tile_name=item.get("name", ""),
-                    series=item.get("series"), finish=item.get("finish"), size=item.get("size"), sku=item.get("sku"),
+                    series=item.get("series"), finish=item.get("finish"), size=item.get("size"), sku=item.get("sku"), quantity_unit=item.get("quantity_unit") or "Box",
                     qty=entry.qty, remaining_qty=entry.qty, created_by=user.id, created_by_name=user.full_name,
                 )
                 await db.ready_batches.insert_one(batch.dict(), session=session)
@@ -162,7 +163,7 @@ async def mark_items_ready(
             customer_order_id=po.get("customer_order_id"), floor_id=po.get("floor_id", TILES_FLOOR_ID),
             customer_id=po.get("customer_id"), customer_name=po.get("customer_name") or "",
             brand_id=po.get("brand_id"), brand_name=po.get("brand_name") or po.get("supplier_name") or "Unassigned",
-            tile_name=batch["tile_name"], series=batch.get("series"), finish=batch.get("finish"),
+            tile_name=batch["tile_name"], series=batch.get("series"), finish=batch.get("finish"), quantity_unit=batch.get("quantity_unit") or "Box",
             size=batch.get("size"), sku=batch.get("sku"), boxes=batch["qty"], source="Brand",
             destination="BuildCon", performed_by=user.id, performed_by_name=user.full_name,
         )
@@ -306,7 +307,7 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
                     # boxes == quantity here: pieces_per_box is free text (e.g. "4" or
                     # "BOX", same convention as the old ChalanLineItem.unit field) so it
                     # cannot be reliably multiplied into a separate numeric piece count.
-                    boxes=qty, pieces_per_box=item.get("pieces_per_box"), quantity=qty,
+                    boxes=qty, pieces_per_box=item.get("pieces_per_box"), quantity_unit=item.get("quantity_unit") or "Box", quantity=qty,
                 ))
 
             now = now_iso()
@@ -478,7 +479,7 @@ async def move_material_to_godown(
             customer_order_id=po.get("customer_order_id"), floor_id=po.get("floor_id", TILES_FLOOR_ID),
             customer_id=po.get("customer_id"), customer_name=po.get("customer_name") or "",
             brand_id=po.get("brand_id"), brand_name=po.get("brand_name") or po.get("supplier_name") or "Unassigned",
-            tile_name=row["tile_name"], series=row.get("series"), finish=row.get("finish"), size=row.get("size"),
+            tile_name=row["tile_name"], series=row.get("series"), finish=row.get("finish"), quantity_unit=row.get("quantity_unit") or "Box", size=row.get("size"),
             sku=row.get("sku"), boxes=row["qty"], source="Released", destination="BuildCon Godown",
             performed_by=user.id, performed_by_name=user.full_name,
         )
@@ -563,11 +564,11 @@ async def _commit_simple_dispatch(
                 chalan_items.append(TileChalanItem(
                     po_item_id=entry.po_item_id, tile_name=item.get("name", ""), series=item.get("series"),
                     finish=item.get("finish"), size=item.get("size"), sku=item.get("sku"),
-                    boxes=qty, pieces_per_box=item.get("pieces_per_box"), quantity=qty,
+                    boxes=qty, pieces_per_box=item.get("pieces_per_box"), quantity_unit=item.get("quantity_unit") or "Box", quantity=qty,
                 ))
                 movement_rows.append({
                     "po_item_id": entry.po_item_id, "tile_name": item.get("name"), "series": item.get("series"),
-                    "finish": item.get("finish"), "size": item.get("size"), "sku": item.get("sku"), "qty": qty,
+                    "finish": item.get("finish"), "size": item.get("size"), "sku": item.get("sku"), "quantity_unit": item.get("quantity_unit") or "Box", "qty": qty,
                 })
 
             now = now_iso()
@@ -626,7 +627,7 @@ async def _commit_simple_dispatch(
             customer_order_id=co_id, floor_id=po.get("floor_id", TILES_FLOOR_ID), customer_id=po.get("customer_id"),
             customer_name=po.get("customer_name") or "", brand_id=po.get("brand_id"),
             brand_name=po.get("brand_name") or po.get("supplier_name") or "Unassigned",
-            tile_name=row["tile_name"], series=row.get("series"), finish=row.get("finish"), size=row.get("size"),
+            tile_name=row["tile_name"], series=row.get("series"), finish=row.get("finish"), quantity_unit=row.get("quantity_unit") or "Box", size=row.get("size"),
             sku=row.get("sku"), boxes=row["qty"], source=source_label, destination=destination_name,
             dispatch_id=dispatch.id, dispatch_number=dispatch.dispatch_number, chalan_id=chalan.id,
             chalan_number=chalan.number, performed_by=user.id, performed_by_name=user.full_name,
@@ -917,7 +918,7 @@ async def mark_dispatch_delivered(
             customer_id=dispatch.get("customer_id"), customer_name=dispatch.get("customer_name") or "",
             brand_id=(po or {}).get("brand_id"),
             brand_name=(po or {}).get("brand_name") or dispatch.get("supplier_name") or "Unassigned",
-            tile_name=line.get("tile_name") or "", series=line.get("series"), finish=line.get("finish"),
+            tile_name=line.get("tile_name") or "", series=line.get("series"), finish=line.get("finish"), quantity_unit=line.get("quantity_unit") or "Box",
             size=line.get("size"), sku=line.get("sku"), boxes=float(line.get("boxes") or 0),
             source="Godown" if dispatch.get("source") == "godown" else "Released",
             destination=dispatch.get("destination_name") or "Customer",
@@ -1067,7 +1068,7 @@ async def purchase_order_detail(po_id: str, user: UserPublic = Depends(require_m
             "size": item.get("size"), "sku": item.get("sku"), "qty": item.get("qty"),
             "boxes_ready": item.get("boxes_ready"), "boxes_godown": item.get("boxes_godown") or 0,
             "boxes_dispatched": item.get("boxes_dispatched"),
-            "boxes_pending": item.get("boxes_pending"), "current_location": item.get("current_location"),
+            "boxes_pending": item.get("boxes_pending"), "quantity_unit": item.get("quantity_unit") or "Box", "current_location": item.get("current_location"),
             "overall_status": item.get("overall_status"),
         } for item in po.get("items", [])],
     }
@@ -1206,7 +1207,7 @@ async def customer_order_detail(co_id: str, user: UserPublic = Depends(require_m
             "boxes_ordered": item.get("qty"), "boxes_ready": item.get("boxes_ready"),
             "boxes_godown": item.get("boxes_godown") or 0,
             "boxes_dispatched": item.get("boxes_dispatched"), "boxes_pending": item.get("boxes_pending"),
-            "current_location": item.get("current_location"), "overall_status": item.get("overall_status"),
+            "quantity_unit": item.get("quantity_unit") or "Box", "current_location": item.get("current_location"), "overall_status": item.get("overall_status"),
         } for item in po.get("items", [])],
     } for po in pos]
     days = waiting_days(co["created_at"])
@@ -1307,7 +1308,7 @@ async def list_dispatches(
                 "customer_id": dispatch.get("customer_id"), "customer_name": dispatch.get("customer_name"),
                 "customer_order_id": dispatch.get("customer_order_id"),
                 "brand_id": this_brand_id, "brand_name": this_brand_name or dispatch.get("supplier_name") or "Unassigned",
-                "tile_name": line.get("tile_name"), "tile_size": line.get("size"), "boxes": line.get("boxes"),
+                "tile_name": line.get("tile_name"), "tile_size": line.get("size"), "boxes": line.get("boxes"), "quantity_unit": line.get("quantity_unit") or "Box",
                 "source": source_label,
                 "chalan_id": chalan.get("id"), "chalan_number": chalan.get("number"),
                 "vehicle_number": chalan.get("vehicle_number"), "driver_name": chalan.get("driver_name"),
@@ -1360,6 +1361,147 @@ async def tile_orders_dashboard(user: UserPublic = Depends(require_min_role("sal
         "pending": pending, "ready": ready, "waiting_over_15_days": waiting_over_15,
         "boxes_ordered": boxes_ordered, "boxes_pending": boxes_pending, "revenue": round(revenue, 2),
     }
+
+
+@router.get("/history")
+async def completed_tile_order_history(
+    search: Optional[str] = None, customer_id: Optional[str] = None,
+    brand_id: Optional[str] = None, date_from: Optional[str] = None,
+    date_to: Optional[str] = None, user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Permanent completed-delivery ledger, derived from live Tile Orders.
+
+    No second history collection is created: an order enters this workspace
+    when its workflow status is Delivered and all linked dispatches remain
+    available as the historical references.
+    """
+    filters: dict = {"is_deleted": False, "overall_status": "Delivered"}
+    if customer_id:
+        filters["customer_id"] = customer_id
+    orders = await db.customer_orders.find(tiles_floor_query(user, filters), {"_id": 0}).to_list(5000)
+    rows = []
+    for order in orders:
+        pos = await db.purchase_orders.find(
+            tiles_floor_query(user, {"customer_order_id": order["id"]}), {"_id": 0}
+        ).to_list(100)
+        if brand_id and not any(po.get("brand_id") == brand_id for po in pos):
+            continue
+        haystack = " ".join([order.get("customer_name") or "", order.get("number") or ""] + [po.get("brand_name") or "" for po in pos]).lower()
+        if search and search.lower() not in haystack:
+            continue
+        dispatches = await db.dispatches.find(
+            tiles_floor_query(user, {"customer_order_id": order["id"], "is_deleted": False}), {"_id": 0}
+        ).to_list(5000)
+        chalans = await db.chalans.find(
+            tiles_floor_query(user, {"customer_order_id": order["id"], "is_deleted": False}), {"_id": 0}
+        ).to_list(5000)
+        completion_date = max((d.get("delivered_at") or "" for d in dispatches), default=None) or order.get("updated_at")
+        if date_from and (completion_date or "") < date_from:
+            continue
+        if date_to and (completion_date or "")[:10] > date_to:
+            continue
+        products = []
+        for po in pos:
+            for item in po.get("items", []):
+                pieces_per_box = item.get("pieces_per_box")
+                quantity_unit = item.get("quantity_unit") or "Box"
+                pieces = None
+                try: pieces = float(item.get("boxes_dispatched") or 0) if quantity_unit == "Pieces" else float(item.get("boxes_dispatched") or 0) * float(pieces_per_box)
+                except (TypeError, ValueError): pass
+                products.append({"product": item.get("name"), "size": item.get("size"), "quantity": item.get("qty"), "boxes": item.get("boxes_dispatched") or 0, "pieces": pieces, "quantity_unit": quantity_unit})
+        events = await db.activity_events.find(
+            {"floor_id": TILES_FLOOR_ID, "$or": [{"entity_type": "tile_customer_order", "entity_id": order["id"]}, {"purchase_id": {"$in": [po["id"] for po in pos]}}]}, {"_id": 0}
+        ).to_list(5000)
+        rows.append({
+            "id": order["id"], "customer": order.get("customer_name"), "order_number": order.get("number"),
+            "delivery_date": completion_date, "completion_date": completion_date,
+            "brands": [po.get("brand_name") or "Unassigned" for po in pos], "products": products,
+            "final_amount": order.get("total_value") or 0, "delivery_status": "Delivered",
+            "delivery_notes": next((d.get("delivery_note") for d in dispatches if d.get("delivery_note")), None),
+            "timeline": sorted(events, key=lambda e: e.get("created_at", ""), reverse=True),
+            "chalan_references": [{"id": c.get("id"), "number": c.get("number")} for c in chalans],
+            "dispatch_references": [{"id": d.get("id"), "number": d.get("dispatch_number")} for d in dispatches],
+        })
+    rows.sort(key=lambda row: row.get("completion_date") or "", reverse=True)
+    return {"rows": rows, "total": len(rows)}
+
+
+@router.get("/history/export")
+async def export_completed_tile_order_history(
+    format: str = "xlsx", search: Optional[str] = None, customer_id: Optional[str] = None,
+    brand_id: Optional[str] = None, date_from: Optional[str] = None, date_to: Optional[str] = None,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Export the same filtered, derived history view; never a second ledger."""
+    if format not in {"csv", "xlsx"}:
+        raise HTTPException(status_code=400, detail="format must be csv or xlsx")
+    payload = await completed_tile_order_history(
+        search=search, customer_id=customer_id, brand_id=brand_id,
+        date_from=date_from, date_to=date_to, user=user,
+    )
+    rows = []
+    for row in payload["rows"]:
+        rows.append({
+            "customer": row["customer"], "order_number": row["order_number"],
+            "delivery_date": row["delivery_date"], "completion_date": row["completion_date"],
+            "brands": ", ".join(row["brands"]),
+            "products": "; ".join(f'{p["product"]} ({p.get("size") or "—"})' for p in row["products"]),
+            "quantities": ", ".join(str(p.get("quantity") or 0) for p in row["products"]),
+            "boxes": sum(float(p.get("boxes") or 0) for p in row["products"]),
+            "pieces": ", ".join(str(p.get("pieces") or "—") for p in row["products"]),
+            "final_amount": row["final_amount"], "delivery_status": row["delivery_status"],
+            "delivery_notes": row.get("delivery_notes") or "",
+            "chalan_references": ", ".join(c["number"] for c in row["chalan_references"]),
+            "dispatch_references": ", ".join(d["number"] for d in row["dispatch_references"]),
+        })
+    columns = [
+        ("customer", "Customer"), ("order_number", "Order Number"), ("delivery_date", "Delivery Date"),
+        ("completion_date", "Completion Date"), ("brands", "Brands"), ("products", "Products"),
+        ("quantities", "Quantities"), ("boxes", "Boxes"), ("pieces", "Pieces"),
+        ("final_amount", "Final Amount"), ("delivery_status", "Delivery Status"),
+        ("delivery_notes", "Delivery Notes"), ("chalan_references", "Chalan References"),
+        ("dispatch_references", "Dispatch References"),
+    ]
+    return export_response(rows, columns, "ground-floor-tile-history", format)
+
+
+@router.get("/inventory")
+async def godown_inventory(
+    search: Optional[str] = None, brand_id: Optional[str] = None,
+    customer_id: Optional[str] = None, status: Optional[str] = None,
+    sort: str = "stock_desc",
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Live go-down inventory read model from Tile PurchaseOrder item counters."""
+    pos = await db.purchase_orders.find(tiles_floor_query(user, {"is_deleted": False}), {"_id": 0}).to_list(5000)
+    product_ids = list({item.get("product_id") for po in pos for item in po.get("items", []) if item.get("product_id")})
+    products = await db.products.find({"id": {"$in": product_ids}}, {"_id": 0, "id": 1, "price": 1, "mrp": 1}).to_list(len(product_ids) + 5) if product_ids else []
+    product_by_id = {product["id"]: product for product in products}
+    rows = []
+    for po in pos:
+        if brand_id and po.get("brand_id") != brand_id: continue
+        if customer_id and po.get("customer_id") != customer_id: continue
+        for item in po.get("items", []):
+            current = float(item.get("boxes_godown") or 0)
+            # Tile Orders stock is already customer-linked; the available
+            # quantity is the physical Godown balance, while reservation is
+            # represented by the linked customer/order rather than counted
+            # twice from the supplier-release counter.
+            reserved = 0.0
+            available = current
+            catalog_product = product_by_id.get(item.get("product_id"), {})
+            row = {"id": f'{po["id"]}:{item["id"]}', "product": item.get("name"), "brand": po.get("brand_name") or "Unassigned", "size": item.get("size"), "finish": item.get("finish"), "current_stock": current, "reserved_stock": reserved, "available_stock": available, "customer": po.get("customer_name"), "arrival_date": po.get("latest_ready_date") or po.get("created_at"), "supplier": po.get("supplier_name"), "purchase_price": item.get("unit_cost") or 0, "selling_price": catalog_product.get("price") or catalog_product.get("mrp") or 0, "boxes": current, "pieces": item.get("pieces_per_box"), "quantity_unit": item.get("quantity_unit") or "Box", "location": item.get("current_location") or "Godown", "status": item.get("overall_status") or "Pending", "customer_id": po.get("customer_id"), "brand_id": po.get("brand_id")}
+            haystack = " ".join(str(row.get(key) or "") for key in ("product", "brand", "size", "finish", "customer", "supplier", "location")).lower()
+            if search and search.lower() not in haystack: continue
+            if status and row["status"] != status and row["location"] != status: continue
+            rows.append(row)
+    if sort == "product_asc":
+        rows.sort(key=lambda row: (row["product"] or "").lower())
+    elif sort == "stock_asc":
+        rows.sort(key=lambda row: (row["available_stock"], row["product"] or ""))
+    else:
+        rows.sort(key=lambda row: (row["available_stock"], row["product"] or ""), reverse=True)
+    return {"rows": rows, "total": len(rows)}
 
 
 @router.get("/purchase-orders/{po_id}/items/{item_id}/ready-batches")
@@ -1419,4 +1561,3 @@ async def list_material_movements(
     rows.sort(key=lambda r: r.get("created_at", ""), reverse=True)
     start = (page - 1) * page_size
     return {"rows": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
-

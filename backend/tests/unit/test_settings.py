@@ -28,6 +28,23 @@ def test_load_settings_accepts_complete_process_environment() -> None:
     assert all(cfg.readiness_flags().values())
 
 
+def test_load_settings_uses_safe_bounded_mongo_defaults() -> None:
+    cfg = load_settings(valid_env(), load_local_fallback=False)
+    assert cfg.mongo_max_pool_size == 20
+    assert cfg.mongo_min_pool_size == 0
+    assert cfg.mongo_connect_timeout_ms == 10_000
+    assert cfg.mongo_server_selection_timeout_ms == 10_000
+    assert cfg.mongo_socket_timeout_ms == 30_000
+    assert cfg.mongo_wait_queue_timeout_ms == 10_000
+
+
+def test_load_settings_rejects_an_invalid_mongo_pool_range() -> None:
+    env = valid_env()
+    env["MONGO_MIN_POOL_SIZE"] = "21"
+    with pytest.raises(ConfigurationError, match="cannot exceed"):
+        load_settings(env, load_local_fallback=False)
+
+
 @pytest.mark.parametrize("missing", [
     "MONGO_URL",
     "DB_NAME",

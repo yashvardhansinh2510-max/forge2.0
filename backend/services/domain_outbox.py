@@ -445,7 +445,7 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
                     floor_id=po["floor_id"], customer_id=quotation.get("customer_id"),
                     customer_name=quotation.get("customer_name", ""), brand_id=group["brand_id"],
                     brand_name=group["brand_name"], tile_name=po_item.name, series=po_item.series,
-                    finish=po_item.finish, size=po_item.size, sku=po_item.sku, boxes=po_item.qty,
+                    finish=po_item.finish, size=po_item.size, sku=po_item.sku, boxes=po_item.qty, quantity_unit=po_item.quantity_unit,
                     performed_by=event["actor_id"], performed_by_name=event["actor_name"], session=session,
                 )
 
@@ -464,7 +464,7 @@ async def _handle_order_placed(event: dict, session: Any) -> dict:
             # real totals on a retry.
             customer_order.total_products = tile_total_products
             customer_order.total_boxes = tile_total_boxes
-            customer_order.total_value = round(tile_total_value, 2)
+            customer_order.total_value = round(tile_total_value + float(quotation.get("transportation_fee") or 0), 2)
             customer_order.overall_status = rollup_status([b.status for b in customer_order.brands])
             customer_order.completion_percentage = 0.0
             customer_order.dashboard_summary = TileCustomerOrderDashboardSummary(

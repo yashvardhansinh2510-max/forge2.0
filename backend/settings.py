@@ -30,6 +30,12 @@ VALID_ENVIRONMENTS = ("production", "staging", "development")
 class Settings:
     mongo_url: str
     db_name: str
+    mongo_max_pool_size: int
+    mongo_min_pool_size: int
+    mongo_connect_timeout_ms: int
+    mongo_server_selection_timeout_ms: int
+    mongo_socket_timeout_ms: int
+    mongo_wait_queue_timeout_ms: int
     jwt_secret: str
     jwt_algorithm: str
     jwt_exp_minutes: int
@@ -66,6 +72,19 @@ def _required(env: Mapping[str, str], name: str) -> str:
             "Set it in the deployment environment; backend/.env is only a local fallback. "
             "See STARTUP_CHECK.md."
         )
+    return value
+
+
+def _positive_int(env: Mapping[str, str], name: str, default: int, *, allow_zero: bool = False) -> int:
+    """Parse a bounded Mongo driver setting before the client is created."""
+    raw = (env.get(name) or str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be an integer.") from exc
+    if value < 0 or (value == 0 and not allow_zero):
+        qualifier = "zero or a positive integer" if allow_zero else "greater than zero"
+        raise ConfigurationError(f"{name} must be {qualifier}.")
     return value
 
 
@@ -110,6 +129,15 @@ def load_settings(
     if jwt_exp_minutes <= 0:
         raise ConfigurationError("JWT_EXP_MINUTES must be greater than zero.")
 
+    mongo_max_pool_size = _positive_int(env, "MONGO_MAX_POOL_SIZE", 20)
+    mongo_min_pool_size = _positive_int(env, "MONGO_MIN_POOL_SIZE", 0, allow_zero=True)
+    if mongo_min_pool_size > mongo_max_pool_size:
+        raise ConfigurationError("MONGO_MIN_POOL_SIZE cannot exceed MONGO_MAX_POOL_SIZE.")
+    mongo_connect_timeout_ms = _positive_int(env, "MONGO_CONNECT_TIMEOUT_MS", 10_000)
+    mongo_server_selection_timeout_ms = _positive_int(env, "MONGO_SERVER_SELECTION_TIMEOUT_MS", 10_000)
+    mongo_socket_timeout_ms = _positive_int(env, "MONGO_SOCKET_TIMEOUT_MS", 30_000)
+    mongo_wait_queue_timeout_ms = _positive_int(env, "MONGO_WAIT_QUEUE_TIMEOUT_MS", 10_000)
+
     driver = (env.get("MEDIA_STORAGE_DRIVER") or "supabase").strip().lower()
     if driver != "supabase":
         raise ConfigurationError(
@@ -141,6 +169,12 @@ def load_settings(
     return Settings(
         mongo_url=mongo_url,
         db_name=db_name,
+        mongo_max_pool_size=mongo_max_pool_size,
+        mongo_min_pool_size=mongo_min_pool_size,
+        mongo_connect_timeout_ms=mongo_connect_timeout_ms,
+        mongo_server_selection_timeout_ms=mongo_server_selection_timeout_ms,
+        mongo_socket_timeout_ms=mongo_socket_timeout_ms,
+        mongo_wait_queue_timeout_ms=mongo_wait_queue_timeout_ms,
         jwt_secret=jwt_secret,
         jwt_algorithm=(env.get("JWT_ALGORITHM") or "HS256").strip(),
         jwt_exp_minutes=jwt_exp_minutes,

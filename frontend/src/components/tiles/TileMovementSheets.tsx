@@ -79,6 +79,10 @@ function collectEntries(qtyByItem: Record<string, string>) {
     .filter((e) => e.qty > 0);
 }
 
+function qtyUnit(unit: "Box" | "Pieces" | undefined) {
+  return unit === "Pieces" ? "pieces" : "boxes";
+}
+
 // ---------------------------------------------------------------- Brand page
 export function ReleaseMaterialSheet({ poId, items, onClose, onDone }: { poId: string; items: PurchaseOrderItemDetail[]; onClose: () => void; onDone: () => void }) {
   const [qtyByItem, setQtyByItem] = useState<Record<string, string>>(
@@ -109,7 +113,7 @@ export function ReleaseMaterialSheet({ poId, items, onClose, onDone }: { poId: s
       <ScrollView style={{ marginVertical: spacing.md }}>
         {items.filter((item) => item.boxes_pending > 0).map((item) => (
           <QtyRow
-            key={item.id} name={item.name} hint={`${item.boxes_pending} boxes remaining`}
+            key={item.id} name={item.name} hint={`${item.boxes_pending} ${qtyUnit(item.quantity_unit)} remaining`}
             value={qtyByItem[item.id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.id]: v }))}
           />
         ))}
@@ -149,7 +153,7 @@ export function MoveToGodownSheet({ poId, items, onClose, onDone }: { poId: stri
       <ScrollView style={{ marginVertical: spacing.md }}>
         {items.filter((item) => item.boxes_ready > 0).map((item) => (
           <QtyRow
-            key={item.po_item_id} name={item.tile_name} hint={`${item.boxes_ready} boxes Released`}
+            key={item.po_item_id} name={item.tile_name} hint={`${item.boxes_ready} ${qtyUnit(item.quantity_unit)} Released`}
             value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))}
           />
         ))}
@@ -255,7 +259,7 @@ function DispatchSheet({
       <ScrollView style={{ marginVertical: spacing.md }}>
         {items.filter((item) => available(item) > 0).map((item) => (
           <QtyRow
-            key={item.po_item_id} name={item.tile_name} hint={`${available(item)} boxes available`}
+            key={item.po_item_id} name={item.tile_name} hint={`${available(item)} ${qtyUnit(item.quantity_unit)} available`}
             value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))}
           />
         ))}

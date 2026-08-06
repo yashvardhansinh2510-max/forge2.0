@@ -5,7 +5,7 @@
 //
 //   1. pick the customer order        (only orders with dispatchable stock)
 //   2. pick the brand + source pool   (Released or Godown)
-//   3. enter boxes per line + transport details -> Confirm
+//   3. enter quantity per line + transport details -> Confirm
 //
 // Confirm calls the exact same backend actions the Customer workspace
 // uses (dispatch-from-released / dispatch-from-godown), so a dispatch
@@ -25,6 +25,8 @@ type Source = "released" | "godown";
 
 const available = (item: { boxes_ready: number; boxes_godown: number }, source: Source) =>
   source === "released" ? item.boxes_ready : item.boxes_godown;
+
+const qtyUnit = (item: { quantity_unit?: string }) => item.quantity_unit === "Pieces" ? "pieces" : "boxes";
 
 export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [orders, setOrders] = useState<CustomerOrderCard[] | null>(null);
@@ -198,16 +200,16 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
               })}
             </View>
             {lines.length === 0 ? (
-              <Text style={type.bodyMuted}>No boxes in this pool. Switch pool above.</Text>
+              <Text style={type.bodyMuted}>No quantity in this pool. Switch pool above.</Text>
             ) : lines.map((item) => (
               <View key={item.po_item_id} style={{ marginBottom: spacing.sm }}>
                 <Text style={type.bodyStrong}>{item.tile_name}</Text>
-                <Text style={type.bodyMuted}>{available(item, source)} boxes available</Text>
+                <Text style={type.bodyMuted}>{available(item, source)} {qtyUnit(item)} available</Text>
                 <TextInput
                   testID={`tile-create-dispatch-qty-${item.po_item_id}`} keyboardType="number-pad"
                   value={qty[item.po_item_id] || ""}
                   onChangeText={(v) => setQty((s) => ({ ...s, [item.po_item_id]: v.replace(/[^0-9.]/g, "") }))}
-                  placeholder="Boxes" placeholderTextColor={colors.onSurfaceSubtle} style={styles.input}
+                  placeholder={qtyUnit(item)} placeholderTextColor={colors.onSurfaceSubtle} style={styles.input}
                 />
               </View>
             ))}

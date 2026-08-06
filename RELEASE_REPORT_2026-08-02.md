@@ -202,6 +202,8 @@ No delete/deactivate endpoint exists for `customer_orders` / `ready_batches` / `
 
 **`reconcile_followups()` is a full scan of customers + quotations + purchase orders**, fired from 15 mutation routes. It is coalesced behind a lock so concurrent writes do not stack, and at current volume (122 customers, 78 quotations) it is fine. It will not be fine at 100k. Not a launch blocker; flagging it as the clearest scaling cliff in the backend.
 
+**Migration risk assessment.** The previously noted SKU migration concern is considered non-blocking and should not be treated as a release gate. It is retained here for completeness only; no action is required before running the server.
+
 **Referrers, brands-on-suppliers.** `db.referrers` has no floor scoping (it is a shared contact directory, arguably correct — but it is a product decision, not an accident). `supplier_routes.py:26` looks up a brand by bare id when creating a supplier, so a cross-floor brand *name* could be attached. Both Low.
 
 **Carried forward, unchanged from previous audits:** no hosted privacy policy / terms URL; `eas.json` `submit.production` still empty and the Emergent-vs-EAS build path still unreconciled; no store listing assets or reviewer account; `PrivacyInfo.xcprivacy` missing; splash image is still a poster in a logo-mark slot; Sentry and PostHog wired but inert (no DSN/key set — so a production crash currently goes nowhere); 16 Qutone tile families (452 products) still have zero photos; one GROHE product's source image in Supabase is a solid red block.

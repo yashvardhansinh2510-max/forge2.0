@@ -309,7 +309,7 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
     cell = ParagraphStyle("tcCell", parent=styles["Normal"], fontSize=8, leading=9.5)
     cell_right = ParagraphStyle("tcCellRight", parent=cell, alignment=2)
 
-    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "SKU", "Boxes", "Pcs/Box", "Qty"]
+    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "SKU", "Unit", "Pcs/Box", "Qty"]
     table_data = [header_row]
     for i, item in enumerate(chalan.get("items", []), start=1):
         table_data.append([
@@ -319,7 +319,7 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
             Paragraph(_escape(item.get("finish") or "—"), cell),
             Paragraph(_escape(item.get("size") or "—"), cell),
             Paragraph(_escape(item.get("sku") or "—"), cell),
-            Paragraph(f"{item.get('boxes', 0):g}", cell_right),
+            Paragraph(_escape(item.get("quantity_unit") or "Box"), cell_right),
             Paragraph(_escape(item.get("pieces_per_box") or "—"), cell_right),
             Paragraph(f"{item.get('quantity', 0):g}", cell_right),
         ])

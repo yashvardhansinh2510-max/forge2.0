@@ -8,6 +8,7 @@ from .qutone import QutoneAdapter
 from .dimore import DimoreAdapter
 from .nexion import NexionAdapter
 from .modulo import ModuloAdapter
+from .donato import DonatoAdapter
 
 REGISTRY = {
     "grohe": GroheAdapter,
@@ -22,6 +23,7 @@ REGISTRY = {
     "dimore": DimoreAdapter,
     "nexion": NexionAdapter,
     "modulo": ModuloAdapter,
+    "donato": DonatoAdapter,
 }
 
 

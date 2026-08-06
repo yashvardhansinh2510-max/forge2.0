@@ -97,6 +97,7 @@ class TileReadyBatch(TimestampedModel):
     finish: Optional[str] = None
     size: Optional[str] = None
     sku: Optional[str] = None
+    quantity_unit: Literal["Box", "Pieces"] = "Box"
     qty: float
     remaining_qty: float       # decrements as Dispatches consume it
     created_by: str
@@ -169,6 +170,7 @@ class TileChalanItem(BaseModel):
     sku: Optional[str] = None
     boxes: float
     pieces_per_box: Optional[str] = None
+    quantity_unit: Literal["Box", "Pieces"] = "Box"
     quantity: float
 
 
@@ -229,6 +231,7 @@ class TileMaterialMovement(TimestampedModel):
     size: Optional[str] = None
     sku: Optional[str] = None
     boxes: float
+    quantity_unit: Literal["Box", "Pieces"] = "Box"
     source: Optional[str] = None        # e.g. "Released", "Godown" — where the boxes came from
     destination: Optional[str] = None   # e.g. "BuildCon Godown", or the customer delivery name/address
     dispatch_id: Optional[str] = None

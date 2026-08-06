@@ -76,7 +76,7 @@ export function ChalanPreviewSheet({ chalanId, onClose }: { chalanId: string; on
               <View style={styles.tableHeader}>
                 <Text style={[styles.lineCol, styles.tableLabel]}>PRODUCT</Text>
                 <Text style={[styles.smallCol, styles.tableLabel]}>SIZE</Text>
-                <Text style={[styles.numCol, styles.tableLabel]}>BOXES</Text>
+                <Text style={[styles.numCol, styles.tableLabel]}>QTY</Text>
               </View>
               {chalan.items.map((line, index) => (
                 <View key={`${line.po_item_id}-${index}`} style={styles.tableRow}>
@@ -85,7 +85,7 @@ export function ChalanPreviewSheet({ chalanId, onClose }: { chalanId: string; on
                     <Text numberOfLines={1} style={type.caption}>{[line.series, line.finish].filter(Boolean).join(" · ") || "—"}</Text>
                   </View>
                   <Text numberOfLines={1} style={[styles.smallCol, type.bodySm]}>{line.size || "—"}</Text>
-                  <Text style={[styles.numCol, styles.mono]}>{line.boxes}</Text>
+                  <Text style={[styles.numCol, styles.mono]}>{line.boxes} {line.quantity_unit === "Pieces" ? "pcs" : "box"}</Text>
                 </View>
               ))}
             </View>
@@ -179,7 +179,7 @@ export function DispatchRecordSheet({
                       <Text numberOfLines={1} style={type.bodyStrong}>{line.tile_name}</Text>
                       <Text numberOfLines={1} style={type.caption}>{[line.series, line.finish, line.size].filter(Boolean).join(" · ") || "—"}</Text>
                     </View>
-                    <Text style={[styles.numCol, styles.mono]}>{line.boxes}</Text>
+                    <Text style={[styles.numCol, styles.mono]}>{line.boxes} {line.quantity_unit === "Pieces" ? "pcs" : "box"}</Text>
                   </View>
                 ))}
               </View>

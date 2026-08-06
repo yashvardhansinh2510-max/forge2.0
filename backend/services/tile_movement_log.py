@@ -25,6 +25,7 @@ async def record_movement(
     brand_name: str,
     tile_name: str,
     boxes: float,
+    quantity_unit: str = "Box",
     performed_by: str,
     performed_by_name: str,
     po_item_id: Optional[str] = None,
@@ -48,7 +49,7 @@ async def record_movement(
         movement_type=movement_type, purchase_order_id=purchase_order_id, po_item_id=po_item_id,
         customer_order_id=customer_order_id, floor_id=floor_id, customer_id=customer_id,
         customer_name=customer_name, brand_id=brand_id, brand_name=brand_name, tile_name=tile_name,
-        series=series, finish=finish, size=size, sku=sku, boxes=boxes, source=source, destination=destination,
+        series=series, finish=finish, size=size, sku=sku, boxes=boxes, quantity_unit=quantity_unit, source=source, destination=destination,
         dispatch_id=dispatch_id, dispatch_number=dispatch_number, chalan_id=chalan_id, chalan_number=chalan_number,
         performed_by=performed_by, performed_by_name=performed_by_name,
     )

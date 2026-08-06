@@ -44,7 +44,7 @@ function ItemActions({
     { key: "dispatch-godown", label: "Dispatch from Godown", kind: "dispatch-godown", enabled: item.boxes_godown > 0, primary: true },
   ];
   const hint = item.boxes_ready <= 0 && item.boxes_godown <= 0
-    ? (item.boxes_pending > 0 ? `Awaiting brand release · ${item.boxes_pending} boxes still owed` : "Fully dispatched")
+    ? (item.boxes_pending > 0 ? `Awaiting brand release · ${item.boxes_pending} ${item.quantity_unit === "Pieces" ? "pieces" : "boxes"} still owed` : "Fully dispatched")
     : null;
 
   return (
@@ -148,15 +148,15 @@ export default function CustomerOrderDetailScreen() {
         />
       ),
     },
-    { key: "ordered", label: "ORDERED", width: 104, align: "right", render: (i) => <CellNumber value={i.boxes_ordered} /> },
-    { key: "released", label: "RELEASED", width: 108, align: "right", render: (i) => <CellNumber value={i.boxes_ready} /> },
-    { key: "godown", label: "GODOWN", width: 104, align: "right", render: (i) => <CellNumber value={i.boxes_godown} /> },
-    { key: "dispatched", label: "DISPATCHED", width: 124, align: "right", render: (i) => <CellNumber value={i.boxes_dispatched} /> },
+    { key: "ordered", label: "ORDERED", width: 120, align: "right", render: (i) => <CellNumber value={`${i.boxes_ordered} ${i.quantity_unit === "Pieces" ? "pieces" : "boxes"}`} /> },
+    { key: "released", label: "RELEASED", width: 124, align: "right", render: (i) => <CellNumber value={`${i.boxes_ready} ${i.quantity_unit === "Pieces" ? "pieces" : "boxes"}`} /> },
+    { key: "godown", label: "GODOWN", width: 120, align: "right", render: (i) => <CellNumber value={`${i.boxes_godown} ${i.quantity_unit === "Pieces" ? "pieces" : "boxes"}`} /> },
+    { key: "dispatched", label: "DISPATCHED", width: 136, align: "right", render: (i) => <CellNumber value={`${i.boxes_dispatched} ${i.quantity_unit === "Pieces" ? "pieces" : "boxes"}`} /> },
     {
       key: "delivered", label: "DELIVERED", width: 118, align: "right",
-      render: (i) => <CellNumber value={i.current_location === "Delivered" ? i.boxes_dispatched : "—"} dim={i.current_location !== "Delivered"} />,
+      render: (i) => <CellNumber value={i.current_location === "Delivered" ? `${i.boxes_dispatched} ${i.quantity_unit === "Pieces" ? "pieces" : "boxes"}` : "—"} dim={i.current_location !== "Delivered"} />,
     },
-    { key: "remaining", label: "REMAINING", width: 118, align: "right", render: (i) => <CellNumber value={i.boxes_pending} dim={i.boxes_pending === 0} /> },
+    { key: "remaining", label: "REMAINING", width: 130, align: "right", render: (i) => <CellNumber value={`${i.boxes_pending} ${i.quantity_unit === "Pieces" ? "pieces" : "boxes"}`} dim={i.boxes_pending === 0} /> },
     {
       // Pinned: the three movement verbs are the reason this screen exists, so
       // they stay on screen even when the counters scroll under them.
@@ -227,7 +227,7 @@ export default function CustomerOrderDetailScreen() {
             </View>
             <View style={styles.summaryStats}>
               <Stat label="Products" value={summary.total_products} />
-              <Stat label="Boxes ordered" value={summary.total_boxes} />
+              <Stat label="Units ordered" value={summary.total_boxes} />
               <Stat label="Complete" value={`${summary.completion_percentage}%`} tone="brand" />
               <Stat label="Brands" value={summary.brand_count} />
               <Stat label="Waiting" value={`${summary.waiting_days}d`} tone={summary.ageing_band === "green" ? "default" : "warn"} />

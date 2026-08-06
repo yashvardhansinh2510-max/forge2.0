@@ -48,7 +48,7 @@ export default function QuotationTilesList() {
           <Text style={type.overline}>Ground Floor · Tiles</Text>
           <Text style={type.titleMd}>Quotation Tiles</Text>
         </View>
-        <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={styles.headerActions}>
           <Button
             label="Create new selection"
             variant="ghost"
@@ -92,10 +92,11 @@ export default function QuotationTilesList() {
 
 const styles = StyleSheet.create({
   header: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8,
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  headerActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "flex-end", flexShrink: 1 },
   row: {
     flexDirection: "row", alignItems: "center", gap: 10,
     padding: spacing.md, borderRadius: radius.md,
