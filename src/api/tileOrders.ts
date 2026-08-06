@@ -29,7 +29,7 @@ export type CustomerOrderCard = {
 
 export type CustomerOrderItem = {
   po_item_id: string; tile_name: string; series: string | null; finish: string | null; size: string | null;
-  boxes_ordered: number; boxes_ready: number; boxes_godown: number; boxes_dispatched: number; boxes_pending: number;
+  boxes_ordered: number; boxes_ready: number; boxes_godown: number; boxes_dispatched: number; boxes_pending: number; quantity_unit: "Box" | "Pieces";
   current_location: TileLocation; overall_status: TileOverallStatus;
 };
 
@@ -65,7 +65,7 @@ export type BrandOrdersKpi = {
 
 export type PurchaseOrderItemDetail = {
   id: string; name: string; series: string | null; finish: string | null; size: string | null; sku: string | null;
-  qty: number; boxes_ready: number; boxes_godown: number; boxes_dispatched: number; boxes_pending: number;
+  qty: number; boxes_ready: number; boxes_godown: number; boxes_dispatched: number; boxes_pending: number; quantity_unit: "Box" | "Pieces";
   current_location: TileLocation; overall_status: TileOverallStatus;
 };
 
@@ -85,7 +85,7 @@ export type MaterialMovementRow = {
   purchase_order_id: string; po_item_id: string | null; customer_order_id: string | null;
   customer_id: string | null; customer_name: string;
   brand_id: string | null; brand_name: string; tile_name: string; series: string | null; finish: string | null;
-  size: string | null; sku: string | null; boxes: number; source: string | null; destination: string | null;
+  size: string | null; sku: string | null; boxes: number; quantity_unit: "Box" | "Pieces"; source: string | null; destination: string | null;
   dispatch_id: string | null; dispatch_number: string | null; chalan_id: string | null; chalan_number: string | null;
   performed_by_name: string;
 };
@@ -94,7 +94,7 @@ export type DispatchListRow = {
   dispatch_id: string; dispatch_number: string; dispatch_date: string;
   customer_id: string | null; customer_name: string; customer_order_id: string | null;
   brand_id: string | null; brand_name: string;
-  tile_name: string; tile_size: string | null; boxes: number;
+  tile_name: string; tile_size: string | null; boxes: number; quantity_unit: "Box" | "Pieces";
   source: "Released" | "Godown";
   chalan_id: string; chalan_number: string;
   vehicle_number: string | null; driver_name: string | null;
@@ -106,6 +106,18 @@ export type TileOrdersDashboard = {
   customer_orders: number; supplier_orders: number; dispatched_today: number; delivered_today: number;
   pending: number; ready: number; waiting_over_15_days: number; boxes_ordered: number; boxes_pending: number; revenue: number;
 };
+export type CompletedTileOrder = {
+  id: string; customer: string; order_number: string; delivery_date: string; completion_date: string;
+  brands: string[]; products: { product: string; size: string | null; quantity: number; boxes: number; pieces: number | null; quantity_unit: "Box" | "Pieces" }[];
+  final_amount: number; delivery_status: string; delivery_notes: string | null;
+  timeline: Record<string, any>[]; chalan_references: { id: string; number: string }[]; dispatch_references: { id: string; number: string }[];
+};
+export type GodownInventoryRow = {
+  id: string; product: string; brand: string; size: string | null; finish: string | null;
+  current_stock: number; reserved_stock: number; available_stock: number; customer: string; arrival_date: string;
+  supplier: string | null; purchase_price: number; selling_price: number; boxes: number; pieces: string | null; quantity_unit: "Box" | "Pieces";
+  location: string; status: string; customer_id: string | null; brand_id: string | null;
+};
 
 export type MovementItemInput = { po_item_id: string; qty: number };
 export type DispatchDestinationOverride = {
@@ -116,7 +128,7 @@ export type DispatchDestinationOverride = {
 
 export type ChalanItem = {
   po_item_id: string; tile_name: string; series: string | null; finish: string | null;
-  size: string | null; sku: string | null; boxes: number; pieces_per_box: string | null; quantity: number;
+  size: string | null; sku: string | null; boxes: number; pieces_per_box: string | null; quantity_unit: "Box" | "Pieces"; quantity: number;
 };
 
 export type ChalanDetail = {
@@ -216,6 +228,10 @@ export const tileOrdersApi = {
   }) => api.get<{ rows: MaterialMovementRow[]; page: number; page_size: number; total: number }>(
     `/tile-orders/movements${toQuery(params)}`, GROUND_FLOOR,
   ),
+  listHistory: (params?: { search?: string; customer_id?: string; brand_id?: string; date_from?: string; date_to?: string }) =>
+    api.get<{ rows: CompletedTileOrder[]; total: number }>(`/tile-orders/history${toQuery(params)}`, GROUND_FLOOR),
+  listInventory: (params?: { search?: string; brand_id?: string; customer_id?: string; status?: string; sort?: "stock_desc" | "stock_asc" | "product_asc" }) =>
+    api.get<{ rows: GodownInventoryRow[]; total: number }>(`/tile-orders/inventory${toQuery(params)}`, GROUND_FLOOR),
 
   itemHistory: (itemId: string) => api.get<{ item_id: string; events: Record<string, any>[] }>(`/tile-orders/items/${itemId}/history`, GROUND_FLOOR),
   dashboard: () => api.get<TileOrdersDashboard>("/tile-orders/dashboard", GROUND_FLOOR),

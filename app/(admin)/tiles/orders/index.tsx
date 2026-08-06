@@ -16,15 +16,18 @@
 // declaration, which is what stops labels drifting off their columns.
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from "react-native";
 
 import {
   tileOrdersApi,
   type BrandLandingCard,
+  type CompletedTileOrder,
   type CustomerOrderCard,
   type DispatchListRow,
+  type GodownInventoryRow,
   type MaterialMovementRow,
 } from "@/src/api/tileOrders";
+import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { CreateDispatchSheet } from "@/src/components/tiles/CreateDispatchSheet";
 import { DispatchRecordSheet, openChalanPdf } from "@/src/components/tiles/DispatchRecordSheet";
@@ -41,7 +44,7 @@ import { Sheet } from "@/src/components/ui";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
-type TabKey = "customer" | "brands" | "dispatch-list" | "material-register";
+type TabKey = "customer" | "brands" | "history" | "inventory" | "dispatch-list" | "material-register";
 
 // These four label strings are pinned by scripts/verify-tile-orders-contract.mjs
 // — they are the operator-facing vocabulary for the module and must not be
@@ -49,6 +52,8 @@ type TabKey = "customer" | "brands" | "dispatch-list" | "material-register";
 const TABS: [TabKey, string][] = [
   ["customer", "Customer"],
   ["brands", "Brands"],
+  ["history", "History"],
+  ["inventory", "Go-down Inventory"],
   ["dispatch-list", "Dispatch List"],
   ["material-register", "Material Movement Register"],
 ];
@@ -79,6 +84,10 @@ function timestamp(value: string | undefined | null) {
   return value ? value.slice(0, 16).replace("T", " ") : "—";
 }
 
+function quantityLabel(value: number | string, unit?: "Box" | "Pieces") {
+  return `${value} ${unit === "Pieces" ? "pieces" : "boxes"}`;
+}
+
 export default function TileOrdersScreen() {
   useRequireFloorAccess("ground-floor");
   const router = useRouter();
@@ -94,6 +103,18 @@ export default function TileOrdersScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [customerOrders, setCustomerOrders] = useState<CustomerOrderCard[]>([]);
   const [brands, setBrands] = useState<BrandLandingCard[]>([]);
+  const [history, setHistory] = useState<CompletedTileOrder[]>([]);
+  const [selectedHistory, setSelectedHistory] = useState<CompletedTileOrder | null>(null);
+  const [inventory, setInventory] = useState<GodownInventoryRow[]>([]);
+  const [historySearch, setHistorySearch] = useState(params.search ?? "");
+  const [historyCustomer, setHistoryCustomer] = useState("All");
+  const [historyBrand, setHistoryBrand] = useState("All");
+  const [historyDateRange, setHistoryDateRange] = useState<"All" | "30d" | "year">("All");
+  const [inventorySearch, setInventorySearch] = useState(params.search ?? "");
+  const [inventoryCustomer, setInventoryCustomer] = useState("All");
+  const [inventoryBrand, setInventoryBrand] = useState("All");
+  const [inventoryStatus, setInventoryStatus] = useState("All");
+  const [inventorySort, setInventorySort] = useState<"stock_desc" | "stock_asc" | "product_asc">("stock_desc");
   const [movements, setMovements] = useState<MaterialMovementRow[]>([]);
   const [movementSearch, setMovementSearch] = useState(params.search ?? "");
   const [selectedMovement, setSelectedMovement] = useState<MaterialMovementRow | null>(null);
@@ -111,6 +132,11 @@ export default function TileOrdersScreen() {
         setCustomerOrders((await tileOrdersApi.listCustomerOrders({ page_size: 30 })).orders);
       } else if (tab === "brands") {
         setBrands((await tileOrdersApi.listBrands()).brands);
+      } else if (tab === "history") {
+        const dateFrom = historyDateRange === "year" ? `${new Date().getFullYear()}-01-01` : historyDateRange === "30d" ? new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10) : undefined;
+        setHistory((await tileOrdersApi.listHistory({ search: historySearch || undefined, customer_id: historyCustomer !== "All" ? historyCustomer : undefined, brand_id: historyBrand !== "All" ? historyBrand : undefined, date_from: dateFrom })).rows);
+      } else if (tab === "inventory") {
+        setInventory((await tileOrdersApi.listInventory({ search: inventorySearch || undefined, customer_id: inventoryCustomer !== "All" ? inventoryCustomer : undefined, brand_id: inventoryBrand !== "All" ? inventoryBrand : undefined, status: inventoryStatus !== "All" ? inventoryStatus : undefined, sort: inventorySort })).rows);
       } else if (tab === "dispatch-list") {
         setDispatchRows((await tileOrdersApi.listDispatchList({
           search: dispatchSearch || undefined,
@@ -130,7 +156,12 @@ export default function TileOrdersScreen() {
     } finally {
       setLoading(false);
     }
-  }, [tab, movementSearch, dispatchSearch, dispatchStatus]);
+  }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch, inventoryCustomer, inventoryBrand, inventoryStatus, inventorySort]);
+
+  const historyCustomers = useMemo(() => ["All", ...Array.from(new Set(history.map((row) => row.customer).filter(Boolean)))], [history]);
+  const historyBrands = useMemo(() => ["All", ...Array.from(new Set(history.flatMap((row) => row.brands).filter(Boolean)))], [history]);
+  const inventoryCustomers = useMemo(() => ["All", ...Array.from(new Set(inventory.map((row) => row.customer).filter(Boolean)))], [inventory]);
+  const inventoryBrands = useMemo(() => ["All", ...Array.from(new Set(inventory.map((row) => row.brand).filter(Boolean)))], [inventory]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -171,7 +202,7 @@ export default function TileOrdersScreen() {
       render: (order) => <CellNumber value={order.total_products} />,
     },
     {
-      key: "boxes", label: "BOXES", width: 84, align: "right",
+      key: "boxes", label: "QTY", width: 84, align: "right",
       render: (order) => <CellNumber value={order.total_boxes} />,
     },
     {
@@ -237,8 +268,8 @@ export default function TileOrdersScreen() {
       render: (row) => <CellStack title={row.tile_name} subtitle={row.brand_name} />,
     },
     {
-      key: "boxes", label: "BOXES", width: 88, align: "right",
-      render: (row) => <CellNumber value={row.boxes} />,
+      key: "boxes", label: "QTY", width: 88, align: "right",
+      render: (row) => <CellNumber value={quantityLabel(row.boxes, row.quantity_unit)} />,
     },
     {
       // Was two columns, SOURCE and DESTINATION — but a dispatch on this list
@@ -319,7 +350,7 @@ export default function TileOrdersScreen() {
     },
     {
       key: "qty", label: "QTY", width: 96, align: "right",
-      render: (row) => <CellNumber value={row.boxes} />,
+      render: (row) => <CellNumber value={quantityLabel(row.boxes, row.quantity_unit)} />,
     },
     {
       // FROM is always a short location word ("Released", "Godown"); TO is
@@ -344,6 +375,34 @@ export default function TileOrdersScreen() {
       key: "action", label: "", width: 108, align: "right",
       render: () => <CellLink>Open →</CellLink>,
     },
+  ], []);
+
+  const historyColumns = useMemo<Column<CompletedTileOrder>[]>(() => [
+    { key: "customer", label: "CUSTOMER", grow: 2, minWidth: 190, render: (row) => <CellTitle>{row.customer}</CellTitle> },
+    { key: "order", label: "ORDER NO.", width: 160, render: (row) => <CellMono>{row.order_number}</CellMono> },
+    { key: "brands", label: "BRANDS", grow: 2, minWidth: 180, render: (row) => <CellText muted>{row.brands.join(", ")}</CellText> },
+    { key: "date", label: "COMPLETED", width: 150, render: (row) => <CellMono>{timestamp(row.completion_date)}</CellMono> },
+    { key: "products", label: "PRODUCTS", width: 100, align: "right", render: (row) => <CellNumber value={row.products.length} /> },
+    { key: "amount", label: "FINAL AMOUNT", width: 140, align: "right", render: (row) => <CellNumber value={row.final_amount} /> },
+    { key: "status", label: "STATUS", width: 130, align: "center", render: (row) => <StatusPill status="Delivered" /> },
+    { key: "action", label: "", width: 56, align: "right", render: () => <CellChevron /> },
+  ], []);
+
+  const inventoryColumns = useMemo<Column<GodownInventoryRow>[]>(() => [
+    { key: "product", label: "PRODUCT", grow: 3, minWidth: 220, render: (row) => <CellStack title={row.product} subtitle={`${row.brand} · ${row.size || "Size —"}`} /> },
+    { key: "finish", label: "FINISH", width: 130, render: (row) => <CellText muted>{row.finish || "—"}</CellText> },
+    { key: "stock", label: "CURRENT STOCK", width: 125, align: "right", render: (row) => <CellNumber value={row.current_stock} /> },
+    { key: "reserved", label: "RESERVED", width: 105, align: "right", render: (row) => <CellNumber value={row.reserved_stock} /> },
+    { key: "available", label: "AVAILABLE", width: 105, align: "right", render: (row) => <CellNumber value={row.available_stock} /> },
+    { key: "customer", label: "CUSTOMER", grow: 2, minWidth: 170, render: (row) => <CellText>{row.customer}</CellText> },
+    { key: "arrival", label: "ARRIVAL DATE", width: 145, render: (row) => <CellMono>{timestamp(row.arrival_date)}</CellMono> },
+    { key: "supplier", label: "SUPPLIER", grow: 1, minWidth: 140, render: (row) => <CellText muted>{row.supplier || "—"}</CellText> },
+    { key: "purchase", label: "PURCHASE PRICE", width: 130, align: "right", render: (row) => <CellNumber value={row.purchase_price} /> },
+    { key: "selling", label: "SELLING PRICE", width: 125, align: "right", render: (row) => <CellNumber value={row.selling_price || "—"} /> },
+    { key: "boxes", label: "QTY", width: 105, align: "right", render: (row) => <CellNumber value={quantityLabel(row.boxes, row.quantity_unit)} /> },
+    { key: "pieces", label: "PIECES", width: 105, align: "right", render: (row) => <CellNumber value={row.pieces ? `${row.pieces} / box` : "—"} /> },
+    { key: "location", label: "LOCATION", width: 120, render: (row) => <CellText>{row.location}</CellText> },
+    { key: "status", label: "STATUS", width: 130, align: "center", render: (row) => <StatusPill status={row.status as any} /> },
   ], []);
 
   const renderBody = () => {
@@ -396,6 +455,14 @@ export default function TileOrdersScreen() {
       );
     }
 
+    if (tab === "history") {
+      return <DataTable testID="tile-orders-history-table" fillViewport columns={historyColumns} data={history} rowMinHeight={60} keyExtractor={(row) => row.id} rowTestID={(row) => `tile-orders-history-${row.id}`} onRowPress={(row) => setSelectedHistory(row)} emptyMessage="No completed tile deliveries yet." />;
+    }
+
+    if (tab === "inventory") {
+      return <DataTable testID="tile-orders-inventory-table" fillViewport columns={inventoryColumns} data={inventory} rowMinHeight={60} keyExtractor={(row) => row.id} emptyMessage="No stock is currently recorded in the go-down." />;
+    }
+
     if (tab === "dispatch-list") {
       return (
         <DataTable
@@ -423,6 +490,19 @@ export default function TileOrdersScreen() {
         emptyMessage="No material movements recorded yet."
       />
     );
+  };
+
+  const exportHistory = async (format: "csv" | "xlsx") => {
+    try {
+      const qs = new URLSearchParams({ format });
+      if (historySearch) qs.set("search", historySearch);
+      if (historyCustomer !== "All") qs.set("customer_id", historyCustomer);
+      if (historyBrand !== "All") qs.set("brand_id", historyBrand);
+      if (historyDateRange !== "All") qs.set("date_from", historyDateRange === "year" ? `${new Date().getFullYear()}-01-01` : new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
+      const url = await api.authenticatedUrl(`/tile-orders/history/export?${qs.toString()}`);
+      if (Platform.OS === "web") window.open(url, "_blank"); else await Linking.openURL(url);
+      toast.success("History export ready");
+    } catch { toast.error("History export failed"); }
   };
 
   return (
@@ -491,6 +571,31 @@ export default function TileOrdersScreen() {
             />
           ) : null}
 
+          {tab === "history" ? (
+            <Toolbar
+              search={<SearchField testID="tile-orders-history-search" value={historySearch} onChangeText={setHistorySearch} onSubmit={() => load()} placeholder="Search customer, order or brand…" />}
+              filters={[
+                ...historyCustomers.map((value) => <FilterChip key={`customer-${value}`} label={`Customer: ${value}`} active={historyCustomer === value} onPress={() => setHistoryCustomer(value)} />),
+                ...historyBrands.map((value) => <FilterChip key={`brand-${value}`} label={`Brand: ${value}`} active={historyBrand === value} onPress={() => setHistoryBrand(value)} />),
+                ...(["All", "30d", "year"] as const).map((value) => <FilterChip key={`date-${value}`} label={value === "All" ? "All dates" : value === "30d" ? "Last 30 days" : "This year"} active={historyDateRange === value} onPress={() => setHistoryDateRange(value)} />),
+              ]}
+              actions={<Button label="Export" variant="primary" onPress={() => void exportHistory("xlsx")} testID="tile-orders-history-export" />}
+            />
+          ) : null}
+
+          {tab === "inventory" ? (
+            <Toolbar
+              search={<SearchField testID="tile-orders-inventory-search" value={inventorySearch} onChangeText={setInventorySearch} onSubmit={() => load()} placeholder="Search product, brand, customer or supplier…" />}
+              filters={[
+                ...inventoryCustomers.map((value) => <FilterChip key={`inventory-customer-${value}`} label={`Customer: ${value}`} active={inventoryCustomer === value} onPress={() => setInventoryCustomer(value)} />),
+                ...inventoryBrands.map((value) => <FilterChip key={`inventory-brand-${value}`} label={`Brand: ${value}`} active={inventoryBrand === value} onPress={() => setInventoryBrand(value)} />),
+                ...["All", "Godown", "Ready", "Delivered"].map((value) => <FilterChip key={`inventory-status-${value}`} label={`Status: ${value}`} active={inventoryStatus === value} onPress={() => setInventoryStatus(value)} />),
+                <FilterChip key="inventory-sort-stock" label="Stock ↓" active={inventorySort === "stock_desc"} onPress={() => setInventorySort("stock_desc")} />,
+                <FilterChip key="inventory-sort-product" label="Product A–Z" active={inventorySort === "product_asc"} onPress={() => setInventorySort("product_asc")} />,
+              ]}
+            />
+          ) : null}
+
           {renderBody()}
         </Section>
       </PageShell>
@@ -522,7 +627,7 @@ export default function TileOrdersScreen() {
             <View style={styles.sheetFacts}>
               <SheetFact label="Customer" value={selectedMovement.customer_name} />
               <SheetFact label="Product" value={`${selectedMovement.brand_name} · ${selectedMovement.tile_name}`} />
-              <SheetFact label="Quantity" value={`${selectedMovement.boxes} boxes`} />
+              <SheetFact label="Quantity" value={quantityLabel(selectedMovement.boxes, selectedMovement.quantity_unit)} />
               <SheetFact
                 label="Route"
                 value={`${selectedMovement.source || "—"} → ${selectedMovement.destination || "—"}`}
@@ -575,6 +680,32 @@ export default function TileOrdersScreen() {
                   }}
                 />
               ) : null}
+            </ButtonGroup>
+          </View>
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        visible={selectedHistory !== null}
+        onClose={() => setSelectedHistory(null)}
+        title={selectedHistory ? `${selectedHistory.customer} · ${selectedHistory.order_number}` : "Completed delivery"}
+        subtitle={selectedHistory ? `Completed ${timestamp(selectedHistory.completion_date)}` : undefined}
+        testID="tile-orders-history-sheet"
+      >
+        {selectedHistory ? (
+          <View style={styles.sheetBody}>
+            <View style={styles.sheetFacts}>
+              <SheetFact label="Customer" value={selectedHistory.customer} />
+              <SheetFact label="Brand" value={selectedHistory.brands.join(", ")} />
+              <SheetFact label="Delivery status" value={selectedHistory.delivery_status} />
+              <SheetFact label="Final amount" value={String(selectedHistory.final_amount)} />
+              <SheetFact label="Delivery notes" value={selectedHistory.delivery_notes || "—"} />
+              <SheetFact label="Chalans" value={selectedHistory.chalan_references.map((ref) => ref.number).join(", ") || "—"} />
+              <SheetFact label="Dispatches" value={selectedHistory.dispatch_references.map((ref) => ref.number).join(", ") || "—"} />
+              <SheetFact label="Products" value={selectedHistory.products.map((product) => `${product.product} · ${product.size || "Size —"} · ${quantityLabel(product.boxes, product.quantity_unit)}${product.pieces == null ? "" : ` · ${product.pieces} pieces`}`).join("; ") || "—"} />
+            </View>
+            <ButtonGroup>
+              <Button label="Open original order" variant="primary" testID="tile-orders-history-open-original" onPress={() => { const id = selectedHistory.id; setSelectedHistory(null); openCustomerOrder(id); }} />
             </ButtonGroup>
           </View>
         ) : null}

@@ -125,8 +125,8 @@ export default function BrandDashboardScreen() {
                 <Stat label="Released" value={kpi.ready} tone="brand" />
                 <Stat label="Partial" value={kpi.partially_dispatched} />
                 <Stat label="Completed" value={kpi.completed} />
-                <Stat label="Boxes remaining" value={kpi.boxes_remaining} />
-                <Stat label="Boxes released" value={kpi.boxes_released} />
+                <Stat label="Units remaining" value={kpi.boxes_remaining} />
+                <Stat label="Units released" value={kpi.boxes_released} />
                 <Stat label="Oldest waiting" value={`${kpi.oldest_pending_days}d`} tone={kpi.oldest_pending_days > 7 ? "warn" : "default"} />
               </StatRow>
             </Section>
