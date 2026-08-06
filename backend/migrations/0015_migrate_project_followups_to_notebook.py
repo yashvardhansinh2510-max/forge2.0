@@ -109,6 +109,8 @@ async def up(db) -> None:
     )
     await _create_index_tolerant(
         db.customers, [("floor_id", 1), ("phone_normalized", 1)],
+        unique=True,
+        partialFilterExpression={"phone_normalized": {"$type": "string"}},
         name="customers_floor_phone_normalized",
     )
 

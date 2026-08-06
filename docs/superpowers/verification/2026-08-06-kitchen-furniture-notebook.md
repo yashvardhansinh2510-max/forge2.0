@@ -1,7 +1,7 @@
 # Kitchen/Furniture notebook verification
 
 Date: 2026-08-06
-Commit: `c698b04` (pushed to `origin/main`)
+Commit: pending final verification commit (migration applied to the configured database)
 
 ## Automated checks
 
@@ -11,6 +11,11 @@ Commit: `c698b04` (pushed to `origin/main`)
 - Frontend TypeScript: `npx tsc --noEmit` passed.
 - Web production export: `npx expo export --platform web` bundled successfully.
 - Backend compile check: routes, services, models, and migration compiled successfully.
+- Production migration: `0015_migrate_project_followups_to_notebook` applied; a
+  subsequent dry-run reported no pending migrations.
+- Customer identity diagnostic: 107 normalized phone keys scanned, with zero
+  floor-scoped duplicates; the resulting phone index is unique for non-empty
+  normalized values.
 
 ## Implemented behavior
 
