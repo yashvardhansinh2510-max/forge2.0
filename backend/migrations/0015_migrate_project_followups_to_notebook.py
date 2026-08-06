@@ -137,4 +137,4 @@ async def up(db) -> None:
             summary="Migrated from Kitchen/Furniture notebook prototype",
             floor_id=floor_id,
         )
-        await db.activity_events.insert_one(event.dict())
+        await db.activity_events.insert_one(event.model_dump())
