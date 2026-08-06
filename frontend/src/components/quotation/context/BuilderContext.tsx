@@ -242,6 +242,11 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Autosave requests must be serialized. Without a queue, a slow PATCH from
+  // an earlier edit can finish after a newer edit and overwrite the server
+  // with stale quotation state.
+  const persistQueue = useRef<Promise<string | null>>(Promise.resolve(null));
+  const persistedIdRef = useRef<string | null>(null);
 
   // Sheets
   const [discountSheet, setDiscountSheet] = useState<DiscountSheetState>(null);
@@ -408,46 +413,52 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
 
   // ---------- Autosave ----------
   const persist = useCallback(async (): Promise<string | null> => {
-    if (!s.customerId) return null;
-    const payload = {
-      customer_id: s.customerId,
-      items: s.lines,
-      rooms: s.rooms,
-      notes: s.notes,
-      project_name: s.header.projectName || null,
-      phone_snapshot: s.header.phone || null,
-      reference_source: s.header.referenceSource || null,
-      referrer_type: s.header.referrerType,
-      referrer_id: s.header.referrerId,
-      ui_state: {
-        activeRoom: s.activeRoom,
-        collapsedRooms: s.collapsedRooms,
-        selectedBrandId, selectedCategoryId, sortKey,
-      },
-      project_discount_pct: s.projectDiscount,
-      category_discounts: s.categoryDiscounts,
-      room_discounts: s.roomDiscounts,
-    };
-    try {
-      setSaveState("saving");
-      let persistedId = quotationId;
-      if (!quotationId) {
-        const created = await api.post<{ id: string; number: string }>("/quotations", payload, { floorId: "first-floor" });
-        setQuotationId(created.id);
-        setQuotationNumber(created.number);
-        persistedId = created.id;
-      } else {
-        const upd: any = { ...payload, silent: true, collapsed_rooms: Object.keys(s.collapsedRooms).filter((k) => s.collapsedRooms[k]) };
-        await api.patch(`/quotations/${quotationId}`, upd);
+    const run = async (): Promise<string | null> => {
+      if (!s.customerId) return null;
+      const payload = {
+        customer_id: s.customerId,
+        items: s.lines,
+        rooms: s.rooms,
+        notes: s.notes,
+        project_name: s.header.projectName || null,
+        phone_snapshot: s.header.phone || null,
+        reference_source: s.header.referenceSource || null,
+        referrer_type: s.header.referrerType,
+        referrer_id: s.header.referrerId,
+        ui_state: {
+          activeRoom: s.activeRoom,
+          collapsedRooms: s.collapsedRooms,
+          selectedBrandId, selectedCategoryId, sortKey,
+        },
+        project_discount_pct: s.projectDiscount,
+        category_discounts: s.categoryDiscounts,
+        room_discounts: s.roomDiscounts,
+      };
+      try {
+        setSaveState("saving");
+        let persistedId = persistedIdRef.current || quotationId;
+        if (!persistedId) {
+          const created = await api.post<{ id: string; number: string }>("/quotations", payload, { floorId: "first-floor" });
+          setQuotationId(created.id);
+          setQuotationNumber(created.number);
+          persistedIdRef.current = created.id;
+          persistedId = created.id;
+        } else {
+          const upd: any = { ...payload, silent: true, collapsed_rooms: Object.keys(s.collapsedRooms).filter((k) => s.collapsedRooms[k]) };
+          await api.patch(`/quotations/${persistedId}`, upd);
+        }
+        setSaveState("saved");
+        setSavedAt(new Date());
+        return persistedId;
+      } catch (e: any) {
+        setSaveState("error");
+        toast.error(e?.detail || "Save failed");
+        return null;
       }
-      setSaveState("saved");
-      setSavedAt(new Date());
-      return persistedId;
-    } catch (e: any) {
-      setSaveState("error");
-      toast.error(e?.detail || "Save failed");
-      return null;
-    }
+    };
+    const queued = persistQueue.current.then(run, run);
+    persistQueue.current = queued.then(() => null, () => null);
+    return queued;
   }, [s, quotationId, selectedBrandId, selectedCategoryId, sortKey]);
 
   useEffect(() => {
@@ -518,6 +529,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       };
       history.replace(restored);
       setQuotationId(doc.id);
+      persistedIdRef.current = doc.id;
       setQuotationNumber(doc.number);
       setSaveState("saved");
       setSavedAt(new Date(doc.updated_at || Date.now()));
@@ -534,6 +546,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   const startNewQuotation = useCallback(() => {
     history.replace(INITIAL_BUILDER_STATE);
     setQuotationId(null);
+    persistedIdRef.current = null;
     setQuotationNumber(null);
     setSaveState("idle");
     setSavedAt(null);

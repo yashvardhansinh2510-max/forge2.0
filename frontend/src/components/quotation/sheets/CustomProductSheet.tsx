@@ -1,8 +1,7 @@
 // CustomProductSheet — quick-add sheet for a one-off custom product.
 // Two modes controlled by a checkbox:
-//   [ ] Save as catalogue product   → persists via /products/custom (is_custom=true)
-//   [x] Save                        → available in future quotations, searchable
-//   [ ] Unsaved                     → lives ONLY inside this quotation
+//   [ ] Keep in catalogue          → persists via /products/custom (is_custom=true)
+//   [ ] Inline only                → lives ONLY inside this quotation
 // In both cases a line is inserted into the current room.
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
@@ -75,7 +74,7 @@ export function CustomProductSheet() {
       }
       b.setCustomProductSheetOpen(false);
     } catch (e: any) {
-      toast.error(e?.detail || "Could not save");
+      toast.error(e?.detail || "Could not add product");
     } finally {
       setBusy(false);
     }
@@ -158,7 +157,7 @@ export function CustomProductSheet() {
                 {saveToCatalog ? <Feather name="check" size={11} color={colors.onBrand} /> : null}
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.checkboxLabel}>Save as catalogue product</Text>
+              <Text style={styles.checkboxLabel}>Keep in catalogue</Text>
                 <Text style={styles.checkboxHint}>
                   {saveToCatalog
                     ? "Appears in future quotations, searchable, editable."
@@ -173,8 +172,8 @@ export function CustomProductSheet() {
               <Text style={styles.secondaryLabel}>Cancel</Text>
             </Pressable>
             <Pressable onPress={commit} style={[styles.primary, busy && { opacity: 0.6 }]} disabled={busy} testID="cp-commit">
-              <Feather name={saveToCatalog ? "save" : "plus"} size={13} color={colors.onBrand} />
-              <Text style={styles.primaryLabel}>{saveToCatalog ? "Save & add" : "Add inline"}</Text>
+              <Feather name="plus" size={13} color={colors.onBrand} />
+              <Text style={styles.primaryLabel}>{saveToCatalog ? "Add & keep" : "Add inline"}</Text>
             </Pressable>
           </View>
         </Pressable>

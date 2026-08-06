@@ -440,12 +440,12 @@ class QuotationLineItem(BaseModel):
     sort_order: int = 0
     # Tiles document fields (Ground Floor → Tiles Selection / Quotation).
     # On tiles docs `room` doubles as the free-text AREA cell, `unit_price` is
-    # the rate per box and `qty` the box count — so existing totals math holds.
+    # the derived rate per box and `qty` the quantity — so existing totals math holds.
     size: Optional[str] = None             # e.g. "1200X1800"
     rate_sqft: Optional[float] = Field(default=None, ge=0)
-    pcs_per_box: Optional[str] = None      # free text — reference docs print "BOX"
+    pcs_per_box: Optional[str] = None      # catalog metadata; UI/PDF show the quantity unit instead
     box_sqft: Optional[float] = Field(default=None, ge=0)  # sqft covered by one box — rate_sqft x box_sqft auto-derives unit_price (rate/box)
-    offer_rate: Optional[float] = Field(default=None, ge=0)  # quotation-only: manually-typed special rate/box, shown alongside unit_price — informational, does not feed totals
+    offer_rate: Optional[float] = Field(default=None, ge=0)  # quotation display rate per SQ.FT; informational, does not feed totals
     quantity_unit: Literal["Box", "Pieces"] = "Box"
 
     @property

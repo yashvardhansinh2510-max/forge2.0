@@ -270,14 +270,14 @@ def _brand_terms_signature_block(styles: dict, branding: dict) -> list:
     return flow
 
 
-def _price_summary_table(total_boxes: float, subtotal: float, styles: dict) -> Table:
+def _price_summary_table(total_boxes: float, subtotal: float, transportation_fee: float, total_quote: float, styles: dict) -> Table:
     """Quotation-only PRICE SUMMARY box on page 1 — TOTAL BOX / SUBTOTAL /
     TRANSPORTATION / TOTAL QUOTE."""
     rows = [
         [Paragraph("TOTAL BOX", styles["sumLabel"]), Paragraph(f"{total_boxes:g}" if total_boxes else "", styles["sumValue"])],
         [Paragraph("SUBTOTAL (Rs.)", styles["sumLabel"]), Paragraph(_rupee(subtotal), styles["sumValue"])],
-        [Paragraph("TRANSPORTATION", styles["sumLabel"]), Paragraph("EXTRA", styles["sumValue"])],
-        [Paragraph("TOTAL QUOTE (Rs.)", styles["sumRed"]), Paragraph(_rupee(subtotal), styles["sumRed"])],
+        [Paragraph("TRANSPORTATION", styles["sumLabel"]), Paragraph(_rupee(transportation_fee), styles["sumValue"])],
+        [Paragraph("TOTAL QUOTE (Rs.)", styles["sumRed"]), Paragraph(_rupee(total_quote), styles["sumRed"])],
     ]
     table = Table(rows, colWidths=[130 * mm, 64 * mm], rowHeights=[7.5 * mm] * 4, hAlign="CENTER")
     table.setStyle(TableStyle([
@@ -341,7 +341,7 @@ def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | 
             Paragraph(_escape(item.get("room") or ""), styles["cell"]),
             Paragraph(_escape(item.get("name") or ""), styles["cellBold"]),
             Paragraph(_escape(item.get("size") or ""), styles["cell"]),
-            Paragraph(_fmt_rate_sqft(item.get("rate_sqft"), " PER SQFT"), styles["cellRed"]),
+            Paragraph(_fmt_rate_sqft(item.get("rate_sqft")), styles["cellRed"]),
         ])
     style_cmds = [
         ("GRID", (0, 0), (-1, -1), 0.7, GRID),
@@ -385,7 +385,10 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
     items = quotation.get("items") or []
 
     total_boxes = sum(float(item.get("qty") or 0) for item in items)
-    subtotal = sum(float(item.get("qty") or 0) * float(item.get("unit_price") or 0) for item in items)
+    item_subtotal = sum(float(item.get("qty") or 0) * float(item.get("unit_price") or 0) for item in items)
+    transportation_fee = float(quotation.get("transportation_fee") or 0)
+    subtotal = item_subtotal
+    total_quote = float(quotation.get("grand_total") or (item_subtotal + transportation_fee))
 
     story: list = [
         _header_block("PRODUCT QUOTATION", "Tiles &amp; Sanitaryware Solutions", styles),
@@ -401,7 +404,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
         Spacer(1, 4 * mm),
         Paragraph("PRICE SUMMARY", styles["sectionTitle"]),
         Spacer(1, 1.5 * mm),
-        _price_summary_table(total_boxes, subtotal, styles),
+        _price_summary_table(total_boxes, subtotal, transportation_fee, total_quote, styles),
         Spacer(1, 4 * mm),
     ]
     story.extend(_brand_terms_signature_block(styles, b))
@@ -423,12 +426,10 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
     for index, item in enumerate(items, 1):
         qty = float(item.get("qty") or 0)
         rate_box = float(item.get("unit_price") or 0)
-        offer_rate = float(item.get("offer_rate") or 0)
-        box_sqft = item.get("box_sqft")
+        offer_rate = float(item.get("offer_rate") if item.get("offer_rate") is not None else (item.get("rate_sqft") if item.get("rate_sqft") is not None else item.get("unit_price") or 0))
         line_total = qty * rate_box
         rate_sqft_text = _fmt_rate_sqft(item.get("rate_sqft"))
-        if box_sqft:
-            rate_sqft_text += f"<br/><font name='Helvetica' size='5.6' color='#666666'>&#215; {box_sqft:g} sqft/box</font>"
+        quantity_unit = item.get("quantity_unit") or "Box"
         rows.append([
             Paragraph(str(index), styles["cell"]),
             _img(item.get("image"), width_mm=24, height_mm=15),
@@ -438,13 +439,13 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
             Paragraph(rate_sqft_text, styles["cellRed"]),
             Paragraph(_money(offer_rate) if offer_rate else "", styles["cellOffer"]),
             Paragraph(_money(rate_box) if rate_box else "", styles["cell"]),
-            Paragraph(f"{qty:g}" if qty else "", styles["cellBold"]),
-            Paragraph(_escape(item.get("pcs_per_box") or ""), styles["cellBold"]),
+            Paragraph(f"{qty:g} {quantity_unit}" if qty else "", styles["cellBold"]),
+            Paragraph("PIECE" if quantity_unit == "Pieces" else "BOX", styles["cellBold"]),
             Paragraph(_money(line_total) if line_total else "", styles["cell"]),
         ])
     total_row = ["" for _ in head]
     total_row[3] = Paragraph("<b>TOTAL</b>", styles["cell"])
-    total_row[-1] = Paragraph(f"<b>{_money(subtotal)}</b>", styles["cell"])
+    total_row[-1] = Paragraph(f"<b>{_money(item_subtotal)}</b>", styles["cell"])
     rows.append(total_row)
 
     style_cmds = [

@@ -92,7 +92,11 @@ export function computeTotals(
   const rows = computeLineBreakdown(lines, projectDiscount, categoryDiscounts, roomDiscounts);
   let sub = 0, disc = 0;
   for (const r of rows) { sub += r.gross; disc += r.discountAmount; }
-  return { subtotal: sub, discount: disc, grand: Math.round((sub - disc) * 100) / 100 };
+  return {
+    subtotal: Math.round(sub * 100) / 100,
+    discount: Math.round(disc * 100) / 100,
+    grand: Math.round((sub - disc) * 100) / 100,
+  };
 }
 
 // Joins whichever of finish/size/color are present into one display

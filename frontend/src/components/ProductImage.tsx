@@ -72,13 +72,13 @@ export function ProductImage({
     return arr.filter((s): s is string => typeof s === "string" && s.length > 0);
   }, [source]);
 
+  // `source` is already ordered by the shared media resolver. Preserve that
+  // order: a URI heuristic here can silently replace an exact product image
+  // with a sibling/fallback and makes every consumer disagree about media
+  // identity. Only remove duplicate candidates.
   const sanitizedCandidates: string[] = useMemo(() => {
     const seen = new Set<string>();
-    return candidates
-      .map((uri) => ({ uri, score: imageQualityScore(uri) }))
-      .filter(({ uri, score }) => score < 8 && !seen.has(uri) && seen.add(uri))
-      .sort((a, b) => a.score - b.score)
-      .map(({ uri }) => uri);
+    return candidates.filter((uri) => !seen.has(uri) && seen.add(uri));
   }, [candidates]);
 
   // Track the current candidate index. On error we advance; once we run out
@@ -155,22 +155,6 @@ function Skeleton() {
   }, [opacity]);
 
   return <Animated.View style={[StyleSheet.absoluteFill, styles.skeleton, { opacity }]} />;
-}
-
-function imageQualityScore(uri: string): number {
-  const lower = uri.toLowerCase();
-  let score = 0;
-
-  // Supplier/import screenshots occasionally contain huge preview captures or
-  // QR/test imagery. They technically load, but make catalog cards feel broken.
-  // Keep real product photos first, push suspicious captures behind fallbacks,
-  // and drop obvious non-product assets from the candidate list.
-  if (lower.includes("screenshot") || lower.includes("screen-shot") || lower.includes("screen_capture")) score += 10;
-  if (lower.includes("whatsapp") || lower.includes("qr") || lower.includes("mahjong") || lower.includes("game")) score += 10;
-  if (lower.includes("test") || lower.includes("sample")) score += 4;
-  if (lower.includes("hero") || lower.includes("product") || lower.includes("catalog") || lower.includes("sanitary") || lower.includes("bath")) score -= 2;
-  if (lower.startsWith("data:image/")) score -= 1;
-  return score;
 }
 
 // -----------------------------------------------------------------------------

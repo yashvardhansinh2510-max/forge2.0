@@ -29,7 +29,7 @@ from services.domain_outbox import (
     enqueue_after_primary_commit,
 )
 from services.followup_engine import reconcile_followups
-from services.pricing import _resolve_line_rows, net_amount_list, per_line_net_amounts, stamp_net_amounts
+from services.pricing import _resolve_line_rows, net_amount_list, normalize_tile_line_item, per_line_net_amounts, stamp_net_amounts
 from services.pricing import recalc_quotation_totals as _recalc
 from services.sequence import next_number
 from services.tiles_stage import can_move_to_quotation, can_place_order
@@ -43,6 +43,25 @@ async def _next_number() -> str:
 
 
 TILES_DOC_TYPES = ("tiles_selection", "tiles_quotation")
+
+
+def _normalize_tile_items(items: list[QuotationLineItem], doc_type: str) -> list[QuotationLineItem]:
+    """Apply tile-only defaults before totals and downstream reads."""
+    if doc_type not in TILES_DOC_TYPES:
+        return items
+    for item in items:
+        normalize_tile_line_item(item)
+    return items
+
+
+def _tile_totals(totals: dict, transportation_fee: float, doc_type: str) -> dict:
+    if doc_type not in TILES_DOC_TYPES:
+        return totals
+    fee = round(float(transportation_fee or 0), 2)
+    return {
+        **totals,
+        "grand_total": round(float(totals.get("grand_total") or 0) + fee, 2),
+    }
 
 
 def _floor_for_tiles_document(user: UserPublic, item_floor_ids: set[str]) -> str:
@@ -186,7 +205,7 @@ async def create_quotation(
 
     # Fill category_id on items so category discounts can resolve later, and
     # collect each item's own product floor_id (see `_floor_id_for_new_quotation`).
-    items = body.items or []
+    items = _normalize_tile_items(body.items or [], body.doc_type)
     item_floor_ids: set[str] = set()
     for it in items:
         p = await db.products.find_one({"id": it.product_id}, {"_id": 0, "category_id": 1, "floor_id": 1})
@@ -202,7 +221,10 @@ async def create_quotation(
         if not referrer_doc:
             raise HTTPException(status_code=404, detail="Referrer not found")
 
-    totals = _recalc(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {})
+    totals = _tile_totals(
+        _recalc(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {}),
+        body.transportation_fee, body.doc_type,
+    )
     # Denormalize each line's post-discount total so analytics can sum one
     # field instead of re-deriving the discount cascade per report.
     # Positional, not id-keyed: line ids are client-supplied and a duplicate
@@ -230,6 +252,7 @@ async def create_quotation(
         address_snapshot=body.address_snapshot,
         doc_date=body.doc_date,
         doc_number=body.doc_number,
+        transportation_fee=body.transportation_fee if body.doc_type in TILES_DOC_TYPES else 0,
         created_by=user.id,
         created_by_name=user.full_name,
         floor_id=(
@@ -258,7 +281,11 @@ async def create_quotation(
     if quot.doc_type == "tiles_selection":
         from services.walkin_service import on_selection_created
         await on_selection_created(customer["id"], quot.id, quot.number)
-        asyncio.create_task(reconcile_followups())
+    # Every quotation family enters the same idempotent follow-up engine at
+    # creation time. Tile Selections additionally update the walk-in lifecycle
+    # above, but Sanitary quotations must not wait for a later status change or
+    # cron pass before their quotation-stage follow-up becomes visible.
+    asyncio.create_task(reconcile_followups())
     return quot
 
 
@@ -336,7 +363,7 @@ async def update_quotation(
                 p = await db.products.find_one({"id": it.product_id}, {"_id": 0, "category_id": 1})
                 if p:
                     it.category_id = p.get("category_id")
-        update["items"] = [i.dict() for i in items_typed]
+        update["items"] = [i.dict() for i in _normalize_tile_items(items_typed, doc.get("doc_type", "standard"))]
         await _track_product_usage(user.id, [it.product_id for it in items_typed])
 
     if body.rooms is not None:
@@ -381,25 +408,30 @@ async def update_quotation(
         update["doc_date"] = body.doc_date
     if body.doc_number is not None:
         update["doc_number"] = body.doc_number
+    if body.transportation_fee is not None:
+        if doc.get("doc_type") not in TILES_DOC_TYPES:
+            raise HTTPException(status_code=400, detail="Transportation Fee is only supported for Ground Floor tile documents")
+        update["transportation_fee"] = float(body.transportation_fee)
     if body.ui_state is not None:
         update["ui_state"] = body.ui_state
 
     # Recalc totals if anything pricing-related changed
-    if any(k in update for k in ("items", "project_discount_pct", "category_discounts", "room_discounts")):
-        items_for_calc = [
+    if any(k in update for k in ("items", "project_discount_pct", "category_discounts", "room_discounts", "transportation_fee")):
+        items_for_calc = _normalize_tile_items([
             QuotationLineItem(**i) for i in update.get("items", doc.get("items", []))
-        ]
+        ], doc.get("doc_type", "standard"))
+        update["items"] = [i.dict() for i in items_for_calc]
         project_discount_pct_for_calc = update.get("project_discount_pct", doc.get("project_discount_pct", 0))
         category_discounts_for_calc = update.get("category_discounts", doc.get("category_discounts", {}))
         room_discounts_for_calc = {
             k: RoomDiscountCfg(**v) for k, v in update.get("room_discounts", doc.get("room_discounts", {}) or {}).items()
         }
-        totals = _recalc(
+        totals = _tile_totals(_recalc(
             items_for_calc,
             project_discount_pct_for_calc,
             category_discounts_for_calc,
             room_discounts_for_calc,
-        )
+        ), update.get("transportation_fee", doc.get("transportation_fee", 0)), doc.get("doc_type", "standard"))
         update.update(totals)
         update["items"] = _stamped_items_for_update(
             update, doc,
@@ -418,7 +450,7 @@ async def update_quotation(
             reason=body.reason,
             snapshot={k: doc.get(k) for k in (
                 "items", "rooms", "notes", "status", "grand_total", "project_discount_pct",
-                "category_discounts", "room_discounts", "customer_id", "customer_name",
+                "category_discounts", "room_discounts", "customer_id", "customer_name", "transportation_fee",
             )},
         )
         update["revisions"] = revisions + [rev.dict()]
@@ -553,6 +585,8 @@ async def duplicate_quotation(
             product_id=i["product_id"], sku=i["sku"], name=i["name"], image=i.get("image"),
             category_id=i.get("category_id"), room=i.get("room"),
             qty=i["qty"], unit_price=i["unit_price"],
+            offer_rate=i.get("offer_rate"), quantity_unit=i.get("quantity_unit") or "Box",
+            size=i.get("size"), rate_sqft=i.get("rate_sqft"), box_sqft=i.get("box_sqft"), pcs_per_box=i.get("pcs_per_box"),
             discount_pct=i.get("discount_pct"),
             notes=i.get("notes"), description=i.get("description"),
             sort_order=i.get("sort_order", 0),
@@ -672,13 +706,17 @@ async def quotation_breakdown(quotation_id: str, user: UserPublic = Depends(get_
     room_discs = {k: RoomDiscountCfg(**v) for k, v in room_discs_raw.items()}
 
     lines_out = _breakdown_lines(doc)
-    totals = _recalc([QuotationLineItem(**i) for i in doc.get("items", [])], project_pct, cat_discs, room_discs)
+    totals = _tile_totals(
+        _recalc([QuotationLineItem(**i) for i in doc.get("items", [])], project_pct, cat_discs, room_discs),
+        doc.get("transportation_fee", 0), doc.get("doc_type", "standard"),
+    )
     return {
         "lines": lines_out,
         "totals": totals,
         "project_discount_pct": project_pct,
         "category_discounts": cat_discs,
         "room_discounts": room_discs_raw,
+        "transportation_fee": doc.get("transportation_fee", 0),
     }
 
 
@@ -694,7 +732,7 @@ def _enriched_items_for_pdf(doc: dict) -> list[dict]:
         doc.get("category_discounts", {}) or {},
         {k: RoomDiscountCfg(**v) for k, v in (doc.get("room_discounts") or {}).items()},
     )
-    return [{**raw, "discount_pct": round(row["pct"], 2)} for raw, row in zip(raws, rows, strict=True)]
+    return [{**raw, "offer_rate": raw.get("offer_rate") if raw.get("offer_rate") is not None else (raw.get("rate_sqft") if raw.get("rate_sqft") is not None else raw.get("unit_price")), "discount_pct": round(row["pct"], 2)} for raw, row in zip(raws, rows, strict=True)]
 
 
 # --- PDF branding (Settings > Company + Settings > PDF, merged) -----------
@@ -730,10 +768,10 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
     doc_type = doc.get("doc_type") or "standard"
     if doc_type == "tiles_selection":
-        pdf_bytes = build_tiles_selection_pdf(doc, customer, await _pdf_branding())
+        pdf_bytes = build_tiles_selection_pdf({**doc, "items": _enriched_items_for_pdf(doc)}, customer, await _pdf_branding())
         filename = tiles_pdf_filename(doc)
     elif doc_type == "tiles_quotation":
-        pdf_bytes = build_tiles_quotation_pdf(doc, customer, await _pdf_branding())
+        pdf_bytes = build_tiles_quotation_pdf({**doc, "items": _enriched_items_for_pdf(doc)}, customer, await _pdf_branding())
         filename = tiles_pdf_filename(doc)
     else:
         pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}

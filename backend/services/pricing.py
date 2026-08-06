@@ -19,6 +19,25 @@ from typing import Any
 from models import QuotationLineItem, RoomDiscountCfg
 
 
+def normalize_tile_line_item(item: QuotationLineItem) -> QuotationLineItem:
+    """Normalize tile-only display/pricing fields at the pricing boundary.
+
+    `unit_price` is the persisted per-unit amount used by the existing
+    quotation pricing engine. When a tile row supplies both a rate per square
+    foot and the square-foot coverage of a box, the conversion is performed
+    here—not in a presentation component. Offer Rate is the per-SQ.FT rate
+    supplied by the row, never the derived per-box amount.
+    """
+    if item.rate_sqft is not None and item.box_sqft is not None:
+        rate_sqft = float(item.rate_sqft)
+        box_sqft = float(item.box_sqft)
+        if rate_sqft >= 0 and box_sqft >= 0:
+            item.unit_price = round(rate_sqft * box_sqft, 2)
+    if item.offer_rate is None:
+        item.offer_rate = item.rate_sqft if item.rate_sqft is not None else item.unit_price
+    return item
+
+
 def effective_discount_pct(
     line: QuotationLineItem,
     room_discounts: dict[str, RoomDiscountCfg],

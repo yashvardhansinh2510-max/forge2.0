@@ -111,7 +111,7 @@ export function BuilderFooter({ compact = false }: { compact?: boolean }) {
       </View>
 
       <Pressable
-        testID="save-quotation-btn"
+        testID="finish-quotation-btn"
         onPress={b.finalize}
         disabled={!canFinish}
         style={({ pressed }) => [styles.saveBtn, { opacity: !canFinish ? 0.4 : pressed ? 0.9 : 1 }]}

@@ -33,12 +33,13 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
+import { ProductImage } from "@/src/components/ProductImage";
 import { productImageList } from "@/src/components/quotation/helpers/media";
 import type { Customer, Product } from "@/src/components/quotation/helpers/types";
 import { Button, Card, Dropdown, TextField } from "@/src/components/ds";
@@ -59,34 +60,17 @@ const ZEBRA = "#F0F0F0";
 const GRID = "#8A8A8A";
 const SERIF = Platform.select({ ios: "Times New Roman", android: "serif", default: "Georgia, 'Times New Roman', serif" }) as string;
 
-// Product photo cell for the SELECTION/QUOTATION grids — every image slot on
-// these printed formats is a wide rectangle, but source photos (a phone-shot
-// tile swatch, most commonly) are just as often portrait. A portrait photo
-// dropped into a landscape box with resizeMode="contain" just sits centered
-// and narrow — still reads as "vertical" even though its frame is wide.
-// Mirrors backend/pdf_generator.py's `_landscape_bytes`: detect a taller-
-// than-wide source and rotate it 90° so it actually fills the frame
-// horizontally, instead of only widening the box around it.
 function TileImageCell({ uri }: { uri: string }) {
-  const [portrait, setPortrait] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    Image.getSize(
-      uri,
-      (w, h) => { if (alive) setPortrait(h > w); },
-      () => { if (alive) setPortrait(false); },
-    );
-    return () => { alive = false; };
-  }, [uri]);
-
   return (
-    <View style={{ width: "100%", aspectRatio: 16 / 10, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
-      <Image
-        source={{ uri }}
-        resizeMode={portrait ? "cover" : "contain"}
-        style={portrait ? { width: "62.5%", height: "160%", transform: [{ rotate: "90deg" }] } : { width: "100%", height: "100%" }}
-      />
-    </View>
+    <ProductImage
+      source={uri}
+      contentFit="contain"
+      frameInset={2}
+      borderRadius={0}
+      disableSkeleton
+      style={{ width: "100%", aspectRatio: 16 / 10 }}
+      accessibilityLabel="Quotation product image"
+    />
   );
 }
 
@@ -105,9 +89,9 @@ type TileRow = {
   boxSqft: string;
   offerRate: string;
   rateBox: string;
-  rateBoxEdited: boolean;
   totalBox: string;
   pcsBox: string;
+  quantityUnit: "Box" | "Pieces";
   total: string;
   totalEdited: boolean;
 };
@@ -121,6 +105,7 @@ type TilesHeader = {
   preparedBy: string;
   address: string;
   docNumber: string;
+  transportationFee: string;
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -161,8 +146,8 @@ function emptyRow(): TileRow {
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     lineId: null, productId: null, sku: "", categoryId: null,
     name: "", image: null, mrp: null,
-    area: "", size: "", rateSqft: "", boxSqft: "", offerRate: "", rateBox: "", rateBoxEdited: false,
-    totalBox: "", pcsBox: "", total: "",
+    area: "", size: "", rateSqft: "", boxSqft: "", offerRate: "", rateBox: "",
+    totalBox: "", pcsBox: "", quantityUnit: "Box", total: "",
     totalEdited: false,
   };
 }
@@ -172,9 +157,8 @@ const num = (text: string): number => {
   return Number.isFinite(value) ? value : 0;
 };
 
-function computedTotal(row: TileRow): string {
-  const total = num(row.rateBox) * num(row.totalBox);
-  return total ? String(Math.round(total * 100) / 100) : "";
+function quantityUnitLabel(unit: TileRow["quantityUnit"]): "Box" | "Piece" {
+  return unit === "Pieces" ? "Piece" : "Box";
 }
 
 // ---------------------------------------------------------------------------
@@ -187,18 +171,22 @@ function useTilesDoc(docType: TilesDocType) {
   const [docNumberServer, setDocNumberServer] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("draft");
   const [customerId, setCustomerId] = useState<string | null>(null);
+  const customerIdRef = useRef<string | null>(null);
   const [customerSnapshot, setCustomerSnapshot] = useState<{ name: string; phone: string }>({ name: "", phone: "" });
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [header, setHeader] = useState<TilesHeader>({
     customerName: "", phone: "", reference: "", docDate: defaultDocDate(docType),
-    attendedBy: "", preparedBy: "", address: "", docNumber: "",
+    attendedBy: "", preparedBy: "", address: "", docNumber: "", transportationFee: "0",
   });
   const [rows, setRows] = useState<TileRow[]>([emptyRow()]);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [serverTotals, setServerTotals] = useState<{ subtotal: number; grandTotal: number; transportation: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(Boolean(routeId));
   const dirtyRef = useRef(false);
   const persistRef = useRef<() => Promise<string | null>>(async () => null);
+  const persistQueue = useRef<Promise<string | null>>(Promise.resolve(null));
+  const persistedIdRef = useRef<string | null>((routeId as string) || null);
 
   useEffect(() => {
     api.get<Customer[]>("/customers", { floorId: "ground-floor" }).then(setCustomers).catch(() => {});
@@ -215,7 +203,13 @@ function useTilesDoc(docType: TilesDocType) {
         setDocId(doc.id);
         setDocNumberServer(doc.number || null);
         setStatus(doc.status || "draft");
+        setServerTotals({
+          subtotal: Number(doc.subtotal || 0),
+          grandTotal: Number(doc.grand_total || 0),
+          transportation: Number(doc.transportation_fee || 0),
+        });
         setCustomerId(doc.customer_id || null);
+        customerIdRef.current = doc.customer_id || null;
         setCustomerSnapshot({ name: doc.customer_name || "", phone: doc.phone_snapshot || "" });
         setHeader({
           customerName: doc.customer_name || "",
@@ -226,6 +220,7 @@ function useTilesDoc(docType: TilesDocType) {
           preparedBy: doc.prepared_by || "",
           address: doc.address_snapshot || "",
           docNumber: doc.doc_number || doc.number || "",
+          transportationFee: doc.transportation_fee != null ? String(doc.transportation_fee) : "0",
         });
         const restored: TileRow[] = (doc.items || []).map((it: any): TileRow => ({
           key: it.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -240,12 +235,12 @@ function useTilesDoc(docType: TilesDocType) {
           size: it.size || "",
           rateSqft: it.rate_sqft != null ? String(it.rate_sqft) : "",
           boxSqft: it.box_sqft != null ? String(it.box_sqft) : "",
-          offerRate: it.offer_rate != null ? String(it.offer_rate) : "",
+          offerRate: it.offer_rate != null ? String(it.offer_rate) : (it.rate_sqft != null ? String(it.rate_sqft) : ""),
           rateBox: it.unit_price ? String(it.unit_price) : "",
-          rateBoxEdited: false,
           totalBox: it.qty ? String(it.qty) : "",
           pcsBox: it.pcs_per_box || "",
-          total: it.qty && it.unit_price ? String(Math.round(it.qty * it.unit_price * 100) / 100) : "",
+          quantityUnit: it.quantity_unit === "Pieces" ? "Pieces" : "Box",
+          total: it.net_amount != null ? String(it.net_amount) : "",
           totalEdited: false,
         }));
         setRows(restored.length ? restored : [emptyRow()]);
@@ -269,27 +264,9 @@ function useTilesDoc(docType: TilesDocType) {
     setRows((cur) => cur.map((row) => {
       if (row.key !== key) return row;
       const next = { ...row, ...patch };
-      let rateBoxChanged = "rateBox" in patch;
-      if (rateBoxChanged) {
-        next.rateBoxEdited = true;
-      } else if (("rateSqft" in patch || "boxSqft" in patch) && !next.rateBoxEdited) {
-        // Auto-derive rate/box = rate/sqft x box sqft-coverage whenever either
-        // input changes, unless the preparer has manually typed into
-        // rate/box directly (rateBoxEdited) — mirrors the totalEdited
-        // override pattern used for the TOTAL column below.
-        const sqft = num(next.boxSqft);
-        const rateSqftNum = num(next.rateSqft);
-        if (sqft > 0 && rateSqftNum > 0) {
-          next.rateBox = String(Math.round(rateSqftNum * sqft * 100) / 100);
-          rateBoxChanged = true;
-        }
-      }
-      if ("total" in patch) {
-        next.totalEdited = true;
-      } else if (rateBoxChanged || "totalBox" in patch) {
-        next.totalEdited = false;
-        next.total = computedTotal(next);
-      }
+      // Editable values are sent to the backend pricing engine. The
+      // presentation layer does not derive prices or line totals.
+      if ("total" in patch) next.totalEdited = true;
       return next;
     }));
     markDirty();
@@ -329,9 +306,6 @@ function useTilesDoc(docType: TilesDocType) {
       if (row.key !== key) return row;
       const boxSqft = history?.box_sqft != null ? String(history.box_sqft) : (specNum("sqft_per_box", "box_sqft") || row.boxSqft);
       const rateSqft = history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft);
-      const sqftNum = num(boxSqft);
-      const rateSqftNum = num(rateSqft);
-      const autoRateBox = sqftNum > 0 && rateSqftNum > 0 ? String(Math.round(rateSqftNum * sqftNum * 100) / 100) : "";
       const next: TileRow = {
         ...row,
         productId: product.id,
@@ -343,12 +317,11 @@ function useTilesDoc(docType: TilesDocType) {
         size: history?.size || product.size || product.dimensions || row.size,
         rateSqft,
         boxSqft,
-        rateBox: history?.rate_box != null ? String(history.rate_box) : (autoRateBox || specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox),
-        rateBoxEdited: false,
+        rateBox: history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox),
+        offerRate: history?.rate_sqft != null ? String(history.rate_sqft) : (row.offerRate || rateSqft),
         pcsBox: history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox,
         totalEdited: false,
       };
-      next.total = computedTotal(next);
       return next;
     }));
     if (history) toast.show(`Used ${customerId ? "this customer's" : ""} last rate for ${product.name}`.replace("  ", " "));
@@ -374,8 +347,9 @@ function useTilesDoc(docType: TilesDocType) {
           size: row.size.trim() || null,
           rate_sqft: row.rateSqft.trim() ? num(row.rateSqft) : null,
           box_sqft: row.boxSqft.trim() ? num(row.boxSqft) : null,
-          offer_rate: row.offerRate.trim() ? num(row.offerRate) : null,
+          offer_rate: row.offerRate.trim() ? num(row.offerRate) : (row.rateSqft.trim() ? num(row.rateSqft) : unitPrice),
           pcs_per_box: row.pcsBox.trim() || null,
+          quantity_unit: row.quantityUnit,
           sort_order: index,
         };
         if (row.lineId) item.id = row.lineId;
@@ -383,19 +357,39 @@ function useTilesDoc(docType: TilesDocType) {
       });
   }, [rows]);
 
+  // Show the same subtotal/transport/grand-total relationship immediately
+  // while the debounced autosave round-trip is in flight.
+  const previewTotals = useMemo(() => {
+    const subtotal = rows.reduce((sum, row) => {
+      if (!row.productId || !row.name.trim()) return sum;
+      const qty = num(row.totalBox) || 1;
+      const rateBox = num(row.rateBox) || (num(row.rateSqft) * num(row.boxSqft));
+      const lineTotal = row.totalEdited && num(row.total) > 0 ? num(row.total) : qty * rateBox;
+      return sum + lineTotal;
+    }, 0);
+    const transportation = docType === "tiles_quotation" ? num(header.transportationFee) : 0;
+    return {
+      subtotal: Math.round(subtotal * 100) / 100,
+      transportation,
+      grandTotal: Math.round((subtotal + transportation) * 100) / 100,
+    };
+  }, [rows, header.transportationFee, docType]);
+
   const persist = useCallback(async ({ silent = true }: { silent?: boolean } = {}): Promise<string | null> => {
-    const name = header.customerName.trim();
-    if (!name) {
-      toast.show("Enter the customer name first");
-      return null;
-    }
-    setSaveState("saving");
-    try {
+    const run = async (): Promise<string | null> => {
+      const name = header.customerName.trim();
+      if (!name) {
+        toast.show("Enter the customer name first");
+        return null;
+      }
+      setSaveState("saving");
+      try {
       // 1. Resolve the customer — reuse an explicit pick, else create one.
-      let cid = customerId;
+      let cid = customerIdRef.current || customerId;
       if (!cid) {
         const created = await api.post<Customer>("/customers", { name, phone: header.phone.trim() || null }, { floorId: "ground-floor" });
         cid = created.id;
+        customerIdRef.current = created.id;
         setCustomerId(created.id);
         setCustomerSnapshot({ name, phone: header.phone.trim() });
         setCustomers((cur) => [created, ...cur]);
@@ -416,11 +410,13 @@ function useTilesDoc(docType: TilesDocType) {
         address_snapshot: header.address.trim() || null,
         doc_date: header.docDate.trim() || null,
         doc_number: header.docNumber.trim() || null,
+        transportation_fee: docType === "tiles_quotation" ? num(header.transportationFee) : 0,
       };
-      let id = docId;
+      let id = persistedIdRef.current || docId;
       if (!id) {
         const created = await api.post<{ id: string; number: string }>("/quotations", { ...payload, doc_type: docType }, { floorId: "ground-floor" });
         id = created.id;
+        persistedIdRef.current = created.id;
         setDocId(created.id);
         setDocNumberServer(created.number);
         if (docType === "tiles_quotation" && !header.docNumber.trim()) {
@@ -428,16 +424,49 @@ function useTilesDoc(docType: TilesDocType) {
         }
         router.setParams({ id: created.id });
       } else {
-        await api.patch(`/quotations/${id}`, { ...payload, silent, reason: silent ? undefined : "Saved from tiles builder" });
+        const fresh = await api.patch<any>(`/quotations/${id}`, { ...payload, silent, reason: silent ? undefined : "Saved from tiles builder" });
+        setServerTotals({
+          subtotal: Number(fresh.subtotal || 0),
+          grandTotal: Number(fresh.grand_total || 0),
+          transportation: Number(fresh.transportation_fee || 0),
+        });
+        if (Array.isArray(fresh.items)) {
+          setRows((current) => fresh.items.map((item: any, index: number) => ({
+            ...(current[index] || emptyRow()),
+            key: current[index]?.key || item.id || `${Date.now()}-${index}`,
+            lineId: item.id || current[index]?.lineId || null,
+            productId: item.product_id || null,
+            sku: item.sku || "",
+            categoryId: item.category_id || null,
+            name: item.name || "",
+            image: item.image || null,
+            mrp: item.mrp ?? null,
+            area: item.room || "",
+            size: item.size || "",
+            rateSqft: item.rate_sqft != null ? String(item.rate_sqft) : "",
+            boxSqft: item.box_sqft != null ? String(item.box_sqft) : "",
+            offerRate: item.offer_rate != null ? String(item.offer_rate) : (item.rate_sqft != null ? String(item.rate_sqft) : ""),
+            rateBox: item.unit_price != null ? String(item.unit_price) : "",
+            totalBox: item.qty != null ? String(item.qty) : "",
+            pcsBox: item.pcs_per_box || "",
+            quantityUnit: item.quantity_unit === "Pieces" ? "Pieces" : "Box",
+            total: item.net_amount != null ? String(item.net_amount) : "",
+            totalEdited: false,
+          })));
+        }
       }
       dirtyRef.current = false;
       setSaveState("saved");
       return id;
-    } catch (e: any) {
-      setSaveState("error");
-      toast.error(e?.detail || "Save failed");
-      return null;
-    }
+      } catch (e: any) {
+        setSaveState("error");
+        toast.error(e?.detail || "Save failed");
+        return null;
+      }
+    };
+    const queued = persistQueue.current.then(run, run);
+    persistQueue.current = queued.then(() => null, () => null);
+    return queued;
   }, [header, customerId, customerSnapshot, docId, docType, buildItems, router]);
   persistRef.current = () => persist({ silent: true });
 
@@ -447,13 +476,6 @@ function useTilesDoc(docType: TilesDocType) {
     const timer = setTimeout(() => { void persistRef.current(); }, 900);
     return () => clearTimeout(timer);
   }, [docId, header, rows]);
-
-  const save = useCallback(async () => {
-    setBusy("save");
-    const id = await persist({ silent: false });
-    setBusy(null);
-    if (id) toast.success("Saved");
-  }, [persist]);
 
   const generatePdf = useCallback(async () => {
     setBusy("pdf");
@@ -525,6 +547,7 @@ function useTilesDoc(docType: TilesDocType) {
 
   const pickCustomer = useCallback((customer: Customer) => {
     setCustomerId(customer.id);
+    customerIdRef.current = customer.id;
     setCustomerSnapshot({ name: customer.name, phone: customer.phone || "" });
     setHeader((cur) => ({ ...cur, customerName: customer.name, phone: customer.phone || cur.phone }));
     markDirty();
@@ -534,7 +557,7 @@ function useTilesDoc(docType: TilesDocType) {
     docId, docNumberServer, loading, header, setHeaderField, rows,
     updateRow, addRow, removeRow, applyProduct,
     customers, customerId, pickCustomer, setCustomerId,
-    saveState, busy, save, generatePdf, print, placeOrder,
+    saveState, busy, generatePdf, print, placeOrder, serverTotals, previewTotals,
     status, stage: tilesStage(docType, status), workflowAction, runWorkflowAction,
   };
 }
@@ -623,7 +646,7 @@ function CustomerNameField({
               {c.phone ? <Text style={suggestStyles.phone}>{c.phone}</Text> : null}
             </Pressable>
           ))}
-          <Text style={suggestStyles.hint}>Pick to reuse an existing customer — or keep typing to create a new one on save.</Text>
+          <Text style={suggestStyles.hint}>Pick to reuse an existing customer — or keep typing; changes save automatically.</Text>
         </View>
       ) : null}
     </View>
@@ -663,7 +686,7 @@ function ProductCell({
   return (
     <View style={{ flex: 1, alignSelf: "stretch", justifyContent: "center" }}>
       <CellInput value={row.name} onChangeText={onChangeName} bold={bold} multiline testID={testID ? `${testID}-name` : undefined} />
-      <Pressable onPress={onOpenPicker} hitSlop={13} style={productStyles.swapBtn} testID={testID ? `${testID}-swap` : undefined}>
+      <Pressable onPress={onOpenPicker} hitSlop={4} style={productStyles.swapBtn} testID={testID ? `${testID}-swap` : undefined}>
         <Feather name="refresh-cw" size={11} color="#666" />
       </Pressable>
     </View>
@@ -702,7 +725,7 @@ function RowSideControls({
         <Pressable
           onPress={onAdd}
           style={sideStyles.addBtn}
-          hitSlop={{ top: 12, left: 12, right: 12, bottom: 3 }}
+          hitSlop={{ top: 12, left: 0, right: 8, bottom: 3 }}
           testID="tiles-add-row"
           accessibilityLabel="Add product row"
         >
@@ -713,7 +736,7 @@ function RowSideControls({
         <Pressable
           onPress={onRemove}
           style={sideStyles.removeBtn}
-          hitSlop={{ top: 3, left: 14, right: 14, bottom: 14 }}
+          hitSlop={{ top: 3, left: 0, right: 10, bottom: 14 }}
           testID="tiles-remove-row"
           accessibilityLabel="Remove row"
         >
@@ -867,7 +890,7 @@ function TermsAndSignatureBlock() {
   );
 }
 
-function PriceSummary({ totals }: { totals: { boxes: number; subtotal: number } }) {
+function PriceSummary({ totals, doc }: { totals: { boxes: number; subtotal: number; grandTotal: number; transportation: number }; doc: ReturnType<typeof useTilesDoc> }) {
   return (
     <View style={{ marginTop: 14 }}>
       <Text style={sectionStyles.title}>PRICE SUMMARY</Text>
@@ -882,11 +905,16 @@ function PriceSummary({ totals }: { totals: { boxes: number; subtotal: number } 
         </View>
         <View style={priceStyles.row}>
           <Text style={priceStyles.label}>TRANSPORTATION</Text>
-          <Text style={priceStyles.value}>EXTRA</Text>
+          <CellInput
+            value={doc.header.transportationFee}
+            onChangeText={(value) => doc.setHeaderField("transportationFee", value)}
+            style={priceStyles.input}
+            testID="tiles-transportation-fee"
+          />
         </View>
         <View style={[priceStyles.row, priceStyles.totalRow]}>
           <Text style={[priceStyles.label, priceStyles.totalText]}>TOTAL QUOTE (Rs.)</Text>
-          <Text style={[priceStyles.value, priceStyles.totalText]}>{money(totals.subtotal)}</Text>
+          <Text style={[priceStyles.value, priceStyles.totalText]}>{money(totals.grandTotal)}</Text>
         </View>
       </View>
     </View>
@@ -931,6 +959,7 @@ const priceStyles = StyleSheet.create({
   totalRow: { backgroundColor: "#DADADA" },
   label: { flex: 1.7, fontSize: 11.5, fontWeight: "700", color: "#111", textAlign: "center", paddingVertical: 6 },
   value: { flex: 1, fontSize: 11.5, color: "#111", textAlign: "center", paddingVertical: 6, borderLeftWidth: 1, borderColor: GRID },
+  input: { flex: 1, fontSize: 11.5, color: "#111", paddingVertical: 4, borderLeftWidth: 1, borderColor: GRID },
   totalText: { color: "#E00000" },
 });
 
@@ -999,7 +1028,6 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
             </View>
             <View style={[selStyles.td, flex(5), { borderRightWidth: 0 }]}>
               <CellInput value={row.rateSqft} onChangeText={(t) => doc.updateRow(row.key, { rateSqft: t })} red bold testID={`tiles-rate-${index}`} />
-              <Text style={selStyles.rateSuffix}>PER SQFT</Text>
             </View>
             <RowSideControls
               isLast={index === doc.rows.length - 1}
@@ -1031,7 +1059,6 @@ const selStyles = StyleSheet.create({
   },
   th: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center" },
   cellText: { fontSize: 12.5, color: "#111" },
-  rateSuffix: { fontSize: 9, fontWeight: "700", color: "#E00000", marginTop: 2, textAlign: "center" },
 });
 
 // ---------------------------------------------------------------------------
@@ -1044,16 +1071,12 @@ const QUO_COLS = [9, 26, 16, 32, 16, 18, 16, 16, 14, 13, 18];
 function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
   const flex = (index: number) => ({ flex: QUO_COLS[index] });
-  const totals = useMemo(() => {
-    let boxes = 0;
-    let subtotal = 0;
-    for (const row of doc.rows) {
-      if (!row.productId) continue;
-      boxes += num(row.totalBox);
-      subtotal += row.totalEdited && num(row.total) > 0 ? num(row.total) : num(row.rateBox) * num(row.totalBox);
-    }
-    return { boxes, subtotal };
-  }, [doc.rows]);
+  const totals = {
+    boxes: 0,
+    transportation: doc.previewTotals.transportation,
+    subtotal: doc.previewTotals.subtotal,
+    grandTotal: doc.previewTotals.grandTotal,
+  };
   const itemCount = doc.rows.filter((r) => r.productId).length;
 
   const headLabels = [
@@ -1069,7 +1092,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
         Dear Sir/Madam, thank you for your interest in our products. We are pleased to offer our most competitive
         rates for premium tiles and sanitaryware, prepared as per your selection.
       </Text>
-      <PriceSummary totals={totals} />
+      <PriceSummary totals={totals} doc={doc} />
       <TermsAndSignatureBlock />
 
       <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
@@ -1105,10 +1128,6 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
             </View>
             <View style={[quoStyles.td, flex(5)]}>
               <CellInput value={row.rateSqft} onChangeText={(t) => doc.updateRow(row.key, { rateSqft: t })} red bold testID={`tiles-rate-sqft-${index}`} />
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 2, marginTop: 1 }}>
-                <Text style={quoStyles.sqftLabel}>/box</Text>
-                <CellInput value={row.boxSqft} onChangeText={(t) => doc.updateRow(row.key, { boxSqft: t })} style={quoStyles.sqftInput} testID={`tiles-box-sqft-${index}`} />
-              </View>
             </View>
             <View style={[quoStyles.td, flex(6)]}>
               <CellInput value={row.offerRate} onChangeText={(t) => doc.updateRow(row.key, { offerRate: t })} bold testID={`tiles-offer-rate-${index}`} />
@@ -1120,7 +1139,16 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
               <CellInput value={row.totalBox} onChangeText={(t) => doc.updateRow(row.key, { totalBox: t })} bold testID={`tiles-total-box-${index}`} />
             </View>
             <View style={[quoStyles.td, flex(9)]}>
-              <CellInput value={row.pcsBox} onChangeText={(t) => doc.updateRow(row.key, { pcsBox: t })} bold placeholder="Box/Pcs" testID={`tiles-pcs-box-${index}`} />
+              <Text style={{ fontSize: 11, fontWeight: "700" }}>{quantityUnitLabel(row.quantityUnit).toUpperCase()}</Text>
+              <Dropdown
+                label={quantityUnitLabel(row.quantityUnit)}
+                variant="ghost"
+                testID={`tiles-quantity-unit-${index}`}
+                items={[
+                  { label: "Box", onPress: () => doc.updateRow(row.key, { quantityUnit: "Box" }) },
+                  { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
+                ]}
+              />
             </View>
             <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
               <CellInput value={row.total} onChangeText={(t) => doc.updateRow(row.key, { total: t })} testID={`tiles-total-${index}`} />
@@ -1170,8 +1198,6 @@ const quoStyles = StyleSheet.create({
   },
   th: { fontSize: 10.2, fontWeight: "700", color: "#111", textAlign: "center" },
   cellText: { fontSize: 12, color: "#111" },
-  sqftLabel: { fontSize: 8.5, color: "#666" },
-  sqftInput: { fontSize: 9.5, width: 34, paddingVertical: 0 },
 });
 
 // ---------------------------------------------------------------------------
@@ -1179,12 +1205,12 @@ const quoStyles = StyleSheet.create({
 // exact same `doc` returned by useTilesDoc() above. See the file header for
 // why this exists as a genuinely separate presentation rather than a
 // reflowed/scaled paper. Every handler called below (updateRow, addRow,
-// removeRow, applyProduct, setHeaderField, save, generatePdf, print,
+// removeRow, applyProduct, setHeaderField, generatePdf, print,
 // placeOrder, runWorkflowAction, pickCustomer) is the identical function the
 // paper views call — one document model, one autosave path, one set of
 // backend calls.
 // ---------------------------------------------------------------------------
-type MobileFieldKey = "area" | "size" | "rateSqft" | "boxSqft" | "offerRate" | "rateBox" | "totalBox" | "pcsBox" | "total";
+type MobileFieldKey = "area" | "size" | "rateSqft" | "offerRate" | "rateBox" | "totalBox" | "pcsBox" | "total";
 type MobileFieldDef = { key: MobileFieldKey; label: string; numeric?: boolean; suffix?: string };
 
 // Mirrors SEL_COLS / QUO_COLS above — Selection intentionally carries only
@@ -1201,11 +1227,10 @@ const MOBILE_FIELDS: Record<TilesDocType, MobileFieldDef[]> = {
     { key: "area", label: "Area / Room" },
     { key: "size", label: "Size" },
     { key: "rateSqft", label: "Rate / Sq.Ft", numeric: true },
-    { key: "boxSqft", label: "Sq.Ft / Box", numeric: true },
     { key: "offerRate", label: "Offer Rate", numeric: true },
     { key: "rateBox", label: "Rate / Box", numeric: true },
     { key: "totalBox", label: "Qty (Boxes)", numeric: true },
-    { key: "pcsBox", label: "Pcs / Box" },
+    { key: "pcsBox", label: "Quantity Unit" },
     { key: "total", label: "Line Total (Rs.)", numeric: true },
   ],
 };
@@ -1245,7 +1270,7 @@ function MobileRowCard({
       <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" }}>
         <Pressable onPress={onOpenPicker} style={mobileStyles.thumb} testID={`mobile-thumb-${index}`}>
           {row.image ? (
-            <Image source={{ uri: row.image }} resizeMode="cover" style={{ width: "100%", height: "100%", borderRadius: radius.sm }} />
+            <ProductImage source={row.image} contentFit="contain" frameInset={2} borderRadius={radius.sm} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
           ) : (
             <Feather name="image" size={18} color={colors.onSurfaceMuted} />
           )}
@@ -1293,6 +1318,18 @@ function MobileRowCard({
             />
           </View>
         ))}
+        <View style={mobileStyles.fieldSlot}>
+          <Text style={type.label}>Quantity unit</Text>
+          <Dropdown
+            label={quantityUnitLabel(row.quantityUnit)}
+            variant="secondary"
+            testID={`mobile-quantity-unit-${index}`}
+            items={[
+              { label: "Box", onPress: () => doc.updateRow(row.key, { quantityUnit: "Box" }) },
+              { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
+            ]}
+          />
+        </View>
       </View>
     </View>
   );
@@ -1312,14 +1349,14 @@ function MobileTilesEditor({
   // a future refactor that hoists this into useTilesDoc() has almost nothing
   // to move.
   const totals = useMemo(() => {
-    let boxes = 0; let subtotal = 0;
-    for (const row of doc.rows) {
-      if (!row.productId) continue;
-      boxes += num(row.totalBox);
-      subtotal += row.totalEdited && num(row.total) > 0 ? num(row.total) : num(row.rateBox) * num(row.totalBox);
-    }
-    return { boxes, subtotal };
-  }, [doc.rows]);
+    const boxes = doc.rows.reduce((sum, row) => sum + (row.productId ? num(row.totalBox) : 0), 0);
+    return {
+      boxes,
+      subtotal: doc.previewTotals.subtotal,
+      grandTotal: doc.previewTotals.grandTotal,
+      transportation: isSelection ? 0 : doc.previewTotals.transportation,
+    };
+  }, [doc.rows, doc.previewTotals, isSelection]);
 
   const primaryAction = doc.workflowAction
     ? { label: doc.workflowAction.label, onPress: doc.runWorkflowAction, loading: doc.busy === "workflow", icon: doc.workflowAction.kind === "move_to_quotation" ? "arrow-right-circle" as const : "check-circle" as const }
@@ -1345,7 +1382,6 @@ function MobileTilesEditor({
           icon="more-vertical"
           variant="ghost"
           items={[
-            { label: doc.saveState === "saving" ? "Saving…" : "Save now", icon: "save", onPress: doc.save },
             isSelection
               ? { label: "Print selection", icon: "printer", onPress: doc.print }
               : { label: "Generate quotation PDF", icon: "file-text", onPress: doc.generatePdf },
@@ -1390,6 +1426,7 @@ function MobileTilesEditor({
                 </View>
               </View>
               <TextField label="Address" value={doc.header.address} onChangeText={(t: string) => doc.setHeaderField("address", t)} multiline testID="mobile-address" />
+              {!isSelection ? <TextField label="Transportation Fee" value={doc.header.transportationFee} onChangeText={(t: string) => doc.setHeaderField("transportationFee", t)} keyboardType="decimal-pad" testID="mobile-transportation-fee" /> : null}
             </Card>
 
             <View style={{ gap: spacing.sm }}>
@@ -1409,8 +1446,8 @@ function MobileTilesEditor({
                 <Text style={[mobileStyles.sectionTitle, { marginBottom: 6 }]}>PRICE SUMMARY</Text>
                 <SummaryLine label="Total boxes" value={totals.boxes ? String(Math.round(totals.boxes * 100) / 100) : "—"} />
                 <SummaryLine label="Subtotal" value={money(totals.subtotal)} />
-                <SummaryLine label="Transportation" value="Extra" />
-                <SummaryLine label="Total quote" value={money(totals.subtotal)} bold />
+                <SummaryLine label="Transportation" value={money(totals.transportation)} />
+                <SummaryLine label="Total quote" value={money(totals.grandTotal)} bold />
               </Card>
             ) : null}
           </ScrollView>
@@ -1551,10 +1588,6 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
   const isSelection = docType === "tiles_selection";
   const title = isSelection ? "Tiles Selection" : "Tiles Quotation";
 
-  const saveLabel = doc.saveState === "saving" ? "Saving…"
-    : doc.saveState === "saved" ? "Saved"
-    : doc.saveState === "error" ? "Retry save" : "Save";
-
   if (isPhone) {
     return <MobileTilesEditor docType={docType} doc={doc} router={router} />;
   }
@@ -1573,7 +1606,7 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
             </Text>
           </View>
         </View>
-        <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "flex-end", flexShrink: 1 }}>
           {doc.workflowAction ? (
             <ActionBtn
               label={doc.workflowAction.label}
@@ -1583,13 +1616,6 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
               testID="tiles-workflow-action"
             />
           ) : null}
-          <ActionBtn
-            label={saveLabel}
-            icon="save"
-            onPress={doc.save}
-            loading={doc.busy === "save"}
-            testID="tiles-save"
-          />
           <ActionBtn
             label={isSelection ? "Selection" : "Quotation"}
             icon="file-text"
@@ -1651,7 +1677,7 @@ function ActionBtn({
 
 const shellStyles = StyleSheet.create({
   topbar: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: spacing.lg, paddingVertical: 10, gap: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface,
