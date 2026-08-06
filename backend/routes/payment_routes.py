@@ -17,7 +17,7 @@ from urllib.parse import quote_plus
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 
 from auth import (
-    accessible_floor_ids, floor_for_write, floor_inherit, floor_query,
+    TILES_FLOOR_ID, accessible_floor_ids, floor_for_write, floor_inherit, floor_query,
     get_current_user, get_floor_scoped_or_404, require_min_role,
 )
 from db import client, db
@@ -36,6 +36,21 @@ router = APIRouter(prefix="/payments", tags=["payments"])
 
 # The set of quotation statuses we treat as "collectable orders".
 ORDER_STATUSES = ("ordered", "won")
+
+
+def _payment_scope_query(user: UserPublic, base: dict | None = None) -> dict:
+    """Include Ground Floor tile orders for users authorized to see them.
+
+    Payments is shared by the sanitary and tiles modules, while ``floor_query``
+    follows the user's ambient floor header. That header can remain on First
+    Floor while a manager is reviewing Ground Floor tiles, so payment screens
+    must include the fixed tiles floor explicitly.
+    """
+    queries = [floor_query(user, base)]
+    allowed = accessible_floor_ids(user)
+    if user.role in ("owner", "manager") or (allowed and TILES_FLOOR_ID in allowed):
+        queries.append({"$and": [{"floor_id": TILES_FLOOR_ID}, base or {}]})
+    return queries[0] if len(queries) == 1 else {"$or": queries}
 
 MODE_LABELS = {
     "cash": "Cash",
@@ -114,7 +129,7 @@ def _iso_month(iso_ts: str) -> str:
 async def payment_stats(user: UserPublic = Depends(get_current_user)):
     """Four KPIs: Total Outstanding · Collected This Month · Active Orders · Fully Paid."""
     orders = await db.quotations.find(
-        floor_query(user, {"status": {"$in": list(ORDER_STATUSES)}}),
+        _payment_scope_query(user, {"status": {"$in": list(ORDER_STATUSES)}}),
         {"_id": 0, "id": 1, "grand_total": 1},
     ).to_list(2000)
     ids = [o["id"] for o in orders]
@@ -136,7 +151,7 @@ async def payment_stats(user: UserPublic = Depends(get_current_user)):
     # Collected this month
     this_month = _iso_month(datetime.now(timezone.utc).isoformat())
     pipeline = [
-        {"$match": floor_query(user, {"status": "completed"})},
+        {"$match": _payment_scope_query(user, {"status": "completed"})},
         {"$group": {"_id": {"$substr": [{"$ifNull": ["$paid_at", "$created_at"]}, 0, 7]}, "total": {"$sum": "$amount"}}},
     ]
     rows = await db.payments.aggregate(pipeline).to_list(60)
@@ -173,7 +188,7 @@ async def list_orders(
         ]
 
     docs = await db.quotations.find(
-        floor_query(user, query), {"_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
+        _payment_scope_query(user, query), {"_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
                 "grand_total": 1, "status": 1, "updated_at": 1, "created_at": 1, "notes": 1},
     ).sort("updated_at", -1).to_list(limit * 2)
 
@@ -214,7 +229,7 @@ async def list_orders(
 # ---------------------------------------------------------------------------
 @router.get("/orders/{order_id}")
 async def order_detail(order_id: str, user: UserPublic = Depends(get_current_user)):
-    doc = await db.quotations.find_one(floor_query(user, {"id": order_id}), {"_id": 0})
+    doc = await db.quotations.find_one(_payment_scope_query(user, {"id": order_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Order not found")
     if doc.get("status") not in ORDER_STATUSES:
@@ -276,7 +291,7 @@ async def create_payment(
         existing = await db.payments.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
         if existing:
             return existing
-    quot = await db.quotations.find_one(floor_query(user, {"id": body.quotation_id}), {"_id": 0})
+    quot = await db.quotations.find_one(_payment_scope_query(user, {"id": body.quotation_id}), {"_id": 0})
     if not quot:
         raise HTTPException(status_code=404, detail="Order not found")
     if quot.get("status") not in ORDER_STATUSES:
@@ -300,7 +315,10 @@ async def create_payment(
         recorded_by=user.id,
         recorded_by_name=user.full_name,
         idempotency_key=idempotency_key,
-        floor_id=floor_for_write(user),
+        # Payments inherit the quotation's floor. The caller's ambient floor
+        # header may still point at First Floor while collecting a Ground Floor
+        # tiles order, and payment records must remain joinable to that order.
+        floor_id=quot.get("floor_id") or floor_for_write(user),
     )
     async def _check_and_insert(session=None):
         """Balance check + insert, optionally inside a transaction session."""
@@ -430,7 +448,7 @@ async def list_payments(
     limit: int = Query(500, ge=1, le=2000),
     user: UserPublic = Depends(get_current_user),
 ):
-    docs = await db.payments.find(floor_query(user), {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit + 1).to_list(limit + 1)
+    docs = await db.payments.find(_payment_scope_query(user), {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit + 1).to_list(limit + 1)
     response.headers["X-Has-More"] = "true" if len(docs) > limit else "false"
     return docs[:limit]
 

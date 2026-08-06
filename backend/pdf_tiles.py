@@ -369,7 +369,7 @@ def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | 
 # ===========================================================================
 # SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
 # RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — sums to PAGE_W_MM (194mm).
-_QUO_COLS = [9 * mm, 26 * mm, 16 * mm, 32 * mm, 16 * mm, 18 * mm, 16 * mm, 16 * mm, 14 * mm, 13 * mm, 18 * mm]
+_QUO_COLS = [9 * mm, 25 * mm, 17 * mm, 33 * mm, 16 * mm, 18 * mm, 16 * mm, 16 * mm, 14 * mm, 13 * mm, 23 * mm]
 
 
 def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
@@ -385,7 +385,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
     items = quotation.get("items") or []
 
     total_boxes = sum(float(item.get("qty") or 0) for item in items)
-    item_subtotal = sum(float(item.get("qty") or 0) * float(item.get("unit_price") or 0) for item in items)
+    item_subtotal = float(quotation.get("subtotal") or sum(float(item.get("net_amount") or 0) for item in items))
     transportation_fee = float(quotation.get("transportation_fee") or 0)
     subtotal = item_subtotal
     total_quote = float(quotation.get("grand_total") or (item_subtotal + transportation_fee))
@@ -425,14 +425,14 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
     rows: list[list[object]] = [head]
     for index, item in enumerate(items, 1):
         qty = float(item.get("qty") or 0)
-        rate_box = float(item.get("unit_price") or 0)
+        rate_box = float(item.get("rate_box") if item.get("rate_box") is not None else (item.get("unit_price") or 0))
         offer_rate = float(item.get("offer_rate") if item.get("offer_rate") is not None else (item.get("rate_sqft") if item.get("rate_sqft") is not None else item.get("unit_price") or 0))
-        line_total = qty * rate_box
+        line_total = float(item.get("net_amount") if item.get("net_amount") is not None else qty * float(item.get("unit_price") or 0))
         rate_sqft_text = _fmt_rate_sqft(item.get("rate_sqft"))
         quantity_unit = item.get("quantity_unit") or "Box"
         rows.append([
             Paragraph(str(index), styles["cell"]),
-            _img(item.get("image"), width_mm=24, height_mm=15),
+            _img(item.get("image"), width_mm=22, height_mm=18),
             Paragraph(_escape(item.get("room") or ""), styles["cell"]),
             Paragraph(_escape(item.get("name") or ""), styles["cellBold"]),
             Paragraph(_escape(item.get("size") or ""), styles["cell"]),
@@ -454,12 +454,11 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
         ("BACKGROUND", (0, -1), (-1, -1), HEADER_GREY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
     for r in range(2, len(rows) - 1, 2):  # zebra every 2nd item row (not the trailing TOTAL row)
         style_cmds.append(("BACKGROUND", (0, r), (-1, r), ZEBRA))
-    row_heights = [9.5 * mm] + [22 * mm] * (len(rows) - 2) + [7 * mm]
-    table = Table(rows, colWidths=_QUO_COLS, rowHeights=row_heights, repeatRows=1)
+    table = Table(rows, colWidths=_QUO_COLS, repeatRows=1)
     table.setStyle(TableStyle(style_cmds))
     story.append(table)
 

@@ -28,13 +28,21 @@ def normalize_tile_line_item(item: QuotationLineItem) -> QuotationLineItem:
     here—not in a presentation component. Offer Rate is the per-SQ.FT rate
     supplied by the row, never the derived per-box amount.
     """
-    if item.rate_sqft is not None and item.box_sqft is not None:
-        rate_sqft = float(item.rate_sqft)
-        box_sqft = float(item.box_sqft)
-        if rate_sqft >= 0 and box_sqft >= 0:
-            item.unit_price = round(rate_sqft * box_sqft, 2)
+    if item.rate_sqft is None and item.offer_rate is not None:
+        item.rate_sqft = item.offer_rate
     if item.offer_rate is None:
         item.offer_rate = item.rate_sqft if item.rate_sqft is not None else item.unit_price
+    rate_box = item.rate_box
+    if rate_box is None and item.rate_sqft is not None and item.box_sqft is not None:
+        rate_box = round(float(item.rate_sqft) * float(item.box_sqft), 2)
+    if rate_box is None:
+        rate_box = item.unit_price
+    item.rate_box = round(max(0.0, float(rate_box)), 2)
+    try:
+        pcs = float(str(item.pcs_per_box or "").replace(",", ""))
+    except ValueError:
+        pcs = 0
+    item.unit_price = round(item.rate_box / pcs, 2) if item.quantity_unit == "Pieces" and pcs > 0 else item.rate_box
     return item
 
 

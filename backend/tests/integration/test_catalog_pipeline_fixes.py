@@ -421,9 +421,7 @@ class TestPipelineEndToEnd:
         from catalog_pipeline.orchestrator import run_pipeline
 
         xlsx = self._tiny_vitra_xlsx()
-        result = asyncio.get_event_loop().run_until_complete(
-            run_pipeline("Vitra", "vitra_test.xlsx", xlsx)
-        )
+        result = asyncio.run(run_pipeline("Vitra", "vitra_test.xlsx", xlsx))
         assert "certification" in result
         cert = result["certification"]
         assert "cross_family_skus" in cert, "orchestrator dropped the new field"

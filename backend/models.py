@@ -443,6 +443,7 @@ class QuotationLineItem(BaseModel):
     # the derived rate per box and `qty` the quantity — so existing totals math holds.
     size: Optional[str] = None             # e.g. "1200X1800"
     rate_sqft: Optional[float] = Field(default=None, ge=0)
+    rate_box: Optional[float] = Field(default=None, ge=0)
     pcs_per_box: Optional[str] = None      # catalog metadata; UI/PDF show the quantity unit instead
     box_sqft: Optional[float] = Field(default=None, ge=0)  # sqft covered by one box — rate_sqft x box_sqft auto-derives unit_price (rate/box)
     offer_rate: Optional[float] = Field(default=None, ge=0)  # quotation display rate per SQ.FT; informational, does not feed totals

@@ -202,13 +202,18 @@ class TestOrderPlacementCreatesOrderCreatedMovement:
             pytest.skip("No customers available to attach a test quotation to")
         customer_id = customer_list[0]["id"]
 
-        r = api_client.get(f"{BASE_URL}/api/products", params={"page_size": 5})
+        r = api_client.get(
+            f"{BASE_URL}/api/products", params={"page_size": 60},
+            headers={"X-Floor-Id": "ground-floor"},
+        )
         assert r.status_code == 200
         products = r.json()
         product_list = products.get("products") or products.get("items") or (products if isinstance(products, list) else [])
         if not product_list:
             pytest.skip("No products available to build a test quotation line")
-        product = product_list[0]
+        product = next((p for p in product_list if p.get("floor_id") == "ground-floor"), None)
+        if not product:
+            pytest.skip("No Ground Floor tile product available to build a tile quotation line")
 
         line_item = {
             "product_id": product["id"], "sku": product.get("sku", "TEST-SKU"), "name": product.get("name", "TEST_Product"),

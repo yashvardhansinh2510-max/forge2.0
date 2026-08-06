@@ -655,7 +655,7 @@ async def tiles_product_history(
                     "doc_date": doc.get("doc_date") or doc.get("created_at"),
                     "size": item.get("size"),
                     "rate_sqft": item.get("rate_sqft"),
-                    "rate_box": item.get("unit_price"),
+                    "rate_box": item.get("rate_box") if item.get("rate_box") is not None else item.get("unit_price"),
                     "pcs_per_box": item.get("pcs_per_box"),
                     "box_sqft": item.get("box_sqft"),
                 }
@@ -924,7 +924,11 @@ async def _brand_grouped_preview(doc: dict) -> dict:
         group["items"].append({**item, "unit_cost": unit_cost})
         group["subtotal"] += qty * unit_cost
     cards = [{**group, "subtotal": round(group["subtotal"], 2), "item_count": len(group["items"])} for group in grouped.values()]
-    return {"quotation_id": doc["id"], "quotation_number": doc.get("number"), "doc_type": doc.get("doc_type", "standard"), "customer_id": doc.get("customer_id"), "customer_name": doc.get("customer_name"), "brands": sorted(cards, key=lambda card: card["brand_name"]), "total_value": round(sum(card["subtotal"] for card in cards), 2)}
+    # Purchase-order cards represent material subtotals, while the customer
+    # quotation total also includes transport. The review screen must show
+    # the same grand total that will be journaled as the payment/customer-order
+    # amount; otherwise Place Order appears to change the price by freight.
+    return {"quotation_id": doc["id"], "quotation_number": doc.get("number"), "doc_type": doc.get("doc_type", "standard"), "customer_id": doc.get("customer_id"), "customer_name": doc.get("customer_name"), "brands": sorted(cards, key=lambda card: card["brand_name"]), "total_value": round(float(doc.get("grand_total") or sum(card["subtotal"] for card in cards)), 2)}
 
 
 @router.get("/{quotation_id}/place-order/preview")

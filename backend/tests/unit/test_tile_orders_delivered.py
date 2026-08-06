@@ -123,6 +123,10 @@ class _FakeDispatches:
 class _FakeChalans:
     def __init__(self, chalan): self.chalan = chalan
     async def find_one(self, _query, *_a, session=None, **_kw): return dict(self.chalan)
+    def find(self, _query, *_a, **_kw):
+        row = dict(self.chalan)
+        row["dispatch_id"] = "d-1"
+        return _Cursor([row])
 
 
 class _FakePOs:

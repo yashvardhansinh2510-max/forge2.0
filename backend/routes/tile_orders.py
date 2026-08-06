@@ -881,11 +881,26 @@ async def mark_dispatch_delivered(
                 siblings = await db.dispatches.find(
                     tiles_floor_query(user, {"purchase_order_id": po_id, "is_deleted": False}), {"_id": 0},
                 ).to_list(2000)
+                sibling_ids = [sibling["id"] for sibling in siblings]
+                chalans = await db.chalans.find(
+                    {"dispatch_id": {"$in": sibling_ids}, "is_deleted": False},
+                    {"_id": 0, "dispatch_id": 1, "items": 1},
+                ).to_list(2000)
+                chalan_items_by_dispatch = {
+                    chalan["dispatch_id"]: chalan.get("items", []) for chalan in chalans
+                }
                 undelivered: set[str] = set()
                 dispatched_items: set[str] = set()
                 for sibling in siblings:
                     is_open = sibling["id"] != dispatch_id and not sibling.get("delivered_at")
                     for line in sibling.get("ready_batches_consumed", []):
+                        dispatched_items.add(line["po_item_id"])
+                        if is_open:
+                            undelivered.add(line["po_item_id"])
+                    # Godown-origin dispatches do not consume a ReadyBatch;
+                    # their immutable Chalan is the source of truth for the
+                    # PO items that were actually dispatched.
+                    for line in chalan_items_by_dispatch.get(sibling["id"], []):
                         dispatched_items.add(line["po_item_id"])
                         if is_open:
                             undelivered.add(line["po_item_id"])

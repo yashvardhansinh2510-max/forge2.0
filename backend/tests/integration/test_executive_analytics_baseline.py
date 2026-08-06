@@ -112,7 +112,15 @@ def test_dashboard_ordered_revenue_matches_manual_sum(base_url: str, auth_header
 
     q_r = requests.get(f"{base_url}/api/quotations", headers=auth_headers, timeout=45)
     assert q_r.status_code == 200
-    quotes = q_r.json()
+    tile_q_r = requests.get(
+        f"{base_url}/api/quotations", params={"doc_type": "tiles_quotation"},
+        headers=auth_headers, timeout=45,
+    )
+    assert tile_q_r.status_code == 200
+    # The ordinary quotation list follows the ambient sanitary floor, while
+    # tiles are intentionally fixed to Ground Floor. Executive "all floors"
+    # must reconcile against both surfaces.
+    quotes = q_r.json() + tile_q_r.json()
     now = datetime.utcnow()
     month_start = datetime(now.year, now.month, 1)
     ordered_sum = 0.0
