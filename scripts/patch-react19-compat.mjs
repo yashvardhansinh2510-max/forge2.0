@@ -23,6 +23,8 @@ for (const relativePath of [
   "../node_modules/react-native-web/dist/exports/TouchableWithoutFeedback/index.js",
   "../node_modules/react-native-gesture-handler/lib/commonjs/handlers/createHandler.js",
   "../node_modules/react-native-gesture-handler/lib/module/handlers/createHandler.js",
+  "../node_modules/react-native-gesture-handler/lib/commonjs/web/utils.js",
+  "../node_modules/react-native-gesture-handler/lib/module/web/utils.js",
 ]) {
   const packageFile = resolve(decodeURIComponent(new URL(relativePath, import.meta.url).pathname));
   if (!existsSync(packageFile)) continue;
@@ -30,5 +32,7 @@ for (const relativePath of [
   const target = /React\.version\.startsWith\('19'\) \? element\.props\.ref : element\.ref|(?:(?:\(0, _utils2\.isReact19\)\(\)|isReact19\(\))) \? child\.props\.ref : child\.ref/;
   if (target.test(source)) {
     writeFileSync(packageFile, source.replace(target, source.includes("element.props.ref") ? "element.props?.ref" : "child.props?.ref"));
+  } else if (source.includes("node.ref?.rngh")) {
+    writeFileSync(packageFile, source.replaceAll("node.ref?.rngh", "node.props?.ref?.rngh"));
   }
 }
