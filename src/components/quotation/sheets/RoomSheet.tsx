@@ -28,7 +28,7 @@ export function RoomSheet() {
       footer={
         <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
           <Button label="Cancel" variant="secondary" onPress={close} />
-          <Button label={cur?.kind === "add" ? "Add" : "Save"} testID="save-room" onPress={submit} />
+          <Button label={cur?.kind === "add" ? "Add" : "Done"} testID="submit-room" onPress={submit} />
         </View>
       }
     >
