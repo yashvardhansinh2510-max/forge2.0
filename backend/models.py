@@ -549,6 +549,9 @@ class Quotation(TimestampedModel):
     subtotal: float = 0
     discount_total: float = 0            # total of all discounts (item + cat + project)
     grand_total: float = 0
+    # Ground Floor Tiles only. Kept on the quotation aggregate so it is
+    # persisted, recalculated, rendered in the PDF, and survives reloads.
+    transportation_fee: float = Field(default=0, ge=0)
     notes: Optional[str] = None
     valid_until: Optional[str] = None
     created_by: str                      # user id
@@ -583,6 +586,7 @@ class QuotationCreate(BaseModel):
     address_snapshot: Optional[str] = None
     doc_date: Optional[str] = None
     doc_number: Optional[str] = None
+    transportation_fee: float = Field(default=0, ge=0)
 
 
 class QuotationUpdate(BaseModel):
@@ -607,6 +611,7 @@ class QuotationUpdate(BaseModel):
     address_snapshot: Optional[str] = None
     doc_date: Optional[str] = None
     doc_number: Optional[str] = None
+    transportation_fee: Optional[float] = Field(default=None, ge=0)
     reason: Optional[str] = None         # for revision log
     silent: bool = False                 # if true, skip revision snapshot (autosave)
 
@@ -983,6 +988,12 @@ FollowupChannel = Literal["call", "whatsapp", "email", "visit"]
 FollowupPriorityLevel = Literal["critical", "high", "medium", "low"]
 FollowupStatus = Literal["open", "snoozed", "done", "dismissed"]
 FollowupOutcome = Literal["interested", "call_back", "no_answer", "rejected", "converted"]
+NotebookStatus = Literal["new", "pending", "won", "lost"]
+NotebookField = Literal[
+    "customer_name", "customer_phone", "address", "kitchen_type",
+    "referred_by", "architect_interior_designer", "notebook_status", "notes",
+    "quotation_price", "estimated_value", "quotation_date",
+]
 
 
 class Followup(TimestampedModel):
@@ -1026,6 +1037,19 @@ class Followup(TimestampedModel):
     completed_at: Optional[str] = None
     completed_outcome: Optional[FollowupOutcome] = None
     notes: Optional[str] = None
+    # Kitchen/Furniture notebook fields. These live on the shared followups
+    # document so the notebook reuses existing identity, activity, and floor
+    # isolation services instead of creating a second domain model.
+    notebook_key: Optional[str] = None
+    is_converted: bool = False
+    address: Optional[str] = None
+    kitchen_type: Optional[Literal["GI", "SS"]] = None
+    referred_by: Optional[str] = None
+    architect_interior_designer: Optional[str] = None
+    notebook_status: NotebookStatus = "new"
+    quotation_price: Optional[float] = None
+    estimated_value: Optional[float] = None
+    quotation_date: Optional[str] = None
 
 
 class FollowupCreate(BaseModel):
@@ -1068,6 +1092,59 @@ class FollowupCallOutcomePayload(BaseModel):
 
 class FollowupContactPayload(BaseModel):
     channel: FollowupChannel
+
+
+# ---------- Project-workspace follow-ups (Kitchen / Furniture) ----------
+ProjectFollowupStatus = Literal[
+    "new", "pending", "contacted", "site_visit_scheduled",
+    "site_visit_completed", "won", "lost", "quotation_created",
+]
+ProjectStage = Literal[
+    "quotation_followup", "revision", "approved", "production",
+    "installation", "completed",
+]
+
+
+class ProjectFollowupCreate(BaseModel):
+    customer_id: Optional[str] = None
+    customer_name: str
+    mobile_number: Optional[str] = None
+    address: Optional[str] = None
+    business_type: str
+    referred_by: Optional[str] = None
+    architect_interior_designer: Optional[str] = None
+    notes: Optional[str] = None
+    followup_date: Optional[str] = None
+    next_followup: Optional[str] = None
+    status: ProjectFollowupStatus = "new"
+
+
+class ProjectFollowupUpdate(BaseModel):
+    customer_name: Optional[str] = None
+    mobile_number: Optional[str] = None
+    address: Optional[str] = None
+    business_type: Optional[str] = None
+    referred_by: Optional[str] = None
+    architect_interior_designer: Optional[str] = None
+    notes: Optional[str] = None
+    followup_date: Optional[str] = None
+    next_followup: Optional[str] = None
+    status: Optional[ProjectFollowupStatus] = None
+    estimated_budget: Optional[float] = None
+    quotation_version: Optional[int] = None
+    revision_count: Optional[int] = None
+    quotation_amount: Optional[float] = None
+    discount: Optional[float] = None
+    expected_closing: Optional[str] = None
+    current_stage: Optional[ProjectStage] = None
+    payment_terms: Optional[str] = None
+    installation_date: Optional[str] = None
+    remarks: Optional[str] = None
+    lost_reason: Optional[str] = None
+
+
+class ProjectLostReason(BaseModel):
+    reason: str
 
 
 class FollowupSavedView(TimestampedModel):
