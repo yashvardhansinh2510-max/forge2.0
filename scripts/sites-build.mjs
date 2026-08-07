@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 
 // Sites packages the Expo web export as a Cloudflare-compatible worker.
 
-const expo = spawn('npx', ['expo', 'export', '--platform', 'web', '--output-dir', 'dist/client'], {
+const expo = spawn('npx', ['expo', 'export', '--clear', '--platform', 'web', '--output-dir', 'dist/client'], {
   stdio: 'inherit',
   shell: process.platform === 'win32',
 });

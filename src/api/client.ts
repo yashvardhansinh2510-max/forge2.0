@@ -4,7 +4,10 @@ import { storage } from "@/src/utils/storage";
 const SELECTED_FLOOR_KEY = "forge.active-floor";
 
 // Empty string ⇒ same-origin fetch. Kubernetes ingress routes `/api/*` to backend.
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+const configuredBase = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+const BASE = !__DEV__ && (!configuredBase || configuredBase.startsWith("http://localhost"))
+  ? "https://buildcon-backend-production.up.railway.app"
+  : configuredBase;
 
 // APP_STORE_PLAY_STORE_AUDIT.md Blocker #4: a release build whose
 // EXPO_PUBLIC_BACKEND_URL is plain http:// boots to a fully network-dead
