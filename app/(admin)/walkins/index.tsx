@@ -29,22 +29,22 @@ async function openUrl(url: string) {
   }
 }
 
-export default function WalkInsScreen() {
+export default function WalkInsScreen({ fixedFloorId, title = "Walk-ins" }: { fixedFloorId?: string; title?: string } = {}) {
   const router = useRouter();
   const { floors } = useFloorAccess();
   const [dashboard, setDashboard] = useState<WalkInsDashboard | null>(null);
   const [items, setItems] = useState<WalkIn[]>([]);
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
-  const [floorId, setFloorId] = useState("");
+  const [floorId, setFloorId] = useState(fixedFloorId || "");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [dash, list] = await Promise.all([
-        walkinsApi.dashboard(),
-        walkinsApi.list({ status: status || undefined, floor_id: floorId || undefined, search: search || undefined }),
+        walkinsApi.dashboard(fixedFloorId ? { floorId: fixedFloorId } : undefined),
+        walkinsApi.list({ status: status || undefined, floor_id: floorId || undefined, search: search || undefined }, fixedFloorId ? { floorId: fixedFloorId } : undefined),
       ]);
       setDashboard(dash);
       setItems(list);
@@ -53,7 +53,7 @@ export default function WalkInsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [status, floorId, search]);
+  }, [fixedFloorId, status, floorId, search]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -63,7 +63,7 @@ export default function WalkInsScreen() {
   };
   const whatsAppCustomer = async (w: WalkIn) => {
     try {
-      const res = await walkinsApi.contact(w.id, "whatsapp");
+      const res = await walkinsApi.contact(w.id, "whatsapp", fixedFloorId ? { floorId: fixedFloorId } : undefined);
       if (res.wa_url) await openUrl(res.wa_url);
       toast.success("WhatsApp opened");
     } catch (e: any) {
@@ -72,7 +72,7 @@ export default function WalkInsScreen() {
   };
   const scheduleSelection = async (w: WalkIn) => {
     try {
-      await walkinsApi.update(w.id, { status: "selection_scheduled" });
+      await walkinsApi.update(w.id, { status: "selection_scheduled" }, fixedFloorId ? { floorId: fixedFloorId } : undefined);
       toast.success("Marked as Selection Scheduled");
       load();
     } catch (e: any) {
@@ -83,9 +83,9 @@ export default function WalkInsScreen() {
   return (
     <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
       <PageHeader
-        title="Walk-ins" overline="CRM"
+        title={title} overline="CRM"
         subtitle="Every customer journey starts here"
-        actions={<Button label="Log Walk-in" icon="user-plus" onPress={() => router.push("/(admin)/walkins/new" as any)} testID="walkin-new-btn" />}
+        actions={<Button label="Log Walk-in" icon="user-plus" onPress={() => router.push((fixedFloorId ? `/(admin)/walkins/new?floor_id=${fixedFloorId}` : "/(admin)/walkins/new") as any)} testID="walkin-new-btn" />}
       />
       <ScrollView contentContainerStyle={{ padding: spacing.xl }}>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.lg }}>
@@ -109,7 +109,7 @@ export default function WalkInsScreen() {
             <Chip key={s.value} label={s.label} active={status === s.value} onPress={() => setStatus(s.value)} />
           ))}
         </View>
-        {floors.length > 1 ? (
+        {floors.length > 1 && !fixedFloorId ? (
           <View style={{ flexDirection: "row", gap: spacing.xs, flexWrap: "wrap", marginBottom: spacing.lg }}>
             <Chip label="All departments" active={floorId === ""} onPress={() => setFloorId("")} />
             {floors.map((f) => (

@@ -18,6 +18,8 @@ import {
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
 import { tilesStageLabel } from "@/src/components/tiles/tilesStage";
+import { TILES_FLOOR_ID } from "@/src/constants/floors";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { toast } from "@/src/components/Toast";
 import { colors, icon as iconSize, money, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
 import {
@@ -121,6 +123,8 @@ export default function CustomerDetail() {
   }>();
   const router = useRouter();
   const { isDesktop } = useBp();
+  const { selectedFloorId } = useFloorAccess();
+  const isTilesFloor = selectedFloorId === TILES_FLOOR_ID;
   const id = firstParam(rawId) || "";
   const routeSearch = firstParam(rawQ) || "";
   const routeBrand = firstParam(rawBrand);
@@ -219,6 +223,14 @@ export default function CustomerDetail() {
 
   const loadWorkspace = useCallback(async (filters: WorkspaceServerFilters, requestId = invalidateWorkspace()) => {
     if (!id) return;
+    // Ground Floor has its own Tile Orders movement system.  Do not load the
+    // Sanitary Bathroom purchase tracker here; its stage catalog is a
+    // different workflow and was leaking into this customer screen.
+    if (isTilesFloor) {
+      setWorkspace(null);
+      setWorkspaceLoading(false);
+      return;
+    }
     try {
       const params = new URLSearchParams();
       if (filters.productSearch) params.set("q", filters.productSearch);
@@ -239,7 +251,7 @@ export default function CustomerDetail() {
     } finally {
       if (requestId === workspaceRequestIdRef.current) setWorkspaceLoading(false);
     }
-  }, [id, invalidateWorkspace]);
+  }, [id, invalidateWorkspace, isTilesFloor]);
 
   const reloadAll = useCallback(async () => {
     await Promise.all([
@@ -529,6 +541,16 @@ export default function CustomerDetail() {
           )
         ) : tab === "purchases" ? (
           <View style={{ gap: spacing.lg }}>
+            {isTilesFloor ? (
+              <Card>
+                <EmptyState
+                  icon="grid"
+                  title="Ground Floor tile movement"
+                  subtitle="Tile orders use Released, Godown, Dispatch, and Delivered. Open Tile Orders to move this customer's products through the correct workflow."
+                  action={<Button label="Open Tile Orders" icon="grid" onPress={() => router.push("/(admin)/tiles/orders" as any)} testID="customer-ground-floor-tile-orders" />}
+                />
+              </Card>
+            ) : <>
             <Card>
               <View style={{ gap: spacing.md }}>
                 <Text style={type.overline}>Purchase filters</Text>
@@ -883,6 +905,7 @@ export default function CustomerDetail() {
               </Card>
               </>
             )}
+            </>}
           </View>
         ) : (
           <Card>

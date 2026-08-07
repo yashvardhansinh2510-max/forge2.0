@@ -5,7 +5,7 @@
 // duplicate detection (high = auto-link, medium = staff must resolve via a
 // picker sheet, low = soft non-blocking hint). Matches customers/new.tsx
 // pattern for the Customer-level fields.
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -23,6 +23,7 @@ type Assignee = { id: string; full_name: string; role: string };
 
 export default function NewWalkIn() {
   const router = useRouter();
+  const { floor_id: routeFloorId } = useLocalSearchParams<{ floor_id?: string }>();
   const { staff } = useAuth();
   const { floors, selectedFloorId } = useFloorAccess();
   const [saving, setSaving] = useState(false);
@@ -44,7 +45,7 @@ export default function NewWalkIn() {
   const [referenceContact, setReferenceContact] = useState("");
   const [architect, setArchitect] = useState("");
   const [builder, setBuilder] = useState("");
-  const [floorId, setFloorId] = useState(selectedFloorId || floors[0]?.id || "");
+  const [floorId, setFloorId] = useState(routeFloorId || selectedFloorId || floors[0]?.id || "");
   const [error, setError] = useState<string | null>(null);
 
   // Salesperson — explicit, required, defaults to the logged-in staff but
@@ -71,8 +72,9 @@ export default function NewWalkIn() {
   }, [staff, salespersonId]);
 
   useEffect(() => {
+    if (routeFloorId) { setFloorId(routeFloorId); return; }
     if (!floorId && (selectedFloorId || floors[0]?.id)) setFloorId(selectedFloorId || floors[0]?.id);
-  }, [selectedFloorId, floors, floorId]);
+  }, [routeFloorId, selectedFloorId, floors, floorId]);
 
   useEffect(() => {
     const digits = phone.replace(/\D/g, "");
