@@ -1,12 +1,13 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert as RNAlert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
 import { useBp } from "@/src/design/responsive";
 import { Button, Card, IconButton, PriceTag, StatusBadge } from "@/src/components/ui";
+import { ConfirmDialog } from "@/src/components/ds";
 import { api } from "@/src/api/client";
 import { openApiFile } from "@/src/utils/downloadFile";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
@@ -45,6 +46,8 @@ export default function QuotationDetail() {
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [linkedPos, setLinkedPos] = useState<PoStub[]>([]);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     const [doc, br, tl, pos] = await Promise.all([
@@ -75,6 +78,19 @@ export default function QuotationDetail() {
     setQ(updated);
   };
 
+  const deleteQuotation = async () => {
+    setDeleting(true);
+    try {
+      await api.delete(`/quotations/${id}`);
+      setDeleteOpen(false);
+      router.replace("/(admin)/quotations" as any);
+    } catch (e: any) {
+      // Keep the dialog open so a manager can read/retry after a protected
+      // order/payment response rather than losing the failure context.
+      RNAlert.alert("Delete failed", e?.detail || "Quotation could not be deleted");
+    } finally { setDeleting(false); }
+  };
+
   if (!q) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
 
   return (
@@ -90,6 +106,7 @@ export default function QuotationDetail() {
         </View>
         <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
           <Button label="PDF" icon="download" variant="secondary" size="sm" onPress={openPdf} testID="download-pdf" />
+          <Button label="Delete" icon="trash-2" variant="danger" size="sm" onPress={() => setDeleteOpen(true)} testID="delete-quotation" />
           {NEXT_STATUS[q.status] ? (
             <Button
               label={isTablet ? `Mark ${NEXT_STATUS[q.status].replace("_", " ")}` : "Mark"}
@@ -263,6 +280,17 @@ export default function QuotationDetail() {
           </View>
         </Card>
       </ScrollView>
+      <ConfirmDialog
+        visible={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={deleteQuotation}
+        title="Delete this quotation?"
+        description="This removes the quotation, linked follow-ups, and unpaid payment records. Completed payments and purchase orders are protected."
+        confirmLabel="Delete quotation"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-quotation"
+      />
     </SafeAreaView>
   );
 }

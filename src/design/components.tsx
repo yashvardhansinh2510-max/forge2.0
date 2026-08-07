@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Feather } from "@expo/vector-icons";
 import React, {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useRef, useState,
 } from "react";
 import {
   ActivityIndicator, Animated, Easing, KeyboardAvoidingView, Modal, Platform,

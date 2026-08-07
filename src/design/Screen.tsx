@@ -2,7 +2,6 @@
 import { useRouter } from "expo-router";
 import React from "react";
 import { ScrollView, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { IconButton, Txt } from "./components";
 import { useBp } from "./responsive";
@@ -23,7 +22,6 @@ export function Screen({
   header?: boolean;
 }) {
   const { isPhone, gutter } = useBp();
-  const insets = useSafeAreaInsets();
   const router = useRouter();
 
   const headerBlock = header && (title || actions) ? (

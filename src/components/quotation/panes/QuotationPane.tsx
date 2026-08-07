@@ -2,9 +2,11 @@
 // Renders: sticky header (number + save state + status), room chip row, canvas
 // (rooms + line items), footer (notes + discount + totals + place order).
 //
-// Customer / phone / project / reference-source have moved to the topbar as
-// inline pills in V4, so this pane only shows what the quotation *contains*.
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+// Customer / phone / project / reference-source live in the topbar on desktop
+// and in this pane's fixed header on compact layouts, so they never disappear
+// behind the quotation canvas.
+import { Feather } from "@expo/vector-icons";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { StatusBadge } from "@/src/components/ui";
 import { colors, spacing, type } from "@/src/theme/tokens";
@@ -49,6 +51,11 @@ export function QuotationPane({ compact = false }: { compact?: boolean }) {
           <StatusBadge status="draft" />
         </View>
 
+        {/* The top bar intentionally stays compact on phone and two-pane
+            layouts. Keep every customer/project field here instead of making
+            the salesperson scroll past the quotation table to find them. */}
+        {compact ? <CompactHeaderFields /> : null}
+
         <RoomChipRow />
       </View>
 
@@ -61,6 +68,62 @@ export function QuotationPane({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function CompactHeaderFields() {
+  const b = useBuilder();
+  const customer = b.customers.find((c) => c.id === b.s.customerId);
+
+  return (
+    <View style={styles.compactFields} testID="compact-quotation-fields">
+      <Pressable
+        testID="compact-hdr-customer"
+        onPress={() => b.setCustomerSwitcherOpen(true)}
+        style={[styles.compactField, styles.compactFieldWide]}
+      >
+        <Text style={styles.fieldLabel}>Customer</Text>
+        <View style={styles.customerValueRow}>
+          <Text style={styles.fieldValue} numberOfLines={1}>{customer?.company || customer?.name || "Select customer"}</Text>
+          <Feather name="chevron-down" size={12} color={colors.onSurfaceMuted} />
+        </View>
+      </Pressable>
+      <CompactTextField label="Phone" value={b.s.header.phone} onChange={b.setPhone} placeholder="+91 ·········" testID="compact-hdr-phone" />
+      <CompactTextField label="Project" value={b.s.header.projectName} onChange={b.setProjectName} placeholder="Project name" testID="compact-hdr-project" />
+      <CompactTextField label="Reference" value={b.s.header.referenceSource} onChange={b.setReferenceSource} placeholder="Walk-in · Architect" testID="compact-hdr-ref" />
+      <Pressable
+        testID="compact-hdr-referrer"
+        onPress={() => b.setReferrerSwitcherOpen(true)}
+        style={[styles.compactField, styles.compactFieldWide]}
+      >
+        <Text style={styles.fieldLabel}>Referred by</Text>
+        <View style={styles.customerValueRow}>
+          <Text style={styles.fieldValue} numberOfLines={1}>{b.s.header.referrerName || "None"}</Text>
+          <Feather name="chevron-down" size={12} color={colors.onSurfaceMuted} />
+        </View>
+      </Pressable>
+    </View>
+  );
+}
+
+function CompactTextField({
+  label, value, onChange, placeholder, testID,
+}: {
+  label: string; value: string; onChange: (value: string) => void; placeholder: string; testID: string;
+}) {
+  return (
+    <View style={styles.compactField}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        placeholderTextColor={colors.onSurfaceMuted}
+        numberOfLines={1}
+        style={[styles.fieldInput, Platform.OS === "web" && ({ outlineStyle: "none" } as any)]}
+        testID={testID}
+      />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   panel: { flex: 1, minHeight: 0, overflow: "hidden", backgroundColor: colors.surfaceSecondary },
   head: {
@@ -69,4 +132,14 @@ const styles = StyleSheet.create({
   },
   docNumber: { fontFamily: dsFont.display, fontSize: 22, lineHeight: 28, letterSpacing: -0.2, color: colors.onSurface },
   customerLine: { fontSize: 12, fontWeight: "600", color: colors.onSurfaceSecondary, marginTop: 4 },
+  compactFields: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  compactField: {
+    flexGrow: 1, flexBasis: "47%", minWidth: 0, paddingHorizontal: 9, paddingVertical: 6,
+    borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  compactFieldWide: { flexBasis: "100%" },
+  fieldLabel: { fontSize: 9, fontWeight: "700", color: colors.onSurfaceMuted, letterSpacing: 0.7, textTransform: "uppercase" },
+  fieldValue: { flex: 1, minWidth: 0, marginTop: 1, fontSize: 12, fontWeight: "600", color: colors.onSurface },
+  fieldInput: { padding: 0, marginTop: 1, fontSize: 12, fontWeight: "600", color: colors.onSurface },
+  customerValueRow: { flexDirection: "row", alignItems: "center", gap: 4 },
 });

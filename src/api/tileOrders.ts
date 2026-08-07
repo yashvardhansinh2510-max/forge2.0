@@ -109,14 +109,11 @@ export type TileOrdersDashboard = {
 export type CompletedTileOrder = {
   id: string; customer: string; order_number: string; delivery_date: string; completion_date: string;
   brands: string[]; products: { product: string; size: string | null; quantity: number; boxes: number; pieces: number | null; quantity_unit: "Box" | "Pieces" }[];
-  final_amount: number; delivery_status: string; delivery_notes: string | null;
+  final_amount: number; delivery_status: "Dispatched" | "Delivered"; delivery_notes: string | null;
   timeline: Record<string, any>[]; chalan_references: { id: string; number: string }[]; dispatch_references: { id: string; number: string }[];
 };
 export type GodownInventoryRow = {
-  id: string; product: string; brand: string; size: string | null; finish: string | null;
-  current_stock: number; reserved_stock: number; available_stock: number; customer: string; arrival_date: string;
-  supplier: string | null; purchase_price: number; selling_price: number; boxes: number; pieces: string | null; quantity_unit: "Box" | "Pieces";
-  location: string; status: string; customer_id: string | null; brand_id: string | null;
+  id: string; customer: string; name: string; brand: string; product: string | null; size: string | null; arrival_date: string;
 };
 
 export type MovementItemInput = { po_item_id: string; qty: number };
@@ -230,7 +227,7 @@ export const tileOrdersApi = {
   ),
   listHistory: (params?: { search?: string; customer_id?: string; brand_id?: string; date_from?: string; date_to?: string }) =>
     api.get<{ rows: CompletedTileOrder[]; total: number }>(`/tile-orders/history${toQuery(params)}`, GROUND_FLOOR),
-  listInventory: (params?: { search?: string; brand_id?: string; customer_id?: string; status?: string; sort?: "stock_desc" | "stock_asc" | "product_asc" }) =>
+  listInventory: (params?: { search?: string }) =>
     api.get<{ rows: GodownInventoryRow[]; total: number }>(`/tile-orders/inventory${toQuery(params)}`, GROUND_FLOOR),
 
   itemHistory: (itemId: string) => api.get<{ item_id: string; events: Record<string, any>[] }>(`/tile-orders/items/${itemId}/history`, GROUND_FLOOR),

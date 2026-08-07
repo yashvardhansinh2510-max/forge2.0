@@ -96,7 +96,11 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
             <BrandRail collapsed={railCollapsed} onToggleCollapsed={toggleRail} compact={false} />
           </View>
           <View style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
-            <ProductExplorer />
+            {/* The rail owns brand/category navigation while the explorer is
+                inline. Do not let the explorer infer a phone layout from its
+                narrow middle-column width: that created a second brand panel
+                above the grid. */}
+            <ProductExplorer showCompactFilters={false} />
           </View>
           <View style={{ width: quotationW, minHeight: 0, overflow: "hidden", borderLeftWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
             <QuotationPane compact={false} />

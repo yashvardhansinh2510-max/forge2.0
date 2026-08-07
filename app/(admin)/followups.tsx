@@ -22,12 +22,13 @@ import { api } from "@/src/api/client";
 import { useBp } from "@/src/design/responsive";
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
 import {
-  Avatar, Badge, Button, Card, Chip, Dropdown, EmptyState, FilterBar,
+  Avatar, Badge, Button, Card, Chip, ConfirmDialog, Dropdown, EmptyState, FilterBar,
   FormField, HeroCard, HoverCard, IconButton, Panel, PageHeader, SearchField,
   SegmentedControl, Sheet, Skeleton, SkeletonList, StatTile,
 } from "@/src/components/ds";
 import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, elevation, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
 import { MANAGER_ROLES } from "./followup-assignments";
 
@@ -228,6 +229,7 @@ function greeting(): string {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function FollowupsScreen() {
   const { staff } = useAuth();
+  const { selectedFloorId } = useFloorAccess();
   const router = useRouter();
   const { isPhone, isDesktop } = useBp();
   const pagePad = isPhone ? spacing.md : spacing.xl;
@@ -259,6 +261,8 @@ export default function FollowupsScreen() {
   const [callOutcomeFor, setCallOutcomeFor] = useState<Followup | null>(null);
   const [noteFor, setNoteFor] = useState<Followup | null>(null);
   const [customSnoozeFor, setCustomSnoozeFor] = useState<Followup | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Followup | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -270,6 +274,14 @@ export default function FollowupsScreen() {
   // design decision to reuse existing components and avoid a new visual
   // style. Walk-ins / Payments workspaces land in a later phase.
   const [workspace, setWorkspace] = useState<"all" | "selection" | "quotation_tiles">("all");
+  const hasTileFollowupWorkspaces = selectedFloorId === "ground-floor";
+
+  // Tile selection/quotation workspaces are a Ground Floor workflow.  The
+  // shared Follow-ups route must not make Sanitary Bathroom users inherit its
+  // tabs (or leave a stale tile filter active after switching floors).
+  useEffect(() => {
+    if (!hasTileFollowupWorkspaces) setWorkspace("all");
+  }, [hasTileFollowupWorkspaces]);
 
   // ── Data loading ──────────────────────────────────────────────────────────
   const loadList = useCallback(async () => {
@@ -416,15 +428,33 @@ export default function FollowupsScreen() {
     catch (e: any) { toast.error(e?.detail || "Could not dismiss"); loadList(); }
   }, [patchLocal, refreshStatsQuiet, loadList]);
 
+  const deleteFollowup = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/followups/${deleteTarget.id}`);
+      setRawItems((prev) => prev.filter((item) => item.id !== deleteTarget.id));
+      if (selectedId === deleteTarget.id) { setSelectedId(null); setDetail(null); }
+      setDeleteTarget(null);
+      toast.success("Follow-up deleted");
+      refreshStatsQuiet();
+    } catch (e: any) { toast.error(e?.detail || "Could not delete follow-up"); }
+    finally { setDeleting(false); }
+  }, [deleteTarget, refreshStatsQuiet, selectedId]);
+
   const saveNote = useCallback(async (f: Followup, notes: string) => {
     patchLocal(f.id, { notes });
     try { await api.patch(`/followups/${f.id}`, { notes }); toast.success("Note saved"); setNoteFor(null); }
     catch (e: any) { toast.error(e?.detail || "Could not save note"); }
   }, [patchLocal]);
 
-  const logCallOutcome = useCallback(async (f: Followup, outcome: string, notes?: string) => {
+  const logCallOutcome = useCallback(async (f: Followup, outcome: string, notes?: string, nextFollowupAt?: string) => {
     try {
-      await api.post(`/followups/${f.id}/log-call`, { outcome, notes: notes || undefined });
+      await api.post(`/followups/${f.id}/log-call`, {
+        outcome,
+        notes: notes || undefined,
+        next_followup_at: nextFollowupAt || undefined,
+      });
       toast.success("Call logged");
       setCallOutcomeFor(null);
       await loadList();
@@ -683,18 +713,19 @@ export default function FollowupsScreen() {
         contentContainerStyle={{ padding: pagePad, gap: isPhone ? spacing.md : spacing.lg, paddingBottom: isPhone ? 132 : spacing.xxxl }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
-        {/* Follow-ups 2.0 — dedicated workspaces */}
-        <SegmentedControl
-          value={workspace}
-          onChange={setWorkspace}
-          fullWidth
-          testID="followups-workspace-tabs"
-          options={[
-            { value: "all", label: "All", icon: "layers" },
-            { value: "selection", label: `Selections${stats ? ` · ${stats.workspace_counts.selection}` : ""}`, icon: "grid" },
-            { value: "quotation_tiles", label: `Quotations${stats ? ` · ${stats.workspace_counts.quotation_tiles}` : ""}`, icon: "file-text" },
-          ]}
-        />
+        {hasTileFollowupWorkspaces ? (
+          <SegmentedControl
+            value={workspace}
+            onChange={setWorkspace}
+            fullWidth
+            testID="followups-workspace-tabs"
+            options={[
+              { value: "all", label: "All", icon: "layers" },
+              { value: "selection", label: `Selections${stats ? ` · ${stats.workspace_counts.selection}` : ""}`, icon: "grid" },
+              { value: "quotation_tiles", label: `Quotations${stats ? ` · ${stats.workspace_counts.quotation_tiles}` : ""}`, icon: "file-text" },
+            ]}
+          />
+        ) : null}
 
         {/* Today's Mission */}
         <MissionHero mission={mission} loading={loading} onJumpTop={() => topPriorityOpen && selectCard(topPriorityOpen)} compact={isPhone} />
@@ -851,6 +882,8 @@ export default function FollowupsScreen() {
                   onAssign={assignFollowup}
                   onNote={setNoteFor}
                   onDismiss={dismissFollowup}
+                  canDelete={!!staff && MANAGER_ROLES.includes(staff.role)}
+                  onDelete={setDeleteTarget}
                   onOpenDoc={(f) => router.push(`/(admin)/tiles/${f.rule_type === "selection_waiting" ? "selection" : "quotation"}?id=${f.quotation_id}` as any)}
                 />
               ))
@@ -908,6 +941,17 @@ export default function FollowupsScreen() {
       <AutomationRulesSheet visible={rulesSheet} onClose={() => setRulesSheet(false)} rules={stats?.rules || []} />
       <NoteSheet visible={!!noteFor} f={noteFor} onClose={() => setNoteFor(null)} onSave={saveNote} />
       <CustomSnoozeSheet visible={!!customSnoozeFor} f={customSnoozeFor} onClose={() => setCustomSnoozeFor(null)} onSave={customSnooze} />
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={deleteFollowup}
+        title="Delete this follow-up?"
+        description="This permanently removes the follow-up and its timeline entries."
+        confirmLabel="Delete follow-up"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-followup"
+      />
       <SavedViewsSheet
         visible={savedViewsSheet} onClose={() => setSavedViewsSheet(false)} views={savedViews}
         onApply={applySavedView} onSave={saveCurrentView} onDelete={deleteSavedView}
@@ -1145,7 +1189,7 @@ function InsightRow({ icon, label, value }: { icon: FeatherName; label: string; 
 // ─────────────────────────────────────────────────────────────────────────────
 function InboxSection({
   bucket, items, collapsed, onToggle, selectedId, assignees, rankMap, selectedIds, onToggleSelect,
-  onSelect, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, onOpenDoc,
+  onSelect, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, canDelete, onDelete, onOpenDoc,
 }: {
   bucket: Bucket; items: Followup[]; collapsed: boolean; onToggle: () => void; selectedId: string | null;
   assignees: Assignee[]; rankMap: Map<string, number>; selectedIds: Set<string>; onToggleSelect: (id: string) => void;
@@ -1154,7 +1198,7 @@ function InboxSection({
   onComplete: (f: Followup) => void; onSnooze: (f: Followup, preset: "15m" | "1h" | "tomorrow" | "next_week") => void;
   onCustomSnooze: (f: Followup) => void; onPushDays: (f: Followup, days: number) => void;
   onAssign: (f: Followup, userId: string) => void;
-  onNote: (f: Followup) => void; onDismiss: (f: Followup) => void; onOpenDoc: (f: Followup) => void;
+  onNote: (f: Followup) => void; onDismiss: (f: Followup) => void; canDelete: boolean; onDelete: (f: Followup) => void; onOpenDoc: (f: Followup) => void;
 }) {
   const meta = BUCKET_META[bucket];
   return (
@@ -1188,6 +1232,8 @@ function InboxSection({
               onAssign={(uid) => onAssign(f, uid)}
               onNote={() => onNote(f)}
               onDismiss={() => onDismiss(f)}
+              canDelete={canDelete}
+              onDelete={() => onDelete(f)}
               onOpenDoc={(f.rule_type === "selection_waiting" || f.rule_type === "quotation_tiles_waiting") && f.quotation_id ? () => onOpenDoc(f) : undefined}
             />
           ))}
@@ -1292,13 +1338,13 @@ function IconMenuButton({ icon, tone = "surface", accessibilityLabel, items, tes
 // ─────────────────────────────────────────────────────────────────────────────
 function FollowupCard({
   f, active, assignees, rank, checked, onToggleSelect,
-  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, onOpenDoc,
+  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, canDelete, onDelete, onOpenDoc,
 }: {
   f: Followup; active: boolean; assignees: Assignee[]; rank?: number; checked: boolean; onToggleSelect: () => void;
   onPress: () => void; onCall: () => void; onWhatsApp: () => void; onEmail: () => void;
   onComplete: () => void; onSnooze: (p: "15m" | "1h" | "tomorrow" | "next_week") => void;
   onCustomSnooze: () => void; onPushDays: (days: number) => void;
-  onAssign: (userId: string) => void; onNote: () => void; onDismiss: () => void; onOpenDoc?: () => void;
+  onAssign: (userId: string) => void; onNote: () => void; onDismiss: () => void; canDelete: boolean; onDelete: () => void; onOpenDoc?: () => void;
 }) {
   const level = f.manual_priority_override || f.priority_level;
   const tone = PRIORITY_TONE[level];
@@ -1433,6 +1479,7 @@ function FollowupCard({
                 { label: "Dismiss", icon: "x-circle", tone: "danger" as const, onPress: onDismiss },
               ]}
             />
+            {canDelete ? <IconButton icon="trash-2" onPress={onDelete} size={34} tone="danger" accessibilityLabel="Delete follow-up" testID={`delete-followup-${f.id}`} /> : null}
           </View>
         ) : null}
       </View>
@@ -1568,23 +1615,30 @@ function ContextPanel({ detail, loading, embedded, compact }: { detail: Detail |
 const OUTCOMES: { value: string; label: string; icon: FeatherName; tone: "success" | "warning" | "danger" | "brand" }[] = [
   { value: "interested", label: "Interested", icon: "thumbs-up", tone: "success" },
   { value: "call_back", label: "Call Back", icon: "phone-call", tone: "brand" },
+  { value: "pending", label: "Pending", icon: "clock", tone: "warning" },
   { value: "no_answer", label: "No Answer", icon: "phone-missed", tone: "warning" },
   { value: "rejected", label: "Rejected", icon: "thumbs-down", tone: "danger" },
+  { value: "lost", label: "Lost", icon: "user-x", tone: "danger" },
+  { value: "won", label: "Won", icon: "award", tone: "success" },
   { value: "converted", label: "Converted", icon: "award", tone: "success" },
 ];
 function CallOutcomeSheet({ visible, f, onClose, onSubmit }: {
-  visible: boolean; f: Followup | null; onClose: () => void; onSubmit: (f: Followup, outcome: string, notes?: string) => void;
+  visible: boolean; f: Followup | null; onClose: () => void; onSubmit: (f: Followup, outcome: string, notes?: string, nextFollowupAt?: string) => void;
 }) {
   const [outcome, setOutcome] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
-  useEffect(() => { if (visible) { setOutcome(null); setNotes(""); } }, [visible]);
+  const [nextFollowupAt, setNextFollowupAt] = useState("");
+  useEffect(() => { if (visible) { setOutcome(null); setNotes(""); setNextFollowupAt(""); } }, [visible]);
   if (!f) return null;
+  const notesRequired = outcome === "lost";
+  const pending = outcome === "pending";
+  const canSave = !!outcome && (!notesRequired || !!notes.trim()) && (!pending || !!nextFollowupAt.trim());
   return (
     <Sheet visible={visible} onClose={onClose} variant="modal" title="Log Call Outcome" subtitle={f.customer_name} width={440}
       footer={<>
         <Button label="Cancel" variant="secondary" onPress={onClose} size="md" />
         <View style={{ flex: 1 }} />
-        <Button label="Save" variant="primary" icon="check" disabled={!outcome} onPress={() => outcome && onSubmit(f, outcome, notes || undefined)} size="md" testID="save-call-outcome" />
+        <Button label="Save" variant="primary" icon="check" disabled={!canSave} onPress={() => outcome && onSubmit(f, outcome, notes || undefined, nextFollowupAt.trim() || undefined)} size="md" testID="save-call-outcome" />
       </>}
     >
       <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.md }}>
@@ -1608,7 +1662,13 @@ function CallOutcomeSheet({ visible, f, onClose, onSubmit }: {
             );
           })}
         </View>
-        <FormField label="Notes" helper="Optional — visible on the customer timeline">
+        {pending ? (
+          <FormField label="Next follow-up date" helper="Required — enter when the customer asked you to reconnect (for example, 2026-08-14T10:00).">
+            <TextInput value={nextFollowupAt} onChangeText={setNextFollowupAt} placeholder="YYYY-MM-DDTHH:MM" placeholderTextColor={colors.onSurfaceMuted}
+              style={styles.textInput} testID="pending-next-followup-at" />
+          </FormField>
+        ) : null}
+        <FormField label={notesRequired ? "Lost reason" : "Notes"} helper={notesRequired ? "Required — explain why this client was lost." : "Optional — visible on the customer timeline"}>
           <TextInput value={notes} onChangeText={setNotes} placeholder="What did the customer say?" placeholderTextColor={colors.onSurfaceMuted}
             style={styles.textArea} multiline testID="outcome-notes" />
         </FormField>

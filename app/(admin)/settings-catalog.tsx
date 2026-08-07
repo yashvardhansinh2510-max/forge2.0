@@ -5,7 +5,7 @@
 // honestly below instead of faking a button that does nothing safe.
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { ScrollView, Text } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { Button, Card } from "@/src/components/ui";

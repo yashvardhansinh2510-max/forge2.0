@@ -29,6 +29,8 @@ export type NotebookRow = {
   quotation_price?: number | null;
   estimated_value?: number | null;
   quotation_date?: string | null;
+  quotation_number?: string | null;
+  converted_at?: string | null;
 };
 
 export type NotebookColumn = {
@@ -41,4 +43,3 @@ export type NotebookColumn = {
 
 export type CellPosition = { row: number; column: number };
 export type CellKey = "Enter" | "Tab" | "Shift+Tab" | "Escape" | "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
-

@@ -5,16 +5,18 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert as RNAlert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { useBp } from "@/src/design/responsive";
 import {
-  Avatar, Chip, EmptyState, SearchField, Skeleton, StatusBadge,
+  Avatar, Chip, EmptyState, IconButton, SearchField, Skeleton, StatusBadge,
 } from "@/src/components/ui";
+import { ConfirmDialog } from "@/src/components/ds";
 import { api } from "@/src/api/client";
 import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
+import { useAuth } from "@/src/state/auth";
 
 type Quotation = {
   id: string; number: string; customer_name: string;
@@ -37,12 +39,27 @@ export default function QuotationsList() {
   // this screen to "first-floor" is what made Ground Floor show The
   // Sanitary Bathroom's records.
   const router = useRouter();
+  const { staff } = useAuth();
   const { isPhone } = useBp();
   const isTablet = !isPhone;
 
   const [items, setItems] = useState<Quotation[] | null>(null);
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<Filter>("all");
+  const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const deleteQuotation = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/quotations/${deleteTarget.id}`);
+      setItems((current) => current?.filter((item) => item.id !== deleteTarget.id) || []);
+      setDeleteTarget(null);
+    } catch (e: any) {
+      RNAlert.alert("Delete failed", e?.detail || "Quotation could not be deleted");
+    } finally { setDeleting(false); }
+  };
 
   useEffect(() => {
     api.get<Quotation[]>("/quotations?doc_type=standard").then(setItems).catch(() => setItems([]));
@@ -126,16 +143,29 @@ export default function QuotationsList() {
               key={q0.id}
               q={q0}
               onPress={() => router.push(`/(admin)/quotations/${q0.id}` as any)}
+              canDelete={!!staff && ["owner", "admin", "manager"].includes(staff.role)}
+              onDelete={() => setDeleteTarget(q0)}
             />
           ))}
         </View>
       )}
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={deleteQuotation}
+        title="Delete this quotation?"
+        description="Linked follow-ups and unpaid payment records will also be removed. Completed payments and purchase orders are protected."
+        confirmLabel="Delete quotation"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-quotation-list"
+      />
     </AdminPage>
   );
 }
 
 // ── Single row card ──
-function QuotationRow({ q, onPress }: { q: Quotation; onPress: () => void }) {
+function QuotationRow({ q, onPress, canDelete, onDelete }: { q: Quotation; onPress: () => void; canDelete: boolean; onDelete: () => void }) {
   const created = new Date(q.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   return (
     <Pressable
@@ -146,7 +176,10 @@ function QuotationRow({ q, onPress }: { q: Quotation; onPress: () => void }) {
       {/* Row 1: number + status */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
         <Text style={styles.numberText}>{q.number}</Text>
-        <StatusBadge status={q.status} />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <StatusBadge status={q.status} />
+          {canDelete ? <IconButton icon="trash-2" onPress={onDelete} size={32} tone="danger" accessibilityLabel="Delete quotation" testID={`delete-quotation-${q.id}`} /> : null}
+        </View>
       </View>
 
       {/* Row 2: customer + total */}

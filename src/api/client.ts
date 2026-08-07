@@ -90,6 +90,12 @@ async function request<T>(method: string, path: string, body?: any, opts?: Reque
     if (timedOut) {
       throw new ApiError(408, "Request timed out. Please try again.");
     }
+    // Fetch reports a transport failure as an unhelpful TypeError. Surface a
+    // useful, actionable message instead of leaving floor screens looking as
+    // though their buttons did nothing when the configured API is offline.
+    if (error instanceof TypeError) {
+      throw new ApiError(503, "Cannot reach the backend. Check the configured secure backend URL and try again.");
+    }
     throw error;
   } finally {
     clearTimeout(timeoutId);
@@ -109,7 +115,8 @@ export const api = {
   // first, instead of embedding the real JWT in the URL where it would leak
   // into browser history and server access logs.
   authenticatedUrl: async (path: string): Promise<string> => {
-    const { token } = await request<{ token: string }>("POST", "/downloads/token");
+    const target = `/api${path}`;
+    const { token } = await request<{ token: string }>("POST", "/downloads/token", { target });
     const sep = path.includes("?") ? "&" : "?";
     return `${BASE}/api${path}${sep}dl=${encodeURIComponent(token)}`;
   },

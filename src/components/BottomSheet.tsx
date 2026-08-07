@@ -1,11 +1,10 @@
 // Reusable BottomSheet (portal-modeled) — mounts at document root so it never
 // clashes with tab bars / sidebars. No zIndex bleed: React Native <Modal> handles it.
 import { Feather } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, spacing, type } from "@/src/theme/tokens";
 import { useBp } from "@/src/design/responsive";
 
 export function BottomSheet({

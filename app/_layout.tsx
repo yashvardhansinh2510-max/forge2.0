@@ -2,7 +2,7 @@ import { Stack, useRootNavigationState, useRouter, useSegments } from "expo-rout
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useEffect } from "react";
-import { LogBox, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -23,7 +23,6 @@ const anyText = Text as any;
 anyText.defaultProps = anyText.defaultProps || {};
 anyText.defaultProps.style = [{ fontFamily: font.regular }, anyText.defaultProps.style];
 
-LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
 
 function AuthGate({ children }: { children: React.ReactNode }) {

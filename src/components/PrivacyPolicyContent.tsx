@@ -49,9 +49,9 @@ export function PrivacyPolicyContent() {
         <P>Database records are hosted on MongoDB Atlas. Product photos, company logos, and
           document attachments are stored on Supabase. Both are third-party infrastructure
           providers processing data on our behalf, not independent data users.</P>
-        <P>If enabled by your administrator, crash reports are sent to Sentry and product usage
-          analytics to PostHog — both are off by default and only active if the relevant service
-          credentials have been configured for this deployment.</P>
+        <P>If enabled by your administrator, crash reports are sent to Sentry. It is off by
+          default and activates only when the deployment has been configured with its error
+          monitoring credentials.</P>
       </Section>
 
       <Section title="Data retention">

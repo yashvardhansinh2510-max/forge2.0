@@ -111,10 +111,6 @@ export default function TileOrdersScreen() {
   const [historyBrand, setHistoryBrand] = useState("All");
   const [historyDateRange, setHistoryDateRange] = useState<"All" | "30d" | "year">("All");
   const [inventorySearch, setInventorySearch] = useState(params.search ?? "");
-  const [inventoryCustomer, setInventoryCustomer] = useState("All");
-  const [inventoryBrand, setInventoryBrand] = useState("All");
-  const [inventoryStatus, setInventoryStatus] = useState("All");
-  const [inventorySort, setInventorySort] = useState<"stock_desc" | "stock_asc" | "product_asc">("stock_desc");
   const [movements, setMovements] = useState<MaterialMovementRow[]>([]);
   const [movementSearch, setMovementSearch] = useState(params.search ?? "");
   const [selectedMovement, setSelectedMovement] = useState<MaterialMovementRow | null>(null);
@@ -136,7 +132,7 @@ export default function TileOrdersScreen() {
         const dateFrom = historyDateRange === "year" ? `${new Date().getFullYear()}-01-01` : historyDateRange === "30d" ? new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10) : undefined;
         setHistory((await tileOrdersApi.listHistory({ search: historySearch || undefined, customer_id: historyCustomer !== "All" ? historyCustomer : undefined, brand_id: historyBrand !== "All" ? historyBrand : undefined, date_from: dateFrom })).rows);
       } else if (tab === "inventory") {
-        setInventory((await tileOrdersApi.listInventory({ search: inventorySearch || undefined, customer_id: inventoryCustomer !== "All" ? inventoryCustomer : undefined, brand_id: inventoryBrand !== "All" ? inventoryBrand : undefined, status: inventoryStatus !== "All" ? inventoryStatus : undefined, sort: inventorySort })).rows);
+        setInventory((await tileOrdersApi.listInventory({ search: inventorySearch || undefined })).rows);
       } else if (tab === "dispatch-list") {
         setDispatchRows((await tileOrdersApi.listDispatchList({
           search: dispatchSearch || undefined,
@@ -156,12 +152,10 @@ export default function TileOrdersScreen() {
     } finally {
       setLoading(false);
     }
-  }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch, inventoryCustomer, inventoryBrand, inventoryStatus, inventorySort]);
+  }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch]);
 
   const historyCustomers = useMemo(() => ["All", ...Array.from(new Set(history.map((row) => row.customer).filter(Boolean)))], [history]);
   const historyBrands = useMemo(() => ["All", ...Array.from(new Set(history.flatMap((row) => row.brands).filter(Boolean)))], [history]);
-  const inventoryCustomers = useMemo(() => ["All", ...Array.from(new Set(inventory.map((row) => row.customer).filter(Boolean)))], [inventory]);
-  const inventoryBrands = useMemo(() => ["All", ...Array.from(new Set(inventory.map((row) => row.brand).filter(Boolean)))], [inventory]);
 
   // The customer-order screen can mutate go-down stock while this tab stays
   // mounted in the navigation stack. Re-fetch whenever the screen becomes
@@ -390,25 +384,17 @@ export default function TileOrdersScreen() {
     { key: "date", label: "COMPLETED", width: 150, render: (row) => <CellMono>{timestamp(row.completion_date)}</CellMono> },
     { key: "products", label: "PRODUCTS", width: 100, align: "right", render: (row) => <CellNumber value={row.products.length} /> },
     { key: "amount", label: "FINAL AMOUNT", width: 140, align: "right", render: (row) => <CellNumber value={row.final_amount} /> },
-    { key: "status", label: "STATUS", width: 130, align: "center", render: (row) => <StatusPill status="Delivered" /> },
+    { key: "status", label: "STATUS", width: 130, align: "center", render: (row) => <StatusPill status={row.delivery_status as any} /> },
     { key: "action", label: "", width: 56, align: "right", render: () => <CellChevron /> },
   ], []);
 
   const inventoryColumns = useMemo<Column<GodownInventoryRow>[]>(() => [
-    { key: "product", label: "PRODUCT", grow: 3, minWidth: 220, render: (row) => <CellStack title={row.product} subtitle={`${row.brand} · ${row.size || "Size —"}`} /> },
-    { key: "finish", label: "FINISH", width: 130, render: (row) => <CellText muted>{row.finish || "—"}</CellText> },
-    { key: "stock", label: "CURRENT STOCK", width: 125, align: "right", render: (row) => <CellNumber value={row.current_stock} /> },
-    { key: "reserved", label: "RESERVED", width: 105, align: "right", render: (row) => <CellNumber value={row.reserved_stock} /> },
-    { key: "available", label: "AVAILABLE", width: 105, align: "right", render: (row) => <CellNumber value={row.available_stock} /> },
-    { key: "customer", label: "CUSTOMER", grow: 2, minWidth: 170, render: (row) => <CellText>{row.customer}</CellText> },
-    { key: "arrival", label: "ARRIVAL DATE", width: 145, render: (row) => <CellMono>{timestamp(row.arrival_date)}</CellMono> },
-    { key: "supplier", label: "SUPPLIER", grow: 1, minWidth: 140, render: (row) => <CellText muted>{row.supplier || "—"}</CellText> },
-    { key: "purchase", label: "PURCHASE PRICE", width: 130, align: "right", render: (row) => <CellNumber value={row.purchase_price} /> },
-    { key: "selling", label: "SELLING PRICE", width: 125, align: "right", render: (row) => <CellNumber value={row.selling_price || "—"} /> },
-    { key: "boxes", label: "QTY", width: 105, align: "right", render: (row) => <CellNumber value={quantityLabel(row.boxes, row.quantity_unit)} /> },
-    { key: "pieces", label: "PIECES", width: 105, align: "right", render: (row) => <CellNumber value={row.pieces ? `${row.pieces} / box` : "—"} /> },
-    { key: "location", label: "LOCATION", width: 120, render: (row) => <CellText>{row.location}</CellText> },
-    { key: "status", label: "STATUS", width: 130, align: "center", render: (row) => <StatusPill status={row.status as any} /> },
+    { key: "customer", label: "CUSTOMER", grow: 2, minWidth: 180, render: (row) => <CellTitle>{row.customer}</CellTitle> },
+    { key: "name", label: "NAME", grow: 3, minWidth: 220, render: (row) => <CellText>{row.name}</CellText> },
+    { key: "brand", label: "BRAND", grow: 2, minWidth: 150, render: (row) => <CellText muted>{row.brand}</CellText> },
+    { key: "product", label: "PRODUCT", grow: 2, minWidth: 150, render: (row) => <CellMono>{row.product || "—"}</CellMono> },
+    { key: "size", label: "SIZE", width: 130, render: (row) => <CellText muted>{row.size || "—"}</CellText> },
+    { key: "arrival", label: "ARRIVED", width: 160, render: (row) => <CellMono>{timestamp(row.arrival_date)}</CellMono> },
   ], []);
 
   const renderBody = () => {
@@ -591,14 +577,7 @@ export default function TileOrdersScreen() {
 
           {tab === "inventory" ? (
             <Toolbar
-              search={<SearchField testID="tile-orders-inventory-search" value={inventorySearch} onChangeText={setInventorySearch} onSubmit={() => load()} placeholder="Search product, brand, customer or supplier…" />}
-              filters={[
-                ...inventoryCustomers.map((value) => <FilterChip key={`inventory-customer-${value}`} label={`Customer: ${value}`} active={inventoryCustomer === value} onPress={() => setInventoryCustomer(value)} />),
-                ...inventoryBrands.map((value) => <FilterChip key={`inventory-brand-${value}`} label={`Brand: ${value}`} active={inventoryBrand === value} onPress={() => setInventoryBrand(value)} />),
-                ...["All", "Godown", "Ready", "Delivered"].map((value) => <FilterChip key={`inventory-status-${value}`} label={`Status: ${value}`} active={inventoryStatus === value} onPress={() => setInventoryStatus(value)} />),
-                <FilterChip key="inventory-sort-stock" label="Stock ↓" active={inventorySort === "stock_desc"} onPress={() => setInventorySort("stock_desc")} />,
-                <FilterChip key="inventory-sort-product" label="Product A–Z" active={inventorySort === "product_asc"} onPress={() => setInventorySort("product_asc")} />,
-              ]}
+              search={<SearchField testID="tile-orders-inventory-search" value={inventorySearch} onChangeText={setInventorySearch} onSubmit={() => load()} placeholder="Search customer, name, brand, product or size…" />}
             />
           ) : null}
 
