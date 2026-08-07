@@ -13,6 +13,9 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } fr
 
 import { colors, money, radius, spacing, statusMeta, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
+import { ConfirmDialog } from "@/src/components/ds";
+import { canManageDestructiveData } from "@/src/constants/roles";
+import { useAuth } from "@/src/state/auth";
 
 import { useBuilder } from "../context/BuilderContext";
 
@@ -28,6 +31,9 @@ export function BuilderTopbar({
   onBack: () => void; isPhone: boolean; isDesktop: boolean;
 }) {
   const b = useBuilder();
+  const { staff } = useAuth();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const revs = b.recentQuotations.find((q) => q.id === b.quotationId)?.revision_count ?? 0;
   const status = b.recentQuotations.find((q) => q.id === b.quotationId)?.status || "draft";
@@ -178,7 +184,34 @@ export function BuilderTopbar({
         >
           <Feather name="corner-up-right" size={16} color={colors.onSurface} />
         </Pressable>
+        {canManageDestructiveData(staff?.role) && b.quotationId ? (
+          <Pressable
+            testID="builder-delete-quotation"
+            onPress={() => setDeleteOpen(true)}
+            style={({ pressed }) => [styles.iconBtn, { opacity: pressed ? 0.7 : 1 }]}
+            hitSlop={6}
+            accessibilityLabel="Delete quotation"
+          >
+            <Feather name="trash-2" size={16} color={colors.error} />
+          </Pressable>
+        ) : null}
       </View>
+      <ConfirmDialog
+        visible={deleteOpen}
+        onClose={() => { if (!deleting) setDeleteOpen(false); }}
+        onConfirm={async () => {
+          setDeleting(true);
+          await b.deleteQuotation();
+          setDeleting(false);
+          setDeleteOpen(false);
+        }}
+        title="Delete quotation?"
+        description="This removes the quotation and unpaid workflow records. Completed payments and purchase orders are protected."
+        confirmLabel="Delete"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-active-builder-quotation"
+      />
     </View>
   );
 }

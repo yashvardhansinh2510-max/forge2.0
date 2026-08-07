@@ -15,12 +15,15 @@ import {
   Avatar, Badge, Button, Card, Chip, EmptyState, FormField, PageHeader,
   SegmentedControl, Sheet, StatTile, StatusBadge, TextField,
 } from "@/src/components/ui";
+import { ConfirmDialog } from "@/src/components/ds";
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
 import { tilesStageLabel } from "@/src/components/tiles/tilesStage";
 import { TILES_FLOOR_ID } from "@/src/constants/floors";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { toast } from "@/src/components/Toast";
+import { useAuth } from "@/src/state/auth";
+import { canManageDestructiveData } from "@/src/constants/roles";
 import { colors, icon as iconSize, money, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
 import {
   HistorySheet, MovableItem, MoveStageSheet, STAGE_TONE, TransferSheet,
@@ -122,6 +125,7 @@ export default function CustomerDetail() {
     stage?: string | string[];
   }>();
   const router = useRouter();
+  const { staff } = useAuth();
   const { isDesktop } = useBp();
   const { selectedFloorId } = useFloorAccess();
   const isTilesFloor = selectedFloorId === TILES_FLOOR_ID;
@@ -149,6 +153,8 @@ export default function CustomerDetail() {
   const [transferItem, setTransferItem] = useState<WorkspaceProduct | null>(null);
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
   const [walkInSheet, setWalkInSheet] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const workspaceRequestIdRef = useRef(0);
   const scheduledWorkspaceRequestIdRef = useRef<number | null>(null);
 
@@ -279,6 +285,20 @@ export default function CustomerDetail() {
     }
   }, []);
 
+  const deleteCustomer = useCallback(async () => {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/customers/${id}`);
+      toast.success("Customer deleted");
+      router.replace("/(admin)/customers" as any);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not delete customer");
+    } finally {
+      setDeleting(false);
+    }
+  }, [id, router]);
+
   const toMovable = useCallback((p: WorkspaceProduct): MovableItem => ({
     item_id: p.item_id, sku: p.sku, name: p.name, image: p.image, qty: p.qty,
     stage: p.stage as any, customer_id: p.customer_id, customer_name: p.customer_name,
@@ -396,6 +416,16 @@ export default function CustomerDetail() {
               size="md"
               onPress={() => router.push(`/(admin)/customers/${customer.id}/edit` as any)}
             />
+            {canManageDestructiveData(staff?.role) ? (
+              <Button
+                icon="trash-2"
+                label="Delete"
+                variant="danger"
+                size="md"
+                onPress={() => setDeleteOpen(true)}
+                testID="delete-customer-detail"
+              />
+            ) : null}
           </View>
         }
       />
@@ -936,6 +966,17 @@ export default function CustomerDetail() {
         onClose={() => setWalkInSheet(false)}
         customer={customer}
         onCreate={createWalkInFollowup}
+      />
+      <ConfirmDialog
+        visible={deleteOpen}
+        onClose={() => { if (!deleting) setDeleteOpen(false); }}
+        onConfirm={deleteCustomer}
+        title="Delete customer?"
+        description="This removes the customer and disposable sales-workflow records. Purchase orders and completed payments protect the customer from deletion."
+        confirmLabel="Delete"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-customer-detail"
       />
     </SafeAreaView>
   );

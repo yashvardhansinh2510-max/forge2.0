@@ -108,6 +108,7 @@ export type BuilderApi = {
   recentQuotations: RecentQuotation[];
   refreshRecentQuotations: () => Promise<void>;
   restoreQuotation: (id: string) => Promise<void>;
+  deleteQuotation: (id?: string | null) => Promise<boolean>;
   startNewQuotation: () => void;
 
   // Derived
@@ -541,6 +542,27 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       toast.error(e?.detail || "Could not restore quotation");
     }
   }, [history]);
+
+  const deleteQuotation = useCallback(async (id = quotationId) => {
+    if (!id) return false;
+    try {
+      await api.delete(`/quotations/${id}`);
+      setRecentQuotations((current) => current.filter((q) => q.id !== id));
+      if (id === quotationId) {
+        history.replace(INITIAL_BUILDER_STATE);
+        setQuotationId(null);
+        persistedIdRef.current = null;
+        setQuotationNumber(null);
+        setSaveState("idle");
+        setSavedAt(null);
+      }
+      toast.success("Quotation deleted");
+      return true;
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not delete quotation");
+      return false;
+    }
+  }, [history, quotationId]);
 
   const startNewQuotation = useCallback(() => {
     history.replace(INITIAL_BUILDER_STATE);
@@ -977,7 +999,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     setProjectName, setPhone, setReferenceSource,
     productModal, openProductModal, closeProductModal, patchProduct,
     customProductSheetOpen, setCustomProductSheetOpen,
-    recentQuotations, refreshRecentQuotations, restoreQuotation, startNewQuotation,
+    recentQuotations, refreshRecentQuotations, restoreQuotation, deleteQuotation, startNewQuotation,
     totals, usedCategoryIds, flatRows,
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
     workflowBusy, generateOfficialQuotation, placeOrder,
@@ -1005,7 +1027,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     setProjectName, setPhone, setReferenceSource,
     productModal, openProductModal, closeProductModal, patchProduct,
     customProductSheetOpen, setCustomProductSheetOpen,
-    recentQuotations, refreshRecentQuotations, restoreQuotation, startNewQuotation,
+    recentQuotations, refreshRecentQuotations, restoreQuotation, deleteQuotation, startNewQuotation,
     totals, usedCategoryIds, flatRows,
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
     workflowBusy, generateOfficialQuotation, placeOrder,
