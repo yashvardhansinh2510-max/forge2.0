@@ -12,10 +12,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { useBp } from "@/src/design/responsive";
 import {
-  Avatar, Badge, Button, Chip, EmptyState, PageHeader,
+  Avatar, Badge, Button, Chip, ConfirmDialog, EmptyState, IconButton, PageHeader,
   SearchField, Skeleton, StatTile,
-} from "@/src/components/ui";
+} from "@/src/components/ds";
 import { colors, icon as iconSize, radius, spacing, type } from "@/src/theme/tokens";
+import { useAuth } from "@/src/state/auth";
+import { canManageDestructiveData } from "@/src/constants/roles";
+import { toast } from "@/src/components/Toast";
 
 type Customer = {
   id: string;
@@ -38,14 +41,33 @@ type TierFilter = "all" | "vip" | "trade" | "retail";
 export default function Customers() {
   const router = useRouter();
   const { isDesktop } = useBp();
+  const { staff } = useAuth();
 
   const [items, setItems] = useState<Customer[] | null>(null);
   const [q, setQ] = useState("");
   const [tier, setTier] = useState<TierFilter>("all");
+  const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     api.get<Customer[]>("/customers").then(setItems).catch(() => setItems([]));
   }, []);
+
+  const deleteCustomer = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/customers/${deleteTarget.id}`);
+      setItems((current) => (current || []).filter((item) => item.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (e: any) {
+      // The backend explains protected payments/orders and floor failures.
+      // Keep the dialog open so the manager can read the error from the toast.
+      toast.error(e?.detail || "Could not delete customer");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const counts = useMemo(() => {
     const map: Record<string, number> = { all: items?.length || 0, vip: 0, trade: 0, retail: 0 };
@@ -203,13 +225,43 @@ export default function Customers() {
                 </View>
                 <View style={{ alignItems: "flex-end", gap: spacing.sm, flexShrink: 0 }}>
                   <Badge label={c.tier.toUpperCase()} tone={tierTone[c.tier]} size="sm" />
-                  <Feather name="chevron-right" size={iconSize.md} color={colors.onSurfaceMuted} />
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                    <IconButton
+                      icon="edit-2"
+                      onPress={() => router.push(`/(admin)/customers/${c.id}/edit` as any)}
+                      size={30}
+                      accessibilityLabel={`Edit ${c.name}`}
+                      testID={`edit-customer-${c.id}`}
+                    />
+                    {canManageDestructiveData(staff?.role) ? (
+                      <IconButton
+                        icon="trash-2"
+                        onPress={() => setDeleteTarget(c)}
+                        size={30}
+                        tone="danger"
+                        accessibilityLabel={`Delete ${c.name}`}
+                        testID={`delete-customer-${c.id}`}
+                      />
+                    ) : null}
+                    <Feather name="chevron-right" size={iconSize.md} color={colors.onSurfaceMuted} />
+                  </View>
                 </View>
               </Pressable>
             ))}
           </View>
         )}
       </ScrollView>
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        onClose={() => { if (!deleting) setDeleteTarget(null); }}
+        onConfirm={deleteCustomer}
+        title="Delete customer?"
+        description={deleteTarget ? `${deleteTarget.company || deleteTarget.name} and disposable quotations, follow-ups, walk-ins, and unpaid payments will be removed. Customers with purchase orders or completed payments cannot be deleted.` : undefined}
+        confirmLabel="Delete"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-customer-list"
+      />
     </SafeAreaView>
   );
 }

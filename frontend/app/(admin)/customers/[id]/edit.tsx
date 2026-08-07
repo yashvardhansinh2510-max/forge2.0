@@ -15,8 +15,11 @@ import { api } from "@/src/api/client";
 import {
   Button, Card, Chip, PageHeader, TextField,
 } from "@/src/components/ui";
+import { ConfirmDialog } from "@/src/components/ds";
 import { TempPasswordDialog, TempPasswordResult } from "@/src/components/TempPasswordDialog";
 import { toast } from "@/src/components/Toast";
+import { useAuth } from "@/src/state/auth";
+import { canManageDestructiveData } from "@/src/constants/roles";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type Tier = "retail" | "trade" | "vip";
@@ -30,6 +33,7 @@ type Customer = {
 export default function EditCustomer() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { staff } = useAuth();
 
   const [loaded, setLoaded] = useState(false);
   const [name, setName] = useState("");
@@ -50,6 +54,8 @@ export default function EditCustomer() {
   const [resetting, setResetting] = useState(false);
   const [tempResult, setTempResult] = useState<TempPasswordResult | null>(null);
   const [tempDialogOpen, setTempDialogOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     const c = await api.get<Customer>(`/customers/${id}`);
@@ -68,6 +74,20 @@ export default function EditCustomer() {
     setLoaded(true);
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  const deleteCustomer = useCallback(async () => {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/customers/${id}`);
+      toast.success("Customer deleted");
+      router.replace("/(admin)/customers" as any);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not delete customer");
+    } finally {
+      setDeleting(false);
+    }
+  }, [id, router]);
 
   const canUsePortalActions = portalEnabled && !!email.trim();
 
@@ -135,7 +155,21 @@ export default function EditCustomer() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
-      <PageHeader title="Edit Customer" overline="CRM" back={() => router.back()} />
+      <PageHeader
+        title="Edit Customer"
+        overline="CRM"
+        back={() => router.back()}
+        actions={canManageDestructiveData(staff?.role) ? (
+          <Button
+            label="Delete"
+            icon="trash-2"
+            variant="danger"
+            size="sm"
+            onPress={() => setDeleteOpen(true)}
+            testID="delete-customer-edit"
+          />
+        ) : undefined}
+      />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
@@ -232,6 +266,17 @@ export default function EditCustomer() {
         onClose={() => { setTempDialogOpen(false); setTempResult(null); }}
         title="Customer Portal credential"
         result={tempResult}
+      />
+      <ConfirmDialog
+        visible={deleteOpen}
+        onClose={() => { if (!deleting) setDeleteOpen(false); }}
+        onConfirm={deleteCustomer}
+        title="Delete customer?"
+        description="This removes the customer and disposable sales-workflow records. Purchase orders and completed payments protect the customer from deletion."
+        confirmLabel="Delete"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-customer-edit"
       />
     </SafeAreaView>
   );

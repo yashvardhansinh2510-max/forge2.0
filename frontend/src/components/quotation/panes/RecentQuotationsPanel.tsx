@@ -2,14 +2,21 @@
 // Clicking any row restores the whole builder session (customer, rooms,
 // items, discounts, UI state) via the backend GET /quotations/{id}.
 import { Feather } from "@expo/vector-icons";
+import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { money, radius, spacing } from "@/src/theme/tokens";
+import { colors, money, radius, spacing } from "@/src/theme/tokens";
 import { color as ds, statusTone } from "@/src/design/tokens";
+import { ConfirmDialog } from "@/src/components/ds";
+import { useAuth } from "@/src/state/auth";
+import { canManageDestructiveData } from "@/src/constants/roles";
 import { useBuilder } from "../context/BuilderContext";
 
 export function RecentQuotationsPanel() {
   const b = useBuilder();
+  const { staff } = useAuth();
+  const [deleteTarget, setDeleteTarget] = React.useState<typeof b.recentQuotations[number] | null>(null);
+  const [deleting, setDeleting] = React.useState(false);
 
   if (!b.recentQuotations.length) return null;
 
@@ -37,13 +44,40 @@ export function RecentQuotationsPanel() {
                 {q.project_name ? ` · ${q.project_name}` : ""}
               </Text>
             </View>
-            <View style={{ alignItems: "flex-end" }}>
+            <View style={{ alignItems: "flex-end", gap: 2 }}>
               <Text style={styles.amt}>{money(q.grand_total || 0)}</Text>
               <Text style={styles.status}>{statusTone[q.status]?.label || q.status}</Text>
+              {canManageDestructiveData(staff?.role) ? (
+                <Pressable
+                  hitSlop={6}
+                  onPress={(event) => { event.stopPropagation(); setDeleteTarget(q); }}
+                  testID={`rail-delete-${q.number}`}
+                  accessibilityLabel={`Delete quotation ${q.number}`}
+                >
+                  <Feather name="trash-2" size={12} color={colors.error} />
+                </Pressable>
+              ) : null}
             </View>
           </Pressable>
         );
       })}
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        onClose={() => { if (!deleting) setDeleteTarget(null); }}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          setDeleting(true);
+          await b.deleteQuotation(deleteTarget.id);
+          setDeleting(false);
+          setDeleteTarget(null);
+        }}
+        title="Delete quotation?"
+        description={deleteTarget ? `${deleteTarget.number} and its unpaid workflow records will be removed. Completed payments and purchase orders are protected.` : undefined}
+        confirmLabel="Delete"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-builder-quotation"
+      />
     </View>
   );
 }

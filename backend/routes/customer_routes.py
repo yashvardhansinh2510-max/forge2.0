@@ -1,4 +1,6 @@
 """Customer CRUD (admin) + customer-portal self-serve endpoints."""
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from auth import (
@@ -121,6 +123,98 @@ async def update_customer(
 
     doc = await db.customers.find_one({"id": customer_id}, {"_id": 0, "password_hash": 0})
     return CustomerPublic(**doc)
+
+
+@router.delete("/customers/{customer_id}")
+async def delete_customer(
+    customer_id: str,
+    user: UserPublic = Depends(require_min_role("manager")),
+):
+    """Delete an unused customer and disposable sales-workflow records.
+
+    Purchase orders and completed payments are immutable business records, so
+    either kind of reference blocks the operation.
+    """
+    try:
+        existing = await get_floor_scoped_or_404(
+            db.customers, customer_id, user, not_found="Customer not found", projection={"_id": 0},
+        )
+    except HTTPException as error:
+        # A repeated cleanup request is safe after the first successful
+        # deletion. Keep the response shape stable without exposing records
+        # outside the caller's floor scope.
+        if error.status_code == 404:
+            return {
+                "ok": True,
+                "customer_id": customer_id,
+                "deleted": {
+                    "customers": 0, "quotations": 0, "followups": 0,
+                    "walkins": 0, "pending_payments": 0, "activity_events": 0,
+                    "legacy_gender_fields": 0,
+                },
+                "protected": {"purchase_orders": 0, "completed_payments": 0},
+            }
+        raise
+    quotation_docs = await db.quotations.find(
+        {"customer_id": customer_id}, {"_id": 0, "id": 1},
+    ).to_list(5000)
+    quotation_ids = [doc["id"] for doc in quotation_docs if doc.get("id")]
+    quotation_ref = {"$in": quotation_ids} if quotation_ids else {"$in": ["__none__"]}
+    po_count, completed_payment_count = await asyncio.gather(
+        db.purchase_orders.count_documents({
+            "$or": [{"customer_id": customer_id}, {"quotation_id": quotation_ref}],
+        }),
+        db.payments.count_documents({
+            "$or": [
+                {"customer_id": customer_id, "status": "completed"},
+                {"quotation_id": quotation_ref, "status": "completed"},
+            ],
+        }),
+    )
+    if po_count or completed_payment_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot delete — {po_count} purchase order(s) and {completed_payment_count} completed payment(s) "
+                "reference this customer or its quotations. Preserve the customer for financial reconciliation."
+            ),
+        )
+
+    legacy_results = await asyncio.gather(
+        db.walkins.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
+        db.followups.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
+        db.quotations.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
+    )
+    followups_result, walkins_result, pending_payments_result, quotations_result, activity_result = await asyncio.gather(
+        db.followups.delete_many({"customer_id": customer_id}),
+        db.walkins.delete_many({"customer_id": customer_id}),
+        db.payments.delete_many({
+            "$or": [
+                {"customer_id": customer_id, "status": {"$ne": "completed"}},
+                {"quotation_id": quotation_ref, "status": {"$ne": "completed"}},
+            ],
+        }),
+        db.quotations.delete_many({"customer_id": customer_id}),
+        db.activity_events.delete_many({"customer_id": customer_id}),
+    )
+    customer_result = await db.customers.delete_one({"id": customer_id})
+    if customer_result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return {
+        "ok": True,
+        "customer_id": customer_id,
+        "deleted": {
+            "customers": customer_result.deleted_count,
+            "quotations": quotations_result.deleted_count,
+            "followups": followups_result.deleted_count,
+            "walkins": walkins_result.deleted_count,
+            "pending_payments": pending_payments_result.deleted_count,
+            "activity_events": activity_result.deleted_count,
+            "legacy_gender_fields": sum(getattr(result, "modified_count", 0) for result in legacy_results),
+        },
+        "protected": {"purchase_orders": 0, "completed_payments": 0},
+        "customer_name": existing.get("name"),
+    }
 
 
 async def _issue_temp_password(customer_id: str, *, kind: str, user: UserPublic):
