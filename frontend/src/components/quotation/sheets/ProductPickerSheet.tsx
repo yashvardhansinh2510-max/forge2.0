@@ -28,7 +28,9 @@ export function ProductPickerSheet() {
           <View style={{ width: 22 }} />
         </View>
         <View style={{ flex: 1 }}>
-          <ProductExplorer />
+          {/* This is the only product view without the persistent BrandRail,
+              so it owns the compact brand and category selectors. */}
+          <ProductExplorer showCompactFilters />
         </View>
       </SafeAreaView>
     </Modal>

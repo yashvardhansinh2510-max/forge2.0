@@ -107,6 +107,15 @@ def _payment_status(paid: float, grand: float) -> str:
     return "due"
 
 
+def _fully_paid_order_ids(orders: list[dict], paid_by_order: dict[str, float]) -> list[str]:
+    """Return non-zero orders whose completed payments cover the total."""
+    return [
+        order["id"] for order in orders
+        if float(order.get("grand_total") or 0) > 0
+        and paid_by_order.get(order["id"], 0.0) + 1e-6 >= float(order.get("grand_total") or 0)
+    ]
+
+
 def _short_amount(amount: float) -> str:
     """Compact Indian rupee display used in the sidebar badge: ₹10.9L / ₹8.5L."""
     if amount >= 1_00_00_000:
@@ -451,6 +460,33 @@ async def list_payments(
     docs = await db.payments.find(_payment_scope_query(user), {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit + 1).to_list(limit + 1)
     response.headers["X-Has-More"] = "true" if len(docs) > limit else "false"
     return docs[:limit]
+
+
+@router.get("/list")
+async def completed_payment_list(
+    response: Response,
+    q: Optional[str] = Query(None, description="Search customer, invoice number, or reference"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    business_unit: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None),
+    sort: str = Query("date_desc", pattern="^(date_desc|date_asc|amount_desc|amount_asc)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    user: UserPublic = Depends(get_current_user),
+):
+    """Return payment rows only for orders that are fully paid (100%)."""
+    order_query = _payment_scope_query(user, {"status": {"$in": list(ORDER_STATUSES)}})
+    orders = await db.quotations.find(order_query, {"_id": 0, "id": 1, "grand_total": 1}).to_list(5000)
+    paid_by_order = await _paid_by_quotation([order["id"] for order in orders])
+    fully_paid_ids = _fully_paid_order_ids(orders, paid_by_order)
+    floor_ids = _resolve_history_floor_ids(user, business_unit)
+    query = _history_filter(floor_ids, q, date_from, date_to, None, mode, "completed")
+    query["quotation_id"] = {"$in": fully_paid_ids}
+    total = await db.payments.count_documents(query)
+    docs = await db.payments.find(query, {"_id": 0}).sort(_SORT_MAP[sort]).skip(skip).limit(limit).to_list(limit)
+    response.headers["X-Total-Count"] = str(total)
+    return {"total": total, "items": await _enrich_history_rows(docs)}
 
 
 # ---------------------------------------------------------------------------

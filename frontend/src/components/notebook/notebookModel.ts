@@ -1,5 +1,7 @@
 import type { CellKey, CellPosition, NotebookColumn, NotebookField, NotebookFilter, NotebookRow, NotebookView } from "./notebookTypes";
 
+const KITCHEN_FLOOR_ID = "second-floor";
+
 export const NOTEBOOK_COLUMNS: readonly NotebookColumn[] = [
   { key: "customer_name", label: "Customer Name", minWidth: 190, editable: true },
   { key: "customer_phone", label: "Mobile Number", minWidth: 145, editable: true },
@@ -17,10 +19,18 @@ export const QUOTATION_COLUMNS: readonly NotebookColumn[] = [
   { key: "quotation_date", label: "Quotation Date", minWidth: 145, editable: true, quotationOnly: true },
 ];
 
-export const NOTEBOOK_FILTERS: readonly NotebookFilter[] = ["all", "pending", "won", "lost", "new", "quotation"];
+/** Filters that apply to the Follow-ups page. Quotation follow-ups are a
+ * separate workspace, not a filter on this page. */
+export const FOLLOWUP_FILTERS: readonly Exclude<NotebookFilter, "quotation">[] = ["all", "pending", "won", "lost", "new"];
 
-export function columnsForView(view: NotebookView): readonly NotebookColumn[] {
-  return view === "quotation" ? [...NOTEBOOK_COLUMNS, ...QUOTATION_COLUMNS] : NOTEBOOK_COLUMNS;
+/** @deprecated Use FOLLOWUP_FILTERS. Kept to avoid breaking existing imports. */
+export const NOTEBOOK_FILTERS: readonly NotebookFilter[] = [...FOLLOWUP_FILTERS, "quotation"];
+
+export function columnsForView(view: NotebookView, floorId: string = KITCHEN_FLOOR_ID): readonly NotebookColumn[] {
+  const followupColumns = floorId === KITCHEN_FLOOR_ID
+    ? NOTEBOOK_COLUMNS
+    : NOTEBOOK_COLUMNS.filter((column) => column.key !== "kitchen_type");
+  return view === "quotation" ? [...followupColumns, ...QUOTATION_COLUMNS] : followupColumns;
 }
 
 const SEARCH_FIELDS: readonly NotebookField[] = [
@@ -65,4 +75,3 @@ export function formatIndianDate(value: string | null | undefined): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
   return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
 }
-

@@ -29,6 +29,7 @@ async def ensure_download_token_indexes() -> None:
 
 async def create_download_token(
     user_id: str, session_id: str | None = None, floor_id: str | None = None,
+    target: str | None = None,
 ) -> str:
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
@@ -45,6 +46,9 @@ async def create_download_token(
         # export URL resolve against the other unit's records. This is the one
         # in-product request path where the header is absent by construction.
         "floor_id": floor_id,
+        # A leaked token may be spent only on the exact browser navigation it
+        # was minted for, never on an arbitrary authenticated GET endpoint.
+        "target": target,
         "used": False,
         "created_at": now.isoformat(),
         "expires_at": now + timedelta(seconds=_TTL_SECONDS),
@@ -52,13 +56,18 @@ async def create_download_token(
     return token
 
 
-async def consume_download_token(token: str) -> dict | None:
+async def consume_download_token(token: str, *, target: str | None = None) -> dict | None:
     """Atomically marks the token used and returns its record, or None if
     missing, expired, or already redeemed. The atomic find_one_and_update
     means two concurrent requests replaying one leaked token can't both
     succeed."""
     now = datetime.now(timezone.utc)
+    query = {"token": token, "used": False, "expires_at": {"$gt": now}}
+    if target:
+        # Existing 60-second tokens from the rollout before target binding
+        # remain usable once; all newly minted tokens have an exact target.
+        query["$or"] = [{"target": target}, {"target": {"$exists": False}}]
     return await db.download_tokens.find_one_and_update(
-        {"token": token, "used": False, "expires_at": {"$gt": now}},
+        query,
         {"$set": {"used": True}},
     )

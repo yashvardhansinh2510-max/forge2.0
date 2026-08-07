@@ -371,6 +371,7 @@ class ProductCreate(BaseModel):
     brand_id: str
     category_id: str
     description: Optional[str] = None
+    variant_label: Optional[str] = None
     finish: Optional[str] = None
     size: Optional[str] = None
     material: Optional[str] = None
@@ -398,6 +399,7 @@ class ProductPatch(BaseModel):
     series: Optional[str] = None
     family_key: Optional[str] = None
     family_name: Optional[str] = None
+    variant_label: Optional[str] = None
     finish: Optional[str] = None
     size: Optional[str] = None
     colour: Optional[str] = None
@@ -445,8 +447,8 @@ class QuotationLineItem(BaseModel):
     rate_sqft: Optional[float] = Field(default=None, ge=0)
     rate_box: Optional[float] = Field(default=None, ge=0)
     pcs_per_box: Optional[str] = None      # catalog metadata; UI/PDF show the quantity unit instead
-    box_sqft: Optional[float] = Field(default=None, ge=0)  # sqft covered by one box — rate_sqft x box_sqft auto-derives unit_price (rate/box)
-    offer_rate: Optional[float] = Field(default=None, ge=0)  # quotation display rate per SQ.FT; informational, does not feed totals
+    box_sqft: Optional[float] = Field(default=None, ge=0)  # sqft covered by one box — effective per-sqft price x box_sqft derives unit_price (rate/box)
+    offer_rate: Optional[float] = Field(default=None, ge=0)  # final selling price per SQ.FT; defaults to rate_sqft and drives totals
     quantity_unit: Literal["Box", "Pieces"] = "Box"
 
     @property
@@ -738,6 +740,9 @@ class PurchaseOrderItem(BaseModel):
     boxes_godown: float = 0
     boxes_dispatched: float = 0
     boxes_pending: float = 0
+    # First time any quantity from this line entered BuildCon's Godown.
+    # Partial/repeated moves must not reset this arrival date.
+    godown_arrived_at: Optional[str] = None
     current_location: str = "Pending"   # TileLocation — Pending|Ready|Dispatched|Godown|Delivered
     overall_status: str = "Pending"     # TileOverallStatus — furthest-progress ladder
 
@@ -988,7 +993,13 @@ FollowupCategory = Literal[
 FollowupChannel = Literal["call", "whatsapp", "email", "visit"]
 FollowupPriorityLevel = Literal["critical", "high", "medium", "low"]
 FollowupStatus = Literal["open", "snoozed", "done", "dismissed"]
-FollowupOutcome = Literal["interested", "call_back", "no_answer", "rejected", "converted"]
+# Call outcomes are deliberately distinct from the follow-up's workflow
+# status: a lost lead is closed, while a pending lead creates a dated next
+# follow-up so it cannot disappear from the queue.
+FollowupOutcome = Literal[
+    "interested", "call_back", "no_answer", "rejected", "converted",
+    "won", "lost", "pending",
+]
 NotebookStatus = Literal["new", "pending", "won", "lost"]
 NotebookField = Literal[
     "customer_name", "customer_phone", "address", "kitchen_type",
@@ -1089,6 +1100,9 @@ class FollowupCompletePayload(BaseModel):
 class FollowupCallOutcomePayload(BaseModel):
     outcome: FollowupOutcome
     notes: Optional[str] = None
+    # Required by the route for a pending customer.  Keeping it optional here
+    # lets the API return a clear, outcome-specific validation error.
+    next_followup_at: Optional[datetime] = None
 
 
 class FollowupContactPayload(BaseModel):
@@ -1099,7 +1113,9 @@ class NotebookFollowupCreatePayload(BaseModel):
     customer_name: str
     customer_phone: str
     address: Optional[str] = None
-    kitchen_type: str
+    # Kitchen rows choose GI or SS. Furniture rows deliberately do not carry
+    # that kitchen-specific attribute.
+    kitchen_type: Optional[str] = None
     referred_by: Optional[str] = None
     architect_interior_designer: Optional[str] = None
     notes: Optional[str] = None

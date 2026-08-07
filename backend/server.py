@@ -54,7 +54,7 @@ from services.floor_scope import ensure_floor_scope  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("forge")
 
-# Monitoring (Sentry + PostHog) — complete no-op until SENTRY_DSN/POSTHOG_API_KEY
+# Monitoring (Sentry) — complete no-op until SENTRY_DSN
 # are set (see services/monitoring.py + backend/.env.example). Called before app
 # construction so an unhandled exception anywhere downstream is captured.
 _monitoring_status = init_monitoring()
@@ -133,6 +133,12 @@ api.include_router(walkin_router)
 
 app.include_router(api)
 
+
+@app.get("/", include_in_schema=False)
+async def service_root():
+    """Provide a useful response when the service URL is opened directly."""
+    return {"name": "Forge API", "version": "0.1.0", "status": "ok"}
+
 # Security headers (defense-in-depth, no behavior change for existing
 # clients) — registered before CORSMiddleware so CORS stays the outermost
 # middleware, unchanged from its current behavior.
@@ -196,7 +202,7 @@ async def _startup():
     except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load
         logger.warning("Initial follow-up reconciliation skipped: %s", e)
     logger.info("Forge API ready; infrastructure preflight passed.")
-    logger.info("Monitoring status: sentry=%s posthog=%s", _monitoring_status["sentry"], _monitoring_status["posthog"])
+    logger.info("Monitoring status: sentry=%s", _monitoring_status["sentry"])
 
 
 @app.on_event("shutdown")

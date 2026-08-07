@@ -12,12 +12,12 @@ from uuid import uuid4
 
 from pymongo.errors import DuplicateKeyError
 
-from auth import floor_query
 from models import NotebookField, NotebookStatus, now_iso
 
 
 NOTEBOOK_STATUSES: frozenset[str] = frozenset({"new", "pending", "won", "lost"})
 KITCHEN_TYPES: frozenset[str] = frozenset({"GI", "SS"})
+KITCHEN_FLOOR_ID = "second-floor"
 
 NOTEBOOK_FIELDS: frozenset[str] = frozenset({
     "customer_name", "customer_phone", "address", "kitchen_type",
@@ -106,6 +106,7 @@ def _merged(current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
 
 def validate_notebook_patch(
     patch: dict[str, Any], *, converted: bool, current: dict[str, Any], creating: bool = False,
+    floor_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate and normalize a notebook patch; return a safe copy."""
     # Quote fields are known notebook fields even before conversion; reporting
@@ -125,11 +126,17 @@ def validate_notebook_patch(
         if not str(merged.get("customer_name") or "").strip():
             raise NotebookValidationError("customer_name is required")
     if creating or "customer_phone" in clean:
-        if not normalize_mobile(str(merged.get("customer_phone") or "")):
+        phone = normalize_mobile(str(merged.get("customer_phone") or ""))
+        if not phone:
             raise NotebookValidationError("customer_phone is required")
-    if creating or "kitchen_type" in clean:
+        if len(phone) != 10:
+            raise NotebookValidationError("customer_phone must contain 10 digits")
+    requires_kitchen_type = floor_id in (None, KITCHEN_FLOOR_ID)
+    if requires_kitchen_type and (creating or "kitchen_type" in clean):
         if merged.get("kitchen_type") not in KITCHEN_TYPES:
             raise NotebookValidationError("kitchen_type must be GI or SS")
+    if not requires_kitchen_type and "kitchen_type" in clean:
+        raise NotebookValidationError("kitchen_type is only available on Kitchen Floor")
 
     status = merged.get("notebook_status") or "new"
     if status not in NOTEBOOK_STATUSES:
@@ -184,11 +191,21 @@ def notebook_search_query(query: str) -> dict[str, Any] | None:
 
 
 def notebook_query(user: Any, floor_id: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build a floor-scoped query for notebook rows."""
-    base = {"floor_id": floor_id, "notebook_key": {"$exists": True}}
+    """Build a query pinned to the notebook route's explicit floor.
+
+    Notebook URLs address a concrete department.  Using the caller's ambient
+    active-floor header here made a valid Kitchen/Furniture request look empty
+    whenever that header was stale or selected a different permitted floor.
+    Routes authorize ``floor_id`` before calling this helper; the data query
+    must then remain pinned to that same floor.
+    """
+    # Every shared Followup model carries ``notebook_key=None`` unless it is
+    # an actual Kitchen/Furniture notebook row.  ``$exists`` therefore leaks
+    # ordinary CRM/automation rows into the notebook; accept only real keys.
+    base = {"floor_id": floor_id, "notebook_key": {"$type": "string"}}
     if extra:
         base.update(extra)
-    return floor_query(user, base) if user is not None else base
+    return base
 
 
 async def resolve_or_create_customer(
@@ -198,13 +215,15 @@ async def resolve_or_create_customer(
     normalized = normalize_mobile(phone)
     if not normalized:
         raise NotebookValidationError("customer_phone is required")
-    scope = floor_query if user is not None else lambda _user, base: base
-    query = scope(user, {"floor_id": floor_id, "phone_normalized": normalized})
+    # The floor is explicit and pre-authorized by the notebook route.  Do not
+    # additionally apply the user's ambient active-floor selection: it can be
+    # stale and would split one floor's customers into duplicate identities.
+    query = {"floor_id": floor_id, "phone_normalized": normalized}
     customer = await db.customers.find_one(query, {"_id": 0})
     if not customer:
         # Compatibility fallback for customers written before the normalized
         # field existed. The migration backfills it for indexed lookups.
-        cursor = db.customers.find(scope(user, {"floor_id": floor_id}), {"_id": 0})
+        cursor = db.customers.find({"floor_id": floor_id}, {"_id": 0})
         for candidate in await cursor.to_list(10000):
             if normalize_mobile(candidate.get("phone") or "") == normalized:
                 customer = candidate
@@ -240,7 +259,7 @@ async def patch_notebook_row(
     if current.get("updated_at") != expected_updated_at:
         raise NotebookConflictError(serialize_notebook_row(current))
     clean = validate_notebook_patch(
-        patch, converted=bool(current.get("is_converted")), current=current,
+        patch, converted=bool(current.get("is_converted")), current=current, floor_id=floor_id,
     )
     if not clean:
         return serialize_notebook_row(current)
@@ -268,7 +287,7 @@ async def convert_notebook_row(
         return serialize_notebook_row(current)
     if current.get("updated_at") != expected_updated_at:
         raise NotebookConflictError(serialize_notebook_row(current))
-    clean = validate_notebook_patch(patch, converted=True, current=current)
+    clean = validate_notebook_patch(patch, converted=True, current=current, floor_id=floor_id)
     now = now_iso()
     result = await db.followups.update_one(
         {**query, "updated_at": expected_updated_at},

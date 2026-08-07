@@ -14,9 +14,17 @@ from services.activity_log import log_event
 from services.download_tokens import create_download_token
 from services.invite_service import generate_temp_password, get_invite_service, temp_password_expiry_iso
 from settings import settings
+from time import monotonic
 from typing import Optional
+from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["ops"])
+_SYSTEM_HEALTH_CACHE_TTL_SECONDS = 30.0
+_system_health_cache: tuple[float, dict] | None = None
+
+
+class DownloadTokenRequest(BaseModel):
+    target: str = Field(min_length=6, max_length=2048)
 
 # Settings > System > Version. Bump manually alongside meaningful releases —
 # there's no build pipeline yet to derive this automatically.
@@ -41,7 +49,7 @@ async def _ensure_default_floors() -> None:
 
 
 @router.post("/downloads/token")
-async def mint_download_token(user: UserPublic = Depends(get_current_user)):
+async def mint_download_token(body: DownloadTokenRequest, user: UserPublic = Depends(get_current_user)):
     """Call this (normal Authorization-header request) right before opening a
     browser-download URL (PDF/xlsx export). Returns a token good for one
     download within 60 seconds — see services/download_tokens.py.
@@ -54,7 +62,9 @@ async def mint_download_token(user: UserPublic = Depends(get_current_user)):
     `floor_query()` unrestricted for that download — the exact leak
     described in services/download_tokens.py. `floor_for_write` always
     resolves to a concrete floor."""
-    token = await create_download_token(user.id, user.session_id, floor_for_write(user))
+    if not body.target.startswith("/api/") or "dl=" in body.target:
+        raise HTTPException(status_code=400, detail="Download target must be an API path without a token")
+    token = await create_download_token(user.id, user.session_id, floor_for_write(user), body.target)
     return {"token": token, "expires_in": 60}
 
 
@@ -101,15 +111,19 @@ def _sanitize_error(err: Optional[str]) -> Optional[str]:
 
 
 @router.get("/health/system")
-async def health_system():
+async def health_system(_: UserPublic = Depends(require_min_role("admin"))):
     """Persistence & Disaster Recovery — startup/session health check.
 
-    Public (no auth) so it can be curled from anywhere/anytime, but it NEVER
-    returns secret values — only booleans/counts. Covers every item in the
+    Admin-only and cached because it performs privileged storage checks and
+    collection counts. It NEVER returns secret values. Covers every item in the
     "before you build a new feature" checklist: db reachability, storage
     reachability, data counts, and which required secrets are actually loaded
     in this session's environment.
     """
+    global _system_health_cache
+    if _system_health_cache and monotonic() - _system_health_cache[0] < _SYSTEM_HEALTH_CACHE_TTL_SECONDS:
+        return _system_health_cache[1]
+
     mongo_url = settings.mongo_url
     is_local_mongo = ("localhost" in mongo_url) or ("127.0.0.1" in mongo_url) or (not mongo_url)
 
@@ -155,7 +169,7 @@ async def health_system():
     secrets_loaded = settings.readiness_flags()
     monitoring_status = {
         "sentry_configured": bool((os.environ.get("SENTRY_DSN") or "").strip()),
-        "posthog_configured": bool((os.environ.get("POSTHOG_API_KEY") or "").strip()),
+        "posthog_configured": False,
     }
 
     warnings = []
@@ -175,7 +189,7 @@ async def health_system():
             "catalog. Re-run the catalog importers or restore from a backup."
         )
 
-    return {
+    result = {
         "backend": "running",
         "version": FORGE_VERSION,
         "mongo": {"connected": mongo_ok, "is_local": is_local_mongo, "error": _sanitize_error(mongo_error)},
@@ -186,6 +200,8 @@ async def health_system():
         "warnings": warnings,
         "healthy": mongo_ok and (supabase_ok is not False),
     }
+    _system_health_cache = (monotonic(), result)
+    return result
 
 
 @router.get("/notifications")

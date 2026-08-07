@@ -193,7 +193,15 @@ async def create_session(
     return sid
 
 
+def _download_request_target(request: Request) -> str:
+    """Canonical path+query used to bind a browser download token."""
+    pairs = [(key, value) for key, value in request.query_params.multi_items() if key != "dl"]
+    query = "&".join(f"{key}={value}" for key, value in pairs)
+    return f"{request.url.path}{'?' + query if query else ''}"
+
+
 async def get_current_user(
+    request: Request = None,
     authorization: Optional[str] = Header(None),
     x_floor_id: Optional[str] = Header(None, alias="X-Floor-Id"),
     dl: Optional[str] = Query(None, description="Short-lived single-use token for browser-download URLs (see POST /downloads/token)"),
@@ -206,7 +214,9 @@ async def get_current_user(
         # header, so they use a one-shot opaque token minted moments earlier
         # instead of embedding the real JWT in the URL. See services/download_tokens.py.
         from services.download_tokens import consume_download_token
-        record = await consume_download_token(dl)
+        if request is None:
+            raise HTTPException(status_code=401, detail="Download request context is required")
+        record = await consume_download_token(dl, target=_download_request_target(request))
         if not record:
             raise HTTPException(status_code=401, detail="Download link expired or already used — reopen it from the app.")
         # The session_id recorded at mint time is replayed here. Without it

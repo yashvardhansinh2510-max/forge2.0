@@ -12,9 +12,10 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
+import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID } from "@/src/constants/floors";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { FeatherName, KeyCap, PaletteContext } from "./components";
-import { color, font, layout, motion, radius, shadow, space } from "./tokens";
-import { fmtMoneyCompact } from "./tokens";
+import { color, fmtMoneyCompact, font, layout, motion, radius, shadow, space } from "./tokens";
 
 type Item = {
   key: string;
@@ -38,6 +39,8 @@ const NAV: { label: string; icon: FeatherName; href: string; kw?: string }[] = [
   { label: "Notifications", icon: "bell", href: "/(admin)/notifications", kw: "alerts" },
   { label: "Team", icon: "user-check", href: "/(admin)/team", kw: "staff roles" },
   { label: "Settings", icon: "settings", href: "/(admin)/settings", kw: "preferences" },
+  { label: "Kitchen Floor", icon: "book-open", href: "/(admin)/notebook/kitchen/followups", kw: "notebook follow ups" },
+  { label: "Furniture Floor", icon: "book-open", href: "/(admin)/notebook/furniture/followups", kw: "notebook follow ups" },
 ];
 
 export function PaletteProvider({ children }: { children: React.ReactNode }) {
@@ -68,6 +71,8 @@ export function PaletteProvider({ children }: { children: React.ReactNode }) {
 
 function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
+  const { selectedFloorId } = useFloorAccess();
+  const notebookOnly = selectedFloorId === KITCHEN_FLOOR_ID || selectedFloorId === FURNITURE_FLOOR_ID;
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const isPhone = winW < layout.bp.tablet;
@@ -90,18 +95,20 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
       Animated.timing(anim, { toValue: 1, duration: motion.standard, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
       setTimeout(() => inputRef.current?.focus(), 60);
       // Prefetch light indexes once per open.
-      api.get<any[]>("/customers").then(setCustomers).catch(() => {});
-      api.get<any[]>("/quotations").then((d: any) => setQuotations(Array.isArray(d) ? d : d?.items ?? [])).catch(() => {});
+      if (!notebookOnly) {
+        api.get<any[]>("/customers").then(setCustomers).catch(() => {});
+        api.get<any[]>("/quotations").then((d: any) => setQuotations(Array.isArray(d) ? d : d?.items ?? [])).catch(() => {});
+      }
     } else {
       Animated.timing(anim, { toValue: 0, duration: motion.quick, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
         if (finished) setVisible(false);
       });
     }
-  }, [open, anim]);
+  }, [open, anim, notebookOnly]);
 
   // Product search — server-side, debounced.
   useEffect(() => {
-    if (!open) return;
+    if (!open || notebookOnly) return;
     if (debounce.current) clearTimeout(debounce.current);
     if (q.trim().length < 2) { setProducts([]); return; }
     debounce.current = setTimeout(() => {
@@ -109,7 +116,7 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
         .then((d) => setProducts(d?.items ?? []))
         .catch(() => setProducts([]));
     }, 180);
-  }, [q, open]);
+  }, [q, open, notebookOnly]);
 
   const go = useCallback((href: string) => {
     onClose();
@@ -120,19 +127,20 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
     const needle = q.trim().toLowerCase();
     const match = (s?: string) => !needle || (s ?? "").toLowerCase().includes(needle);
 
-    const actions: Item[] = ([
+    const actions: Item[] = (notebookOnly ? [] : [
       { key: "a-newq", section: "Actions", icon: "plus", title: "New quotation", keywords: "create quote", run: () => go("/(admin)/quotations/new") },
       { key: "a-cust", section: "Actions", icon: "user-plus", title: "Add customer", keywords: "create client", run: () => go("/(admin)/customers") },
       { key: "a-pay", section: "Actions", icon: "credit-card", title: "Record a payment", keywords: "collect money", run: () => go("/(admin)/payments") },
     ] as Item[]).filter((a) => match(a.title + " " + a.keywords));
 
     const nav: Item[] = NAV
+      .filter((n) => !notebookOnly || (selectedFloorId === KITCHEN_FLOOR_ID ? n.href.includes("/notebook/kitchen/") : n.href.includes("/notebook/furniture/")))
       .filter((n) => match(n.label + " " + (n.kw ?? "")))
       .map((n) => ({
         key: `n-${n.href}`, section: "Go to", icon: n.icon, title: n.label, run: () => go(n.href),
       }));
 
-    const cust: Item[] = !needle ? [] : customers
+    const cust: Item[] = notebookOnly || !needle ? [] : customers
       .filter((c) => match(`${c.name} ${c.company ?? ""} ${c.city ?? ""} ${c.email ?? ""}`))
       .slice(0, 4)
       .map((c) => ({
@@ -141,7 +149,7 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
         run: () => go(`/(admin)/customers/${c.id}`),
       }));
 
-    const quots: Item[] = !needle ? [] : quotations
+    const quots: Item[] = notebookOnly || !needle ? [] : quotations
       .filter((x) => match(`${x.number} ${x.customer_name ?? ""}`))
       .slice(0, 4)
       .map((x) => ({
@@ -151,14 +159,14 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
         run: () => go(`/(admin)/quotations/${x.id}`),
       }));
 
-    const prods: Item[] = products.slice(0, 5).map((p) => ({
+    const prods: Item[] = notebookOnly ? [] : products.slice(0, 5).map((p) => ({
       key: `p-${p.id}`, section: "Products", icon: "package", title: p.name,
       sub: p.sku, meta: p.price ? `₹${fmtMoneyCompact(p.price)}` : undefined,
       run: () => go(`/(admin)/catalog/${p.id}`),
     }));
 
     return [...actions, ...(needle ? [...cust, ...quots, ...prods] : []), ...nav];
-  }, [q, customers, quotations, products, go]);
+  }, [q, customers, quotations, products, go, notebookOnly, selectedFloorId]);
 
   // Clamp selection.
   useEffect(() => { setSel((s) => Math.min(s, Math.max(0, items.length - 1))); }, [items.length]);

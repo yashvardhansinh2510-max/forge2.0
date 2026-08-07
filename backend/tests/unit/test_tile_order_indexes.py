@@ -23,6 +23,7 @@ class _FakeDb:
         self.ready_batches = _RecordingCollection()
         self.dispatches = _RecordingCollection()
         self.chalans = _RecordingCollection()
+        self.material_movements = _RecordingCollection()
 
 
 def test_ensure_tile_order_indexes_creates_expected_indexes(monkeypatch):
@@ -36,6 +37,7 @@ def test_ensure_tile_order_indexes_creates_expected_indexes(monkeypatch):
     assert len(fake_db.ready_batches.calls) == 4
     assert len(fake_db.dispatches.calls) == 4
     assert len(fake_db.chalans.calls) == 2
+    assert len(fake_db.material_movements.calls) == 3
 
     # Verify customer_orders.number unique index
     customer_order_calls = {kwargs.get("name"): (keys, kwargs) for keys, kwargs in fake_db.customer_orders.calls}
@@ -69,3 +71,8 @@ def test_ensure_tile_order_indexes_creates_expected_indexes(monkeypatch):
     unique_names = {kwargs.get("name") for _, kwargs in fake_db.chalans.calls}
     assert "chalan_dispatch_unique" in unique_names
     assert "chalan_number_unique" in unique_names
+
+    movement_calls = {kwargs.get("name"): (keys, kwargs) for keys, kwargs in fake_db.material_movements.calls}
+    assert movement_calls["movement_floor_active_created"][0] == [
+        ("floor_id", 1), ("is_deleted", 1), ("created_at", -1),
+    ]

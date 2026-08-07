@@ -44,6 +44,9 @@ class _Collection:
             if isinstance(value, dict) and "$exists" in value:
                 if (key in row) != value["$exists"]:
                     return False
+            elif isinstance(value, dict) and "$type" in value:
+                if value["$type"] == "string" and not isinstance(row.get(key), str):
+                    return False
             elif isinstance(value, dict) and "$in" in value:
                 if row.get(key) not in value["$in"]:
                     return False
@@ -100,6 +103,31 @@ def test_notebook_contract_requires_identity_and_kitchen_type():
             {"customer_name": "A", "customer_phone": "9909906652", "kitchen_type": "Wood"},
             converted=False, current={}, creating=True,
         )
+    with pytest.raises(NotebookValidationError, match="10 digits"):
+        validate_notebook_patch(
+            {"customer_name": "A", "customer_phone": "99099", "kitchen_type": "GI"},
+            converted=False, current={}, creating=True,
+        )
+
+
+def test_furniture_contract_does_not_require_or_accept_kitchen_type():
+    assert validate_notebook_patch(
+        {"customer_name": "A", "customer_phone": "9909906652"},
+        converted=False, current={}, creating=True, floor_id="third-floor",
+    )["customer_name"] == "A"
+    with pytest.raises(NotebookValidationError, match="only available on Kitchen"):
+        validate_notebook_patch(
+            {"kitchen_type": "GI"}, converted=False, current={}, floor_id="third-floor",
+        )
+
+
+def test_notebook_api_is_limited_to_kitchen_and_furniture_floors():
+    from fastapi import HTTPException
+    from routes.followup_routes import require_notebook_floor
+
+    user = SimpleNamespace(active_floor_id="first-floor", floor_ids=["first-floor"], role="sales")
+    with pytest.raises(HTTPException, match="Kitchen or Furniture"):
+        require_notebook_floor("first-floor", user)
 
 
 def test_quotation_fields_are_rejected_before_conversion():
@@ -142,6 +170,13 @@ def test_search_query_contains_only_notebook_text_fields():
     assert "quotation_price" not in fields
 
 
+def test_notebook_query_is_pinned_to_the_url_floor_not_the_active_floor():
+    user = SimpleNamespace(active_floor_id="first-floor", floor_ids=["first-floor", "second-floor"], role="sales")
+    assert notebook_query(user, "second-floor", {"id": "row-1"}) == {
+        "floor_id": "second-floor", "notebook_key": {"$type": "string"}, "id": "row-1",
+    }
+
+
 def test_timeline_event_names_are_stable():
     assert timeline_event_for_field("notebook_status", "new", "won")[0] == "project_followup.status_changed"
     assert timeline_event_for_field("quotation_price", None, 100)[0] == "project_followup.quotation_updated"
@@ -166,6 +201,10 @@ async def test_notebook_list_is_floor_scoped_and_search_excludes_quote_fields(mo
     followups = _FollowupCollection([
         {"id": "k1", "floor_id": "second-floor", "notebook_key": "second-floor:c1", "is_converted": False,
          "customer_name": "Kitchen", "notebook_status": "new", "updated_at": "2"},
+        # Shared Followup documents are serialized with notebook_key=None;
+        # they must never bleed into the notebook projection.
+        {"id": "legacy", "floor_id": "second-floor", "notebook_key": None, "is_converted": False,
+         "customer_name": "Legacy CRM", "notebook_status": "new", "updated_at": "3"},
         {"id": "f1", "floor_id": "third-floor", "notebook_key": "third-floor:c2", "is_converted": False,
          "customer_name": "Furniture", "notebook_status": "new", "updated_at": "1"},
     ])
@@ -181,8 +220,35 @@ async def test_notebook_list_is_floor_scoped_and_search_excludes_quote_fields(mo
 
 
 @pytest.mark.asyncio
+async def test_create_notebook_reuses_the_same_floor_customer_row(monkeypatch):
+    from models import NotebookFollowupCreatePayload
+    from routes import followup_routes
+
+    db = _Db()
+
+    async def _log_event(**_kwargs):
+        return None
+
+    monkeypatch.setattr(followup_routes, "db", db)
+    monkeypatch.setattr(followup_routes, "log_event", _log_event)
+    # The explicit second-floor URL remains valid even if the user's shell
+    # still carries a stale first-floor selection.
+    user = SimpleNamespace(active_floor_id="first-floor", floor_ids=["first-floor", "second-floor"], role="sales")
+    body = NotebookFollowupCreatePayload(
+        customer_name="A", customer_phone="9909906652", kitchen_type="GI",
+    )
+
+    first = await followup_routes.create_notebook_row("second-floor", body, user)
+    second = await followup_routes.create_notebook_row("second-floor", body, user)
+
+    assert first["id"] == second["id"]
+    assert len(db.followups.rows) == 1
+    assert len(db.customers.rows) == 1
+    assert {row["customer_id"] for row in db.followups.rows} == {db.customers.rows[0]["id"]}
+
+
+@pytest.mark.asyncio
 async def test_resolve_or_create_customer_reuses_floor_scoped_mobile(monkeypatch):
-    monkeypatch.setattr("services.followup_notebook.floor_query", lambda _user, base: base)
     db = _Db(customers=[{"id": "c1", "name": "Existing", "phone": "+91 9909906652", "floor_id": "second-floor"}])
     user = object()
     customer = await resolve_or_create_customer(
@@ -194,7 +260,6 @@ async def test_resolve_or_create_customer_reuses_floor_scoped_mobile(monkeypatch
 
 @pytest.mark.asyncio
 async def test_patch_notebook_row_updates_only_one_field_and_revision(monkeypatch):
-    monkeypatch.setattr("services.followup_notebook.floor_query", lambda _user, base: base)
     db = _Db(followups=[{
         "id": "f1", "floor_id": "second-floor", "notebook_key": "second-floor:c1",
         "customer_name": "A", "customer_phone": "9909906652", "kitchen_type": "GI",
@@ -211,7 +276,6 @@ async def test_patch_notebook_row_updates_only_one_field_and_revision(monkeypatc
 
 @pytest.mark.asyncio
 async def test_conversion_updates_same_row_and_is_idempotent(monkeypatch):
-    monkeypatch.setattr("services.followup_notebook.floor_query", lambda _user, base: base)
     db = _Db(followups=[{
         "id": "f1", "floor_id": "second-floor", "notebook_key": "second-floor:c1",
         "customer_name": "A", "customer_phone": "9909906652", "kitchen_type": "GI",

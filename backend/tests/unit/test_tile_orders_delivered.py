@@ -255,3 +255,25 @@ def test_history_completion_rejects_partial_delivery():
     dispatches = [{"delivered_at": "2026-08-07T10:00:00+00:00"}]
 
     assert not router_module._is_fully_delivered(pos, dispatches)
+
+
+def test_history_completion_uses_100_percent_dispatched_state():
+    pos = [{"items": [{"qty": 10, "boxes_dispatched": 10}]}]
+    dispatches = [{"created_at": "2026-08-07T10:00:00+00:00", "delivered_at": None}]
+
+    assert router_module._is_fully_dispatched(pos, dispatches)
+
+
+def test_history_completion_rejects_partial_dispatch():
+    pos = [{"items": [{"qty": 10, "boxes_dispatched": 9}]}]
+    dispatches = [{"created_at": "2026-08-07T10:00:00+00:00", "delivered_at": None}]
+
+    assert not router_module._is_fully_dispatched(pos, dispatches)
+
+
+def test_godown_arrival_timestamp_is_first_move_only():
+    item = {}
+    router_module._ensure_godown_arrival(item, "2026-08-07T10:00:00+00:00")
+    router_module._ensure_godown_arrival(item, "2026-08-07T11:00:00+00:00")
+
+    assert item["godown_arrived_at"] == "2026-08-07T10:00:00+00:00"

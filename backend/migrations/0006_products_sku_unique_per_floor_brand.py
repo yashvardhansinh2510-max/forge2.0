@@ -3,16 +3,12 @@ globally or per-brand-only — the ground-floor tile catalog and the
 first-floor sanitary catalog are separate businesses that may legitimately
 reuse a supplier SKU code across floors.
 
-PREREQUISITE (manual, human decision — do not automate): as of 2026-07-17
-there is one known live duplicate SKU (26456000) under Hansgrohe, both rows
-on floor_id="first-floor" — this migration's index will fail to build
-against that data until it's resolved (rename one SKU or merge the two
-products). See migrations/0003's docstring for the exact failure mode
-(OperationFailure code 85) this class of problem produces if left
-unresolved and the collision happens to also match on index name; a
-brand-new index name here means a genuine duplicate-key error instead,
-which is the correct, loud failure for real duplicate data — don't catch or
-suppress it.
+The previously reported Hansgrohe collision was verified as already
+normalised in production: the two valid products are stored as ``26456000``
+and ``26456000-2``. The ``-2`` row is the "With attachment" variant; it is
+not a duplicate document. Keep this index strict: any future same-floor,
+same-brand SKU collision must use an explicit supplier/variant SKU suffix
+rather than silently overwriting a catalog row.
 
 ** DEPLOYMENT WARNING — this is not just about avoiding a manual script. **
 `migrations/runner.py` auto-applies every pending migration at every backend

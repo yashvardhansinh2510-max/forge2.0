@@ -35,6 +35,7 @@ SCOPING_HELPERS = {
     "tiles_floor_query",
     "get_floor_scoped_or_404",
     "require_floor_access",
+    "require_notebook_floor",
     "floor_scope_ids",
     "floor_for_write",
     "floor_inherit",

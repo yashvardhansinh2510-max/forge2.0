@@ -163,11 +163,13 @@ export function TilesProductPicker({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1, backgroundColor: "rgba(20,20,20,0.45)",
-    alignItems: "center", justifyContent: "flex-start",
-    paddingTop: 80, paddingHorizontal: spacing.lg,
+    alignItems: "center", justifyContent: "center",
+    padding: spacing.lg,
   },
   panel: {
-    width: "100%", maxWidth: 620, maxHeight: 480,
+    // Product selection is a working surface, not a tiny dialog. It opens
+    // wide/tall enough to make a large tile catalog easy to scan.
+    width: "100%", maxWidth: 1040, maxHeight: "84%",
     backgroundColor: colors.surface, borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     overflow: "hidden",

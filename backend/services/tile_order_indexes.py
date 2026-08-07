@@ -29,3 +29,16 @@ async def ensure_tile_order_indexes() -> None:
 
     await db.chalans.create_index("dispatch_id", unique=True, name="chalan_dispatch_unique")
     await db.chalans.create_index("number", unique=True, name="chalan_number_unique")
+
+    await db.material_movements.create_index(
+        [("floor_id", 1), ("is_deleted", 1), ("created_at", -1)],
+        name="movement_floor_active_created",
+    )
+    await db.material_movements.create_index(
+        [("floor_id", 1), ("is_deleted", 1), ("customer_id", 1), ("created_at", -1)],
+        name="movement_floor_customer_created",
+    )
+    await db.material_movements.create_index(
+        [("floor_id", 1), ("is_deleted", 1), ("brand_id", 1), ("created_at", -1)],
+        name="movement_floor_brand_created",
+    )

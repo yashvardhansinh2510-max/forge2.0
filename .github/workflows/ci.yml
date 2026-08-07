@@ -70,7 +70,16 @@ jobs:
         run: npm audit --audit-level=high
       - name: TypeScript check
         run: npx tsc --noEmit
+      - name: Expo dependency and configuration check
+        run: npx expo-doctor
+      - name: Existing frontend contract tests
+        run: |
+          npm run test:quotation-media
+          npm run test:quotation-contract
+          npm run test:notebook
       - name: Tile Orders workflow route contract
         run: node scripts/verify-tile-orders-contract.mjs
       - name: Lint
-        run: npx expo lint -- --max-warnings 200
+        run: npx expo lint -- --max-warnings 0
+      - name: Production web export
+        run: npx expo export --platform web

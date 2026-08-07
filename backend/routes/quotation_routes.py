@@ -532,7 +532,12 @@ async def delete_quotation(
     quotation_id: str,
     user: UserPublic = Depends(require_min_role("manager")),
 ):
-    existing = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0, "id": 1})
+    # Resolve by the document's own floor rather than the ambient floor header.
+    # This is important for tile selections/quotations, which always belong to
+    # Ground Floor even when a manager is currently viewing another unit.
+    existing = await get_floor_scoped_or_404(
+        db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0},
+    )
     if not existing:
         raise HTTPException(status_code=404, detail="Quotation not found")
     # BACKEND_AUDIT_2026-07-17.md Medium #20: deleting a quotation that
@@ -542,22 +547,49 @@ async def delete_quotation(
     # back to the quotation (order detail, payment history, PO lineage).
     # A draft/pending quotation with nothing built on it yet is still safe
     # to delete outright.
-    po_count, payment_count = await asyncio.gather(
+    po_count, completed_payment_count = await asyncio.gather(
         db.purchase_orders.count_documents({"quotation_id": quotation_id}),
-        db.payments.count_documents({"quotation_id": quotation_id}),
+        db.payments.count_documents({"quotation_id": quotation_id, "status": "completed"}),
     )
-    if po_count or payment_count:
+    if po_count or completed_payment_count:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Cannot delete — {po_count} purchase order(s) and {payment_count} payment(s) "
+                f"Cannot delete — {po_count} purchase order(s) and {completed_payment_count} completed payment(s) "
                 "reference this quotation. Cancel/void the order instead of deleting it."
             ),
         )
-    res = await db.quotations.delete_one(floor_query(user, {"id": quotation_id}))
+    customer_id = existing.get("customer_id")
+    followups_result, pending_payments_result = await asyncio.gather(
+        db.followups.delete_many({"quotation_id": quotation_id}),
+        db.payments.delete_many({"quotation_id": quotation_id, "status": {"$ne": "completed"}}),
+    )
+    # Gender was never part of the current schema, but removing the legacy key
+    # here keeps old imported records from retaining data the product no longer
+    # collects. The updates are intentionally limited to this customer's data.
+    gender_cleanup = 0
+    if customer_id:
+        cleanup_results = await asyncio.gather(
+            db.customers.update_one({"id": customer_id}, {"$unset": {"gender": ""}}),
+            db.walkins.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
+            db.followups.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
+            db.quotations.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
+        )
+        gender_cleanup = sum(getattr(result, "modified_count", 0) for result in cleanup_results)
+    res = await db.quotations.delete_one({"id": quotation_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Quotation not found")
-    return {"ok": True}
+    return {
+        "ok": True,
+        "quotation_id": quotation_id,
+        "doc_type": existing.get("doc_type", "standard"),
+        "deleted": {
+            "quotations": res.deleted_count,
+            "followups": followups_result.deleted_count,
+            "pending_payments": pending_payments_result.deleted_count,
+            "legacy_gender_fields": gender_cleanup,
+        },
+    }
 
 
 @router.post("/{quotation_id}/duplicate", response_model=Quotation)

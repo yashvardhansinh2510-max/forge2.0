@@ -120,7 +120,7 @@ export function MoveStageSheet({
     setQty(String(item.qty));
     setNote("");
     fetchStages().then(setStages).catch(() => {});
-  }, [visible, item?.item_id]);
+  }, [visible, item]);
 
   if (!item) return null;
 
@@ -296,7 +296,7 @@ export function TransferSheet({
     api.get<CustomerLite[]>("/customers").then((list) => {
       setCustomers((list || []).filter((c) => c.id !== item.customer_id));
     }).catch(() => {});
-  }, [visible, item?.item_id]);
+  }, [visible, item]);
 
   const filteredCustomers = useMemo(() => {
     const term = custSearch.trim().toLowerCase();

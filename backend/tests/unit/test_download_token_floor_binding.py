@@ -17,6 +17,7 @@ import asyncio
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 import auth
 import services.download_tokens as download_tokens
@@ -42,14 +43,21 @@ def test_mint_records_the_active_floor(monkeypatch):
     tokens = _FakeTokens()
     monkeypatch.setattr(download_tokens, "db", _Db(tokens))
 
-    asyncio.run(download_tokens.create_download_token("u1", "s1", "ground-floor"))
+    asyncio.run(download_tokens.create_download_token("u1", "s1", "ground-floor", "/api/quotations/q1/pdf"))
 
     assert tokens.stored["floor_id"] == "ground-floor"
     assert tokens.stored["session_id"] == "s1"
+    assert tokens.stored["target"] == "/api/quotations/q1/pdf"
+
+
+def _request(path="/api/quotations/q1/pdf?dl=tok"):
+    raw_path, _, raw_query = path.partition("?")
+    return Request({"type": "http", "method": "GET", "path": raw_path, "query_string": raw_query.encode(), "headers": []})
 
 
 def _consume(monkeypatch, *, record: dict, user_doc: dict, header_floor=None):
-    async def fake_consume(_token):
+    async def fake_consume(_token, *, target=None):
+        assert target == "/api/quotations/q1/pdf"
         return record
 
     async def fake_principal(_payload, kind=None, collection=None):
@@ -58,7 +66,7 @@ def _consume(monkeypatch, *, record: dict, user_doc: dict, header_floor=None):
     monkeypatch.setattr(download_tokens, "consume_download_token", fake_consume)
     monkeypatch.setattr(auth, "_load_active_principal", fake_principal)
     return asyncio.run(auth.get_current_user(
-        authorization=None, x_floor_id=header_floor, dl="tok",
+        request=_request(), authorization=None, x_floor_id=header_floor, dl="tok",
     ))
 
 

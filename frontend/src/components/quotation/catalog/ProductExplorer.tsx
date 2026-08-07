@@ -24,11 +24,6 @@ import { quotationGridColumns } from "../helpers/responsive";
 import type { Product, ProductVariant } from "../helpers/types";
 import { isNearScrollEnd } from "@/src/utils/scrollEnd";
 
-// Matches BuilderShell's THREE_PANE threshold: below that width, BuilderShell
-// always renders this component full-screen inside ProductPickerSheet with no
-// adjacent BrandRail (see BuilderShell.tsx), so the mobile brand/category
-// chips below need to cover that entire range — not just narrow phones.
-const PHONE_BREAKPOINT = 1180;
 const RECENT_SEARCHES_KEY = "forge.builder.recentSearches.v1";
 const MAX_RECENT_SEARCHES = 8;
 
@@ -42,10 +37,9 @@ const SORT_OPTIONS: { k: SortKey; label: string; icon: React.ComponentProps<type
   { k: "name", label: "A–Z", icon: "align-left" },
 ];
 
-export function ProductExplorer() {
+export function ProductExplorer({ showCompactFilters = true }: { showCompactFilters?: boolean }) {
   const b = useBuilder();
   const [paneWidth, setPaneWidth] = useState(0);
-  const isPhone = paneWidth > 0 ? paneWidth < PHONE_BREAKPOINT : true;
   const numCols = quotationGridColumns(paneWidth);
   const brandName = useMemo(() => {
     if (!b.selectedBrandId) return "All brands";
@@ -155,7 +149,7 @@ export function ProductExplorer() {
             these permanently in BrandRail alongside the grid, so this block is
             redundant there and intentionally hidden). Keeps the phone catalog
             experience at full parity with desktop browsing. */}
-        {isPhone ? (
+        {showCompactFilters ? (
           <>
             <ScrollView
               horizontal showsHorizontalScrollIndicator={false}

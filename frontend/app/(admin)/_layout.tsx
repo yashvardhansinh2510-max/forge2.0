@@ -20,8 +20,7 @@ import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { storage } from "@/src/utils/storage";
-import { SANITARY_FLOOR_ID, TILES_FLOOR_ID } from "@/src/constants/floors";
-import { KITCHEN_FLOOR_ID, FURNITURE_FLOOR_ID } from "@/src/constants/floors";
+import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID, SANITARY_FLOOR_ID, TILES_FLOOR_ID } from "@/src/constants/floors";
 
 type NavItem = {
   href: string; label: string; icon: FeatherName; match: string; roles?: string[];
@@ -48,9 +47,10 @@ const PRIMARY: NavItem[] = [
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases", floors: [SANITARY_FLOOR_ID] },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
+  { href: "/(admin)/payments-list", label: "Payment List", icon: "list", match: "payments-list" },
   { href: "/(admin)/followups", label: "Follow-ups", icon: "phone-call", match: "followups" },
-  { href: "/(admin)/notebook/kitchen", label: "Kitchen Floor", icon: "book-open", match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
-  { href: "/(admin)/notebook/furniture", label: "Furniture Floor", icon: "book-open", match: "furniture", floors: [FURNITURE_FLOOR_ID] },
+  { href: "/(admin)/notebook/kitchen/followups", label: "Kitchen Floor", icon: "book-open", match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
+  { href: "/(admin)/notebook/furniture/followups", label: "Furniture Floor", icon: "book-open", match: "furniture", floors: [FURNITURE_FLOOR_ID] },
 ];
 
 const SECONDARY: NavItem[] = [
@@ -210,6 +210,12 @@ function useVisibleNav() {
   const hasAccess = useModuleAccess();
   const { access, selectedFloorId } = useFloorAccess();
   return (items: NavItem[]) => items.filter((item) => {
+    // Kitchen and Furniture are intentionally notebook-only floors. Keeping
+    // generic CRM destinations in their shell would make them look like an
+    // inherited dashboard instead of the two-page floor notebook.
+    if (selectedFloorId === KITCHEN_FLOOR_ID || selectedFloorId === FURNITURE_FLOOR_ID) {
+      return item.floors?.includes(selectedFloorId) ?? false;
+    }
     if (!hasAccess(item.match)) return false;
     if (!item.floors) return true;
     // While the floor is still resolving, keep the item — hiding it first and
@@ -395,8 +401,9 @@ const MORE_ITEMS: NavItem[] = [
   { href: "/(admin)/customers", label: "Customers", icon: "users", match: "customers" },
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases", floors: [SANITARY_FLOOR_ID] },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
-  { href: "/(admin)/notebook/kitchen", label: "Kitchen Floor", icon: "book-open", match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
-  { href: "/(admin)/notebook/furniture", label: "Furniture Floor", icon: "book-open", match: "furniture", floors: [FURNITURE_FLOOR_ID] },
+  { href: "/(admin)/payments-list", label: "Payment List", icon: "list", match: "payments-list" },
+  { href: "/(admin)/notebook/kitchen/followups", label: "Kitchen Floor", icon: "book-open", match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
+  { href: "/(admin)/notebook/furniture/followups", label: "Furniture Floor", icon: "book-open", match: "furniture", floors: [FURNITURE_FLOOR_ID] },
   { href: "/(admin)/notifications", label: "Notifications", icon: "bell", match: "notifications" },
   { href: "/(admin)/sales-data", label: "Sales Data", icon: "trending-up", match: "sales-data" },
   { href: "/(admin)/team", label: "Team", icon: "user-check", match: "team", roles: ["owner", "admin", "manager"] },

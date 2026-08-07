@@ -23,18 +23,21 @@ def normalize_tile_line_item(item: QuotationLineItem) -> QuotationLineItem:
     """Normalize tile-only display/pricing fields at the pricing boundary.
 
     `unit_price` is the persisted per-unit amount used by the existing
-    quotation pricing engine. When a tile row supplies both a rate per square
-    foot and the square-foot coverage of a box, the conversion is performed
-    here—not in a presentation component. Offer Rate is the per-SQ.FT rate
-    supplied by the row, never the derived per-box amount.
+    quotation pricing engine. When a tile row supplies both a per-square-foot
+    price and the square-foot coverage of a box, the conversion is performed
+    here—not in a presentation component. The offer rate is the actual
+    selling price: if it is absent, the rate per SQ.FT is used instead.
     """
     if item.rate_sqft is None and item.offer_rate is not None:
         item.rate_sqft = item.offer_rate
     if item.offer_rate is None:
         item.offer_rate = item.rate_sqft if item.rate_sqft is not None else item.unit_price
+    # A supplied offer must always drive the box and line totals. Do not
+    # retain a stale rate_box calculated before the offer was edited.
+    effective_rate = item.offer_rate if item.offer_rate is not None else item.rate_sqft
     rate_box = item.rate_box
-    if rate_box is None and item.rate_sqft is not None and item.box_sqft is not None:
-        rate_box = round(float(item.rate_sqft) * float(item.box_sqft), 2)
+    if effective_rate is not None and item.box_sqft is not None:
+        rate_box = round(float(effective_rate) * float(item.box_sqft), 2)
     if rate_box is None:
         rate_box = item.unit_price
     item.rate_box = round(max(0.0, float(rate_box)), 2)

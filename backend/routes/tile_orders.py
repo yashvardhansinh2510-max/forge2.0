@@ -6,10 +6,11 @@ the TileCustomerOrder itself) lives in services/domain_outbox.py, not here
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Literal, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -439,6 +440,7 @@ async def move_material_to_godown(
     endpoints below)."""
     session = await client.start_session()
     moved_rows: list[dict] = []
+    now = now_iso()
     async with session:
         async with session.start_transaction():
             po = await db.purchase_orders.find_one(tiles_floor_query(user, {"id": po_id}), {"_id": 0}, session=session)
@@ -455,6 +457,7 @@ async def move_material_to_godown(
                 await _consume_released_pool(po_id, entry.po_item_id, entry.qty, session)
                 item["boxes_ready"] = released - entry.qty
                 item["boxes_godown"] = float(item.get("boxes_godown") or 0) + entry.qty
+                _ensure_godown_arrival(item, now)
                 item["overall_status"] = derive_item_status(
                     item["qty"], item["boxes_ready"], float(item.get("boxes_dispatched") or 0),
                 )
@@ -470,7 +473,6 @@ async def move_material_to_godown(
                 })
 
             items = list(items_by_id.values())
-            now = now_iso()
             updated = await db.purchase_orders.update_one(tiles_floor_query(user, {"id": po_id}), {"$set": {
                 "items": items,
                 "ready_boxes": sum(float(i.get("boxes_ready") or 0) for i in items),
@@ -989,6 +991,26 @@ def _is_fully_delivered(pos: list[dict], dispatches: list[dict]) -> bool:
     ) and all(dispatch.get("delivered_at") for dispatch in dispatches)
 
 
+def _is_fully_dispatched(pos: list[dict], dispatches: list[dict]) -> bool:
+    """Return whether every ordered box has left BuildCon.
+
+    History is keyed to the user-visible 100% completion metric, which is
+    based on dispatched boxes. Delivery confirmation is a later status.
+    """
+    items = [item for po in pos for item in po.get("items", [])]
+    return bool(items and dispatches) and all(
+        float(item.get("qty") or 0) > 0
+        and float(item.get("boxes_dispatched") or 0) >= float(item.get("qty") or 0) - 1e-6
+        for item in items
+    )
+
+
+def _ensure_godown_arrival(item: dict, arrived_at: str) -> None:
+    """Set the first Godown arrival time, preserving it on later moves."""
+    if not item.get("godown_arrived_at"):
+        item["godown_arrived_at"] = arrived_at
+
+
 @router.get("/suppliers")
 async def list_suppliers(user: UserPublic = Depends(require_min_role("sales"))):
     pos = await db.purchase_orders.find(tiles_floor_query(user, {"customer_order_id": {"$ne": None}}), {"_id": 0}).to_list(5000)
@@ -1450,12 +1472,15 @@ async def completed_tile_order_history(
         dispatches = await db.dispatches.find(
             tiles_floor_query(user, {"customer_order_id": order["id"], "is_deleted": False}), {"_id": 0}
         ).to_list(5000)
-        if not _is_fully_delivered(pos, dispatches):
+        if not _is_fully_dispatched(pos, dispatches):
             continue
         chalans = await db.chalans.find(
             tiles_floor_query(user, {"customer_order_id": order["id"], "is_deleted": False}), {"_id": 0}
         ).to_list(5000)
-        completion_date = max((d.get("delivered_at") or "" for d in dispatches), default=None) or order.get("updated_at")
+        completion_date = max(
+            (d.get("delivered_at") or d.get("created_at") or "" for d in dispatches),
+            default=None,
+        ) or order.get("updated_at")
         if date_from and (completion_date or "") < date_from:
             continue
         if date_to and (completion_date or "")[:10] > date_to:
@@ -1476,7 +1501,8 @@ async def completed_tile_order_history(
             "id": order["id"], "customer": order.get("customer_name"), "order_number": order.get("number"),
             "delivery_date": completion_date, "completion_date": completion_date,
             "brands": [po.get("brand_name") or "Unassigned" for po in pos], "products": products,
-            "final_amount": order.get("total_value") or 0, "delivery_status": "Delivered",
+            "final_amount": order.get("total_value") or 0,
+            "delivery_status": "Delivered" if all(d.get("delivered_at") for d in dispatches) else "Dispatched",
             "delivery_notes": next((d.get("delivery_note") for d in dispatches if d.get("delivery_note")), None),
             "timeline": sorted(events, key=lambda e: e.get("created_at", ""), reverse=True),
             "chalan_references": [{"id": c.get("id"), "number": c.get("number")} for c in chalans],
@@ -1527,42 +1553,34 @@ async def export_completed_tile_order_history(
 
 @router.get("/inventory")
 async def godown_inventory(
-    search: Optional[str] = None, brand_id: Optional[str] = None,
-    customer_id: Optional[str] = None, status: Optional[str] = None,
-    sort: str = "stock_desc",
+    search: Optional[str] = None,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
     """Live go-down inventory read model from Tile PurchaseOrder item counters."""
-    pos = await db.purchase_orders.find(tiles_floor_query(user, {"is_deleted": False}), {"_id": 0}).to_list(5000)
-    product_ids = list({item.get("product_id") for po in pos for item in po.get("items", []) if item.get("product_id")})
-    products = await db.products.find({"id": {"$in": product_ids}}, {"_id": 0, "id": 1, "price": 1, "mrp": 1}).to_list(len(product_ids) + 5) if product_ids else []
-    product_by_id = {product["id"]: product for product in products}
+    # Older Tile PurchaseOrder documents predate the shared soft-delete field
+    # and therefore omit `is_deleted` entirely. Treat missing as active so
+    # valid Godown stock is not silently hidden by the read model.
+    active_po = {"$or": [{"is_deleted": False}, {"is_deleted": {"$exists": False}}]}
+    pos = await db.purchase_orders.find(tiles_floor_query(user, active_po), {"_id": 0}).to_list(5000)
     rows = []
     for po in pos:
-        if brand_id and po.get("brand_id") != brand_id: continue
-        if customer_id and po.get("customer_id") != customer_id: continue
         for item in po.get("items", []):
             current = float(item.get("boxes_godown") or 0)
             if current <= 1e-9:
                 continue
-            # Tile Orders stock is already customer-linked; the available
-            # quantity is the physical Godown balance, while reservation is
-            # represented by the linked customer/order rather than counted
-            # twice from the supplier-release counter.
-            reserved = 0.0
-            available = current
-            catalog_product = product_by_id.get(item.get("product_id"), {})
-            row = {"id": f'{po["id"]}:{item["id"]}', "product": item.get("name"), "brand": po.get("brand_name") or "Unassigned", "size": item.get("size"), "finish": item.get("finish"), "current_stock": current, "reserved_stock": reserved, "available_stock": available, "customer": po.get("customer_name"), "arrival_date": po.get("latest_ready_date") or po.get("created_at"), "supplier": po.get("supplier_name"), "purchase_price": item.get("unit_cost") or 0, "selling_price": catalog_product.get("price") or catalog_product.get("mrp") or 0, "boxes": current, "pieces": item.get("pieces_per_box"), "quantity_unit": item.get("quantity_unit") or "Box", "location": item.get("current_location") or "Godown", "status": item.get("overall_status") or "Pending", "customer_id": po.get("customer_id"), "brand_id": po.get("brand_id")}
-            haystack = " ".join(str(row.get(key) or "") for key in ("product", "brand", "size", "finish", "customer", "supplier", "location")).lower()
+            row = {
+                "id": f'{po["id"]}:{item["id"]}',
+                "customer": po.get("customer_name"),
+                "name": item.get("name"),
+                "brand": po.get("brand_name") or "Unassigned",
+                "product": item.get("sku"),
+                "size": item.get("size"),
+                "arrival_date": item.get("godown_arrived_at") or po.get("latest_ready_date") or po.get("created_at"),
+            }
+            haystack = " ".join(str(row.get(key) or "") for key in ("customer", "name", "brand", "product", "size")).lower()
             if search and search.lower() not in haystack: continue
-            if status and row["status"] != status and row["location"] != status: continue
             rows.append(row)
-    if sort == "product_asc":
-        rows.sort(key=lambda row: (row["product"] or "").lower())
-    elif sort == "stock_asc":
-        rows.sort(key=lambda row: (row["available_stock"], row["product"] or ""))
-    else:
-        rows.sort(key=lambda row: (row["available_stock"], row["product"] or ""), reverse=True)
+    rows.sort(key=lambda row: ((row["name"] or "").lower(), (row["customer"] or "").lower()))
     return {"rows": rows, "total": len(rows)}
 
 
@@ -1583,7 +1601,7 @@ async def list_material_movements(
     customer_id: Optional[str] = None, brand_id: Optional[str] = None, movement_type: Optional[str] = None,
     date_from: Optional[str] = None, date_to: Optional[str] = None,
     chalan_number: Optional[str] = None, dispatch_number: Optional[str] = None, search: Optional[str] = None,
-    page: int = 1, page_size: int = 50,
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
     user: UserPublic = Depends(require_min_role("sales")),
 ):
     """Material Movement Register — the permanent, chronological audit
@@ -1599,10 +1617,12 @@ async def list_material_movements(
         filters["brand_id"] = brand_id
     if movement_type:
         filters["movement_type"] = movement_type
+    def contains(value: str) -> dict:
+        return {"$regex": re.escape(value[:80]), "$options": "i"}
     if chalan_number:
-        filters["chalan_number"] = {"$regex": chalan_number, "$options": "i"}
+        filters["chalan_number"] = contains(chalan_number)
     if dispatch_number:
-        filters["dispatch_number"] = {"$regex": dispatch_number, "$options": "i"}
+        filters["dispatch_number"] = contains(dispatch_number)
     if date_from or date_to:
         date_filter: dict = {}
         if date_from:
@@ -1611,15 +1631,14 @@ async def list_material_movements(
             date_filter["$lte"] = date_to + "T23:59:59.999999"
         filters["created_at"] = date_filter
     if search:
+        safe_search = contains(search)
         filters["$or"] = [
-            {"customer_name": {"$regex": search, "$options": "i"}},
-            {"brand_name": {"$regex": search, "$options": "i"}},
-            {"tile_name": {"$regex": search, "$options": "i"}},
-            {"sku": {"$regex": search, "$options": "i"}},
-            {"chalan_number": {"$regex": search, "$options": "i"}},
-            {"dispatch_number": {"$regex": search, "$options": "i"}},
+            {"customer_name": safe_search}, {"brand_name": safe_search},
+            {"tile_name": safe_search}, {"sku": safe_search},
+            {"chalan_number": safe_search}, {"dispatch_number": safe_search},
         ]
-    rows = await db.material_movements.find(tiles_floor_query(user, filters), {"_id": 0}).to_list(20000)
-    rows.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+    query = tiles_floor_query(user, filters)
+    total = await db.material_movements.count_documents(query)
     start = (page - 1) * page_size
-    return {"rows": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+    rows = await db.material_movements.find(query, {"_id": 0}).sort("created_at", -1).skip(start).limit(page_size).to_list(page_size)
+    return {"rows": rows, "page": page, "page_size": page_size, "total": total}

@@ -17,12 +17,17 @@
 // faithful replica of a specific printed form (see PAPER_W below), not a
 // responsive app screen — reflowing it, shrinking it, or scaling it would
 // let the on-screen editor drift away from what actually prints. This is
-// still true and still intentional for tablet and desktop.
+// still true and still intentional for desktop. Tablet screens lose a
+// meaningful slice of their width to the navigation rail, so presenting an
+// 820px paper there created a nested horizontal viewport. Tablets use the
+// same reflowed editor as phones instead, while retaining the exact document
+// model and generated PDF.
 //
-// Phones are a different medium, not a smaller version of the same one: a
-// pixel-faithful A4 replica is not something anyone can usefully edit on a
-// 375px screen, horizontal scroll or not. So below useBp().isPhone branches
-// to `MobileTilesEditor` — a genuinely separate, application-first
+// Phones and tablets are different media, not smaller versions of the same
+// one: a pixel-faithful A4 replica is not something anyone can usefully edit
+// in the constrained content area beside the navigation. So below the
+// phone/tablet breakpoint branches to `MobileTilesEditor` — a genuinely
+// separate, application-first
 // presentation (cards, sections, a product picker sheet) that calls the
 // EXACT SAME `useTilesDoc()` hook as the paper: same document model, same
 // autosave, same validation, same pricing/totals math, same backend calls.
@@ -33,7 +38,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -90,6 +95,10 @@ type TileRow = {
   rateSqft: string;
   boxSqft: string;
   offerRate: string;
+  // True when Offer Rate is merely mirroring Rate/SQ.FT rather than a
+  // customer-specific offer. This lets later rate edits continue to price
+  // correctly without requiring the user to clear the displayed fallback.
+  offerRateIsFallback: boolean;
   rateBox: string;
   totalBox: string;
   pcsBox: string;
@@ -148,7 +157,7 @@ function emptyRow(): TileRow {
     key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     lineId: null, productId: null, sku: "", categoryId: null,
     name: "", image: null, mrp: null,
-    area: "", size: "", rateSqft: "", boxSqft: "", offerRate: "", rateBox: "",
+    area: "", size: "", rateSqft: "", boxSqft: "", offerRate: "", offerRateIsFallback: true, rateBox: "",
     totalBox: "", pcsBox: "", quantityUnit: "Box", total: "",
     totalEdited: false,
   };
@@ -158,6 +167,39 @@ const num = (text: string): number => {
   const value = parseFloat(String(text).replace(/,/g, ""));
   return Number.isFinite(value) ? value : 0;
 };
+
+// Offer rate is the selling rate. When no offer has been entered, rate/SQ.FT
+// is the effective offer; this keeps the editor, API, and PDF on one formula.
+function effectiveTileRate(row: TileRow): number {
+  return row.offerRate.trim() !== "" ? num(row.offerRate) : num(row.rateSqft);
+}
+
+function derivedTileBoxRate(row: TileRow): number | null {
+  const sqft = num(row.boxSqft);
+  return sqft > 0 ? Math.round(effectiveTileRate(row) * sqft * 100) / 100 : null;
+}
+
+// A line total is normally derived from its quantity and rate. Keeping this
+// calculation in one place means the editor's visible per-product amount and
+// the quotation subtotal cannot drift apart. A typed total remains an explicit
+// override, matching the value persisted by buildItems().
+function resolvedLineTotal(row: TileRow): number {
+  const manualTotal = num(row.total);
+  if (row.totalEdited && manualTotal > 0) return manualTotal;
+
+  const quantity = num(row.totalBox) || 1;
+  const rateBox = derivedTileBoxRate(row) ?? num(row.rateBox);
+  const pcs = num(row.pcsBox);
+  const unitRate = row.quantityUnit === "Pieces" && pcs > 0 ? rateBox / pcs : rateBox;
+  return quantity * unitRate;
+}
+
+function lineTotalInputValue(row: TileRow): string {
+  // Preserve what the user is typing, including an in-progress blank value.
+  if (row.totalEdited) return row.total;
+  const total = resolvedLineTotal(row);
+  return total > 0 ? String(Math.round(total * 100) / 100) : "";
+}
 
 function quantityUnitLabel(unit: TileRow["quantityUnit"]): "Box" | "Piece" {
   return unit === "Pieces" ? "Piece" : "Box";
@@ -238,6 +280,7 @@ function useTilesDoc(docType: TilesDocType) {
           rateSqft: it.rate_sqft != null ? String(it.rate_sqft) : "",
           boxSqft: it.box_sqft != null ? String(it.box_sqft) : "",
           offerRate: it.offer_rate != null ? String(it.offer_rate) : (it.rate_sqft != null ? String(it.rate_sqft) : ""),
+          offerRateIsFallback: it.offer_rate == null || it.offer_rate === it.rate_sqft,
           rateBox: it.rate_box != null ? String(it.rate_box) : (it.unit_price != null ? String(it.unit_price) : ""),
           totalBox: it.qty ? String(it.qty) : "",
           pcsBox: it.pcs_per_box || "",
@@ -266,6 +309,17 @@ function useTilesDoc(docType: TilesDocType) {
     setRows((cur) => cur.map((row) => {
       if (row.key !== key) return row;
       const next = { ...row, ...patch };
+      if ("offerRate" in patch) next.offerRateIsFallback = !(patch.offerRate ?? "").trim();
+      if ("rateSqft" in patch && row.offerRateIsFallback) {
+        next.offerRate = patch.rateSqft ?? "";
+        next.offerRateIsFallback = true;
+      }
+      // Recalculate immediately when the selling rate or box coverage changes
+      // so the on-screen total never lags behind the edited offer.
+      if ("offerRate" in patch || "boxSqft" in patch || ("rateSqft" in patch && row.offerRateIsFallback)) {
+        const derived = derivedTileBoxRate(next);
+        if (derived !== null) next.rateBox = String(derived);
+      }
       // Editable values are sent to the backend pricing engine. The
       // presentation layer does not derive prices or line totals.
       if ("total" in patch) next.totalEdited = true;
@@ -323,7 +377,8 @@ function useTilesDoc(docType: TilesDocType) {
         rateSqft,
         boxSqft,
         rateBox: history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox || derivedRateBox),
-        offerRate: history?.rate_sqft != null ? String(history.rate_sqft) : (row.offerRate || rateSqft),
+        offerRate: history?.rate_sqft != null ? String(history.rate_sqft) : rateSqft,
+        offerRateIsFallback: true,
         pcsBox: history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox,
         totalBox: row.totalBox || "1",
         totalEdited: false,
@@ -342,9 +397,11 @@ function useTilesDoc(docType: TilesDocType) {
         const qty = num(row.totalBox) || 1;
         const manualTotal = num(row.total);
         const pcs = num(row.pcsBox);
+        const derivedRateBox = derivedTileBoxRate(row);
+        const baseRateBox = derivedRateBox ?? num(row.rateBox);
         const rateBox = row.totalEdited && manualTotal > 0 && qty > 0
           ? Math.round((manualTotal / qty) * (row.quantityUnit === "Pieces" && pcs > 0 ? pcs : 1) * 100) / 100
-          : num(row.rateBox);
+          : baseRateBox;
         const unitPrice = row.quantityUnit === "Pieces" && pcs > 0
           ? Math.round(rateBox / pcs * 100) / 100
           : rateBox;
@@ -372,12 +429,7 @@ function useTilesDoc(docType: TilesDocType) {
   const previewTotals = useMemo(() => {
     const lines = rows.flatMap((row) => {
       if (!row.productId || !row.name.trim()) return [];
-      const qty = num(row.totalBox) || 1;
-      const rateBox = num(row.rateBox);
-      const pcs = num(row.pcsBox);
-      const unitRate = row.quantityUnit === "Pieces" && pcs > 0 ? rateBox / pcs : rateBox;
-      const lineTotal = row.totalEdited && num(row.total) > 0 ? num(row.total) : qty * unitRate;
-      return [{ qty: 1, unitPrice: lineTotal }];
+      return [{ qty: 1, unitPrice: resolvedLineTotal(row) }];
     });
     const transportation = docType === "tiles_quotation" ? num(header.transportationFee) : 0;
     const totals = computeQuotationTotals(lines, transportation);
@@ -459,6 +511,7 @@ function useTilesDoc(docType: TilesDocType) {
             rateSqft: item.rate_sqft != null ? String(item.rate_sqft) : "",
             boxSqft: item.box_sqft != null ? String(item.box_sqft) : "",
             offerRate: item.offer_rate != null ? String(item.offer_rate) : (item.rate_sqft != null ? String(item.rate_sqft) : ""),
+            offerRateIsFallback: item.offer_rate == null || item.offer_rate === item.rate_sqft,
             rateBox: item.rate_box != null ? String(item.rate_box) : (item.unit_price != null ? String(item.unit_price) : ""),
             totalBox: item.qty != null ? String(item.qty) : "",
             pcsBox: item.pcs_per_box || "",
@@ -559,6 +612,18 @@ function useTilesDoc(docType: TilesDocType) {
     }
   }, [docType, status, persist, router]);
 
+  const deleteDocument = useCallback(async () => {
+    if (!docId) return;
+    setBusy("delete");
+    try {
+      await api.delete(`/quotations/${docId}`);
+      toast.success("Quotation deleted");
+      router.replace("/(admin)/followups" as any);
+    } catch (e: any) {
+      toast.error(e?.detail || "Quotation could not be deleted");
+    } finally { setBusy(null); }
+  }, [docId, router]);
+
   const pickCustomer = useCallback((customer: Customer) => {
     setCustomerId(customer.id);
     customerIdRef.current = customer.id;
@@ -572,7 +637,7 @@ function useTilesDoc(docType: TilesDocType) {
     updateRow, addRow, removeRow, applyProduct,
     customers, customerId, pickCustomer, setCustomerId,
     saveState, busy, generatePdf, print, placeOrder, serverTotals, previewTotals,
-    status, stage: tilesStage(docType, status), workflowAction, runWorkflowAction,
+    status, stage: tilesStage(docType, status), workflowAction, runWorkflowAction, deleteDocument,
   };
 }
 
@@ -608,6 +673,9 @@ function CellInput({
 
 const cellStyles = StyleSheet.create({
   input: {
+    // Each input owns its own column. RN Web otherwise lets an intrinsic
+    // input paint into adjacent columns, making taps focus the wrong field.
+    width: "100%", minWidth: 0, alignSelf: "stretch",
     fontSize: 12.5, color: "#111", paddingVertical: 2, paddingHorizontal: 3,
     ...(Platform.OS === "web" ? { outlineStyle: "none" } as any : {}),
   },
@@ -979,7 +1047,10 @@ const priceStyles = StyleSheet.create({
 
 const paperStyles = StyleSheet.create({
   paper: {
-    width: PAPER_W, backgroundColor: "#fff", paddingHorizontal: 30, paddingVertical: 26,
+    // Fill all available desktop/tablet space; on narrower tablets the
+    // enclosing horizontal scroller preserves the readable document width.
+    width: "100%", minWidth: PAPER_W, alignSelf: "stretch",
+    backgroundColor: "#fff", paddingHorizontal: 30, paddingVertical: 26,
     borderRadius: 2,
     ...(Platform.OS === "web" ? { boxShadow: "0 10px 34px rgba(20,20,20,0.16)" } as any : {}),
   },
@@ -1165,7 +1236,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
               />
             </View>
             <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
-              <CellInput value={row.total} onChangeText={(t) => doc.updateRow(row.key, { total: t })} testID={`tiles-total-${index}`} />
+              <CellInput value={lineTotalInputValue(row)} onChangeText={(t) => doc.updateRow(row.key, { total: t })} testID={`tiles-total-${index}`} />
             </View>
             <RowSideControls
               isLast={index === doc.rows.length - 1}
@@ -1209,6 +1280,7 @@ const quoStyles = StyleSheet.create({
   td: {
     borderRightWidth: 1, borderColor: "#111",
     alignItems: "center", justifyContent: "center", paddingHorizontal: 6, paddingVertical: 8,
+    minWidth: 0, overflow: "hidden",
   },
   th: { fontSize: 10.2, fontWeight: "700", color: "#111", textAlign: "center" },
   cellText: { fontSize: 12, color: "#111" },
@@ -1324,7 +1396,7 @@ function MobileRowCard({
           <View key={f.key} style={mobileStyles.fieldSlot}>
             <TextField
               label={f.label}
-              value={(row as any)[f.key]}
+              value={f.key === "total" ? lineTotalInputValue(row) : (row as any)[f.key]}
               onChangeText={(t: string) => doc.updateRow(row.key, { [f.key]: t } as Partial<TileRow>)}
               keyboardType={f.numeric ? "decimal-pad" : "default"}
               testID={`mobile-${f.key}-${index}`}
@@ -1350,8 +1422,8 @@ function MobileRowCard({
 }
 
 function MobileTilesEditor({
-  docType, doc, router,
-}: { docType: TilesDocType; doc: ReturnType<typeof useTilesDoc>; router: ReturnType<typeof useRouter> }) {
+  docType, doc, router, onDelete,
+}: { docType: TilesDocType; doc: ReturnType<typeof useTilesDoc>; router: ReturnType<typeof useRouter>; onDelete: () => void }) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
   const isSelection = docType === "tiles_selection";
   const title = isSelection ? "Tiles Selection" : "Tiles Quotation";
@@ -1402,6 +1474,7 @@ function MobileTilesEditor({
             ...(!isSelection && primaryAction?.label !== "Place Order"
               ? [{ label: "Place Order", icon: "shopping-cart" as const, onPress: doc.placeOrder }]
               : []),
+            ...(doc.docId ? [{ label: "Delete quotation", icon: "trash-2" as const, onPress: onDelete }] : []),
           ]}
         />
       </View>
@@ -1598,15 +1671,30 @@ const mobileStyles = StyleSheet.create({
 export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
   const router = useRouter();
   const doc = useTilesDoc(docType);
-  const { isPhone } = useBp();
+  const { isPhone, isTablet } = useBp();
+  const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const isSelection = docType === "tiles_selection";
   const title = isSelection ? "Tiles Selection" : "Tiles Quotation";
+  const confirmDelete = () => {
+    if (!doc.docId) return;
+    RNAlert.alert(
+      "Delete this quotation?",
+      "Linked follow-ups and unpaid payment records will be removed. Completed payments and purchase orders are protected.",
+      [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: doc.deleteDocument }],
+    );
+  };
 
-  if (isPhone) {
-    return <MobileTilesEditor docType={docType} doc={doc} router={router} />;
-  }
+  // Device width is not the usable document width: the admin sidebar/rail
+  // occupies part of the viewport. Do not mount an 820px paper unless the
+  // actual workspace can contain it plus its gutters; otherwise use the
+  // reflowed editor and avoid a nested horizontal scroll.
+  const useResponsiveEditor = isPhone
+    || isTablet
+    || (workspaceWidth > 0 && workspaceWidth < PAPER_W + spacing.lg + 64);
 
   return (
+    <View style={{ flex: 1 }} onLayout={(event) => setWorkspaceWidth(event.nativeEvent.layout.width)}>
+      {useResponsiveEditor ? <MobileTilesEditor docType={docType} doc={doc} router={router} onDelete={confirmDelete} /> : (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={["top"]}>
       <View style={shellStyles.topbar}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
@@ -1643,6 +1731,7 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
           ) : (
             <ActionBtn label="Place Order" icon="shopping-cart" onPress={doc.placeOrder} loading={doc.busy === "order"} testID="tiles-place-order" />
           )}
+          {doc.docId ? <ActionBtn label="Delete" icon="trash-2" onPress={confirmDelete} loading={doc.busy === "delete"} testID="tiles-delete" /> : null}
         </View>
       </View>
 
@@ -1651,10 +1740,10 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
           <ActivityIndicator color={colors.brand} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingVertical: spacing.lg, paddingBottom: 80 }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingVertical: spacing.lg, paddingBottom: 80 }}>
           <ScrollView
             horizontal
-            contentContainerStyle={{ flexGrow: 1, justifyContent: "center", paddingHorizontal: spacing.lg, paddingRight: 64 }}
+            contentContainerStyle={{ flexGrow: 1, minWidth: "100%", paddingHorizontal: spacing.lg, paddingRight: 64 }}
             showsHorizontalScrollIndicator
           >
             {isSelection ? <SelectionPaper {...doc} /> : <QuotationPaper {...doc} />}
@@ -1662,6 +1751,8 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
         </ScrollView>
       )}
     </SafeAreaView>
+      )}
+    </View>
   );
 }
 

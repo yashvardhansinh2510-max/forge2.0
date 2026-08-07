@@ -112,7 +112,7 @@ export default function BrandOrderDetailScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [releaseQty, order?.id, poId, load]);
+  }, [releaseQty, order?.id, order?.items, poId, load]);
 
   const columns = useMemo<Column<ReleaseItem>[]>(() => [
     {

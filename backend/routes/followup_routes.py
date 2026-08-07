@@ -25,8 +25,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
-from auth import floor_for_write, floor_inherit, floor_query, get_current_user, require_floor_access, require_min_role
+from auth import floor_for_write, floor_inherit, floor_query, get_current_user, get_floor_scoped_or_404, require_floor_access, require_min_role
 from db import db
 from models import (
     AutomationRuleUpdate, Followup, FollowupCallOutcomePayload, FollowupCompletePayload,
@@ -49,11 +50,19 @@ from services.followup_notebook import (
 )
 
 router = APIRouter(prefix="/followups", tags=["followups"])
+NOTEBOOK_FLOOR_IDS = frozenset({"second-floor", "third-floor"})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+def require_notebook_floor(floor_id: str, user: UserPublic) -> None:
+    """Limit the notebook surface to its two declared floor modules."""
+    require_floor_access(floor_id, user)
+    if floor_id not in NOTEBOOK_FLOOR_IDS:
+        raise HTTPException(status_code=404, detail="Notebook is available only on Kitchen or Furniture Floor")
+
+
 async def _wake_snoozed() -> None:
     """Self-healing: any snooze whose timer has elapsed flips back to open so
     it resurfaces in the inbox without needing a background job."""
@@ -449,7 +458,7 @@ async def list_notebook(
     limit: int = Query(100, ge=1, le=250),
     user: UserPublic = Depends(get_current_user),
 ):
-    require_floor_access(floor_id, user)
+    require_notebook_floor(floor_id, user)
     query = notebook_query(user, floor_id, {"is_converted": view == "quotation"})
     if status and status != "all":
         query["notebook_status"] = status
@@ -485,19 +494,26 @@ async def create_notebook_row(
     body: NotebookFollowupCreatePayload,
     user: UserPublic = Depends(get_current_user),
 ):
-    require_floor_access(floor_id, user)
+    require_notebook_floor(floor_id, user)
     patch = body.dict(exclude_none=True)
     patch["notebook_status"] = "new"
     try:
-        clean = validate_notebook_patch(patch, converted=False, current={}, creating=True)
+        clean = validate_notebook_patch(
+            patch, converted=False, current={}, creating=True, floor_id=floor_id,
+        )
     except NotebookValidationError as error:
         raise HTTPException(status_code=422, detail=str(error))
     customer = await resolve_or_create_customer(
         db, user=user, floor_id=floor_id, name=clean["customer_name"],
         phone=clean["customer_phone"], address=clean.get("address"),
     )
+    # A customer has one notebook row per floor. Repeated creation requests
+    # must resolve to that row instead of making the register appear to ignore
+    # edits or creating a second customer conversation.
     notebook_key = f"{floor_id}:{customer['id']}"
-    existing = await db.followups.find_one(notebook_query(user, floor_id, {"notebook_key": notebook_key}), {"_id": 0})
+    existing = await db.followups.find_one(
+        notebook_query(user, floor_id, {"notebook_key": notebook_key}), {"_id": 0},
+    )
     if existing:
         return serialize_notebook_row(existing)
     now = now_iso()
@@ -509,12 +525,22 @@ async def create_notebook_row(
         next_action="Call customer", next_action_reason="Notebook customer follow-up",
         suggested_channel="call", priority_score=0, priority_level="medium", due_at=now,
         is_automated=False, is_converted=False, notebook_status="new",
-        address=clean.get("address"), kitchen_type=clean["kitchen_type"],
+        address=clean.get("address"), kitchen_type=clean.get("kitchen_type"),
         referred_by=clean.get("referred_by"),
         architect_interior_designer=clean.get("architect_interior_designer"),
         notes=clean.get("notes"),
     )
-    await db.followups.insert_one(row.dict())
+    try:
+        await db.followups.insert_one(row.dict())
+    except DuplicateKeyError:
+        # The unique notebook_key index wins races between two staff members
+        # creating the same floor/customer record at once.
+        existing = await db.followups.find_one(
+            notebook_query(user, floor_id, {"notebook_key": notebook_key}), {"_id": 0},
+        )
+        if existing:
+            return serialize_notebook_row(existing)
+        raise
     await log_event(
         event_type="project_followup.created", entity_type="followup", entity_id=row.id,
         actor=user, customer_id=row.customer_id, floor_id=floor_id,
@@ -525,7 +551,7 @@ async def create_notebook_row(
 
 @router.get("/notebook/{floor_id}/{row_id}")
 async def get_notebook_row(floor_id: str, row_id: str, user: UserPublic = Depends(get_current_user)):
-    require_floor_access(floor_id, user)
+    require_notebook_floor(floor_id, user)
     row = await db.followups.find_one(notebook_query(user, floor_id, {"id": row_id}), {"_id": 0})
     if not row:
         raise HTTPException(status_code=404, detail="Notebook row not found")
@@ -537,7 +563,7 @@ async def patch_notebook(
     floor_id: str, row_id: str, body: NotebookCellPatchPayload,
     user: UserPublic = Depends(get_current_user),
 ):
-    require_floor_access(floor_id, user)
+    require_notebook_floor(floor_id, user)
     field = "notebook_status" if body.field == "status" else body.field
     if field == "customer_phone" and body.value is not None:
         value = normalize_mobile(str(body.value))
@@ -579,7 +605,7 @@ async def convert_notebook(
     floor_id: str, row_id: str, body: NotebookConversionPayload,
     user: UserPublic = Depends(get_current_user),
 ):
-    require_floor_access(floor_id, user)
+    require_notebook_floor(floor_id, user)
     before = await db.followups.find_one(notebook_query(user, floor_id, {"id": row_id}), {"_id": 0})
     if not before:
         raise HTTPException(status_code=404, detail="Notebook row not found")
@@ -602,7 +628,7 @@ async def convert_notebook(
 
 @router.get("/notebook/{floor_id}/{row_id}/timeline")
 async def notebook_timeline(floor_id: str, row_id: str, user: UserPublic = Depends(get_current_user)):
-    require_floor_access(floor_id, user)
+    require_notebook_floor(floor_id, user)
     row = await db.followups.find_one(notebook_query(user, floor_id, {"id": row_id}), {"_id": 0, "id": 1})
     if not row:
         raise HTTPException(status_code=404, detail="Notebook row not found")
@@ -810,6 +836,27 @@ async def update_followup(followup_id: str, body: FollowupUpdate, user: UserPubl
     return await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
 
 
+@router.delete("/{followup_id}")
+async def delete_followup(
+    followup_id: str,
+    user: UserPublic = Depends(require_min_role("manager")),
+):
+    """Permanently remove a follow-up during manager data cleanup."""
+    f = await get_floor_scoped_or_404(
+        db.followups, followup_id, user, not_found="Follow-up not found", projection={"_id": 0},
+    )
+    result = await db.followups.delete_one({"id": followup_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    activity = await db.activity_events.delete_many({
+        "$or": [
+            {"entity_type": "followup", "entity_id": followup_id},
+            {"followup_id": followup_id},
+        ],
+    })
+    return {"ok": True, "followup_id": followup_id, "deleted": {"followups": result.deleted_count, "activity_events": activity.deleted_count}}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Actions — snooze / complete / contact / call outcome
 # ─────────────────────────────────────────────────────────────────────────────
@@ -918,22 +965,42 @@ async def log_call(followup_id: str, body: FollowupCallOutcomePayload, user: Use
     }
     next_created = None
 
-    if body.outcome in ("interested", "call_back"):
+    if body.outcome == "lost" and not (body.notes or "").strip():
+        raise HTTPException(status_code=422, detail="A reason is required when marking a client as lost")
+
+    if body.outcome == "pending" and body.next_followup_at is None:
+        raise HTTPException(status_code=422, detail="Choose the next follow-up date for a pending client")
+
+    if body.outcome in ("interested", "call_back", "pending"):
         patch.update({"status": "done", "completed_at": now_iso(), "completed_outcome": body.outcome})
-        due = now_dt + timedelta(days=1 if body.outcome == "call_back" else 2)
+        if body.outcome == "pending":
+            due = body.next_followup_at
+            if due.tzinfo is None:
+                due = due.replace(tzinfo=timezone.utc)
+            else:
+                due = due.astimezone(timezone.utc)
+            if due <= now_dt:
+                raise HTTPException(status_code=422, detail="The next follow-up date must be in the future")
+        else:
+            due = now_dt + timedelta(days=1 if body.outcome == "call_back" else 2)
+        next_reason = {
+            "call_back": "Call back requested",
+            "interested": "Customer interested — follow up on their decision",
+            "pending": "Customer asked to reconnect later",
+        }[body.outcome]
         nf = Followup(
             rule_type="manual", category=f.get("category", "general"),
             customer_id=f["customer_id"], customer_name=f["customer_name"], customer_phone=f.get("customer_phone"),
             customer_tier=f.get("customer_tier", "retail"), quotation_id=f.get("quotation_id"),
             quotation_number=f.get("quotation_number"), purchase_id=f.get("purchase_id"),
             purchase_number=f.get("purchase_number"), value=f.get("value", 0),
-            reason=("Call back requested" if body.outcome == "call_back" else "Customer interested — follow up on their decision"),
+            reason=next_reason,
             reason_factors=[f.get("reason", "")] if f.get("reason") else [],
             next_action="Call customer", next_action_reason="Scheduled automatically from the previous call outcome.",
             suggested_channel="call", priority_score=f.get("priority_score", 50), priority_level=f.get("priority_level", "medium"),
             due_at=due.isoformat(), is_automated=False,
             assigned_to=f.get("assigned_to") or user.id, assigned_to_name=f.get("assigned_to_name") or user.full_name,
-            tags=f.get("tags", []),
+            tags=f.get("tags", []), notes=body.notes,
             floor_id=floor_inherit(f),
         )
         await db.followups.insert_one(nf.dict())
@@ -961,6 +1028,16 @@ async def log_call(followup_id: str, body: FollowupCallOutcomePayload, user: Use
         patch.update({
             "status": "done", "completed_at": now_iso(),
             "completed_outcome": "converted", "resolution_note": "Converted!",
+        })
+    elif body.outcome == "won":
+        patch.update({
+            "status": "done", "completed_at": now_iso(),
+            "completed_outcome": "won", "resolution_note": "Client won",
+        })
+    elif body.outcome == "lost":
+        patch.update({
+            "status": "dismissed", "completed_at": now_iso(),
+            "completed_outcome": "lost", "resolution_note": body.notes.strip(),
         })
 
     await db.followups.update_one(floor_query(user, {"id": followup_id}), {"$set": patch})
