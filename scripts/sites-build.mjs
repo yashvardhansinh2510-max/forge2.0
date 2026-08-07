@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 
 // Sites packages the Expo web export as a Cloudflare-compatible worker.
 
-const expo = spawn('npx', ['expo', 'export', '--platform', 'web', '--output-dir', 'dist'], {
+const expo = spawn('npx', ['expo', 'export', '--platform', 'web', '--output-dir', 'dist/client'], {
   stdio: 'inherit',
   shell: process.platform === 'win32',
 });
@@ -14,6 +14,7 @@ expo.on('exit', async (code, signal) => {
     return;
   }
 
+  await mkdir('dist', { recursive: true });
   await mkdir('dist/server', { recursive: true });
   await writeFile(
     'dist/server/index.js',
