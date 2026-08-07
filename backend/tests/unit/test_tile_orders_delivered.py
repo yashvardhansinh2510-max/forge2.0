@@ -241,3 +241,17 @@ def test_transport_edit_updates_chalan_and_rejects_empty_body(monkeypatch):
             "d-1", router_module.DispatchTransportBody(), user=_user(),
         ))
     assert getattr(exc.value, "status_code", None) == 400
+
+
+def test_history_completion_uses_child_delivery_state_when_parent_rollup_is_stale():
+    pos = [{"items": [{"qty": 10, "boxes_dispatched": 10, "overall_status": "Delivered"}]}]
+    dispatches = [{"delivered_at": "2026-08-07T10:00:00+00:00"}]
+
+    assert router_module._is_fully_delivered(pos, dispatches)
+
+
+def test_history_completion_rejects_partial_delivery():
+    pos = [{"items": [{"qty": 10, "boxes_dispatched": 9, "overall_status": "Dispatched"}]}]
+    dispatches = [{"delivered_at": "2026-08-07T10:00:00+00:00"}]
+
+    assert not router_module._is_fully_delivered(pos, dispatches)

@@ -75,7 +75,7 @@ async def _sync_customer_order_brand_status(
         "overall_status": overall,
         "supplier_statuses": [{"supplier_name": b.get("supplier_name"), "status": b.get("status")} for b in brands],
     }
-    await db.customer_orders.update_one(
+    updated = await db.customer_orders.update_one(
         {"id": co_id, "version": co.get("version", 0)},
         {"$set": {
             "brands": brands, "overall_status": overall, "dashboard_summary": summary,
@@ -85,6 +85,8 @@ async def _sync_customer_order_brand_status(
         }},
         session=session,
     )
+    if getattr(updated, "matched_count", 1) == 0:
+        raise HTTPException(status_code=409, detail="Customer order changed — refresh and confirm delivery again")
 
 
 @router.post("/purchase-orders/{po_id}/ready")
@@ -469,13 +471,15 @@ async def move_material_to_godown(
 
             items = list(items_by_id.values())
             now = now_iso()
-            await db.purchase_orders.update_one({"id": po_id}, {"$set": {
+            updated = await db.purchase_orders.update_one(tiles_floor_query(user, {"id": po_id}), {"$set": {
                 "items": items,
                 "ready_boxes": sum(float(i.get("boxes_ready") or 0) for i in items),
                 "pending_boxes": sum(float(i.get("boxes_pending") or 0) for i in items),
                 "dispatched_boxes": sum(float(i.get("boxes_dispatched") or 0) for i in items),
                 "updated_at": now,
             }}, session=session)
+            if getattr(updated, "matched_count", 1) == 0:
+                raise HTTPException(status_code=409, detail="Purchase order changed — refresh and try again")
 
     for row in moved_rows:
         await log_event(
@@ -968,6 +972,23 @@ _STATUS_TO_KPI_KEY = {
 }
 
 
+def _is_fully_delivered(pos: list[dict], dispatches: list[dict]) -> bool:
+    """Return whether every ordered box has a completed customer dispatch.
+
+    This deliberately uses child counters and delivery timestamps rather than
+    the denormalized customer-order status, which may lag after a concurrent
+    parent rollup update.
+    """
+    items = [item for po in pos for item in po.get("items", [])]
+    if not items or not dispatches:
+        return False
+    return all(
+        float(item.get("qty") or 0) > 0
+        and float(item.get("boxes_dispatched") or 0) >= float(item.get("qty") or 0) - 1e-6
+        for item in items
+    ) and all(dispatch.get("delivered_at") for dispatch in dispatches)
+
+
 @router.get("/suppliers")
 async def list_suppliers(user: UserPublic = Depends(require_min_role("sales"))):
     pos = await db.purchase_orders.find(tiles_floor_query(user, {"customer_order_id": {"$ne": None}}), {"_id": 0}).to_list(5000)
@@ -1407,7 +1428,10 @@ async def completed_tile_order_history(
     when its workflow status is Delivered and all linked dispatches remain
     available as the historical references.
     """
-    filters: dict = {"is_deleted": False, "overall_status": "Delivered"}
+    # Do not trust the denormalized customer-order rollup as the inclusion
+    # gate. A concurrent status update can leave that parent field stale even
+    # though every linked PO/item and dispatch is complete.
+    filters: dict = {"is_deleted": False}
     if customer_id:
         filters["customer_id"] = customer_id
     orders = await db.customer_orders.find(tiles_floor_query(user, filters), {"_id": 0}).to_list(5000)
@@ -1416,6 +1440,8 @@ async def completed_tile_order_history(
         pos = await db.purchase_orders.find(
             tiles_floor_query(user, {"customer_order_id": order["id"]}), {"_id": 0}
         ).to_list(100)
+        if not pos:
+            continue
         if brand_id and not any(po.get("brand_id") == brand_id for po in pos):
             continue
         haystack = " ".join([order.get("customer_name") or "", order.get("number") or ""] + [po.get("brand_name") or "" for po in pos]).lower()
@@ -1424,6 +1450,8 @@ async def completed_tile_order_history(
         dispatches = await db.dispatches.find(
             tiles_floor_query(user, {"customer_order_id": order["id"], "is_deleted": False}), {"_id": 0}
         ).to_list(5000)
+        if not _is_fully_delivered(pos, dispatches):
+            continue
         chalans = await db.chalans.find(
             tiles_floor_query(user, {"customer_order_id": order["id"], "is_deleted": False}), {"_id": 0}
         ).to_list(5000)
@@ -1515,6 +1543,8 @@ async def godown_inventory(
         if customer_id and po.get("customer_id") != customer_id: continue
         for item in po.get("items", []):
             current = float(item.get("boxes_godown") or 0)
+            if current <= 1e-9:
+                continue
             # Tile Orders stock is already customer-linked; the available
             # quantity is the physical Godown balance, while reservation is
             # represented by the linked customer/order rather than counted

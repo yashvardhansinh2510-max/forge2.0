@@ -14,8 +14,8 @@
 // Every table on this screen is a <DataTable/>: a column declares its width
 // and alignment once and both the header and the body cell read from that
 // declaration, which is what stops labels drifting off their columns.
-import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from "react-native";
 
 import {
@@ -163,7 +163,13 @@ export default function TileOrdersScreen() {
   const inventoryCustomers = useMemo(() => ["All", ...Array.from(new Set(inventory.map((row) => row.customer).filter(Boolean)))], [inventory]);
   const inventoryBrands = useMemo(() => ["All", ...Array.from(new Set(inventory.map((row) => row.brand).filter(Boolean)))], [inventory]);
 
-  useEffect(() => { load(); }, [load]);
+  // The customer-order screen can mutate go-down stock while this tab stays
+  // mounted in the navigation stack. Re-fetch whenever the screen becomes
+  // visible so returning to Go-down Inventory cannot show a stale snapshot.
+  useFocusEffect(useCallback(() => {
+    load();
+    return undefined;
+  }, [load]));
 
   const openCustomerOrder = (id: string) => router.push(`/(admin)/tiles/orders/${id}` as any);
   const openBrand = (brandId: string | null) =>
