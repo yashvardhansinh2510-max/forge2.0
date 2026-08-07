@@ -18,7 +18,7 @@ expo.on('exit', async (code, signal) => {
   await mkdir('dist/server', { recursive: true });
   await writeFile(
     'dist/server/index.js',
-    `const worker = {\n  async fetch(request, env) {\n    const asset = await env.ASSETS.fetch(request);\n    if (asset.status !== 404) return asset;\n    const url = new URL(request.url);\n    if (url.pathname.startsWith('/_expo/') || url.pathname.includes('.')) return asset;\n    return env.ASSETS.fetch(new Request(new URL('/index.html', url), request));\n  },\n};\n\nexport default worker;\n`,
+    `async function fetchAsset(request, env, pathname) {\n  const base = new URL(request.url);\n  for (const prefix of ['', '/client', '/dist', '/dist/client']) {\n    const candidate = new URL(prefix + (pathname || '/'), base);\n    const response = await env.ASSETS.fetch(new Request(candidate, request));\n    if (response.status !== 404) return response;\n  }\n  return new Response('Not Found', { status: 404 });\n}\n\nconst worker = {\n  async fetch(request, env) {\n    const url = new URL(request.url);\n    const asset = await fetchAsset(request, env, url.pathname);\n    if (asset.status !== 404) return asset;\n    return fetchAsset(request, env, '/index.html');\n  },\n};\n\nexport default worker;\n`,
   );
 });
 
