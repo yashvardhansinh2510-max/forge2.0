@@ -414,7 +414,10 @@ async def customer_workspace(
         for k in PURCHASE_STAGES
     ]
 
-    activity = await timeline_for(customer_id=customer_id, limit=15)
+    # Customer IDs can exist on more than one business floor.  Keep the
+    # activity stream in the same floor scope as the products and POs above;
+    # otherwise Sanitary Bathroom movement events leak into Ground Floor.
+    activity = await timeline_for(customer_id=customer_id, limit=15, floor_ids=floor_scope_ids(user))
 
     shortages = await db.purchase_shortages.find(
         floor_query(user, {"customer_id": customer_id, "status": "awaiting_reorder"}), {"_id": 0},

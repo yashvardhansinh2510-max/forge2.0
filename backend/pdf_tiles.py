@@ -192,6 +192,7 @@ def _header_block(main_title: str, subtitle: str, styles: dict) -> Table:
     )
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
     ]))
@@ -282,6 +283,7 @@ def _price_summary_table(total_boxes: float, subtotal: float, transportation_fee
     table = Table(rows, colWidths=[130 * mm, 64 * mm], rowHeights=[7.5 * mm] * 4, hAlign="CENTER")
     table.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.6, GRID),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("BACKGROUND", (0, 0), (-1, -2), HEADER_GREY),
         ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#DADADA")),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -345,6 +347,7 @@ def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | 
         ])
     style_cmds = [
         ("GRID", (0, 0), (-1, -1), 0.7, GRID),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
@@ -450,6 +453,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
 
     style_cmds = [
         ("GRID", (0, 0), (-1, -1), 0.7, GRID),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
         ("BACKGROUND", (0, -1), (-1, -1), HEADER_GREY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),

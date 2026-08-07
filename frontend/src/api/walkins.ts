@@ -50,9 +50,9 @@ export const walkinsApi = {
   list: (params?: {
     status?: string; priority?: string; salesperson_id?: string; source?: string; floor_id?: string;
     date_from?: string; date_to?: string; search?: string;
-  }) => api.get<WalkIn[]>(`/walkins${toQuery(params)}`),
+  }, options?: { floorId?: string }) => api.get<WalkIn[]>(`/walkins${toQuery(params)}`, options),
 
-  get: (id: string) => api.get<WalkIn>(`/walkins/${id}`),
+  get: (id: string, options?: { floorId?: string }) => api.get<WalkIn>(`/walkins/${id}`, options),
 
   create: (body: {
     customer_name: string; customer_phone: string; alternate_phone?: string; email?: string;
@@ -71,17 +71,17 @@ export const walkinsApi = {
     next_followup_at: string; lost_reason: string; alternate_phone: string;
     budget: number; interested_products: string[];
     reference_contact: string; architect: string; builder: string;
-  }>) => api.patch<WalkIn>(`/walkins/${id}`, body),
+  }>, options?: { floorId?: string }) => api.patch<WalkIn>(`/walkins/${id}`, body, options),
 
   reassign: (id: string, salesperson_id: string) =>
     api.patch<WalkIn>(`/walkins/${id}/reassign`, { salesperson_id }),
 
-  contact: (id: string, channel: "whatsapp" | "email") =>
+  contact: (id: string, channel: "whatsapp" | "email", options?: { floorId?: string }) =>
     api.post<{ channel: string; message?: string; wa_url?: string; subject?: string; body?: string; mailto_url?: string }>(
-      `/walkins/${id}/contact?channel=${channel}`,
+      `/walkins/${id}/contact?channel=${channel}`, undefined, options,
     ),
 
-  timeline: (id: string) => api.get<Record<string, any>[]>(`/walkins/${id}/timeline`),
+  timeline: (id: string, options?: { floorId?: string }) => api.get<Record<string, any>[]>(`/walkins/${id}/timeline`, options),
 
   checkDuplicate: (params: { phone?: string; alternatePhone?: string; email?: string; name?: string; city?: string; address?: string }) =>
     api.get<DuplicateMatches>(`/walkins/check-duplicate${toQuery({
@@ -89,7 +89,7 @@ export const walkinsApi = {
       name: params.name, city: params.city, address: params.address,
     })}`),
 
-  dashboard: () => api.get<WalkInsDashboard>("/walkins/dashboard"),
+  dashboard: (options?: { floorId?: string }) => api.get<WalkInsDashboard>("/walkins/dashboard", options),
   analytics: () => api.get<WalkInsAnalytics>("/walkins/analytics"),
 
   listSources: () => api.get<{ sources: string[] }>("/walkins/config/sources"),

@@ -453,6 +453,9 @@ async def move_material_to_godown(
                 await _consume_released_pool(po_id, entry.po_item_id, entry.qty, session)
                 item["boxes_ready"] = released - entry.qty
                 item["boxes_godown"] = float(item.get("boxes_godown") or 0) + entry.qty
+                item["overall_status"] = derive_item_status(
+                    item["qty"], item["boxes_ready"], float(item.get("boxes_dispatched") or 0),
+                )
                 item["current_location"] = derive_current_location(
                     item["qty"], item["boxes_ready"], float(item.get("boxes_dispatched") or 0),
                     any_at_godown=item["boxes_godown"] > 0,
@@ -461,11 +464,18 @@ async def move_material_to_godown(
                     "po_item_id": entry.po_item_id, "qty": entry.qty, "tile_name": item.get("name"),
                     "series": item.get("series"), "finish": item.get("finish"), "size": item.get("size"),
                     "sku": item.get("sku"),
+                    "quantity_unit": item.get("quantity_unit") or "Box",
                 })
 
             items = list(items_by_id.values())
             now = now_iso()
-            await db.purchase_orders.update_one({"id": po_id}, {"$set": {"items": items, "updated_at": now}}, session=session)
+            await db.purchase_orders.update_one({"id": po_id}, {"$set": {
+                "items": items,
+                "ready_boxes": sum(float(i.get("boxes_ready") or 0) for i in items),
+                "pending_boxes": sum(float(i.get("boxes_pending") or 0) for i in items),
+                "dispatched_boxes": sum(float(i.get("boxes_dispatched") or 0) for i in items),
+                "updated_at": now,
+            }}, session=session)
 
     for row in moved_rows:
         await log_event(
@@ -1246,8 +1256,15 @@ async def customer_order_timeline(co_id: str, user: UserPublic = Depends(require
     pos = await db.purchase_orders.find(tiles_floor_query(user, {"customer_order_id": co_id}), {"_id": 0, "id": 1}).to_list(50)
     po_ids = [po["id"] for po in pos]
     events = await db.activity_events.find(
-        {"$or": [{"entity_type": "tile_customer_order", "entity_id": co_id}, {"purchase_id": {"$in": po_ids}}]}, {"_id": 0},
+        {"$or": [
+            {"entity_type": "tile_customer_order", "entity_id": co_id},
+            {"purchase_id": {"$in": po_ids}},
+        ]}, {"_id": 0},
     ).to_list(500)
+    # Older activity rows predate floor stamping. They are safe to retain here
+    # because the parent CustomerOrder and PO ids were already floor-scoped;
+    # explicitly stamped events must still belong to Ground Floor.
+    events = [event for event in events if event.get("floor_id") in (None, TILES_FLOOR_ID)]
     events.sort(key=lambda e: e.get("created_at", ""), reverse=True)
     return {"events": events}
 
