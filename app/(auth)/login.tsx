@@ -1,0 +1,183 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Authentication — one image, one form, one button.
+// ─────────────────────────────────────────────────────────────────────────────
+import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
+import React, { useState } from "react";
+import {
+  Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
+
+import { Button, Field, IconButton, Input, Txt } from "@/src/design/components";
+import { BuildConLogo } from "@/src/design/BrandLogo";
+import { useBp } from "@/src/design/responsive";
+import { brand, color, font, space } from "@/src/design/tokens";
+import { useAuth } from "@/src/state/auth";
+
+const HERO = "https://images.pexels.com/photos/36650049/pexels-photo-36650049.jpeg?auto=compress&cs=tinysrgb&w=1600";
+
+type Mode = "staff" | "customer";
+
+export default function Login() {
+  const { loginStaff, loginCustomer } = useAuth();
+  const { isPhone, isTablet, height } = useBp();
+  const compactPhone = isPhone && height < 700;
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const showDemoAccount = process.env.NODE_ENV !== "production" && process.env.EXPO_PUBLIC_ENABLE_DEMO_AUTH === "true";
+
+  const [mode, setMode] = useState<Mode>("staff");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    if (!email.trim() || !password) { setError("Enter your email and password."); return; }
+    Keyboard.dismiss();
+    setBusy(true); setError(null);
+    try {
+      if (mode === "staff") {
+        await loginStaff(email.trim(), password);
+      } else {
+        await loginCustomer(email.trim(), password);
+      }
+      // Navigation is intentionally NOT done here — AuthGate (app/_layout.tsx)
+      // reacts to the `kind` state change from loginStaff/loginCustomer above
+      // and performs the redirect exactly once. Calling router.replace() here
+      // AS WELL used to race against AuthGate's own replace() to the same
+      // destination, and on web that double-navigation could leave the app
+      // stuck on /login with a valid session already in memory.
+    } catch (e: any) {
+      setError(e?.message === "Invalid credentials" ? "That email and password don't match." : e?.message || "Sign-in failed. Try again.");
+      setBusy(false);
+    }
+  };
+
+  const fillDemo = () => {
+    if (mode === "staff") { setEmail("owner@forge.app"); setPassword("Forge@2026"); }
+    else { setEmail("customer@forge.app"); setPassword("Forge@2026"); }
+    setError(null);
+  };
+
+  const form = (
+    <View style={{ width: "100%", maxWidth: 384, alignSelf: "center", gap: compactPhone ? space.x3 : space.x5 }}>
+      <View style={{ gap: 8 }}>
+        {!isPhone ? <BuildConLogo height={44} style={{ marginBottom: 4 }} /> : null}
+        <Txt v="display" style={isPhone ? { fontSize: 30, lineHeight: 38 } : undefined}>
+          {mode === "staff" ? "Welcome back." : "Your project, live."}
+        </Txt>
+        <Txt v="bodyMid">
+          {mode === "staff" ? "Sign in to your workspace." : "Sign in to follow your order."}
+        </Txt>
+      </View>
+
+      <View style={{ gap: compactPhone ? space.x3 : space.x4 }}>
+        <Field label="Email">
+          <Input
+            testID="login-email"
+            value={email}
+            onChangeText={(v) => { setEmail(v); setError(null); }}
+            placeholder="you@company.com"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="email"
+            returnKeyType="next"
+          />
+        </Field>
+        <Field label="Password" error={error}>
+          <Input
+            testID="login-password"
+            value={password}
+            onChangeText={(v) => { setPassword(v); setError(null); }}
+            placeholder="••••••••"
+            secureTextEntry={!showPw}
+            autoCapitalize="none"
+            autoComplete="password"
+            returnKeyType="go"
+            onSubmitEditing={submit}
+            invalid={!!error}
+            right={<IconButton icon={showPw ? "eye-off" : "eye"} size={30} iconSize={15} tone="soft" onPress={() => setShowPw((v) => !v)} label="Toggle password" />}
+          />
+        </Field>
+        <Button testID="login-submit" label="Sign in" size="lg" full onPress={submit} loading={busy} />
+      </View>
+
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: space.x1 }}>
+        {showDemoAccount ? (
+          <Pressable onPress={fillDemo} hitSlop={8}>
+            <Text style={{ fontFamily: font.medium, fontSize: 13, color: color.inkSoft }}>Use demo account</Text>
+          </Pressable>
+        ) : <View />}
+        <Pressable
+          testID="toggle-portal"
+          onPress={() => { setMode((m) => (m === "staff" ? "customer" : "staff")); setError(null); setEmail(""); setPassword(""); }}
+          hitSlop={8}
+        >
+          <Text style={{ fontFamily: font.medium, fontSize: 13, color: color.brassDeep }}>
+            {mode === "staff" ? "Customer portal →" : "← Staff sign-in"}
+          </Text>
+        </Pressable>
+      </View>
+
+      <View style={{ flexDirection: "row", justifyContent: "center", gap: space.x4 }}>
+        <Pressable testID="login-privacy-link" onPress={() => router.push("/privacy")} hitSlop={8}>
+          <Text style={{ fontFamily: font.regular, fontSize: 12, color: color.inkSoft }}>Privacy</Text>
+        </Pressable>
+        <Pressable testID="login-terms-link" onPress={() => router.push("/terms")} hitSlop={8}>
+          <Text style={{ fontFamily: font.regular, fontSize: 12, color: color.inkSoft }}>Terms</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+
+  // ── Phone: image banner + form ──────────────────────────────────────────────
+  if (isPhone) {
+    return (
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, backgroundColor: color.canvas }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={{ height: compactPhone ? 128 : 216 }}>
+            <Image source={{ uri: HERO }} style={{ flex: 1 }} contentFit="cover" transition={300} />
+            <LinearGradient colors={["rgba(20,17,12,0.05)", "rgba(20,17,12,0.55)"]} style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }} />
+            <View style={{ position: "absolute", left: 20, bottom: 16, right: 20 }}>
+              <BuildConLogo height={compactPhone ? 32 : 40} />
+            </View>
+          </View>
+          <View style={{ flex: 1, padding: compactPhone ? 16 : 24, paddingTop: compactPhone ? 12 : 32, paddingBottom: Math.max(24, insets.bottom + 16) }}>
+            {form}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  // ── Tablet / desktop: split panel ───────────────────────────────────────────
+  return (
+    <View style={{ flex: 1, flexDirection: "row", backgroundColor: color.canvas }}>
+      <View style={{ flex: isTablet ? 0.85 : 1.1 }}>
+        <Image source={{ uri: HERO }} style={{ flex: 1 }} contentFit="cover" transition={400} />
+        <LinearGradient
+          colors={["rgba(20,17,12,0)", "rgba(20,17,12,0.62)"]}
+          start={{ x: 0.5, y: 0.35 }}
+          end={{ x: 0.5, y: 1 }}
+          style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
+        />
+        <View style={{ position: "absolute", left: 40, right: 40, bottom: 40, gap: 6 }}>
+          <Text style={{ fontFamily: font.display, fontSize: 30, lineHeight: 38, color: "#FFFFFF", letterSpacing: -0.3 }}>
+            {brand.tagline}.
+          </Text>
+          <Text style={{ fontFamily: font.regular, fontSize: 14, lineHeight: 21, color: "rgba(255,255,255,0.82)", maxWidth: 420 }}>
+            The operating system for premium sanitaryware — quotations, orders and payments in one calm place.
+          </Text>
+        </View>
+      </View>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1, justifyContent: "center", padding: space.x10 }}>
+        {form}
+      </KeyboardAvoidingView>
+    </View>
+  );
+}

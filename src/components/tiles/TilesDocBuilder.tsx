@@ -1,0 +1,1800 @@
+// TilesDocBuilder — Ground Floor → Tiles → Selection / Quotation.
+// -----------------------------------------------------------------------------
+// Each page renders as an editable on-screen replica of its official printed
+// document (the PDFs the backend generates from the same record), backed by
+// the existing quotation infrastructure: customers, autosave (silent PATCH),
+// activity logging, the /quotations PDF endpoint and the Purchase Order
+// workflow. Product rows are added manually with the "+" button (max 11) and
+// filled through the text-only SKU/name picker; every populated value stays
+// editable afterwards.
+//
+// Recorded design decision (Production readiness audit, 2026-07-23; revised
+// 2026-08-03 — see the Production UI/UX Stabilization Milestone): the on-
+// screen "paper" (SelectionPaper / QuotationPaper below) deliberately bypasses
+// both the shared design-token system (colors.ts / tokens.ts) and the app's
+// useBp() breakpoint standard. It renders inside a horizontal ScrollView on
+// narrow viewports instead of reflowing, because it is a fixed-size, pixel-
+// faithful replica of a specific printed form (see PAPER_W below), not a
+// responsive app screen — reflowing it, shrinking it, or scaling it would
+// let the on-screen editor drift away from what actually prints. This is
+// still true and still intentional for desktop. Tablet screens lose a
+// meaningful slice of their width to the navigation rail, so presenting an
+// 820px paper there created a nested horizontal viewport. Tablets use the
+// same reflowed editor as phones instead, while retaining the exact document
+// model and generated PDF.
+//
+// Phones and tablets are different media, not smaller versions of the same
+// one: a pixel-faithful A4 replica is not something anyone can usefully edit
+// in the constrained content area beside the navigation. So below the
+// phone/tablet breakpoint branches to `MobileTilesEditor` — a genuinely
+// separate, application-first
+// presentation (cards, sections, a product picker sheet) that calls the
+// EXACT SAME `useTilesDoc()` hook as the paper: same document model, same
+// autosave, same validation, same pricing/totals math, same backend calls.
+// Nothing about persistence or business logic is duplicated — only the
+// phone-width presentation differs. Both presentations always produce the
+// identical PDF, because they edit the identical document.
+import { Feather } from "@expo/vector-icons";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import { api } from "@/src/api/client";
+import { toast } from "@/src/components/Toast";
+import { ProductImage } from "@/src/components/ProductImage";
+import { productImageList } from "@/src/components/quotation/helpers/media";
+import { enqueueQuotationPersist } from "@/src/components/quotation/helpers/autosave";
+import { computeQuotationTotals } from "@/src/components/quotation/helpers/totals";
+import type { Customer, Product } from "@/src/components/quotation/helpers/types";
+import { Button, Card, Dropdown, TextField } from "@/src/components/ds";
+import { BuildConLogo } from "@/src/design/BrandLogo";
+import { useBp } from "@/src/design/responsive";
+import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { downloadApiFile, printApiFile } from "@/src/utils/downloadFile";
+
+import { TilesProductPicker } from "./TilesProductPicker";
+import { canPlaceOrder, nextTilesAction, tilesStage } from "./tilesStage";
+
+export type TilesDocType = "tiles_selection" | "tiles_quotation";
+
+const MAX_ROWS = 300; // soft cap only — the PDF auto-paginates, so this just guards against runaway input
+const PAPER_W = 820;
+const HEAD_GREY = "#D3D3D3";
+const ZEBRA = "#F0F0F0";
+const GRID = "#8A8A8A";
+const SERIF = Platform.select({ ios: "Times New Roman", android: "serif", default: "Georgia, 'Times New Roman', serif" }) as string;
+
+function TileImageCell({ uri }: { uri: string }) {
+  return (
+    <ProductImage
+      source={uri}
+      contentFit="contain"
+      frameInset={2}
+      borderRadius={0}
+      disableSkeleton
+      style={{ width: "100%", aspectRatio: 16 / 10 }}
+      accessibilityLabel="Quotation product image"
+    />
+  );
+}
+
+type TileRow = {
+  key: string;
+  lineId: string | null;
+  productId: string | null;
+  sku: string;
+  categoryId: string | null;
+  name: string;
+  image: string | null;
+  mrp: number | null;
+  area: string;
+  size: string;
+  rateSqft: string;
+  boxSqft: string;
+  offerRate: string;
+  // True when Offer Rate is merely mirroring Rate/SQ.FT rather than a
+  // customer-specific offer. This lets later rate edits continue to price
+  // correctly without requiring the user to clear the displayed fallback.
+  offerRateIsFallback: boolean;
+  rateBox: string;
+  totalBox: string;
+  pcsBox: string;
+  quantityUnit: "Box" | "Pieces";
+  total: string;
+  totalEdited: boolean;
+};
+
+type TilesHeader = {
+  customerName: string;
+  phone: string;
+  reference: string;
+  docDate: string;
+  attendedBy: string;
+  preparedBy: string;
+  address: string;
+  docNumber: string;
+  transportationFee: string;
+};
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function defaultDocDate(docType: TilesDocType): string {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, "0");
+  if (docType === "tiles_selection") {
+    return `${dd}-${MONTHS[now.getMonth()]}-${String(now.getFullYear()).slice(2)}`;
+  }
+  return `${dd}-${String(now.getMonth() + 1).padStart(2, "0")}-${now.getFullYear()}`;
+}
+
+function parseDocDate(raw: string): Date | null {
+  const text = (raw || "").trim();
+  let m = text.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  m = text.match(/^(\d{1,2})[-/ ]([A-Za-z]{3,})[-/ ](\d{2,4})$/);
+  if (m) {
+    const month = MONTHS.findIndex((x) => m![2].toLowerCase().startsWith(x.toLowerCase()));
+    if (month >= 0) {
+      const year = m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]);
+      return new Date(year, month, Number(m[1]));
+    }
+  }
+  return null;
+}
+
+function pdfFilename(customerName: string, docDate: string): string {
+  const d = parseDocDate(docDate) || new Date();
+  const stamp = `${String(d.getDate()).padStart(2, "0")}-${String(d.getMonth() + 1).padStart(2, "0")}-${d.getFullYear()}`;
+  const name = (customerName || "Customer").trim().replace(/[\\/:*?"<>|]/g, "");
+  return `${name} ${stamp}.pdf`;
+}
+
+function emptyRow(): TileRow {
+  return {
+    key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    lineId: null, productId: null, sku: "", categoryId: null,
+    name: "", image: null, mrp: null,
+    area: "", size: "", rateSqft: "", boxSqft: "", offerRate: "", offerRateIsFallback: true, rateBox: "",
+    totalBox: "", pcsBox: "", quantityUnit: "Box", total: "",
+    totalEdited: false,
+  };
+}
+
+const num = (text: string): number => {
+  const value = parseFloat(String(text).replace(/,/g, ""));
+  return Number.isFinite(value) ? value : 0;
+};
+
+// Offer rate is the selling rate. When no offer has been entered, rate/SQ.FT
+// is the effective offer; this keeps the editor, API, and PDF on one formula.
+function effectiveTileRate(row: TileRow): number {
+  return row.offerRate.trim() !== "" ? num(row.offerRate) : num(row.rateSqft);
+}
+
+function derivedTileBoxRate(row: TileRow): number | null {
+  const sqft = num(row.boxSqft);
+  return sqft > 0 ? Math.round(effectiveTileRate(row) * sqft * 100) / 100 : null;
+}
+
+// A line total is normally derived from its quantity and rate. Keeping this
+// calculation in one place means the editor's visible per-product amount and
+// the quotation subtotal cannot drift apart. A typed total remains an explicit
+// override, matching the value persisted by buildItems().
+function resolvedLineTotal(row: TileRow): number {
+  const manualTotal = num(row.total);
+  if (row.totalEdited && manualTotal > 0) return manualTotal;
+
+  const quantity = num(row.totalBox) || 1;
+  const rateBox = derivedTileBoxRate(row) ?? num(row.rateBox);
+  const pcs = num(row.pcsBox);
+  const unitRate = row.quantityUnit === "Pieces" && pcs > 0 ? rateBox / pcs : rateBox;
+  return quantity * unitRate;
+}
+
+function lineTotalInputValue(row: TileRow): string {
+  // Preserve what the user is typing, including an in-progress blank value.
+  if (row.totalEdited) return row.total;
+  const total = resolvedLineTotal(row);
+  return total > 0 ? String(Math.round(total * 100) / 100) : "";
+}
+
+function quantityUnitLabel(unit: TileRow["quantityUnit"]): "Box" | "Piece" {
+  return unit === "Pieces" ? "Piece" : "Box";
+}
+
+// ---------------------------------------------------------------------------
+// Document state + persistence
+// ---------------------------------------------------------------------------
+function useTilesDoc(docType: TilesDocType) {
+  const router = useRouter();
+  const { id: routeId } = useLocalSearchParams<{ id?: string }>();
+  const [docId, setDocId] = useState<string | null>((routeId as string) || null);
+  const [docNumberServer, setDocNumberServer] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>("draft");
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const customerIdRef = useRef<string | null>(null);
+  const [customerSnapshot, setCustomerSnapshot] = useState<{ name: string; phone: string }>({ name: "", phone: "" });
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [header, setHeader] = useState<TilesHeader>({
+    customerName: "", phone: "", reference: "", docDate: defaultDocDate(docType),
+    attendedBy: "", preparedBy: "", address: "", docNumber: "", transportationFee: "0",
+  });
+  const [rows, setRows] = useState<TileRow[]>([emptyRow()]);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [serverTotals, setServerTotals] = useState<{ subtotal: number; grandTotal: number; transportation: number } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(Boolean(routeId));
+  const dirtyRef = useRef(false);
+  const persistRef = useRef<() => Promise<string | null>>(async () => null);
+  const persistQueue = useRef<Promise<string | null>>(Promise.resolve(null));
+  const persistedIdRef = useRef<string | null>((routeId as string) || null);
+
+  useEffect(() => {
+    api.get<Customer[]>("/customers", { floorId: "ground-floor" }).then(setCustomers).catch(() => {});
+  }, []);
+
+  // Restore a saved document.
+  useEffect(() => {
+    if (!routeId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const doc = await api.get<any>(`/quotations/${routeId}`);
+        if (!alive) return;
+        setDocId(doc.id);
+        setDocNumberServer(doc.number || null);
+        setStatus(doc.status || "draft");
+        setServerTotals({
+          subtotal: Number(doc.subtotal || 0),
+          grandTotal: Number(doc.grand_total || 0),
+          transportation: Number(doc.transportation_fee || 0),
+        });
+        setCustomerId(doc.customer_id || null);
+        customerIdRef.current = doc.customer_id || null;
+        setCustomerSnapshot({ name: doc.customer_name || "", phone: doc.phone_snapshot || "" });
+        setHeader({
+          customerName: doc.customer_name || "",
+          phone: doc.phone_snapshot || "",
+          reference: doc.reference_source || "",
+          docDate: doc.doc_date || defaultDocDate(docType),
+          attendedBy: doc.attended_by || "",
+          preparedBy: doc.prepared_by || "",
+          address: doc.address_snapshot || "",
+          docNumber: doc.doc_number || doc.number || "",
+          transportationFee: doc.transportation_fee != null ? String(doc.transportation_fee) : "0",
+        });
+        const restored: TileRow[] = (doc.items || []).map((it: any): TileRow => ({
+          key: it.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          lineId: it.id || null,
+          productId: it.product_id || null,
+          sku: it.sku || "",
+          categoryId: it.category_id || null,
+          name: it.name || "",
+          image: it.image || null,
+          mrp: it.mrp ?? null,
+          area: it.room || "",
+          size: it.size || "",
+          rateSqft: it.rate_sqft != null ? String(it.rate_sqft) : "",
+          boxSqft: it.box_sqft != null ? String(it.box_sqft) : "",
+          offerRate: it.offer_rate != null ? String(it.offer_rate) : (it.rate_sqft != null ? String(it.rate_sqft) : ""),
+          offerRateIsFallback: it.offer_rate == null || it.offer_rate === it.rate_sqft,
+          rateBox: it.rate_box != null ? String(it.rate_box) : (it.unit_price != null ? String(it.unit_price) : ""),
+          totalBox: it.qty ? String(it.qty) : "",
+          pcsBox: it.pcs_per_box || "",
+          quantityUnit: it.quantity_unit === "Pieces" ? "Pieces" : "Box",
+          total: it.net_amount != null ? String(it.net_amount) : "",
+          totalEdited: false,
+        }));
+        setRows(restored.length ? restored : [emptyRow()]);
+      } catch (e: any) {
+        toast.error(e?.detail || "Couldn't open that document");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [routeId, docType]);
+
+  const markDirty = useCallback(() => { dirtyRef.current = true; }, []);
+
+  const setHeaderField = useCallback((field: keyof TilesHeader, value: string) => {
+    setHeader((cur) => ({ ...cur, [field]: value }));
+    markDirty();
+  }, [markDirty]);
+
+  const updateRow = useCallback((key: string, patch: Partial<TileRow>) => {
+    setRows((cur) => cur.map((row) => {
+      if (row.key !== key) return row;
+      const next = { ...row, ...patch };
+      if ("offerRate" in patch) next.offerRateIsFallback = !(patch.offerRate ?? "").trim();
+      if ("rateSqft" in patch && row.offerRateIsFallback) {
+        next.offerRate = patch.rateSqft ?? "";
+        next.offerRateIsFallback = true;
+      }
+      // Recalculate immediately when the selling rate or box coverage changes
+      // so the on-screen total never lags behind the edited offer.
+      if ("offerRate" in patch || "boxSqft" in patch || ("rateSqft" in patch && row.offerRateIsFallback)) {
+        const derived = derivedTileBoxRate(next);
+        if (derived !== null) next.rateBox = String(derived);
+      }
+      // Editable values are sent to the backend pricing engine. The
+      // presentation layer does not derive prices or line totals.
+      if ("total" in patch) next.totalEdited = true;
+      return next;
+    }));
+    markDirty();
+  }, [markDirty]);
+
+  const addRow = useCallback(() => {
+    setRows((cur) => (cur.length >= MAX_ROWS ? cur : [...cur, emptyRow()]));
+    markDirty();
+  }, [markDirty]);
+
+  const removeRow = useCallback((key: string) => {
+    setRows((cur) => {
+      const next = cur.filter((row) => row.key !== key);
+      return next.length ? next : [emptyRow()];
+    });
+    markDirty();
+  }, [markDirty]);
+
+  const applyProduct = useCallback((key: string, product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null; box_sqft?: number | null }) => {
+    const image = productImageList(product)[0] || null;
+    const specs = product.specs || {};
+    const specNum = (...keys: string[]): string => {
+      for (const k of keys) {
+        const v = (specs as any)[k];
+        if (v != null && v !== "" && Number.isFinite(parseFloat(String(v)))) return String(v);
+      }
+      return "";
+    };
+    const specText = (...keys: string[]): string => {
+      for (const k of keys) {
+        const v = (specs as any)[k];
+        if (v != null && String(v).trim()) return String(v);
+      }
+      return "";
+    };
+    setRows((cur) => cur.map((row) => {
+      if (row.key !== key) return row;
+      const boxSqft = history?.box_sqft != null ? String(history.box_sqft) : (specNum("sqft_per_box", "box_sqft") || row.boxSqft);
+      const rateSqft = history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft);
+      const derivedRateBox = num(rateSqft) > 0 && num(boxSqft) > 0
+        ? String(Math.round(num(rateSqft) * num(boxSqft) * 100) / 100)
+        : row.rateBox;
+      const next: TileRow = {
+        ...row,
+        productId: product.id,
+        sku: product.sku,
+        categoryId: product.category_id || null,
+        name: product.name,
+        image,
+        mrp: product.mrp ?? null,
+        size: history?.size || product.size || product.dimensions || row.size,
+        rateSqft,
+        boxSqft,
+        rateBox: history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox || derivedRateBox),
+        offerRate: history?.rate_sqft != null ? String(history.rate_sqft) : rateSqft,
+        offerRateIsFallback: true,
+        pcsBox: history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox,
+        totalBox: row.totalBox || "1",
+        totalEdited: false,
+      };
+      return next;
+    }));
+    if (history) toast.show(`Used ${customerId ? "this customer's" : ""} last rate for ${product.name}`.replace("  ", " "));
+    markDirty();
+  }, [markDirty, customerId]);
+
+  // ---- Persistence -------------------------------------------------------
+  const buildItems = useCallback(() => {
+    return rows
+      .filter((row) => row.productId && row.name.trim())
+      .map((row, index) => {
+        const qty = num(row.totalBox) || 1;
+        const manualTotal = num(row.total);
+        const pcs = num(row.pcsBox);
+        const derivedRateBox = derivedTileBoxRate(row);
+        const baseRateBox = derivedRateBox ?? num(row.rateBox);
+        const rateBox = row.totalEdited && manualTotal > 0 && qty > 0
+          ? Math.round((manualTotal / qty) * (row.quantityUnit === "Pieces" && pcs > 0 ? pcs : 1) * 100) / 100
+          : baseRateBox;
+        const unitPrice = row.quantityUnit === "Pieces" && pcs > 0
+          ? Math.round(rateBox / pcs * 100) / 100
+          : rateBox;
+        const item: any = {
+          product_id: row.productId, sku: row.sku, name: row.name.trim(),
+          image: row.image, category_id: row.categoryId,
+          room: row.area.trim() || null,
+          qty, unit_price: unitPrice, rate_box: rateBox,
+          mrp: row.mrp,
+          size: row.size.trim() || null,
+          rate_sqft: row.rateSqft.trim() ? num(row.rateSqft) : null,
+          box_sqft: row.boxSqft.trim() ? num(row.boxSqft) : null,
+          offer_rate: row.offerRate.trim() ? num(row.offerRate) : (row.rateSqft.trim() ? num(row.rateSqft) : unitPrice),
+          pcs_per_box: row.pcsBox.trim() || null,
+          quantity_unit: row.quantityUnit,
+          sort_order: index,
+        };
+        if (row.lineId) item.id = row.lineId;
+        return item;
+      });
+  }, [rows]);
+
+  // Show the same subtotal/transport/grand-total relationship immediately
+  // while the debounced autosave round-trip is in flight.
+  const previewTotals = useMemo(() => {
+    const lines = rows.flatMap((row) => {
+      if (!row.productId || !row.name.trim()) return [];
+      return [{ qty: 1, unitPrice: resolvedLineTotal(row) }];
+    });
+    const transportation = docType === "tiles_quotation" ? num(header.transportationFee) : 0;
+    const totals = computeQuotationTotals(lines, transportation);
+    return {
+      subtotal: totals.subtotal,
+      transportation: totals.transportation,
+      grandTotal: totals.grandTotal,
+    };
+  }, [rows, header.transportationFee, docType]);
+
+  const persist = useCallback(async ({ silent = true }: { silent?: boolean } = {}): Promise<string | null> => {
+    const run = async (): Promise<string | null> => {
+      const name = header.customerName.trim();
+      if (!name) {
+        toast.show("Enter the customer name first");
+        return null;
+      }
+      setSaveState("saving");
+      try {
+      // 1. Resolve the customer — reuse an explicit pick, else create one.
+      let cid = customerIdRef.current || customerId;
+      if (!cid) {
+        const created = await api.post<Customer>("/customers", { name, phone: header.phone.trim() || null }, { floorId: "ground-floor" });
+        cid = created.id;
+        customerIdRef.current = created.id;
+        setCustomerId(created.id);
+        setCustomerSnapshot({ name, phone: header.phone.trim() });
+        setCustomers((cur) => [created, ...cur]);
+      } else if (name !== customerSnapshot.name || header.phone.trim() !== customerSnapshot.phone) {
+        // Header edits correct the customer record (typo fixes stay in sync).
+        await api.patch(`/customers/${cid}`, { name, phone: header.phone.trim() || null }).catch(() => {});
+        setCustomerSnapshot({ name, phone: header.phone.trim() });
+      }
+
+      const payload: any = {
+        customer_id: cid,
+        items: buildItems(),
+        rooms: [],
+        phone_snapshot: header.phone.trim() || null,
+        reference_source: header.reference.trim() || null,
+        attended_by: header.attendedBy.trim() || null,
+        prepared_by: header.preparedBy.trim() || null,
+        address_snapshot: header.address.trim() || null,
+        doc_date: header.docDate.trim() || null,
+        doc_number: header.docNumber.trim() || null,
+        transportation_fee: docType === "tiles_quotation" ? num(header.transportationFee) : 0,
+      };
+      let id = persistedIdRef.current || docId;
+      if (!id) {
+        const created = await api.post<{ id: string; number: string }>("/quotations", { ...payload, doc_type: docType }, { floorId: "ground-floor" });
+        id = created.id;
+        persistedIdRef.current = created.id;
+        setDocId(created.id);
+        setDocNumberServer(created.number);
+        if (docType === "tiles_quotation" && !header.docNumber.trim()) {
+          setHeader((cur) => ({ ...cur, docNumber: created.number }));
+        }
+        router.setParams({ id: created.id });
+      } else {
+        const fresh = await api.patch<any>(`/quotations/${id}`, { ...payload, silent, reason: silent ? undefined : "Saved from tiles builder" });
+        setServerTotals({
+          subtotal: Number(fresh.subtotal || 0),
+          grandTotal: Number(fresh.grand_total || 0),
+          transportation: Number(fresh.transportation_fee || 0),
+        });
+        if (Array.isArray(fresh.items)) {
+          setRows((current) => fresh.items.map((item: any, index: number) => ({
+            ...(current[index] || emptyRow()),
+            key: current[index]?.key || item.id || `${Date.now()}-${index}`,
+            lineId: item.id || current[index]?.lineId || null,
+            productId: item.product_id || null,
+            sku: item.sku || "",
+            categoryId: item.category_id || null,
+            name: item.name || "",
+            image: item.image || null,
+            mrp: item.mrp ?? null,
+            area: item.room || "",
+            size: item.size || "",
+            rateSqft: item.rate_sqft != null ? String(item.rate_sqft) : "",
+            boxSqft: item.box_sqft != null ? String(item.box_sqft) : "",
+            offerRate: item.offer_rate != null ? String(item.offer_rate) : (item.rate_sqft != null ? String(item.rate_sqft) : ""),
+            offerRateIsFallback: item.offer_rate == null || item.offer_rate === item.rate_sqft,
+            rateBox: item.rate_box != null ? String(item.rate_box) : (item.unit_price != null ? String(item.unit_price) : ""),
+            totalBox: item.qty != null ? String(item.qty) : "",
+            pcsBox: item.pcs_per_box || "",
+            quantityUnit: item.quantity_unit === "Pieces" ? "Pieces" : "Box",
+            total: item.net_amount != null ? String(item.net_amount) : "",
+            totalEdited: false,
+          })));
+        }
+      }
+      dirtyRef.current = false;
+      setSaveState("saved");
+      return id;
+      } catch (e: any) {
+        setSaveState("error");
+        toast.error(e?.detail || "Save failed");
+        return null;
+      }
+    };
+    return enqueueQuotationPersist(persistQueue, run);
+  }, [header, customerId, customerSnapshot, docId, docType, buildItems, router]);
+  persistRef.current = () => persist({ silent: true });
+
+  // Autosave: create the document on the first meaningful edit, then silently
+  // persist every subsequent edit. A new Tiles document used to wait for an
+  // explicit workflow/PDF action before it acquired an id, which made the
+  // Save-free editor lose a first draft if the tab was closed early.
+  useEffect(() => {
+    if (!dirtyRef.current || !header.customerName.trim()) return;
+    const timer = setTimeout(() => { void persistRef.current(); }, 900);
+    return () => clearTimeout(timer);
+  }, [header, rows, docId]);
+
+  const generatePdf = useCallback(async () => {
+    setBusy("pdf");
+    try {
+      const id = await persist({ silent: true });
+      if (!id) return;
+      await downloadApiFile(`/quotations/${id}/pdf`, pdfFilename(header.customerName, header.docDate), "PDF");
+    } finally {
+      setBusy(null);
+    }
+  }, [persist, header.customerName, header.docDate]);
+
+  const print = useCallback(async () => {
+    setBusy("print");
+    try {
+      const id = await persist({ silent: true });
+      if (!id) return;
+      await printApiFile(`/quotations/${id}/pdf`, "PDF");
+    } finally {
+      setBusy(null);
+    }
+  }, [persist]);
+
+  const placeOrder = useCallback(async () => {
+    setBusy("order");
+    const id = await persist({ silent: true });
+    setBusy(null);
+    if (!id) return;
+    if (!buildItems().length) {
+      toast.show("Add at least one product first");
+      return;
+    }
+    if (!canPlaceOrder(docType, status)) {
+      toast.show("Confirm the quotation before placing the order");
+      return;
+    }
+    router.push(`/(admin)/quotations/${id}/place-order` as any);
+  }, [persist, buildItems, router, docType, status]);
+
+  const workflowAction = nextTilesAction(docType, status);
+
+  const runWorkflowAction = useCallback(async () => {
+    const action = nextTilesAction(docType, status);
+    if (!action) return;
+    setBusy("workflow");
+    try {
+      if (action.kind === "move_to_quotation") {
+        const id = await persist({ silent: true });
+        if (!id) return;
+        const updated = await api.post<{ id: string; doc_type: string; status: string }>(`/quotations/${id}/move-to-quotation`);
+        toast.success("Moved to Quotation");
+        // Move-to-Quotation changes doc_type; the route file (selection.tsx
+        // vs quotation.tsx) is what picks Selection vs Quotation paper, so
+        // navigate to the sibling route for the same id.
+        router.replace(`/(admin)/tiles/quotation?id=${updated.id}` as any);
+        return;
+      }
+      const id = await persist({ silent: true });
+      if (!id) return;
+      const updated = await api.patch<{ status: string }>(`/quotations/${id}`, { status: action.nextStatus });
+      setStatus(updated.status);
+      toast.success(action.label === "Approve" || action.label === "Confirm" ? `${action.label}d` : "Submitted");
+    } catch (e: any) {
+      toast.error(e?.detail || "Couldn't update the workflow stage");
+    } finally {
+      setBusy(null);
+    }
+  }, [docType, status, persist, router]);
+
+  const deleteDocument = useCallback(async () => {
+    if (!docId) return;
+    setBusy("delete");
+    try {
+      await api.delete(`/quotations/${docId}`);
+      toast.success("Quotation deleted");
+      router.replace("/(admin)/followups" as any);
+    } catch (e: any) {
+      toast.error(e?.detail || "Quotation could not be deleted");
+    } finally { setBusy(null); }
+  }, [docId, router]);
+
+  const pickCustomer = useCallback((customer: Customer) => {
+    setCustomerId(customer.id);
+    customerIdRef.current = customer.id;
+    setCustomerSnapshot({ name: customer.name, phone: customer.phone || "" });
+    setHeader((cur) => ({ ...cur, customerName: customer.name, phone: customer.phone || cur.phone }));
+    markDirty();
+  }, [markDirty]);
+
+  return {
+    docId, docNumberServer, loading, header, setHeaderField, rows,
+    updateRow, addRow, removeRow, applyProduct,
+    customers, customerId, pickCustomer, setCustomerId,
+    saveState, busy, generatePdf, print, placeOrder, serverTotals, previewTotals,
+    status, stage: tilesStage(docType, status), workflowAction, runWorkflowAction, deleteDocument,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Small shared pieces
+// ---------------------------------------------------------------------------
+function CellInput({
+  value, onChangeText, style, placeholder, red, bold, serif, multiline, testID, align = "center",
+}: {
+  value: string; onChangeText: (t: string) => void;
+  style?: any; placeholder?: string; red?: boolean; bold?: boolean; serif?: boolean;
+  multiline?: boolean; testID?: string; align?: "left" | "center" | "right";
+}) {
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor="#77777"
+      multiline={multiline}
+      testID={testID}
+      style={[
+        cellStyles.input,
+        { textAlign: align },
+        serif ? { fontFamily: SERIF } : null,
+        bold ? { fontWeight: "700" } : null,
+        red ? { color: "#E00000" } : null,
+        style,
+      ]}
+    />
+  );
+}
+
+const cellStyles = StyleSheet.create({
+  input: {
+    // Each input owns its own column. RN Web otherwise lets an intrinsic
+    // input paint into adjacent columns, making taps focus the wrong field.
+    width: "100%", minWidth: 0, alignSelf: "stretch",
+    fontSize: 12.5, color: "#111", paddingVertical: 2, paddingHorizontal: 3,
+    ...(Platform.OS === "web" ? { outlineStyle: "none" } as any : {}),
+  },
+});
+
+function CustomerNameField({
+  value, onChangeText, customers, customerId, onPickCustomer, inputStyle, testID,
+}: {
+  value: string; onChangeText: (t: string) => void;
+  customers: Customer[]; customerId: string | null;
+  onPickCustomer: (c: Customer) => void;
+  inputStyle?: any; testID?: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  const matches = useMemo(() => {
+    const q = value.trim().toLowerCase();
+    if (!q || q.length < 2) return [];
+    return customers
+      .filter((c) => c.name.toLowerCase().includes(q) || (c.phone || "").includes(q))
+      .slice(0, 5);
+  }, [value, customers]);
+  const exactPicked = customerId && matches.length === 1 && matches[0].id === customerId;
+  const show = focused && matches.length > 0 && !exactPicked;
+  return (
+    <View style={{ flex: 1, zIndex: 400 }}>
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 180)}
+        placeholder="Customer name"
+        placeholderTextColor="#999"
+        testID={testID}
+        style={[cellStyles.input, { textAlign: "left" }, inputStyle]}
+      />
+      {show ? (
+        <View style={suggestStyles.panel}>
+          {matches.map((c) => (
+            <Pressable
+              key={c.id}
+              // Both handlers on purpose: onPressIn beats the TextInput's
+              // delayed blur-hide for real pointers, while web click events
+              // (keyboard, assistive tech, automation) arrive as onPress.
+              // Picking twice is idempotent.
+              onPressIn={() => { onPickCustomer(c); setFocused(false); }}
+              onPress={() => { onPickCustomer(c); setFocused(false); }}
+              style={({ hovered }: any) => [suggestStyles.row, hovered && { backgroundColor: colors.brandTint }]}
+            >
+              <Text style={suggestStyles.name} numberOfLines={1}>{c.name}</Text>
+              {c.phone ? <Text style={suggestStyles.phone}>{c.phone}</Text> : null}
+            </Pressable>
+          ))}
+          <Text style={suggestStyles.hint}>Pick to reuse an existing customer — or keep typing; changes save automatically.</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const suggestStyles = StyleSheet.create({
+  panel: {
+    position: "absolute", top: "100%", left: 0, right: 0, marginTop: 3,
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    zIndex: 100, overflow: "hidden",
+    ...(Platform.OS === "web" ? { boxShadow: "0 10px 28px rgba(0,0,0,0.18)" } as any : {}),
+  },
+  row: { paddingHorizontal: 10, paddingVertical: 7, flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  name: { fontSize: 12.5, fontWeight: "600", color: colors.onSurface, flexShrink: 1 },
+  phone: { fontSize: 11.5, color: colors.onSurfaceSecondary, fontVariant: ["tabular-nums"] },
+  hint: {
+    fontSize: 10, color: colors.onSurfaceMuted, paddingHorizontal: 10, paddingVertical: 5,
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.divider,
+  },
+});
+
+function ProductCell({
+  row, onOpenPicker, onChangeName, bold, testID,
+}: {
+  row: TileRow; onOpenPicker: () => void; onChangeName: (t: string) => void; bold?: boolean; testID?: string;
+}) {
+  if (!row.productId) {
+    return (
+      <Pressable onPress={onOpenPicker} style={productStyles.pickTarget} testID={testID}>
+        <Feather name="search" size={13} color="#555" />
+        <Text style={productStyles.pickLabel}>Select product…</Text>
+      </Pressable>
+    );
+  }
+  return (
+    <View style={{ flex: 1, alignSelf: "stretch", justifyContent: "center" }}>
+      <CellInput value={row.name} onChangeText={onChangeName} bold={bold} multiline testID={testID ? `${testID}-name` : undefined} />
+      <Pressable onPress={onOpenPicker} hitSlop={4} style={productStyles.swapBtn} testID={testID ? `${testID}-swap` : undefined}>
+        <Feather name="refresh-cw" size={11} color="#666" />
+      </Pressable>
+    </View>
+  );
+}
+
+const productStyles = StyleSheet.create({
+  pickTarget: {
+    flex: 1, alignSelf: "stretch", alignItems: "center", justifyContent: "center",
+    flexDirection: "row", gap: 6,
+  },
+  pickLabel: { fontSize: 12, color: "#555", fontStyle: "italic" },
+  swapBtn: {
+    position: "absolute", right: 2, bottom: 2, width: 18, height: 18,
+    alignItems: "center", justifyContent: "center", borderRadius: 9,
+    backgroundColor: "rgba(255,255,255,0.65)",
+  },
+});
+
+function RowSideControls({
+  isLast, canAdd, onAdd, onRemove, showRemove,
+}: {
+  isLast: boolean; canAdd: boolean; onAdd: () => void; onRemove: () => void; showRemove: boolean;
+}) {
+  return (
+    <View style={sideStyles.wrap}>
+      {/*
+        Add/remove sit 8px apart in a 40px rail. Their hitSlop is deliberately
+        asymmetric rather than a uniform ~44px pad on both: expanding evenly
+        would make the two tap zones overlap in the gap between them, which
+        turns "reach for add, land on remove" from a risk into a certainty.
+        Each button's hitSlop is generous on the sides that face empty space
+        and small on the side that faces the other button.
+      */}
+      {isLast && canAdd ? (
+        <Pressable
+          onPress={onAdd}
+          style={sideStyles.addBtn}
+          hitSlop={{ top: 12, left: 0, right: 8, bottom: 3 }}
+          testID="tiles-add-row"
+          accessibilityLabel="Add product row"
+        >
+          <Feather name="plus" size={16} color="#fff" />
+        </Pressable>
+      ) : null}
+      {showRemove ? (
+        <Pressable
+          onPress={onRemove}
+          style={sideStyles.removeBtn}
+          hitSlop={{ top: 3, left: 0, right: 10, bottom: 14 }}
+          testID="tiles-remove-row"
+          accessibilityLabel="Remove row"
+        >
+          <Feather name="x" size={12} color="#8A3333" />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+const sideStyles = StyleSheet.create({
+  wrap: {
+    position: "absolute", right: -44, top: 0, bottom: 0,
+    alignItems: "center", justifyContent: "center", gap: 8, width: 40,
+  },
+  addBtn: {
+    width: 30, height: 30, borderRadius: 15, backgroundColor: colors.brand,
+    alignItems: "center", justifyContent: "center",
+    ...(Platform.OS === "web" ? { boxShadow: "0 3px 10px rgba(0,0,0,0.25)" } as any : {}),
+  },
+  removeBtn: {
+    width: 20, height: 20, borderRadius: 10, backgroundColor: "#F6E3E3",
+    alignItems: "center", justifyContent: "center",
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Shared page-1 building blocks — identical on Selection & Quotation, and
+// mirror backend/pdf_tiles.py's _meta_grid / _brand_terms_signature_block /
+// _price_summary_table so the on-screen replica and the generated PDF never
+// drift apart. Both papers now render the SAME layout the business supplied
+// (logo+title header, 4x2 form grid, brand partners, 12 terms, signature),
+// then a PRODUCT DETAILS grid that grows without a row cap — the PDF
+// auto-paginates once it overflows a page.
+// ---------------------------------------------------------------------------
+const BRAND_PARTNERS: [string, string][][] = [
+  [["GROHE", "Pure Freude an Wasser"], ["hansgrohe", "Life is Waterful"], ["AXOR", "Form Follows Perfection"], ["VitrA", "Design Meets Life"], ["NEXION", "The Surface Experience"], ["QUTONE", "Let's Build Together"]],
+  [["DIMORE", "Reflection of Your Style"], ["Oyster", "Indulge in Luxury"], ["GEBERIT", "Engineered for Hygiene"], ["MCM ITTIMI", "Innovation into Inspiration"], ["VERANTES LIVING", "Kitchens & Wardrobes"], ["IMPORTED FURNITURE", "Crafted Beyond Borders"]],
+];
+
+const TILES_TERMS = [
+  "Prices quoted are based on the current NET prices at the time of selection.",
+  "Prices are subject to revision by any brand without prior notice.",
+  "100% advance payment is required to confirm orders.",
+  "Freight and unloading charges will be applicable as per actuals.",
+  "Delivery timelines are subject to the manufacturer's schedule.",
+  "Rates are valid for 5 days, unless stated otherwise in writing.",
+  "Above rates are inclusive of GST @18%, unless stated otherwise.",
+  "All orders and deliveries are subject to material availability.",
+  "Prices are subject to change in case of changes in government levy.",
+  "Cheques should be written in favour of Buildcon House.",
+  "On confirmation of purchase order, material will be delivered within 15 days.",
+  "Labour cost is extra and not included in this quotation.",
+];
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginTop: 22 }}>
+      <BuildConLogo height={40} />
+      <View style={{ alignItems: "flex-end" }}>
+        <Text style={sectionStyles.headerTitle}>{title}</Text>
+        <Text style={sectionStyles.headerSub}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
+function MetaGrid({ doc }: { doc: ReturnType<typeof useTilesDoc> }) {
+  const row2 = [
+    { label: "REFERENCE", value: doc.header.reference, onChange: (t: string) => doc.setHeaderField("reference", t) },
+    { label: "ATTENDED BY", value: doc.header.attendedBy, onChange: (t: string) => doc.setHeaderField("attendedBy", t) },
+    { label: "PREPARED BY", value: doc.header.preparedBy, onChange: (t: string) => doc.setHeaderField("preparedBy", t) },
+    { label: "ADDRESS", value: doc.header.address, onChange: (t: string) => doc.setHeaderField("address", t) },
+  ];
+  return (
+    <View style={metaStyles.grid}>
+      <View style={metaStyles.row}>
+        <View style={metaStyles.cell}>
+          <Text style={metaStyles.label}>CUSTOMER NAME</Text>
+          <CustomerNameField
+            value={doc.header.customerName}
+            onChangeText={(t) => doc.setHeaderField("customerName", t)}
+            customers={doc.customers}
+            customerId={doc.customerId}
+            onPickCustomer={doc.pickCustomer}
+            inputStyle={metaStyles.value}
+            testID="tiles-customer-name"
+          />
+        </View>
+        <View style={metaStyles.cell}>
+          <Text style={metaStyles.label}>CONTACT NO.</Text>
+          <CellInput value={doc.header.phone} onChangeText={(t) => doc.setHeaderField("phone", t)} style={metaStyles.value} testID="tiles-phone" />
+        </View>
+        <View style={metaStyles.cell}>
+          <Text style={metaStyles.label}>SELECTION / QUOTATION DATE</Text>
+          <CellInput value={doc.header.docDate} onChangeText={(t) => doc.setHeaderField("docDate", t)} style={metaStyles.value} testID="tiles-date" />
+        </View>
+        <View style={metaStyles.cell}>
+          <Text style={metaStyles.label}>QUOTATION NO.</Text>
+          <CellInput value={doc.header.docNumber} onChangeText={(t) => doc.setHeaderField("docNumber", t)} style={metaStyles.value} testID="tiles-doc-number" />
+        </View>
+      </View>
+      <View style={[metaStyles.row, metaStyles.rowSpacing]}>
+        {row2.map((f) => (
+          <View key={f.label} style={metaStyles.cell}>
+            <Text style={metaStyles.label}>{f.label}</Text>
+            <CellInput value={f.value} onChangeText={f.onChange} style={metaStyles.value} testID={`tiles-meta-${f.label}`} />
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function BrandPartnersGrid() {
+  return (
+    <View style={{ marginTop: 4 }}>
+      {BRAND_PARTNERS.map((row, ri) => (
+        <View key={ri} style={{ flexDirection: "row" }}>
+          {row.map(([name, tagline]) => (
+            <View key={name} style={brandStyles.cell}>
+              <Text style={brandStyles.name}>{name}</Text>
+              <Text style={brandStyles.tagline}>{tagline}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function TermsAndSignatureBlock() {
+  return (
+    <View style={{ marginTop: 14 }}>
+      <Text style={sectionStyles.title}>OUR BRAND PARTNERS</Text>
+      <BrandPartnersGrid />
+      <Text style={[sectionStyles.title, { marginTop: 14 }]}>TERMS &amp; CONDITIONS</Text>
+      <View style={{ marginTop: 4, gap: 2 }}>
+        {TILES_TERMS.map((term, i) => (
+          <Text key={i} style={sectionStyles.term}>{i + 1}. {term}</Text>
+        ))}
+      </View>
+      <Text style={sectionStyles.contact}>
+        For general enquiries: <Text style={{ fontWeight: "700" }}>M: +91 99099 06652</Text>  |  <Text style={{ fontWeight: "700" }}>Email: buildconhouse10@gmail.com</Text>
+      </Text>
+      <View style={sectionStyles.signature}>
+        <Text style={sectionStyles.sigNote}>I/We have reviewed and agree to the terms and conditions mentioned in this quotation.</Text>
+        <Text style={sectionStyles.sigLabel}>CUSTOMER SIGNATURE &amp; DATE</Text>
+      </View>
+    </View>
+  );
+}
+
+function PriceSummary({ totals, doc }: { totals: { boxes: number; subtotal: number; grandTotal: number; transportation: number }; doc: ReturnType<typeof useTilesDoc> }) {
+  return (
+    <View style={{ marginTop: 14 }}>
+      <Text style={sectionStyles.title}>PRICE SUMMARY</Text>
+      <View style={priceStyles.table}>
+        <View style={priceStyles.row}>
+          <Text style={priceStyles.label}>TOTAL BOX</Text>
+          <Text style={priceStyles.value}>{totals.boxes ? `${Math.round(totals.boxes * 100) / 100}` : ""}</Text>
+        </View>
+        <View style={priceStyles.row}>
+          <Text style={priceStyles.label}>SUBTOTAL (Rs.)</Text>
+          <Text style={priceStyles.value}>{money(totals.subtotal)}</Text>
+        </View>
+        <View style={priceStyles.row}>
+          <Text style={priceStyles.label}>TRANSPORTATION</Text>
+          <CellInput
+            value={doc.header.transportationFee}
+            onChangeText={(value) => doc.setHeaderField("transportationFee", value)}
+            style={priceStyles.input}
+            testID="tiles-transportation-fee"
+          />
+        </View>
+        <View style={[priceStyles.row, priceStyles.totalRow]}>
+          <Text style={[priceStyles.label, priceStyles.totalText]}>TOTAL QUOTE (Rs.)</Text>
+          <Text style={[priceStyles.value, priceStyles.totalText]}>{money(totals.grandTotal)}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const sectionStyles = StyleSheet.create({
+  headerTitle: { fontSize: 19, fontWeight: "700", color: "#111" },
+  headerSub: { fontSize: 11, color: "#444" },
+  title: { fontSize: 13, fontWeight: "700", color: "#111", textAlign: "center", marginBottom: 6 },
+  term: { fontSize: 10.5, color: "#3A3A3A", textAlign: "center", lineHeight: 15 },
+  contact: { fontSize: 11, color: "#111", textAlign: "center", marginTop: 12 },
+  signature: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    borderWidth: 1, borderColor: GRID, marginTop: 10, padding: 10, gap: 16,
+  },
+  sigNote: { fontSize: 10.5, color: "#111", flex: 1 },
+  sigLabel: { fontSize: 10.5, fontWeight: "700", color: "#111" },
+});
+
+const metaStyles = StyleSheet.create({
+  grid: { marginTop: 16 },
+  row: { flexDirection: "row" },
+  rowSpacing: { marginTop: 10 },
+  cell: { flex: 1, paddingHorizontal: 6 },
+  label: { fontSize: 10, fontWeight: "700", color: "#111", textAlign: "center", marginBottom: 4 },
+  value: { fontSize: 13, color: "#111", textAlign: "center", borderBottomWidth: 1, borderColor: "#333", paddingBottom: 4 },
+});
+
+const brandStyles = StyleSheet.create({
+  cell: {
+    flex: 1, borderWidth: 1, borderColor: GRID, alignItems: "center", justifyContent: "center",
+    paddingVertical: 8, paddingHorizontal: 4,
+  },
+  name: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center" },
+  tagline: { fontSize: 9, fontStyle: "italic", color: "#111", textAlign: "center", marginTop: 1 },
+});
+
+const priceStyles = StyleSheet.create({
+  table: { borderWidth: 1, borderColor: GRID, marginTop: 4, alignSelf: "center", width: "70%" },
+  row: { flexDirection: "row", borderTopWidth: 1, borderColor: GRID, backgroundColor: HEAD_GREY },
+  totalRow: { backgroundColor: "#DADADA" },
+  label: { flex: 1.7, fontSize: 11.5, fontWeight: "700", color: "#111", textAlign: "center", paddingVertical: 6 },
+  value: { flex: 1, fontSize: 11.5, color: "#111", textAlign: "center", paddingVertical: 6, borderLeftWidth: 1, borderColor: GRID },
+  input: { flex: 1, fontSize: 11.5, color: "#111", paddingVertical: 4, borderLeftWidth: 1, borderColor: GRID },
+  totalText: { color: "#E00000" },
+});
+
+const paperStyles = StyleSheet.create({
+  paper: {
+    // Fill all available desktop/tablet space; on narrower tablets the
+    // enclosing horizontal scroller preserves the readable document width.
+    width: "100%", minWidth: PAPER_W, alignSelf: "stretch",
+    backgroundColor: "#fff", paddingHorizontal: 30, paddingVertical: 26,
+    borderRadius: 2,
+    ...(Platform.OS === "web" ? { boxShadow: "0 10px 34px rgba(20,20,20,0.16)" } as any : {}),
+  },
+  ruleThick: { height: 2, backgroundColor: "#111", marginTop: 8, marginBottom: 2 },
+  intro: { fontSize: 12, color: "#111", textAlign: "center", marginTop: 12, lineHeight: 17 },
+});
+
+// ---------------------------------------------------------------------------
+// SELECTION paper
+// ---------------------------------------------------------------------------
+const SEL_COLS = [10, 46, 28, 52, 24, 34]; // SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT
+
+function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
+  const [pickerRow, setPickerRow] = useState<string | null>(null);
+  const flex = (index: number) => ({ flex: SEL_COLS[index] });
+  const itemCount = doc.rows.filter((r) => r.productId).length;
+  return (
+    <View style={paperStyles.paper}>
+      <SectionHeader title="PRODUCT SELECTION" subtitle="Tiles & Sanitaryware Solutions" />
+      <View style={paperStyles.ruleThick} />
+      <MetaGrid doc={doc} />
+      <Text style={paperStyles.intro}>
+        Dear Sir/Madam, thank you for your interest in our products. Please find below the products shortlisted as
+        per your selection, for your review and confirmation.
+      </Text>
+      <TermsAndSignatureBlock />
+
+      <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
+      <View style={paperStyles.ruleThick} />
+      <View style={selStyles.table}>
+        <View style={[selStyles.tr, { backgroundColor: HEAD_GREY, minHeight: 34 }]}>
+          <View style={[selStyles.td, flex(0)]}><Text style={selStyles.th}>{"SR.\nNO."}</Text></View>
+          <View style={[selStyles.td, flex(1)]}><Text style={selStyles.th}>PRODUCT IMAGE</Text></View>
+          <View style={[selStyles.td, flex(2)]}><Text style={selStyles.th}>AREA</Text></View>
+          <View style={[selStyles.td, flex(3)]}><Text style={selStyles.th}>PRODUCT DETAIL</Text></View>
+          <View style={[selStyles.td, flex(4)]}><Text style={selStyles.th}>SIZE</Text></View>
+          <View style={[selStyles.td, flex(5), { borderRightWidth: 0 }]}>
+            <Text style={[selStyles.th, { color: "#E00000" }]}>{"RATE/\nSQ.FT"}</Text>
+          </View>
+        </View>
+        {doc.rows.map((row, index) => (
+          <View key={row.key} style={[selStyles.tr, { minHeight: 92 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
+            <View style={[selStyles.td, flex(0)]}><Text style={selStyles.cellText}>{index + 1}</Text></View>
+            <View style={[selStyles.td, flex(1), { padding: 2 }]}>
+              {row.image ? <TileImageCell uri={row.image} /> : null}
+            </View>
+            <View style={[selStyles.td, flex(2)]}>
+              <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
+            </View>
+            <View style={[selStyles.td, flex(3)]}>
+              <ProductCell
+                row={row}
+                onOpenPicker={() => setPickerRow(row.key)}
+                onChangeName={(t) => doc.updateRow(row.key, { name: t })}
+                testID={`tiles-product-${index}`}
+              />
+            </View>
+            <View style={[selStyles.td, flex(4)]}>
+              <CellInput value={row.size} onChangeText={(t) => doc.updateRow(row.key, { size: t })} testID={`tiles-size-${index}`} />
+            </View>
+            <View style={[selStyles.td, flex(5), { borderRightWidth: 0 }]}>
+              <CellInput value={row.rateSqft} onChangeText={(t) => doc.updateRow(row.key, { rateSqft: t })} red bold testID={`tiles-rate-${index}`} />
+            </View>
+            <RowSideControls
+              isLast={index === doc.rows.length - 1}
+              canAdd={doc.rows.length < MAX_ROWS}
+              onAdd={doc.addRow}
+              onRemove={() => doc.removeRow(row.key)}
+              showRemove={doc.rows.length > 1}
+            />
+          </View>
+        ))}
+      </View>
+
+      <TilesProductPicker
+        open={pickerRow !== null}
+        onClose={() => setPickerRow(null)}
+        onPick={(product, history) => { if (pickerRow) doc.applyProduct(pickerRow, product, history); }}
+        customerId={doc.customerId}
+      />
+    </View>
+  );
+}
+
+const selStyles = StyleSheet.create({
+  table: { marginTop: 14, borderWidth: 1.4, borderColor: "#111" },
+  tr: { flexDirection: "row", borderTopWidth: 1, borderColor: "#111", alignItems: "stretch" },
+  td: {
+    borderRightWidth: 1, borderColor: "#111",
+    alignItems: "center", justifyContent: "center", paddingHorizontal: 4, paddingVertical: 5,
+  },
+  th: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center" },
+  cellText: { fontSize: 12.5, color: "#111" },
+});
+
+// ---------------------------------------------------------------------------
+// QUOTATION paper
+// ---------------------------------------------------------------------------
+// SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
+// RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — mirrors pdf_tiles.py's _QUO_COLS.
+const QUO_COLS = [9, 26, 16, 32, 16, 18, 16, 16, 14, 13, 18];
+
+function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
+  const [pickerRow, setPickerRow] = useState<string | null>(null);
+  const flex = (index: number) => ({ flex: QUO_COLS[index] });
+  const totals = {
+    boxes: 0,
+    transportation: doc.previewTotals.transportation,
+    subtotal: doc.previewTotals.subtotal,
+    grandTotal: doc.previewTotals.grandTotal,
+  };
+  const itemCount = doc.rows.filter((r) => r.productId).length;
+
+  const headLabels = [
+    "SR.\nNO.", "PRODUCT IMAGE", "AREA", "PRODUCT DETAIL", "SIZE",
+    "RATE/\nSQ.FT", "OFFER\nRATE", "RATE/\nBOX", "TOTAL\nBOX", "PCS/\nBOX", "TOTAL\n(Rs.)",
+  ];
+  return (
+    <View style={paperStyles.paper}>
+      <SectionHeader title="PRODUCT QUOTATION" subtitle="Tiles & Sanitaryware Solutions" />
+      <View style={paperStyles.ruleThick} />
+      <MetaGrid doc={doc} />
+      <Text style={paperStyles.intro}>
+        Dear Sir/Madam, thank you for your interest in our products. We are pleased to offer our most competitive
+        rates for premium tiles and sanitaryware, prepared as per your selection.
+      </Text>
+      <PriceSummary totals={totals} doc={doc} />
+      <TermsAndSignatureBlock />
+
+      <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
+      <View style={paperStyles.ruleThick} />
+      <View style={quoStyles.table}>
+        <View style={[quoStyles.tr, { backgroundColor: HEAD_GREY, minHeight: 34 }]}>
+          {headLabels.map((h, i) => (
+            <View key={h} style={[quoStyles.td, flex(i), i === headLabels.length - 1 && { borderRightWidth: 0 }]}>
+              <Text style={[quoStyles.th, i === 5 && { color: "#E00000" }]}>{h}</Text>
+            </View>
+          ))}
+        </View>
+        {doc.rows.map((row, index) => (
+          <View key={row.key} style={[quoStyles.tr, { minHeight: 96 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
+            <View style={[quoStyles.td, flex(0)]}><Text style={quoStyles.cellText}>{index + 1}</Text></View>
+            <View style={[quoStyles.td, flex(1), { padding: 2 }]}>
+              {row.image ? <TileImageCell uri={row.image} /> : null}
+            </View>
+            <View style={[quoStyles.td, flex(2)]}>
+              <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(3)]}>
+              <ProductCell
+                row={row}
+                bold
+                onOpenPicker={() => setPickerRow(row.key)}
+                onChangeName={(t) => doc.updateRow(row.key, { name: t })}
+                testID={`tiles-product-${index}`}
+              />
+            </View>
+            <View style={[quoStyles.td, flex(4)]}>
+              <CellInput value={row.size} onChangeText={(t) => doc.updateRow(row.key, { size: t })} bold testID={`tiles-size-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(5)]}>
+              <CellInput value={row.rateSqft} onChangeText={(t) => doc.updateRow(row.key, { rateSqft: t })} red bold testID={`tiles-rate-sqft-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(6)]}>
+              <CellInput value={row.offerRate} onChangeText={(t) => doc.updateRow(row.key, { offerRate: t })} bold testID={`tiles-offer-rate-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(7)]}>
+              <CellInput value={row.rateBox} onChangeText={(t) => doc.updateRow(row.key, { rateBox: t })} testID={`tiles-rate-box-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(8)]}>
+              <CellInput value={row.totalBox} onChangeText={(t) => doc.updateRow(row.key, { totalBox: t })} bold testID={`tiles-total-box-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(9)]}>
+              <Text style={{ fontSize: 11, fontWeight: "700" }}>{quantityUnitLabel(row.quantityUnit).toUpperCase()}</Text>
+              <Dropdown
+                label={quantityUnitLabel(row.quantityUnit)}
+                variant="ghost"
+                testID={`tiles-quantity-unit-${index}`}
+                items={[
+                  { label: "Box", onPress: () => doc.updateRow(row.key, { quantityUnit: "Box" }) },
+                  { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
+                ]}
+              />
+            </View>
+            <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
+              <CellInput value={lineTotalInputValue(row)} onChangeText={(t) => doc.updateRow(row.key, { total: t })} testID={`tiles-total-${index}`} />
+            </View>
+            <RowSideControls
+              isLast={index === doc.rows.length - 1}
+              canAdd={doc.rows.length < MAX_ROWS}
+              onAdd={doc.addRow}
+              onRemove={() => doc.removeRow(row.key)}
+              showRemove={doc.rows.length > 1}
+            />
+          </View>
+        ))}
+        <View style={[quoStyles.tr, { backgroundColor: HEAD_GREY, minHeight: 30 }]}>
+          <View style={[quoStyles.td, flex(0)]} />
+          <View style={[quoStyles.td, flex(1)]} />
+          <View style={[quoStyles.td, flex(2)]} />
+          <View style={[quoStyles.td, flex(3)]}><Text style={[quoStyles.cellText, { fontWeight: "700" }]}>TOTAL</Text></View>
+          <View style={[quoStyles.td, flex(4)]} />
+          <View style={[quoStyles.td, flex(5)]} />
+          <View style={[quoStyles.td, flex(6)]} />
+          <View style={[quoStyles.td, flex(7)]} />
+          <View style={[quoStyles.td, flex(8)]} />
+          <View style={[quoStyles.td, flex(9)]} />
+          <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
+            <Text style={[quoStyles.cellText, { fontWeight: "700" }]}>{money(totals.subtotal)}</Text>
+          </View>
+        </View>
+      </View>
+
+      <TilesProductPicker
+        open={pickerRow !== null}
+        onClose={() => setPickerRow(null)}
+        onPick={(product, history) => { if (pickerRow) doc.applyProduct(pickerRow, product, history); }}
+        customerId={doc.customerId}
+      />
+    </View>
+  );
+}
+
+const quoStyles = StyleSheet.create({
+  table: { marginTop: 14, borderWidth: 1.4, borderColor: "#111" },
+  tr: { flexDirection: "row", borderTopWidth: 1, borderColor: "#111", alignItems: "stretch", backgroundColor: "#fff" },
+  td: {
+    borderRightWidth: 1, borderColor: "#111",
+    alignItems: "center", justifyContent: "center", paddingHorizontal: 6, paddingVertical: 8,
+    minWidth: 0, overflow: "hidden",
+  },
+  th: { fontSize: 10.2, fontWeight: "700", color: "#111", textAlign: "center" },
+  cellText: { fontSize: 12, color: "#111" },
+});
+
+// ---------------------------------------------------------------------------
+// MOBILE EDITOR (phone widths only) — application-first presentation of the
+// exact same `doc` returned by useTilesDoc() above. See the file header for
+// why this exists as a genuinely separate presentation rather than a
+// reflowed/scaled paper. Every handler called below (updateRow, addRow,
+// removeRow, applyProduct, setHeaderField, generatePdf, print,
+// placeOrder, runWorkflowAction, pickCustomer) is the identical function the
+// paper views call — one document model, one autosave path, one set of
+// backend calls.
+// ---------------------------------------------------------------------------
+type MobileFieldKey = "area" | "size" | "rateSqft" | "offerRate" | "rateBox" | "totalBox" | "pcsBox" | "total";
+type MobileFieldDef = { key: MobileFieldKey; label: string; numeric?: boolean; suffix?: string };
+
+// Mirrors SEL_COLS / QUO_COLS above — Selection intentionally carries only
+// the fields the printed selection sheet has (no pricing beyond rate/sqft);
+// Quotation carries the full pricing grid. Keeping this list in sync with
+// the paper's own column set is a manual but small surface (3 vs 9 fields).
+const MOBILE_FIELDS: Record<TilesDocType, MobileFieldDef[]> = {
+  tiles_selection: [
+    { key: "area", label: "Area / Room" },
+    { key: "size", label: "Size" },
+    { key: "rateSqft", label: "Rate / Sq.Ft", numeric: true, suffix: "per sq.ft" },
+  ],
+  tiles_quotation: [
+    { key: "area", label: "Area / Room" },
+    { key: "size", label: "Size" },
+    { key: "rateSqft", label: "Rate / Sq.Ft", numeric: true },
+    { key: "offerRate", label: "Offer Rate", numeric: true },
+    { key: "rateBox", label: "Rate / Box", numeric: true },
+    { key: "totalBox", label: "Qty (Boxes)", numeric: true },
+    { key: "pcsBox", label: "Pcs / Box" },
+    { key: "total", label: "Line Total (Rs.)", numeric: true },
+  ],
+};
+
+function SaveStatusPill({ state }: { state: "idle" | "saving" | "saved" | "error" }) {
+  if (state === "idle") return null;
+  const meta = {
+    saving: { label: "Saving…", tone: colors.onSurfaceMuted, icon: "loader" as const },
+    saved: { label: "All changes saved", tone: colors.success, icon: "check-circle" as const },
+    error: { label: "Couldn't save — will retry", tone: colors.error, icon: "alert-circle" as const },
+  }[state];
+  return (
+    <View style={mobileStyles.savePill}>
+      <Feather name={meta.icon} size={12} color={meta.tone} />
+      <Text style={[mobileStyles.savePillText, { color: meta.tone }]}>{meta.label}</Text>
+    </View>
+  );
+}
+
+function SummaryLine({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <View style={mobileStyles.summaryLine}>
+      <Text style={[mobileStyles.summaryLabel, bold && mobileStyles.summaryBold]}>{label}</Text>
+      <Text style={[mobileStyles.summaryValue, bold && mobileStyles.summaryBold]}>{value}</Text>
+    </View>
+  );
+}
+
+function MobileRowCard({
+  doc, row, index, docType, onOpenPicker,
+}: {
+  doc: ReturnType<typeof useTilesDoc>; row: TileRow; index: number; docType: TilesDocType; onOpenPicker: () => void;
+}) {
+  const fields = MOBILE_FIELDS[docType];
+  return (
+    <View style={mobileStyles.rowCard} testID={`mobile-row-${index}`}>
+      <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" }}>
+        <Pressable onPress={onOpenPicker} style={mobileStyles.thumb} testID={`mobile-thumb-${index}`}>
+          {row.image ? (
+            <ProductImage source={row.image} contentFit="contain" frameInset={2} borderRadius={radius.sm} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
+          ) : (
+            <Feather name="image" size={18} color={colors.onSurfaceMuted} />
+          )}
+        </Pressable>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={mobileStyles.rowIndex}>Item {index + 1}</Text>
+          {row.productId ? (
+            <>
+              <TextInput
+                value={row.name}
+                onChangeText={(t) => doc.updateRow(row.key, { name: t })}
+                multiline
+                style={mobileStyles.rowTitleInput}
+                testID={`mobile-name-${index}`}
+              />
+              <Pressable onPress={onOpenPicker} style={mobileStyles.swapRow} testID={`mobile-swap-${index}`}>
+                <Feather name="refresh-cw" size={11} color={colors.brand} />
+                <Text style={mobileStyles.swapLabel}>Change product</Text>
+              </Pressable>
+            </>
+          ) : (
+            <Pressable onPress={onOpenPicker} style={mobileStyles.selectBtn} testID={`mobile-select-product-${index}`}>
+              <Feather name="search" size={14} color={colors.brand} />
+              <Text style={mobileStyles.selectLabel}>Select product…</Text>
+            </Pressable>
+          )}
+        </View>
+        {index > 0 || doc.rows.length > 1 ? (
+          <Pressable onPress={() => doc.removeRow(row.key)} hitSlop={10} style={mobileStyles.deleteBtn} testID={`mobile-remove-row-${index}`}>
+            <Feather name="trash-2" size={15} color={colors.error} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      <View style={mobileStyles.fieldGrid}>
+        {fields.map((f) => (
+          <View key={f.key} style={mobileStyles.fieldSlot}>
+            <TextField
+              label={f.label}
+              value={f.key === "total" ? lineTotalInputValue(row) : (row as any)[f.key]}
+              onChangeText={(t: string) => doc.updateRow(row.key, { [f.key]: t } as Partial<TileRow>)}
+              keyboardType={f.numeric ? "decimal-pad" : "default"}
+              testID={`mobile-${f.key}-${index}`}
+              helper={f.suffix}
+            />
+          </View>
+        ))}
+        <View style={mobileStyles.fieldSlot}>
+          <Text style={type.label}>Quantity unit</Text>
+          <Dropdown
+            label={quantityUnitLabel(row.quantityUnit)}
+            variant="secondary"
+            testID={`mobile-quantity-unit-${index}`}
+            items={[
+              { label: "Box", onPress: () => doc.updateRow(row.key, { quantityUnit: "Box" }) },
+              { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
+            ]}
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function MobileTilesEditor({
+  docType, doc, router, onDelete,
+}: { docType: TilesDocType; doc: ReturnType<typeof useTilesDoc>; router: ReturnType<typeof useRouter>; onDelete: () => void }) {
+  const [pickerRow, setPickerRow] = useState<string | null>(null);
+  const isSelection = docType === "tiles_selection";
+  const title = isSelection ? "Tiles Selection" : "Tiles Quotation";
+  const itemCount = doc.rows.filter((r) => r.productId).length;
+
+  // Identical math to QuotationPaper's totals useMemo above — same inputs,
+  // same result, just computed again here since the paper components aren't
+  // mounted on phone. Kept deliberately tiny (a for-loop over `doc.rows`) so
+  // a future refactor that hoists this into useTilesDoc() has almost nothing
+  // to move.
+  const totals = useMemo(() => {
+    const boxes = doc.rows.reduce((sum, row) => sum + (row.productId ? num(row.totalBox) : 0), 0);
+    return {
+      boxes,
+      subtotal: doc.previewTotals.subtotal,
+      grandTotal: doc.previewTotals.grandTotal,
+      transportation: isSelection ? 0 : doc.previewTotals.transportation,
+    };
+  }, [doc.rows, doc.previewTotals, isSelection]);
+
+  const primaryAction = doc.workflowAction
+    ? { label: doc.workflowAction.label, onPress: doc.runWorkflowAction, loading: doc.busy === "workflow", icon: doc.workflowAction.kind === "move_to_quotation" ? "arrow-right-circle" as const : "check-circle" as const }
+    : !isSelection
+      ? { label: "Place Order", onPress: doc.placeOrder, loading: doc.busy === "order", icon: "shopping-cart" as const }
+      : null;
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={["top"]}>
+      <View style={mobileStyles.header}>
+        <Pressable onPress={() => router.back()} hitSlop={10} style={shellStyles.backBtn} testID="tiles-back">
+          <Feather name="chevron-left" size={20} color={colors.onSurface} />
+        </Pressable>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={type.overline}>Ground Floor · Tiles</Text>
+          <Text style={[type.titleMd, { marginTop: 1 }]} numberOfLines={1}>
+            {title}{doc.docNumberServer ? `  ·  ${doc.docNumberServer}` : ""}
+          </Text>
+        </View>
+        <Dropdown
+          testID="tiles-mobile-menu"
+          label="More"
+          icon="more-vertical"
+          variant="ghost"
+          items={[
+            isSelection
+              ? { label: "Print selection", icon: "printer", onPress: doc.print }
+              : { label: "Generate quotation PDF", icon: "file-text", onPress: doc.generatePdf },
+            ...(!isSelection && primaryAction?.label !== "Place Order"
+              ? [{ label: "Place Order", icon: "shopping-cart" as const, onPress: doc.placeOrder }]
+              : []),
+            ...(doc.docId ? [{ label: "Delete quotation", icon: "trash-2" as const, onPress: onDelete }] : []),
+          ]}
+        />
+      </View>
+
+      {doc.loading ? (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator color={colors.brand} />
+        </View>
+      ) : (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}>
+          <ScrollView
+            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: primaryAction ? 96 : spacing.xxxl }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <SaveStatusPill state={doc.saveState} />
+
+            <Card padding={spacing.md} style={{ gap: spacing.md }}>
+              <Text style={mobileStyles.sectionTitle}>CUSTOMER &amp; DETAILS</Text>
+              <FormFieldCustomerName doc={doc} />
+              <TextField label="Contact no." value={doc.header.phone} onChangeText={(t: string) => doc.setHeaderField("phone", t)} keyboardType="phone-pad" testID="mobile-phone" />
+              <View style={mobileStyles.fieldGrid}>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label="Date" value={doc.header.docDate} onChangeText={(t: string) => doc.setHeaderField("docDate", t)} testID="mobile-date" />
+                </View>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label={isSelection ? "Selection no." : "Quotation no."} value={doc.header.docNumber} onChangeText={(t: string) => doc.setHeaderField("docNumber", t)} testID="mobile-doc-number" />
+                </View>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label="Reference" value={doc.header.reference} onChangeText={(t: string) => doc.setHeaderField("reference", t)} testID="mobile-reference" />
+                </View>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label="Attended by" value={doc.header.attendedBy} onChangeText={(t: string) => doc.setHeaderField("attendedBy", t)} testID="mobile-attended-by" />
+                </View>
+                <View style={mobileStyles.fieldSlot}>
+                  <TextField label="Prepared by" value={doc.header.preparedBy} onChangeText={(t: string) => doc.setHeaderField("preparedBy", t)} testID="mobile-prepared-by" />
+                </View>
+              </View>
+              <TextField label="Address" value={doc.header.address} onChangeText={(t: string) => doc.setHeaderField("address", t)} multiline testID="mobile-address" />
+              {!isSelection ? <TextField label="Transportation Fee" value={doc.header.transportationFee} onChangeText={(t: string) => doc.setHeaderField("transportationFee", t)} keyboardType="decimal-pad" testID="mobile-transportation-fee" /> : null}
+            </Card>
+
+            <View style={{ gap: spacing.sm }}>
+              <Text style={mobileStyles.sectionTitle}>PRODUCTS{itemCount ? ` (${itemCount})` : ""}</Text>
+              {doc.rows.map((row, index) => (
+                <MobileRowCard key={row.key} doc={doc} row={row} index={index} docType={docType} onOpenPicker={() => setPickerRow(row.key)} />
+              ))}
+              <Button
+                label="Add product" icon="plus" variant="secondary" fullWidth
+                onPress={doc.addRow} disabled={doc.rows.length >= MAX_ROWS}
+                testID="mobile-add-row"
+              />
+            </View>
+
+            {!isSelection ? (
+              <Card padding={spacing.md} style={{ gap: 2 }}>
+                <Text style={[mobileStyles.sectionTitle, { marginBottom: 6 }]}>PRICE SUMMARY</Text>
+                <SummaryLine label="Total boxes" value={totals.boxes ? String(Math.round(totals.boxes * 100) / 100) : "—"} />
+                <SummaryLine label="Subtotal" value={money(totals.subtotal)} />
+                <SummaryLine label="Transportation" value={money(totals.transportation)} />
+                <SummaryLine label="Total quote" value={money(totals.grandTotal)} bold />
+              </Card>
+            ) : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      )}
+
+      {primaryAction ? (
+        <View style={mobileStyles.bottomBar}>
+          <Button
+            label={primaryAction.label} icon={primaryAction.icon} onPress={primaryAction.onPress}
+            loading={primaryAction.loading} variant="primary" size="lg" fullWidth
+            testID="tiles-mobile-primary-action"
+          />
+        </View>
+      ) : null}
+
+      <TilesProductPicker
+        open={pickerRow !== null}
+        onClose={() => setPickerRow(null)}
+        onPick={(product, history) => { if (pickerRow) doc.applyProduct(pickerRow, product, history); }}
+        customerId={doc.customerId}
+      />
+    </SafeAreaView>
+  );
+}
+
+// Customer name field needs the same autocomplete-against-existing-customers
+// behavior as the paper's CustomerNameField, styled for a full-width mobile
+// TextField instead of an underlined paper cell.
+function FormFieldCustomerName({ doc }: { doc: ReturnType<typeof useTilesDoc> }) {
+  const [focused, setFocused] = useState(false);
+  const matches = useMemo(() => {
+    const q = doc.header.customerName.trim().toLowerCase();
+    if (!q || q.length < 2) return [];
+    return doc.customers.filter((c) => c.name.toLowerCase().includes(q) || (c.phone || "").includes(q)).slice(0, 5);
+  }, [doc.header.customerName, doc.customers]);
+  const exactPicked = doc.customerId && matches.length === 1 && matches[0].id === doc.customerId;
+  const show = focused && matches.length > 0 && !exactPicked;
+  return (
+    <View style={{ zIndex: 200 }}>
+      <TextField
+        label="Customer name"
+        value={doc.header.customerName}
+        onChangeText={(t: string) => doc.setHeaderField("customerName", t)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setTimeout(() => setFocused(false), 180)}
+        testID="mobile-customer-name"
+      />
+      {show ? (
+        <View style={mobileStyles.suggestPanel}>
+          {matches.map((c) => (
+            <Pressable
+              key={c.id}
+              onPress={() => { doc.pickCustomer(c); setFocused(false); }}
+              style={mobileStyles.suggestRow}
+              testID={`mobile-customer-suggest-${c.id}`}
+            >
+              <Text style={mobileStyles.suggestName} numberOfLines={1}>{c.name}</Text>
+              {c.phone ? <Text style={mobileStyles.suggestPhone}>{c.phone}</Text> : null}
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const mobileStyles = StyleSheet.create({
+  header: {
+    flexDirection: "row", alignItems: "center", gap: spacing.sm,
+    paddingHorizontal: spacing.md, paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  sectionTitle: { ...type.overline, color: colors.onSurfaceMuted },
+  savePill: {
+    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill,
+    backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  savePillText: { fontSize: 12, fontFamily: type.body.fontFamily, fontWeight: "600" },
+  fieldGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  fieldSlot: { flexBasis: "47%", flexGrow: 1, minWidth: 130 },
+  rowCard: {
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    padding: spacing.md, gap: spacing.md,
+  },
+  thumb: {
+    width: 56, height: 56, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary,
+    alignItems: "center", justifyContent: "center", overflow: "hidden",
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  rowIndex: { ...type.overline, color: colors.onSurfaceMuted, marginBottom: 2 },
+  rowTitleInput: {
+    fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface,
+    padding: 0, ...(Platform.OS === "web" ? { outlineStyle: "none" } as any : {}),
+  },
+  swapRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 },
+  swapLabel: { fontSize: 12, color: colors.brand, fontWeight: "600" },
+  selectBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
+    paddingVertical: 10, paddingHorizontal: 12, borderRadius: radius.md,
+    backgroundColor: colors.brandTint, minHeight: 44,
+  },
+  selectLabel: { fontSize: 13, color: colors.brand, fontWeight: "600" },
+  deleteBtn: {
+    width: 36, height: 36, borderRadius: radius.md, alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.surfaceSecondary,
+  },
+  summaryLine: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
+  summaryLabel: { fontSize: 13, color: colors.onSurfaceSecondary },
+  summaryValue: { fontSize: 13, color: colors.onSurface, fontVariant: ["tabular-nums"] },
+  summaryBold: { fontWeight: "700", color: colors.onSurface, fontSize: 14 },
+  bottomBar: {
+    position: "absolute", left: 0, right: 0, bottom: 0,
+    padding: spacing.md, backgroundColor: colors.surface,
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  suggestPanel: {
+    position: "absolute", top: "100%", left: 0, right: 0, marginTop: 3, zIndex: 300,
+    backgroundColor: colors.surface, borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, overflow: "hidden",
+    ...(Platform.OS === "web" ? { boxShadow: "0 10px 28px rgba(0,0,0,0.18)" } as any : {}),
+  },
+  suggestRow: { paddingHorizontal: 14, paddingVertical: 10, flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  suggestName: { fontSize: 13, fontWeight: "600", color: colors.onSurface, flexShrink: 1 },
+  suggestPhone: { fontSize: 12, color: colors.onSurfaceSecondary, fontVariant: ["tabular-nums"] },
+});
+
+// ---------------------------------------------------------------------------
+// Page shell — topbar with the action buttons + scrollable paper
+// ---------------------------------------------------------------------------
+export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
+  const router = useRouter();
+  const doc = useTilesDoc(docType);
+  const { isPhone, isTablet } = useBp();
+  const [workspaceWidth, setWorkspaceWidth] = useState(0);
+  const isSelection = docType === "tiles_selection";
+  const title = isSelection ? "Tiles Selection" : "Tiles Quotation";
+  const confirmDelete = () => {
+    if (!doc.docId) return;
+    RNAlert.alert(
+      "Delete this quotation?",
+      "Linked follow-ups and unpaid payment records will be removed. Completed payments and purchase orders are protected.",
+      [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: doc.deleteDocument }],
+    );
+  };
+
+  // Device width is not the usable document width: the admin sidebar/rail
+  // occupies part of the viewport. Do not mount an 820px paper unless the
+  // actual workspace can contain it plus its gutters; otherwise use the
+  // reflowed editor and avoid a nested horizontal scroll.
+  const useResponsiveEditor = isPhone
+    || isTablet
+    || (workspaceWidth > 0 && workspaceWidth < PAPER_W + spacing.lg + 64);
+
+  return (
+    <View style={{ flex: 1 }} onLayout={(event) => setWorkspaceWidth(event.nativeEvent.layout.width)}>
+      {useResponsiveEditor ? <MobileTilesEditor docType={docType} doc={doc} router={router} onDelete={confirmDelete} /> : (
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={["top"]}>
+      <View style={shellStyles.topbar}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+          <Pressable onPress={() => router.back()} hitSlop={10} style={shellStyles.backBtn} testID="tiles-back">
+            <Feather name="chevron-left" size={20} color={colors.onSurface} />
+          </Pressable>
+          <View style={{ minWidth: 0, flex: 1 }}>
+            <Text style={type.overline}>Ground Floor · Tiles</Text>
+            <Text style={[type.titleMd, { marginTop: 1 }]} numberOfLines={1}>
+              {title}{doc.docNumberServer ? `  ·  ${doc.docNumberServer}` : ""}
+            </Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "flex-end", flexShrink: 1 }}>
+          {doc.workflowAction ? (
+            <ActionBtn
+              label={doc.workflowAction.label}
+              icon={doc.workflowAction.kind === "move_to_quotation" ? "arrow-right-circle" : "check-circle"}
+              onPress={doc.runWorkflowAction}
+              loading={doc.busy === "workflow"}
+              testID="tiles-workflow-action"
+            />
+          ) : null}
+          <ActionBtn
+            label={isSelection ? "Selection" : "Quotation"}
+            icon="file-text"
+            primary
+            onPress={doc.generatePdf}
+            loading={doc.busy === "pdf"}
+            testID="tiles-generate-pdf"
+          />
+          {isSelection ? (
+            <ActionBtn label="Print" icon="printer" onPress={doc.print} loading={doc.busy === "print"} testID="tiles-print" />
+          ) : (
+            <ActionBtn label="Place Order" icon="shopping-cart" onPress={doc.placeOrder} loading={doc.busy === "order"} testID="tiles-place-order" />
+          )}
+          {doc.docId ? <ActionBtn label="Delete" icon="trash-2" onPress={confirmDelete} loading={doc.busy === "delete"} testID="tiles-delete" /> : null}
+        </View>
+      </View>
+
+      {doc.loading ? (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <ActivityIndicator color={colors.brand} />
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingVertical: spacing.lg, paddingBottom: 80 }}>
+          <ScrollView
+            horizontal
+            contentContainerStyle={{ flexGrow: 1, minWidth: "100%", paddingHorizontal: spacing.lg, paddingRight: 64 }}
+            showsHorizontalScrollIndicator
+          >
+            {isSelection ? <SelectionPaper {...doc} /> : <QuotationPaper {...doc} />}
+          </ScrollView>
+        </ScrollView>
+      )}
+    </SafeAreaView>
+      )}
+    </View>
+  );
+}
+
+function ActionBtn({
+  label, icon, onPress, primary, loading, testID,
+}: {
+  label: string; icon: any; onPress: () => void; primary?: boolean; loading?: boolean; testID?: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={loading}
+      testID={testID}
+      style={({ pressed }) => [
+        shellStyles.actionBtn,
+        primary && { backgroundColor: colors.brand, borderColor: colors.brand },
+        { opacity: pressed || loading ? 0.75 : 1 },
+      ]}
+    >
+      {loading
+        ? <ActivityIndicator size="small" color={primary ? "#fff" : colors.brand} />
+        : <Feather name={icon} size={13} color={primary ? "#fff" : colors.onSurface} />}
+      <Text style={[shellStyles.actionLabel, primary && { color: "#fff" }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const shellStyles = StyleSheet.create({
+  topbar: {
+    flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: spacing.lg, paddingVertical: 10, gap: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  backBtn: {
+    width: 44, height: 44, borderRadius: radius.md, alignItems: "center", justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  actionBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, height: 44, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  actionLabel: { fontSize: 13, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface },
+});
