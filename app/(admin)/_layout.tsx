@@ -20,7 +20,7 @@ import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { storage } from "@/src/utils/storage";
-import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID, SANITARY_FLOOR_ID, TILES_FLOOR_ID } from "@/src/constants/floors";
+import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID, SANITARY_FLOOR_ID, TILES_FLOOR_ID, floorDisplayLabel } from "@/src/constants/floors";
 
 type NavItem = {
   href: string; label: string; icon: FeatherName; match: string; roles?: string[];
@@ -149,11 +149,11 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
   // once. One concrete floor is always active — company-wide reporting
   // lives in Sales Data's own explicit floor filter, not in the shell.
   const items = floors.map((floor) => ({
-    label: `${floor.name}${floor.id === selectedFloorId ? " · Active" : ""}`,
+    label: `${floorDisplayLabel(floor)}${floor.id === selectedFloorId ? " · Active" : ""}`,
     icon: (floor.id === selectedFloorId ? "check" : "layers") as FeatherName,
     onPress: () => { void pick(floor.id); },
   }));
-  const currentLabel = selected?.name || "Select floor";
+  const currentLabel = selected ? floorDisplayLabel(selected) : "Select floor";
   return (
     <Menu align={compact ? "right" : "left"} items={items}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, height: 40, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: layout.hairline, borderColor: color.line }}>

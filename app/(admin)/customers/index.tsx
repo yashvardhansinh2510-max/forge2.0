@@ -202,6 +202,7 @@ export default function Customers() {
                 onPress={() => router.push(`/(admin)/customers/${c.id}` as any)}
                 style={({ pressed, hovered }: any) => [
                   styles.card,
+                  !isDesktop && styles.cardMobile,
                   {
                     backgroundColor: pressed ? colors.surfaceTertiary
                       : hovered ? colors.surfaceSubtle
@@ -279,6 +280,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary,
   },
+  cardMobile: { alignItems: "flex-start" },
   dot: {
     width: 3, height: 3, borderRadius: 999,
     backgroundColor: colors.onSurfaceSubtle,
