@@ -47,6 +47,12 @@ export function canPlaceOrder(docType: string, status: string): boolean {
   return status === "approved";
 }
 
+export function normalizeTilesStatus(status: string): string {
+  if (status === "sent") return "pending_approval";
+  if (status === "won") return "approved";
+  return status;
+}
+
 export type NextTilesAction = {
   label: string;
   kind: "patch_status" | "move_to_quotation";
@@ -54,6 +60,7 @@ export type NextTilesAction = {
 };
 
 export function nextTilesAction(docType: string, status: string): NextTilesAction | null {
+  status = normalizeTilesStatus(status);
   if (docType === "tiles_selection") {
     if (status === "draft") return { label: "Submit for approval", kind: "patch_status", nextStatus: "pending_approval" };
     if (status === "pending_approval") return { label: "Approve", kind: "patch_status", nextStatus: "approved" };
@@ -62,7 +69,7 @@ export function nextTilesAction(docType: string, status: string): NextTilesActio
   }
   if (docType === "tiles_quotation") {
     if (status === "draft") return { label: "Submit for confirmation", kind: "patch_status", nextStatus: "pending_approval" };
-    if (status === "pending_approval") return { label: "Confirm", kind: "patch_status", nextStatus: "approved" };
+    if (status === "pending_approval") return { label: "Confirm quotation", kind: "patch_status", nextStatus: "approved" };
     return null;
   }
   return null;
