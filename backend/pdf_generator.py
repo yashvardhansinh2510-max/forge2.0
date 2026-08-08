@@ -157,7 +157,11 @@ def _img(url: str | None, width_mm: float = 13, height_mm: float = 13) -> Flowab
                 image = Image(
                     BytesIO(prepared), width=image_width * mm, height=image_height * mm,
                 )
-                image.hAlign = "CENTER"
+                # Product images belong to the left edge of the image cell in
+                # the sanitary bathroom quotation. Centering made narrow or
+                # portrait supplier images appear detached from their row and
+                # did not match the printed template.
+                image.hAlign = "LEFT"
                 return image
             except Exception:
                 pass

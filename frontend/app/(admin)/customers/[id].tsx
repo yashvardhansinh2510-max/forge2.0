@@ -435,7 +435,7 @@ export default function CustomerDetail() {
         <Card>
           <View style={{ flexDirection: "row", gap: spacing.lg, alignItems: "center", flexWrap: "wrap" }}>
             <Avatar name={customer.company || customer.name} size={64} tone="brand" />
-            <View style={{ flex: 1, minWidth: 240, gap: 6 }}>
+            <View style={{ flex: 1, minWidth: isDesktop ? 240 : 0, gap: 6 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
                 <Text style={type.titleLg} numberOfLines={1}>
                   {customer.company || customer.name}
@@ -519,6 +519,7 @@ export default function CustomerDetail() {
                     onPress={() => router.push(`/(admin)/tiles/${doc.doc_type === "tiles_selection" ? "selection" : "quotation"}?id=${doc.id}` as any)}
                     style={({ pressed, hovered }: any) => [
                       styles.listRow,
+                      !isDesktop && styles.listRowMobile,
                       {
                         borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
                         borderTopColor: colors.divider,
@@ -526,9 +527,9 @@ export default function CustomerDetail() {
                       },
                     ]}
                   >
-                    <Text style={[type.mono, { width: 120 }]} numberOfLines={1}>{doc.number}</Text>
+                    <Text style={[type.mono, { width: isDesktop ? 120 : undefined, flexShrink: 1 }]} numberOfLines={1}>{doc.number}</Text>
                     <Text style={{ flex: 1, minWidth: 0 }} numberOfLines={1}>{tilesStageLabel(doc.doc_type!, doc.status)}</Text>
-                    <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]} numberOfLines={1}>
+                    <Text style={[type.mono, { width: isDesktop ? 110 : undefined, textAlign: isDesktop ? "right" : "left", fontWeight: "700" }]} numberOfLines={1}>
                       {money(doc.grand_total)}
                     </Text>
                   </Pressable>
@@ -549,6 +550,7 @@ export default function CustomerDetail() {
                   onPress={() => router.push(`/(admin)/quotations/${q.id}` as any)}
                   style={({ pressed, hovered }: any) => [
                     styles.listRow,
+                    !isDesktop && styles.listRowMobile,
                     {
                       borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
                       borderTopColor: colors.divider,
@@ -556,12 +558,12 @@ export default function CustomerDetail() {
                     },
                   ]}
                 >
-                  <Text style={[type.mono, { width: 120 }]} numberOfLines={1}>{q.number}</Text>
+                  <Text style={[type.mono, { width: isDesktop ? 120 : undefined, flexShrink: 1 }]} numberOfLines={1}>{q.number}</Text>
                   <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                     <Text style={type.titleSm} numberOfLines={1}>{q.items.length} items</Text>
                     <Text style={type.caption}>{fmtDate(q.created_at)}</Text>
                   </View>
-                  <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]} numberOfLines={1}>
+                  <Text style={[type.mono, { width: isDesktop ? 110 : undefined, textAlign: isDesktop ? "right" : "left", fontWeight: "700" }]} numberOfLines={1}>
                     {money(q.grand_total)}
                   </Text>
                   <StatusBadge status={q.status} />
@@ -805,7 +807,7 @@ export default function CustomerDetail() {
               {/* Products ordered */}
               <Card padding={0}>
                 <View style={{ padding: spacing.lg, paddingBottom: spacing.sm, flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                  <View style={{ flex: 1, minWidth: 220, gap: 4 }}>
+                  <View style={{ flex: 1, minWidth: isDesktop ? 220 : 0, gap: 4 }}>
                     <Text style={type.overline}>Products ordered</Text>
                     <Text style={type.caption}>
                       {hasServerFilters ? "Server filters are applied before the chips below." : "Use All, Outstanding, or Delayed on the filtered workspace."}
@@ -856,7 +858,7 @@ export default function CustomerDetail() {
                   <View
                     key={p.item_id}
                     style={{
-                      flexDirection: "row", alignItems: "center", gap: 10, padding: spacing.md,
+                      flexDirection: "row", flexWrap: isDesktop ? "nowrap" : "wrap", alignItems: "center", gap: 10, padding: spacing.md,
                       borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0, borderTopColor: colors.divider,
                       backgroundColor: p.blocked ? "#FBEAEA" : "transparent",
                     }}
@@ -864,15 +866,15 @@ export default function CustomerDetail() {
                     <Pressable onPress={() => router.push(`/(admin)/purchase-orders/${p.po_id}` as any)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
                       <ProductImage
                         source={p.image}
-                        style={styles.prodThumb}
+                        style={[styles.prodThumb, !isDesktop ? styles.prodThumbMobile : {}]}
                         contentFit="cover"
                         disableSkeleton
                         fallbackLabel={p.sku}
                         borderRadius={6}
                       />
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
-                        <Text style={type.caption} numberOfLines={1}>
+                        <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={isDesktop ? 1 : 2}>{p.name}</Text>
+                        <Text style={type.caption} numberOfLines={isDesktop ? 1 : 2}>
                           {p.sku} · {p.brand_name || "—"}{p.supplier_name ? ` · via ${p.supplier_name}` : ""} · Qty {p.qty}
                         </Text>
                       </View>
@@ -908,6 +910,7 @@ export default function CustomerDetail() {
                     onPress={() => router.push(`/(admin)/purchase-orders/${p.id}` as any)}
                     style={({ pressed, hovered }: any) => [
                       styles.listRow,
+                      !isDesktop && styles.listRowMobile,
                       {
                         borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
                         borderTopColor: colors.divider,
@@ -915,12 +918,12 @@ export default function CustomerDetail() {
                       },
                     ]}
                   >
-                    <Text style={[type.mono, { width: 120 }]} numberOfLines={1}>{p.number}</Text>
+                      <Text style={[type.mono, { width: isDesktop ? 120 : undefined, flexShrink: 1 }]} numberOfLines={1}>{p.number}</Text>
                     <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                       <Text style={type.titleSm} numberOfLines={1}>{p.brand_name || "—"} · {p.item_count} items</Text>
                       <Text style={type.caption}>{fmtDate(p.created_at)}{p.expected_delivery_at ? ` · ETA ${fmtDate(p.expected_delivery_at)}` : ""}</Text>
                     </View>
-                    <Text style={[type.mono, { width: 110, textAlign: "right", fontWeight: "700" }]}>
+                      <Text style={[type.mono, { width: isDesktop ? 110 : undefined, textAlign: isDesktop ? "right" : "left", fontWeight: "700" }]}>
                       {money(p.grand_total)}
                     </Text>
                     <StatusBadge status={p.status} />
@@ -1029,6 +1032,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
+  listRowMobile: {
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+    paddingHorizontal: spacing.md,
+  },
   deliveryIcon: {
     width: 34, height: 34, borderRadius: 17, backgroundColor: "#F3DFA3",
     alignItems: "center", justifyContent: "center",
@@ -1050,9 +1058,10 @@ const styles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 6, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
+  prodThumbMobile: { width: 52, height: 52 },
   stagePillSm: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
   itemActionBtn: {
-    width: 28, height: 28, borderRadius: radius.sm, alignItems: "center", justifyContent: "center",
+    width: 44, height: 44, borderRadius: radius.sm, alignItems: "center", justifyContent: "center",
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
   },
   filterChip: {
