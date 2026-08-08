@@ -7,7 +7,7 @@ import { Linking, Platform } from "react-native";
 import { api, getToken } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 
-async function fetchApiBlob(path: string, errorLabel: string): Promise<Blob | null> {
+async function fetchApiBlob(path: string, errorLabel: string, floorId?: string): Promise<Blob | null> {
   const token = await getToken();
   if (!token) {
     toast.show("Please sign in again");
@@ -15,7 +15,7 @@ async function fetchApiBlob(path: string, errorLabel: string): Promise<Blob | nu
   }
   try {
     const res = await fetch(`${api.base}/api${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, ...(floorId ? { "X-Floor-Id": floorId } : {}) },
     });
     if (!res.ok) {
       toast.show(res.status === 404 ? `That ${errorLabel} isn't available` : `Couldn't download the ${errorLabel}`);
@@ -33,12 +33,12 @@ async function fetchApiBlob(path: string, errorLabel: string): Promise<Blob | nu
 // "quotation.pdf") — window.open() ignores Content-Disposition for blob:
 // URLs, so web uses an <a download> click instead. Native opens the file
 // (the OS viewer's share sheet keeps the server-supplied name).
-export async function downloadApiFile(path: string, filename: string, errorLabel = "file"): Promise<boolean> {
+export async function downloadApiFile(path: string, filename: string, errorLabel = "file", floorId?: string): Promise<boolean> {
   if (Platform.OS !== "web") {
-    await openApiFile(path, errorLabel);
+    await openApiFile(path, errorLabel, floorId);
     return true;
   }
-  const blob = await fetchApiBlob(path, errorLabel);
+  const blob = await fetchApiBlob(path, errorLabel, floorId);
   if (!blob) return false;
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -54,12 +54,12 @@ export async function downloadApiFile(path: string, filename: string, errorLabel
 // Print an authenticated PDF: web renders it into a hidden iframe and calls
 // print() so the browser's print dialog opens directly on the document;
 // native falls back to opening the PDF (the OS viewer offers Print).
-export async function printApiFile(path: string, errorLabel = "file"): Promise<void> {
+export async function printApiFile(path: string, errorLabel = "file", floorId?: string): Promise<void> {
   if (Platform.OS !== "web") {
-    await openApiFile(path, errorLabel);
+    await openApiFile(path, errorLabel, floorId);
     return;
   }
-  const blob = await fetchApiBlob(path, errorLabel);
+  const blob = await fetchApiBlob(path, errorLabel, floorId);
   if (!blob) return;
   const url = URL.createObjectURL(blob);
   const frame = document.createElement("iframe");
@@ -83,7 +83,7 @@ export async function printApiFile(path: string, errorLabel = "file"): Promise<v
   setTimeout(() => { frame.remove(); URL.revokeObjectURL(url); }, 120_000);
 }
 
-export async function openApiFile(path: string, errorLabel = "file"): Promise<void> {
+export async function openApiFile(path: string, errorLabel = "file", floorId?: string): Promise<void> {
   const token = await getToken();
   if (!token) {
     toast.show("Please sign in again");
@@ -91,7 +91,7 @@ export async function openApiFile(path: string, errorLabel = "file"): Promise<vo
   }
   try {
     const res = await fetch(`${api.base}/api${path}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}`, ...(floorId ? { "X-Floor-Id": floorId } : {}) },
     });
     if (!res.ok) {
       toast.show(res.status === 404 ? `That ${errorLabel} isn't available` : `Couldn't download the ${errorLabel}`);

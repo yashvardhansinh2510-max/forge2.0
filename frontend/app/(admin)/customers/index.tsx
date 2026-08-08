@@ -211,20 +211,22 @@ export default function Customers() {
                   },
                 ]}
               >
+                <View style={[styles.customerMain, !isDesktop && styles.customerMainMobile]}>
                 <Avatar name={c.company || c.name} size={44} tone="brand" />
                 <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-                  <Text numberOfLines={1} style={type.titleSm}>{c.company || c.name}</Text>
+                  <Text numberOfLines={isDesktop ? 1 : 2} style={type.titleSm}>{c.company || c.name}</Text>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
-                    <Text style={type.caption} numberOfLines={1}>{c.email}</Text>
+                    <Text style={type.caption} numberOfLines={isDesktop ? 1 : 2}>{c.email}</Text>
                     {c.city ? (
                       <>
                         <View style={styles.dot} />
-                        <Text style={type.caption} numberOfLines={1}>{c.city}</Text>
+                        <Text style={type.caption} numberOfLines={isDesktop ? 1 : 2}>{c.city}</Text>
                       </>
                     ) : null}
                   </View>
                 </View>
-                <View style={{ alignItems: "flex-end", gap: spacing.sm, flexShrink: 0 }}>
+                </View>
+                <View style={[{ alignItems: "flex-end", gap: spacing.sm, flexShrink: 0 }, !isDesktop && styles.customerActionsMobile]}>
                   <Badge label={c.tier.toUpperCase()} tone={tierTone[c.tier]} size="sm" />
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                     <IconButton
@@ -280,7 +282,10 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary,
   },
-  cardMobile: { alignItems: "flex-start" },
+  cardMobile: { flexDirection: "column", alignItems: "stretch", gap: spacing.sm },
+  customerMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.md },
+  customerMainMobile: { width: "100%", alignItems: "flex-start" },
+  customerActionsMobile: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   dot: {
     width: 3, height: 3, borderRadius: 999,
     backgroundColor: colors.onSurfaceSubtle,

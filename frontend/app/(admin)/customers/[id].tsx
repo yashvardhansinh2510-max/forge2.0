@@ -106,7 +106,7 @@ function WalkInFollowupSheet({ visible, onClose, customer, onCreate }: {
           <TextField value={reason} onChangeText={setReason} placeholder="e.g. Browsed tile samples, wants a quote next week" testID="walkin-followup-reason" />
         </FormField>
         <FormField label="Remind me in" helper="Defaults to 4 days — change it if the customer asked for something different">
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, width: "100%" }}>
             {WALK_IN_DAY_OPTIONS.map((d) => (
               <Chip key={d} label={`${d} days`} active={days === d} onPress={() => setDays(d)} />
             ))}
@@ -437,7 +437,7 @@ export default function CustomerDetail() {
             <Avatar name={customer.company || customer.name} size={64} tone="brand" />
             <View style={{ flex: 1, minWidth: isDesktop ? 240 : 0, gap: 6 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, flexWrap: "wrap" }}>
-                <Text style={type.titleLg} numberOfLines={1}>
+                <Text style={[type.titleLg, { flexShrink: 1 }]} numberOfLines={isDesktop ? 1 : 3}>
                   {customer.company || customer.name}
                 </Text>
                 <Badge
@@ -528,7 +528,7 @@ export default function CustomerDetail() {
                     ]}
                   >
                     <Text style={[type.mono, { width: isDesktop ? 120 : undefined, flexShrink: 1 }]} numberOfLines={1}>{doc.number}</Text>
-                    <Text style={{ flex: 1, minWidth: 0 }} numberOfLines={1}>{tilesStageLabel(doc.doc_type!, doc.status)}</Text>
+                    <Text style={{ flex: 1, minWidth: 0 }} numberOfLines={isDesktop ? 1 : 3}>{tilesStageLabel(doc.doc_type!, doc.status)}</Text>
                     <Text style={[type.mono, { width: isDesktop ? 110 : undefined, textAlign: isDesktop ? "right" : "left", fontWeight: "700" }]} numberOfLines={1}>
                       {money(doc.grand_total)}
                     </Text>

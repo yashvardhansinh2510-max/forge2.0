@@ -329,7 +329,7 @@ export default function PurchasesScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={[styles.scroll, !isDesktop && { paddingHorizontal: spacing.md, paddingBottom: 120 }]}>
         {/* Header + top actions */}
         <View style={[styles.headerRow, !isDesktop && { flexDirection: "column", alignItems: "stretch", gap: 12 }]}>
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -812,7 +812,7 @@ function ItemRow(props: {
   if (!desktopTable) {
     return (
       <View style={styles.mobileRow}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
           <BulkChk checked={checked} onToggle={onToggle} />
           <ProductImage
             source={row.image}
@@ -833,9 +833,9 @@ function ItemRow(props: {
             Qty {row.qty} · {row.brand_name} · {row.age_days}d{row.supplier_name ? ` · via ${row.supplier_name}` : ""}
           </Text>
           <View style={{ flexDirection: "row", gap: 6 }}>
-            <Pressable onPress={onHistory} style={styles.transferBtn} hitSlop={6}><Feather name="clock" size={12} color={colors.onSurface} /></Pressable>
-            <Pressable onPress={onOpenMove} style={styles.moveBtn} hitSlop={6}><Text style={styles.moveBtnText}>Move</Text></Pressable>
-            <Pressable onPress={onTransfer} style={styles.transferBtn} hitSlop={6}><Feather name="repeat" size={12} color={colors.onSurface} /></Pressable>
+            <Pressable onPress={onHistory} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="clock" size={14} color={colors.onSurface} /></Pressable>
+            <Pressable onPress={onOpenMove} style={styles.mobileMoveBtn} hitSlop={6}><Text style={styles.moveBtnText}>Move</Text></Pressable>
+            <Pressable onPress={onTransfer} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="repeat" size={14} color={colors.onSurface} /></Pressable>
           </View>
         </View>
       </View>
@@ -1267,6 +1267,8 @@ const styles = StyleSheet.create({
   mobileRow: {
     padding: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  mobileTransferBtn: { width: 44, height: 44, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  mobileMoveBtn: { minWidth: 70, minHeight: 44, paddingHorizontal: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   mobileThumb: {
     width: 48, height: 48, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",

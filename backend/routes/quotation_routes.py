@@ -381,10 +381,25 @@ async def update_quotation(
     if body.room_discounts is not None:
         update["room_discounts"] = {k: v.dict() for k, v in body.room_discounts.items()}
     if body.status is not None:
-        update["status"] = body.status
-        if body.status == "approved":
+        requested_status = body.status
+        doc_type = doc.get("doc_type", "standard")
+        current_status = doc.get("status", "draft")
+        if doc_type in {"tiles_selection", "tiles_quotation"}:
+            # Older deployments used the generic quotation status names. Map
+            # them into the tile workflow before validating the transition so
+            # those documents never strand the mobile CTA on Place Order.
+            current_status = {"sent": "pending_approval", "won": "approved"}.get(current_status, current_status)
+            requested_status = {"sent": "pending_approval", "won": "approved"}.get(requested_status, requested_status)
+            allowed = {
+                "tiles_selection": {"draft": {"pending_approval"}, "pending_approval": {"approved"}},
+                "tiles_quotation": {"draft": {"pending_approval"}, "pending_approval": {"approved"}},
+            }[doc_type]
+            if requested_status not in allowed.get(current_status, set()):
+                raise HTTPException(status_code=409, detail=f"Invalid tile quotation transition: {current_status} → {requested_status}")
+        update["status"] = requested_status
+        if requested_status == "approved":
             update["approved_by"] = user.id
-        update.update(_ordered_at_patch(doc, body.status))
+        update.update(_ordered_at_patch(doc, requested_status))
     if body.project_name is not None:
         update["project_name"] = body.project_name
     if body.phone_snapshot is not None:
