@@ -1444,6 +1444,9 @@ function MobileTilesEditor({
     };
   }, [doc.rows, doc.previewTotals, isSelection]);
 
+  // Keep the workflow CTA in the sticky mobile action bar even when a saved
+  // quotation has reached the order step. This prevents the action from
+  // disappearing below the paper/editor on narrow screens.
   const primaryAction = doc.workflowAction
     ? { label: doc.workflowAction.label, onPress: doc.runWorkflowAction, loading: doc.busy === "workflow", icon: doc.workflowAction.kind === "move_to_quotation" ? "arrow-right-circle" as const : "check-circle" as const }
     : !isSelection
@@ -1471,7 +1474,10 @@ function MobileTilesEditor({
             isSelection
               ? { label: "Print selection", icon: "printer", onPress: doc.print }
               : { label: "Generate quotation PDF", icon: "file-text", onPress: doc.generatePdf },
-            ...(!isSelection && primaryAction?.label !== "Place Order"
+            ...(primaryAction
+              ? [{ label: primaryAction.label, icon: primaryAction.icon, onPress: primaryAction.onPress }]
+              : []),
+            ...(!isSelection && !doc.workflowAction && primaryAction?.label !== "Place Order"
               ? [{ label: "Place Order", icon: "shopping-cart" as const, onPress: doc.placeOrder }]
               : []),
             ...(doc.docId ? [{ label: "Delete quotation", icon: "trash-2" as const, onPress: onDelete }] : []),
@@ -1486,7 +1492,7 @@ function MobileTilesEditor({
       ) : (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}>
           <ScrollView
-            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: primaryAction ? 96 : spacing.xxxl }}
+            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: primaryAction ? 128 : spacing.xxxl }}
             keyboardShouldPersistTaps="handled"
           >
             <SaveStatusPill state={doc.saveState} />
@@ -1651,7 +1657,7 @@ const mobileStyles = StyleSheet.create({
   summaryBold: { fontWeight: "700", color: colors.onSurface, fontSize: 14 },
   bottomBar: {
     position: "absolute", left: 0, right: 0, bottom: 0,
-    padding: spacing.md, backgroundColor: colors.surface,
+    padding: spacing.md, paddingBottom: spacing.lg, backgroundColor: colors.surface,
     borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
   suggestPanel: {

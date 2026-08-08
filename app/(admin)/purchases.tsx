@@ -814,6 +814,14 @@ function ItemRow(props: {
       <View style={styles.mobileRow}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <BulkChk checked={checked} onToggle={onToggle} />
+          <ProductImage
+            source={row.image}
+            style={styles.mobileThumb}
+            contentFit="contain"
+            disableSkeleton
+            fallbackLabel={row.sku}
+            borderRadius={8}
+          />
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{row.name}</Text>
             <Text style={type.caption} numberOfLines={1}>{row.sku} · {row.customer_name}</Text>
@@ -821,7 +829,7 @@ function ItemRow(props: {
           <StageBadge stage={row.stage} tone={row.stage_tone} label={row.stage_label} />
         </View>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 8, flexWrap: "wrap", gap: 6 }}>
-          <Text style={type.caption} numberOfLines={1}>
+          <Text style={[type.caption, { flex: 1, minWidth: 0 }]} numberOfLines={2}>
             Qty {row.qty} · {row.brand_name} · {row.age_days}d{row.supplier_name ? ` · via ${row.supplier_name}` : ""}
           </Text>
           <View style={{ flexDirection: "row", gap: 6 }}>
@@ -1258,6 +1266,10 @@ const styles = StyleSheet.create({
   },
   mobileRow: {
     padding: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  mobileThumb: {
+    width: 48, height: 48, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
+    alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
   thumb: {
     width: 44, height: 44, borderRadius: 8, backgroundColor: colors.surfaceTertiary,

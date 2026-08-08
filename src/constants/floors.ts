@@ -17,3 +17,17 @@ export const NOTEBOOK_FLOOR_LABELS: Record<string, string> = {
   [KITCHEN_FLOOR_ID]: "Kitchen Floor",
   [FURNITURE_FLOOR_ID]: "Furniture Floor",
 };
+
+// User-facing names must not depend on the seed data's legacy floor names
+// (the kitchen record is still stored under the historical `second-floor`
+// slug). Keep ids stable for API isolation, but normalize labels everywhere in
+// the shell and notebook UI.
+export const FLOOR_DISPLAY_LABELS: Record<string, string> = {
+  [TILES_FLOOR_ID]: "Ground Floor",
+  [SANITARY_FLOOR_ID]: "The Sanitary Bathroom",
+  ...NOTEBOOK_FLOOR_LABELS,
+};
+
+export function floorDisplayLabel(floor: { id?: string; slug?: string; name?: string }): string {
+  return FLOOR_DISPLAY_LABELS[floor.id || floor.slug || ""] || floor.name || floor.slug || floor.id || "Floor";
+}
