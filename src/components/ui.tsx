@@ -1234,7 +1234,7 @@ export function PageHeader({
         zIndex: 20,
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", flexWrap: "wrap", gap: spacing.md }}>
         {back ? <IconButton icon="chevron-left" onPress={back} size={36} tone="surface" accessibilityLabel="Back" /> : null}
         <View style={{ flex: 1, minWidth: 0 }}>
           {overline ? <Text style={[type.overline, { marginBottom: 4 }]}>{overline}</Text> : null}
@@ -1250,7 +1250,7 @@ export function PageHeader({
           </Text>
           {subtitle ? <Text numberOfLines={2} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
         </View>
-        {actions ? <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>{actions}</View> : null}
+        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center", flexShrink: 1, justifyContent: "flex-end" }}>{actions}</View> : null}
       </View>
     </View>
   );

@@ -31,3 +31,10 @@ export const FLOOR_DISPLAY_LABELS: Record<string, string> = {
 export function floorDisplayLabel(floor: { id?: string; slug?: string; name?: string }): string {
   return FLOOR_DISPLAY_LABELS[floor.id || floor.slug || ""] || floor.name || floor.slug || floor.id || "Floor";
 }
+
+export function floorLandingPath(floorId: string): string {
+  if (floorId === TILES_FLOOR_ID) return "/tiles";
+  if (floorId === KITCHEN_FLOOR_ID) return "/notebook/kitchen/followups";
+  if (floorId === FURNITURE_FLOOR_ID) return "/notebook/furniture/followups";
+  return "/dashboard";
+}

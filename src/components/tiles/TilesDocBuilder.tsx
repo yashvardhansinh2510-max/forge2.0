@@ -54,9 +54,10 @@ import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useBp } from "@/src/design/responsive";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { downloadApiFile, printApiFile } from "@/src/utils/downloadFile";
+import { TILES_FLOOR_ID } from "@/src/constants/floors";
 
 import { TilesProductPicker } from "./TilesProductPicker";
-import { canPlaceOrder, nextTilesAction, tilesStage } from "./tilesStage";
+import { canPlaceOrder, nextTilesAction, normalizeTilesStatus, tilesStage } from "./tilesStage";
 
 export type TilesDocType = "tiles_selection" | "tiles_quotation";
 
@@ -226,6 +227,7 @@ function useTilesDoc(docType: TilesDocType) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [serverTotals, setServerTotals] = useState<{ subtotal: number; grandTotal: number; transportation: number } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(Boolean(routeId));
   const dirtyRef = useRef(false);
   const persistRef = useRef<() => Promise<string | null>>(async () => null);
@@ -233,7 +235,7 @@ function useTilesDoc(docType: TilesDocType) {
   const persistedIdRef = useRef<string | null>((routeId as string) || null);
 
   useEffect(() => {
-    api.get<Customer[]>("/customers", { floorId: "ground-floor" }).then(setCustomers).catch(() => {});
+    api.get<Customer[]>("/customers", { floorId: TILES_FLOOR_ID }).then(setCustomers).catch(() => {});
   }, []);
 
   // Restore a saved document.
@@ -242,11 +244,11 @@ function useTilesDoc(docType: TilesDocType) {
     let alive = true;
     (async () => {
       try {
-        const doc = await api.get<any>(`/quotations/${routeId}`);
+        const doc = await api.get<any>(`/quotations/${routeId}`, { floorId: TILES_FLOOR_ID });
         if (!alive) return;
         setDocId(doc.id);
         setDocNumberServer(doc.number || null);
-        setStatus(doc.status || "draft");
+        setStatus(normalizeTilesStatus(doc.status || "draft"));
         setServerTotals({
           subtotal: Number(doc.subtotal || 0),
           grandTotal: Number(doc.grand_total || 0),
@@ -452,7 +454,7 @@ function useTilesDoc(docType: TilesDocType) {
       // 1. Resolve the customer — reuse an explicit pick, else create one.
       let cid = customerIdRef.current || customerId;
       if (!cid) {
-        const created = await api.post<Customer>("/customers", { name, phone: header.phone.trim() || null }, { floorId: "ground-floor" });
+        const created = await api.post<Customer>("/customers", { name, phone: header.phone.trim() || null }, { floorId: TILES_FLOOR_ID });
         cid = created.id;
         customerIdRef.current = created.id;
         setCustomerId(created.id);
@@ -479,7 +481,7 @@ function useTilesDoc(docType: TilesDocType) {
       };
       let id = persistedIdRef.current || docId;
       if (!id) {
-        const created = await api.post<{ id: string; number: string }>("/quotations", { ...payload, doc_type: docType }, { floorId: "ground-floor" });
+        const created = await api.post<{ id: string; number: string }>("/quotations", { ...payload, doc_type: docType }, { floorId: TILES_FLOOR_ID });
         id = created.id;
         persistedIdRef.current = created.id;
         setDocId(created.id);
@@ -489,7 +491,7 @@ function useTilesDoc(docType: TilesDocType) {
         }
         router.setParams({ id: created.id });
       } else {
-        const fresh = await api.patch<any>(`/quotations/${id}`, { ...payload, silent, reason: silent ? undefined : "Saved from tiles builder" });
+        const fresh = await api.patch<any>(`/quotations/${id}`, { ...payload, silent, reason: silent ? undefined : "Saved from tiles builder" }, { floorId: TILES_FLOOR_ID });
         setServerTotals({
           subtotal: Number(fresh.subtotal || 0),
           grandTotal: Number(fresh.grand_total || 0),
@@ -549,7 +551,7 @@ function useTilesDoc(docType: TilesDocType) {
     try {
       const id = await persist({ silent: true });
       if (!id) return;
-      await downloadApiFile(`/quotations/${id}/pdf`, pdfFilename(header.customerName, header.docDate), "PDF");
+      await downloadApiFile(`/quotations/${id}/pdf`, pdfFilename(header.customerName, header.docDate), "PDF", TILES_FLOOR_ID);
     } finally {
       setBusy(null);
     }
@@ -560,13 +562,14 @@ function useTilesDoc(docType: TilesDocType) {
     try {
       const id = await persist({ silent: true });
       if (!id) return;
-      await printApiFile(`/quotations/${id}/pdf`, "PDF");
+      await printApiFile(`/quotations/${id}/pdf`, "PDF", TILES_FLOOR_ID);
     } finally {
       setBusy(null);
     }
   }, [persist]);
 
   const placeOrder = useCallback(async () => {
+    if (busy) return;
     setBusy("order");
     const id = await persist({ silent: true });
     setBusy(null);
@@ -580,19 +583,21 @@ function useTilesDoc(docType: TilesDocType) {
       return;
     }
     router.push(`/(admin)/quotations/${id}/place-order` as any);
-  }, [persist, buildItems, router, docType, status]);
+  }, [busy, persist, buildItems, router, docType, status]);
 
   const workflowAction = nextTilesAction(docType, status);
 
   const runWorkflowAction = useCallback(async () => {
     const action = nextTilesAction(docType, status);
     if (!action) return;
+    if (busy) return;
+    setWorkflowError(null);
     setBusy("workflow");
     try {
       if (action.kind === "move_to_quotation") {
         const id = await persist({ silent: true });
         if (!id) return;
-        const updated = await api.post<{ id: string; doc_type: string; status: string }>(`/quotations/${id}/move-to-quotation`);
+      const updated = await api.post<{ id: string; doc_type: string; status: string }>(`/quotations/${id}/move-to-quotation`, undefined, { floorId: TILES_FLOOR_ID });
         toast.success("Moved to Quotation");
         // Move-to-Quotation changes doc_type; the route file (selection.tsx
         // vs quotation.tsx) is what picks Selection vs Quotation paper, so
@@ -602,21 +607,25 @@ function useTilesDoc(docType: TilesDocType) {
       }
       const id = await persist({ silent: true });
       if (!id) return;
-      const updated = await api.patch<{ status: string }>(`/quotations/${id}`, { status: action.nextStatus });
-      setStatus(updated.status);
-      toast.success(action.label === "Approve" || action.label === "Confirm" ? `${action.label}d` : "Submitted");
+      const updated = await api.patch<{ status: string }>(`/quotations/${id}`, { status: action.nextStatus }, { floorId: TILES_FLOOR_ID });
+      const nextStatus = normalizeTilesStatus(updated.status);
+      if (nextStatus !== action.nextStatus) throw new Error("The quotation status was not updated. Please retry.");
+      setStatus(nextStatus);
+      toast.success(action.label);
     } catch (e: any) {
-      toast.error(e?.detail || "Couldn't update the workflow stage");
+      const message = e?.detail || e?.message || "Couldn't update the workflow stage";
+      setWorkflowError(message);
+      toast.error(message);
     } finally {
       setBusy(null);
     }
-  }, [docType, status, persist, router]);
+  }, [busy, docType, status, persist, router]);
 
   const deleteDocument = useCallback(async () => {
     if (!docId) return;
     setBusy("delete");
     try {
-      await api.delete(`/quotations/${docId}`);
+      await api.delete(`/quotations/${docId}`, { floorId: TILES_FLOOR_ID });
       toast.success("Quotation deleted");
       router.replace("/(admin)/followups" as any);
     } catch (e: any) {
@@ -637,7 +646,7 @@ function useTilesDoc(docType: TilesDocType) {
     updateRow, addRow, removeRow, applyProduct,
     customers, customerId, pickCustomer, setCustomerId,
     saveState, busy, generatePdf, print, placeOrder, serverTotals, previewTotals,
-    status, stage: tilesStage(docType, status), workflowAction, runWorkflowAction, deleteDocument,
+    status, stage: tilesStage(docType, status), workflowAction, runWorkflowAction, workflowError, deleteDocument,
   };
 }
 
@@ -1496,6 +1505,7 @@ function MobileTilesEditor({
             keyboardShouldPersistTaps="handled"
           >
             <SaveStatusPill state={doc.saveState} />
+            {doc.workflowError ? <Text style={{ color: colors.error, fontSize: 13 }}>{doc.workflowError}</Text> : null}
 
             <Card padding={spacing.md} style={{ gap: spacing.md }}>
               <Text style={mobileStyles.sectionTitle}>CUSTOMER &amp; DETAILS</Text>

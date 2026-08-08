@@ -20,7 +20,7 @@ import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { storage } from "@/src/utils/storage";
-import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID, SANITARY_FLOOR_ID, TILES_FLOOR_ID, floorDisplayLabel } from "@/src/constants/floors";
+import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID, SANITARY_FLOOR_ID, TILES_FLOOR_ID, floorDisplayLabel, floorLandingPath } from "@/src/constants/floors";
 
 type NavItem = {
   href: string; label: string; icon: FeatherName; match: string; roles?: string[];
@@ -141,7 +141,7 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
     // the dashboard rather than reloading in place: a floor-specific screen
     // (any Tiles page) re-pins its own floor on mount, so reloading there
     // would silently undo the switch the user just made.
-    if (Platform.OS === "web" && typeof window !== "undefined") window.location.assign("/dashboard");
+    if (Platform.OS === "web" && typeof window !== "undefined") window.location.assign(floorLandingPath(id));
   };
   // No "All floors" entry: an unscoped selection sends no X-Floor-Id at
   // all, which made every business module (Quotations, Purchases, Tile
