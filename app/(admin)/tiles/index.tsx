@@ -4,7 +4,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, LayoutChangeEvent, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button, EmptyState } from "@/src/components/ui";
@@ -22,6 +22,8 @@ export default function QuotationTilesList() {
   useRequireFloorAccess("ground-floor");
   const router = useRouter();
   const [docs, setDocs] = useState<TilesDoc[] | null>(null);
+  const [width, setWidth] = useState(0);
+  const compact = width > 0 && width < 560;
 
   const load = useCallback(async () => {
     const [selections, quotations] = await Promise.all([
@@ -43,24 +45,28 @@ export default function QuotationTilesList() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
-      <View style={styles.header}>
-        <View>
+      <View onLayout={(event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)} style={[styles.header, compact && styles.headerCompact]}>
+        <View style={compact && { width: "100%" }}>
           <Text style={type.overline}>Ground Floor · Tiles</Text>
           <Text style={type.titleMd}>Quotation Tiles</Text>
         </View>
-        <View style={styles.headerActions}>
+        <View style={[styles.headerActions, compact && styles.headerActionsCompact]}>
           <Button
             label="Create new selection"
             variant="ghost"
             icon="grid"
             onPress={() => router.push("/(admin)/tiles/selection" as any)}
             testID="tiles-create-selection"
+            fullWidth={compact}
+            style={compact ? styles.compactAction : undefined}
           />
           <Button
             label="Create new quotation"
             icon="layout"
             onPress={() => router.push("/(admin)/tiles/quotation" as any)}
             testID="tiles-create-quotation"
+            fullWidth={compact}
+            style={compact ? styles.compactAction : undefined}
           />
         </View>
       </View>
@@ -96,7 +102,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg, paddingVertical: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  headerCompact: { alignItems: "stretch" },
   headerActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "flex-end", flexShrink: 1 },
+  headerActionsCompact: { flexDirection: "column", alignItems: "stretch", width: "100%" },
+  compactAction: { alignSelf: "stretch" },
   row: {
     flexDirection: "row", alignItems: "center", gap: 10,
     padding: spacing.md, borderRadius: radius.md,
