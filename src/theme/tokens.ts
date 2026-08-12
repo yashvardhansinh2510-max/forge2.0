@@ -283,11 +283,11 @@ const systemSans = Platform.select({ ios: "System", android: "sans-serif", defau
 const systemMono = Platform.select({ ios: "Menlo", android: "monospace", default: "Menlo" });
 
 export const font = {
-  regular:  "Inter-Regular",
-  medium:   "Inter-Medium",
-  semibold: "Inter-SemiBold",
-  bold:     "Inter-Bold",
-  sans:     "Inter-Regular", // default alias
+  regular:  Platform.OS === "web" ? "system-ui" : "Inter-Regular",
+  medium:   Platform.OS === "web" ? "system-ui" : "Inter-Medium",
+  semibold: Platform.OS === "web" ? "system-ui" : "Inter-SemiBold",
+  bold:     Platform.OS === "web" ? "system-ui" : "Inter-Bold",
+  sans:     Platform.OS === "web" ? "system-ui" : "Inter-Regular", // default alias
   mono:     systemMono as string,
   systemSans: systemSans as string,
 } as const;

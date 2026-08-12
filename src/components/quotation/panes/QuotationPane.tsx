@@ -134,7 +134,7 @@ const styles = StyleSheet.create({
   customerLine: { fontSize: 12, fontWeight: "600", color: colors.onSurfaceSecondary, marginTop: 4 },
   compactFields: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   compactField: {
-    flexGrow: 1, flexBasis: "47%", minWidth: 0, paddingHorizontal: 9, paddingVertical: 6,
+    flexGrow: 1, flexBasis: "47%", minWidth: 0, minHeight: 44, paddingHorizontal: 9, paddingVertical: 6,
     borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
   },
   compactFieldWide: { flexBasis: "100%" },

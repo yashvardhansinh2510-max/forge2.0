@@ -70,12 +70,12 @@ const styles = StyleSheet.create({
   },
   secondary: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.md,
+    minHeight: 44, paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
   },
   primary: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md,
+    minHeight: 44, paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md,
     backgroundColor: ds.brass,
   },
 });

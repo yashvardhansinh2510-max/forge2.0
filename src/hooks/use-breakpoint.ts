@@ -2,19 +2,20 @@
 // Never scatter `width >= 900` checks across screens; call `useBreakpoint()`.
 // Boundaries come from design tokens so every screen flips phone/tablet at
 // the same width as `useBp()` and `AdminPage`.
-import { useWindowDimensions } from "react-native";
-
-import { layout } from "@/src/design/tokens";
+import { useBp } from "@/src/design/responsive";
 
 export type Breakpoint = "phone" | "tabletPortrait" | "tabletLandscape" | "desktop";
 
 export function useBreakpoint() {
-  const { width, height } = useWindowDimensions();
-  let bp: Breakpoint;
-  if (width >= 1280) bp = "desktop";
-  else if (width >= layout.bp.desktop) bp = "tabletLandscape";
-  else if (width >= layout.bp.tablet) bp = "tabletPortrait";
-  else bp = "phone";
+  const canonical = useBp();
+  const { width, height } = canonical;
+  const bp: Breakpoint = canonical.bp === "phone"
+    ? "phone"
+    : canonical.bp === "tablet"
+      ? "tabletPortrait"
+      : canonical.bp === "desktop"
+        ? "tabletLandscape"
+        : "desktop";
 
   const isPhone = bp === "phone";
   const isTablet = bp === "tabletPortrait" || bp === "tabletLandscape";
@@ -32,7 +33,7 @@ export function useBreakpoint() {
     2;
 
   // Horizontal page padding — same rhythm as AdminPage/useBp gutters.
-  const pad = isPhone ? layout.gutter.phone : isTablet ? layout.gutter.tablet : layout.gutter.desktop;
+  const pad = canonical.gutter;
 
   return { bp, width, height, isPhone, isTablet, isDesktop, isWide, isLandscape, isCompact, productCols, pad };
 }

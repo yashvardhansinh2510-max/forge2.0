@@ -21,8 +21,9 @@
 // Columns marked `grow` absorb leftover width so a wide monitor fills out
 // instead of leaving a dead right-hand margin.
 import { type ReactNode, useRef, useState } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { FlatList, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
+import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 export type ColumnAlign = "left" | "right" | "center";
@@ -180,6 +181,7 @@ export function DataTable<T>({
   const [bodyMaxHeight, setBodyMaxHeight] = useState<number | null>(null);
   const shellRef = useRef<View>(null);
   const windowHeight = useWindowDimensions().height;
+  const { isPhone } = useBreakpoint();
   const scrollThreshold = columns.reduce((total, column) => total + columnFloor(column), 0);
 
   // Pinning is only a help while the pinned column leaves room to read the
@@ -196,6 +198,61 @@ export function DataTable<T>({
     && !innerScroll
     && availableWidth > 0
     && availableWidth - stickyWidth >= MIN_UNPINNED_WIDTH;
+
+  if (isPhone) {
+    return (
+      <View
+        ref={shellRef}
+        style={[styles.mobileListShell, fillViewport && bodyMaxHeight ? { height: bodyMaxHeight } : null]}
+        testID={testID}
+        onLayout={() => {
+          if (!fillViewport) return;
+          shellRef.current?.measureInWindow((_x, y) => {
+            setBodyMaxHeight(Math.max(MIN_BODY_HEIGHT, windowHeight - y - VIEWPORT_BOTTOM_GUTTER));
+          });
+        }}
+      >
+        <FlatList
+          data={data}
+          keyExtractor={keyExtractor}
+          nestedScrollEnabled
+          initialNumToRender={6}
+          maxToRenderPerBatch={6}
+          windowSize={5}
+          contentContainerStyle={styles.mobileListContent}
+          ListEmptyComponent={<View style={styles.mobileEmpty}><Text style={type.bodyMuted}>{emptyMessage}</Text></View>}
+          renderItem={({ item, index }) => {
+            const selected = isRowSelected?.(item, index) ?? false;
+            const content = (
+              <View style={styles.mobileCardContent}>
+                {columns.filter((column) => column.label).map((column) => (
+                  <View key={column.key} style={styles.mobileField}>
+                    <Text style={styles.mobileLabel}>{column.label}</Text>
+                    <View style={styles.mobileValue}>{column.render(item)}</View>
+                  </View>
+                ))}
+                {columns.filter((column) => !column.label).map((column) => (
+                  <View key={column.key} style={styles.mobileAction}>{column.render(item)}</View>
+                ))}
+              </View>
+            );
+            if (!onRowPress) {
+              return <View testID={rowTestID?.(item, index)} style={[styles.mobileCard, selected ? styles.bodyRowSelected : null]}>{content}</View>;
+            }
+            return (
+              <Pressable
+                testID={rowTestID?.(item, index)}
+                onPress={() => onRowPress(item, index)}
+                style={({ pressed }) => [styles.mobileCard, selected ? styles.bodyRowSelected : null, pressed ? styles.bodyRowPressed : null]}
+              >
+                {content}
+              </Pressable>
+            );
+          }}
+        />
+      </View>
+    );
+  }
 
   return (
     <View
@@ -390,6 +447,22 @@ export function ProgressCell({ percent }: { percent: number }) {
 }
 
 const styles = StyleSheet.create({
+  mobileListShell: { width: "100%", minHeight: 120 },
+  mobileListContent: { gap: spacing.s12, paddingBottom: spacing.s24 },
+  mobileCard: {
+    minHeight: 88,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    padding: spacing.lg,
+  },
+  mobileCardContent: { gap: spacing.s12 },
+  mobileField: { gap: spacing.s4, minWidth: 0 },
+  mobileLabel: { ...type.overline, fontSize: 10, color: colors.onSurfaceSubtle },
+  mobileValue: { minWidth: 0, width: "100%", alignItems: "flex-start" },
+  mobileAction: { minHeight: 44, alignItems: "flex-end", justifyContent: "center" },
+  mobileEmpty: { paddingVertical: spacing.s40, paddingHorizontal: spacing.lg, alignItems: "center" },
   shell: {
     borderWidth: 1,
     borderColor: colors.border,

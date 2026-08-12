@@ -15,7 +15,7 @@
 // and alignment once and both the header and the body cell read from that
 // declaration, which is what stops labels drifting off their columns.
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from "react-native";
 
 import {
@@ -26,6 +26,7 @@ import {
   type DispatchListRow,
   type GodownInventoryRow,
   type MaterialMovementRow,
+  type IdNameRef,
 } from "@/src/api/tileOrders";
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
@@ -107,62 +108,89 @@ export default function TileOrdersScreen() {
   const [selectedHistory, setSelectedHistory] = useState<CompletedTileOrder | null>(null);
   const [inventory, setInventory] = useState<GodownInventoryRow[]>([]);
   const [historySearch, setHistorySearch] = useState(params.search ?? "");
+  const [historySearchDraft, setHistorySearchDraft] = useState(params.search ?? "");
   const [historyCustomer, setHistoryCustomer] = useState("All");
   const [historyBrand, setHistoryBrand] = useState("All");
   const [historyDateRange, setHistoryDateRange] = useState<"All" | "30d" | "year">("All");
   const [inventorySearch, setInventorySearch] = useState(params.search ?? "");
+  const [inventorySearchDraft, setInventorySearchDraft] = useState(params.search ?? "");
   const [movements, setMovements] = useState<MaterialMovementRow[]>([]);
   const [movementSearch, setMovementSearch] = useState(params.search ?? "");
+  const [movementSearchDraft, setMovementSearchDraft] = useState(params.search ?? "");
   const [selectedMovement, setSelectedMovement] = useState<MaterialMovementRow | null>(null);
   const [dispatchRows, setDispatchRows] = useState<DispatchListRow[]>([]);
   const [dispatchSearch, setDispatchSearch] = useState(params.search ?? "");
+  const [dispatchSearchDraft, setDispatchSearchDraft] = useState(params.search ?? "");
   const [dispatchStatus, setDispatchStatus] = useState<typeof DISPATCH_STATUS_FILTERS[number]>("All");
   const [openDispatchId, setOpenDispatchId] = useState<string | null>(null);
   const [creatingDispatch, setCreatingDispatch] = useState(false);
+  const [historyFacets, setHistoryFacets] = useState<{ customers: IdNameRef[]; brands: IdNameRef[] }>({ customers: [], brands: [] });
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const requestId = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (nextPage = 1) => {
+    const currentRequest = ++requestId.current;
+    if (nextPage === 1) setLoading(true);
     setLoadError(null);
     try {
       if (tab === "customer") {
-        setCustomerOrders((await tileOrdersApi.listCustomerOrders({ page_size: 30 })).orders);
+        const result = await tileOrdersApi.listCustomerOrders({ page: nextPage, page_size: 30 });
+        if (currentRequest !== requestId.current) return;
+        setCustomerOrders((previous) => nextPage === 1 ? result.orders : [...previous, ...result.orders]);
+        setHasMore(result.has_more);
       } else if (tab === "brands") {
-        setBrands((await tileOrdersApi.listBrands()).brands);
+        const result = await tileOrdersApi.listBrands({ page: nextPage, page_size: 30 });
+        if (currentRequest !== requestId.current) return;
+        setBrands((previous) => nextPage === 1 ? result.brands : [...previous, ...result.brands]);
+        setHasMore(result.has_more);
       } else if (tab === "history") {
         const dateFrom = historyDateRange === "year" ? `${new Date().getFullYear()}-01-01` : historyDateRange === "30d" ? new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10) : undefined;
-        setHistory((await tileOrdersApi.listHistory({ search: historySearch || undefined, customer_id: historyCustomer !== "All" ? historyCustomer : undefined, brand_id: historyBrand !== "All" ? historyBrand : undefined, date_from: dateFrom })).rows);
+        const result = await tileOrdersApi.listHistory({ search: historySearch || undefined, customer_id: historyCustomer !== "All" ? historyCustomer : undefined, brand_id: historyBrand !== "All" ? historyBrand : undefined, date_from: dateFrom, page: nextPage, page_size: 30 });
+        if (currentRequest !== requestId.current) return;
+        setHistory((previous) => nextPage === 1 ? result.rows : [...previous, ...result.rows]);
+        setHistoryFacets(result.facets);
+        setHasMore(result.has_more);
       } else if (tab === "inventory") {
-        setInventory((await tileOrdersApi.listInventory({ search: inventorySearch || undefined })).rows);
+        const result = await tileOrdersApi.listInventory({ search: inventorySearch || undefined, page: nextPage, page_size: 30 });
+        if (currentRequest !== requestId.current) return;
+        setInventory((previous) => nextPage === 1 ? result.rows : [...previous, ...result.rows]);
+        setHasMore(result.has_more);
       } else if (tab === "dispatch-list") {
-        setDispatchRows((await tileOrdersApi.listDispatchList({
+        const result = await tileOrdersApi.listDispatchList({
           search: dispatchSearch || undefined,
           status: dispatchStatus === "All" ? undefined : dispatchStatus,
-          page_size: 100,
-        })).rows);
+          page: nextPage, page_size: 30,
+        });
+        if (currentRequest !== requestId.current) return;
+        setDispatchRows((previous) => nextPage === 1 ? result.rows : [...previous, ...result.rows]);
+        setHasMore(result.has_more);
       } else {
-        setMovements((await tileOrdersApi.listMovements({
+        const result = await tileOrdersApi.listMovements({
           search: movementSearch || undefined,
-          page_size: 100,
-        })).rows);
+          page: nextPage, page_size: 30,
+        });
+        if (currentRequest !== requestId.current) return;
+        setMovements((previous) => nextPage === 1 ? result.rows : [...previous, ...result.rows]);
+        setHasMore(result.has_more);
       }
+      if (currentRequest === requestId.current) setPage(nextPage);
     } catch (e: any) {
+      if (currentRequest !== requestId.current) return;
       const message = e?.detail || "Could not load orders";
       setLoadError(message);
       toast.error(message);
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
   }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch]);
-
-  const historyCustomers = useMemo(() => ["All", ...Array.from(new Set(history.map((row) => row.customer).filter(Boolean)))], [history]);
-  const historyBrands = useMemo(() => ["All", ...Array.from(new Set(history.flatMap((row) => row.brands).filter(Boolean)))], [history]);
 
   // The customer-order screen can mutate go-down stock while this tab stays
   // mounted in the navigation stack. Re-fetch whenever the screen becomes
   // visible so returning to Go-down Inventory cannot show a stale snapshot.
   useFocusEffect(useCallback(() => {
-    load();
-    return undefined;
+    void load(1);
+    return () => { requestId.current += 1; };
   }, [load]));
 
   const openCustomerOrder = (id: string) => router.push(`/(admin)/tiles/orders/${id}` as any);
@@ -523,9 +551,9 @@ export default function TileOrdersScreen() {
               search={
                 <SearchField
                   testID="tile-orders-dispatch-search"
-                  value={dispatchSearch}
-                  onChangeText={setDispatchSearch}
-                  onSubmit={() => load()}
+                  value={dispatchSearchDraft}
+                  onChangeText={setDispatchSearchDraft}
+                  onSubmit={() => setDispatchSearch(dispatchSearchDraft.trim())}
                   placeholder="Search customer, brand, product, dispatch, chalan…"
                 />
               }
@@ -554,9 +582,9 @@ export default function TileOrdersScreen() {
               search={
                 <SearchField
                   testID="tile-orders-movement-search"
-                  value={movementSearch}
-                  onChangeText={setMovementSearch}
-                  onSubmit={() => load()}
+                  value={movementSearchDraft}
+                  onChangeText={setMovementSearchDraft}
+                  onSubmit={() => setMovementSearch(movementSearchDraft.trim())}
                   placeholder="Search customer, brand, tile, chalan, dispatch…"
                 />
               }
@@ -565,10 +593,12 @@ export default function TileOrdersScreen() {
 
           {tab === "history" ? (
             <Toolbar
-              search={<SearchField testID="tile-orders-history-search" value={historySearch} onChangeText={setHistorySearch} onSubmit={() => load()} placeholder="Search customer, order or brand…" />}
+              search={<SearchField testID="tile-orders-history-search" value={historySearchDraft} onChangeText={setHistorySearchDraft} onSubmit={() => setHistorySearch(historySearchDraft.trim())} placeholder="Search customer, order or brand…" />}
               filters={[
-                ...historyCustomers.map((value) => <FilterChip key={`customer-${value}`} label={`Customer: ${value}`} active={historyCustomer === value} onPress={() => setHistoryCustomer(value)} />),
-                ...historyBrands.map((value) => <FilterChip key={`brand-${value}`} label={`Brand: ${value}`} active={historyBrand === value} onPress={() => setHistoryBrand(value)} />),
+                <FilterChip key="customer-All" label="All customers" active={historyCustomer === "All"} onPress={() => setHistoryCustomer("All")} />,
+                ...historyFacets.customers.map((value) => <FilterChip key={`customer-${value.id}`} label={`Customer: ${value.name}`} active={historyCustomer === value.id} onPress={() => setHistoryCustomer(value.id)} />),
+                <FilterChip key="brand-All" label="All brands" active={historyBrand === "All"} onPress={() => setHistoryBrand("All")} />,
+                ...historyFacets.brands.map((value) => <FilterChip key={`brand-${value.id}`} label={`Brand: ${value.name}`} active={historyBrand === value.id} onPress={() => setHistoryBrand(value.id)} />),
                 ...(["All", "30d", "year"] as const).map((value) => <FilterChip key={`date-${value}`} label={value === "All" ? "All dates" : value === "30d" ? "Last 30 days" : "This year"} active={historyDateRange === value} onPress={() => setHistoryDateRange(value)} />),
               ]}
               actions={<Button label="Export" variant="primary" onPress={() => void exportHistory("xlsx")} testID="tile-orders-history-export" />}
@@ -577,11 +607,16 @@ export default function TileOrdersScreen() {
 
           {tab === "inventory" ? (
             <Toolbar
-              search={<SearchField testID="tile-orders-inventory-search" value={inventorySearch} onChangeText={setInventorySearch} onSubmit={() => load()} placeholder="Search customer, name, brand, product or size…" />}
+              search={<SearchField testID="tile-orders-inventory-search" value={inventorySearchDraft} onChangeText={setInventorySearchDraft} onSubmit={() => setInventorySearch(inventorySearchDraft.trim())} placeholder="Search customer, name, brand, product or size…" />}
             />
           ) : null}
 
           {renderBody()}
+          {hasMore && !loading ? (
+            <View style={styles.loadMore}>
+              <Button label="Load more" size="lg" onPress={() => void load(page + 1)} testID="tile-orders-load-more" />
+            </View>
+          ) : null}
         </Section>
       </PageShell>
 
@@ -710,6 +745,7 @@ function SheetFact({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   stateBlock: { paddingVertical: spacing.s48, alignItems: "center", gap: spacing.lg },
+  loadMore: { paddingTop: spacing.lg, alignItems: "center" },
   // The Dispatch List's status is a free-text backend string rather than one
   // of the StatusPill ladder values, so it gets a neutral chip of the same
   // height as a pill instead of pretending to be one.
