@@ -11,7 +11,7 @@
 // -----------------------------------------------------------------------------
 import { useLocalSearchParams } from "expo-router";
 
-import { QuotationBuilder } from "@/src/components/quotation";
+import { LazyQuotationBuilder } from "@/src/components/quotation/LazyQuotationBuilder";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 
 export default function QuotationBuilderScreen() {
@@ -20,5 +20,5 @@ export default function QuotationBuilderScreen() {
   // starting a new quotation from a product's detail page actually seeds
   // that product instead of landing on an empty builder.
   const { productId } = useLocalSearchParams<{ productId?: string }>();
-  return <QuotationBuilder mode="sanitary" initialProductId={productId || null} />;
+  return <LazyQuotationBuilder mode="sanitary" initialProductId={productId || null} />;
 }

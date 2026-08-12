@@ -1,8 +1,10 @@
 import { readFile, stat } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve("dist/client");
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(SCRIPT_DIR, "..", "dist", "client");
 const ROUTES = ["login.html", "dashboard.html"];
 const MAX_INITIAL_JS_GZIP = 350 * 1024;
 
@@ -14,10 +16,14 @@ for (const route of ROUTES) {
   )];
   let gzipBytes = 0;
   let rawBytes = 0;
+  const assetStats = [];
   for (const asset of assets) {
     const bytes = await readFile(path.join(ROOT, asset));
-    rawBytes += (await stat(path.join(ROOT, asset))).size;
-    gzipBytes += gzipSync(bytes, { level: 9 }).length;
+    const raw = (await stat(path.join(ROOT, asset))).size;
+    const gzip = gzipSync(bytes, { level: 9 }).length;
+    rawBytes += raw;
+    gzipBytes += gzip;
+    assetStats.push({ asset, raw, gzip });
   }
   const result = {
     route,
@@ -25,6 +31,10 @@ for (const route of ROUTES) {
     rawKb: Math.round(rawBytes / 1024),
     gzipKb: Math.round(gzipBytes / 1024),
     budgetKb: Math.round(MAX_INITIAL_JS_GZIP / 1024),
+    largestAssets: assetStats
+      .sort((left, right) => right.gzip - left.gzip)
+      .slice(0, 5)
+      .map(({ asset, gzip }) => ({ asset, gzipKb: Math.round(gzip / 1024) })),
   };
   console.log(JSON.stringify(result));
   if (gzipBytes > MAX_INITIAL_JS_GZIP) failed = true;
