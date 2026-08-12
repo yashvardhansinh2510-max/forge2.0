@@ -14,7 +14,7 @@ import { ProductImage } from "@/src/components/ProductImage";
 import { ProductEditor } from "@/src/components/catalog/ProductEditor";
 import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
-import { colors, money, radius, shadow, spacing } from "@/src/theme/tokens";
+import { colors, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, shadow, spacing } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { useBuilder } from "../context/BuilderContext";
 import { productImageList, resolveVariantImages } from "../helpers/media";
@@ -438,7 +438,7 @@ const styles = StyleSheet.create({
   left: { width: "100%", maxWidth: 300, gap: 12 },
   right: { flex: 1, minWidth: 260, gap: 14 },
 
-  hero: { width: "100%", aspectRatio: 1, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
+  hero: { width: "100%", aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   repImageNote: { fontSize: 10, color: colors.onSurfaceMuted, fontStyle: "italic", marginTop: -4 },
   thumb: { width: 52, height: 52, borderRadius: 8, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
   thumbActive: { borderWidth: 2, borderColor: ds.brass },
@@ -508,7 +508,7 @@ const styles = StyleSheet.create({
   relTitle: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   relHint: { fontSize: 11, color: colors.onSurfaceMuted, marginTop: 1 },
   relCard: { width: 130, gap: 4 },
-  relThumb: { width: "100%", aspectRatio: 1, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
+  relThumb: { width: "100%", aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
   relName: { fontSize: 11, fontWeight: "600", color: colors.onSurface, marginTop: 4 },
   relPrice: { fontSize: 11, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"] },
 

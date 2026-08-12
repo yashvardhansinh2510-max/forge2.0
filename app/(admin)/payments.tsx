@@ -164,13 +164,13 @@ export default function PaymentsScreen() {
       const url = query ? `/payments/orders?q=${encodeURIComponent(query)}` : "/payments/orders";
       const list = await api.get<OrderRow[]>(url);
       setOrders(list);
-      if (!selectedId && list.length) setSelectedId(list[0].id);
+      setSelectedId((current) => current || (list.length ? list[0].id : null));
     } catch (e: any) {
       toast.error(e?.detail || "Could not load orders");
     } finally {
       setLoadingList(false);
     }
-  }, [q, selectedId]);
+  }, [q]);
 
   const loadDetail = useCallback(async (id: string) => {
     setLoadingDetail(true);
@@ -189,7 +189,6 @@ export default function PaymentsScreen() {
   // Initial mount only.
   useEffect(() => {
     loadStats();
-    loadOrders("");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {

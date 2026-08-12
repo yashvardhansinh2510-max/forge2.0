@@ -25,6 +25,7 @@ if (!__DEV__ && BASE && !BASE.startsWith("https://")) {
 const TOKEN_KEY = "forge.jwt";
 const TOKEN_KIND_KEY = "forge.jwt.kind"; // "staff" | "customer"
 const REQUEST_TIMEOUT_MS = 30_000;
+const inflightGets = new Map<string, Promise<unknown>>();
 
 export type TokenKind = "staff" | "customer";
 
@@ -107,7 +108,18 @@ async function request<T>(method: string, path: string, body?: any, opts?: Reque
 }
 
 export const api = {
-  get: <T>(p: string, opts?: RequestOptions) => request<T>("GET", p, undefined, opts),
+  get: <T>(p: string, opts?: RequestOptions) => {
+    // Deduplicate concurrent reads across screens/components. This is
+    // intentionally in-flight only: dynamic data is never served stale, but
+    // StrictMode/remounts and overlapping effects no longer hit the backend
+    // twice for the same resource.
+    const key = `${opts?.floorId || "auto"}:${p}`;
+    const existing = inflightGets.get(key);
+    if (existing) return existing as Promise<T>;
+    const pending = request<T>("GET", p, undefined, opts).finally(() => inflightGets.delete(key));
+    inflightGets.set(key, pending);
+    return pending;
+  },
   post: <T>(p: string, b?: any, opts?: RequestOptions) => request<T>("POST", p, b, opts),
   put: <T>(p: string, b?: any, opts?: RequestOptions) => request<T>("PUT", p, b, opts),
   patch: <T>(p: string, b?: any, opts?: RequestOptions) => request<T>("PATCH", p, b, opts),

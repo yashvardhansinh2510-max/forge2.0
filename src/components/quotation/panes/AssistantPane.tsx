@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 8, padding: 8, borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,
   },
-  suggestionThumb: { width: 40, height: 40, borderRadius: 6, backgroundColor: colors.surfaceTertiary },
+  suggestionThumb: { width: 56, aspectRatio: 16 / 10, borderRadius: 6, backgroundColor: colors.surfaceTertiary },
   suggestionAdd: {
     width: 28, height: 28, borderRadius: 999, backgroundColor: colors.brand,
     alignItems: "center", justifyContent: "center",
