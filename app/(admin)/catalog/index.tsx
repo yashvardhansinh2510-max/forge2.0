@@ -101,7 +101,7 @@ function swatchColor(colour?: string | null, finish?: string | null): string {
 
 export default function Catalog() {
   const router = useRouter();
-  const { productCols, pad } = useBreakpoint();
+  const { productCols, pad, isPhone } = useBreakpoint();
 
   const [brands, setBrands] = useState<Brand[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -337,6 +337,7 @@ export default function Catalog() {
         </Pressable>
       </View>
 
+      {!isPhone ? <>
       <ScrollView
         horizontal showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ gap: 8, paddingRight: gridPadding, paddingVertical: 2 }}
@@ -379,6 +380,13 @@ export default function Catalog() {
           />
         ))}
       </ScrollView>
+      </> : hasActiveFilters ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingRight: 8 }}>
+          {brandId ? <ActiveChip label={brandById[brandId] || "Brand"} onClose={() => { setBrandId(null); setCat(null); }} /> : null}
+          {cat ? <ActiveChip label={(categoriesForBrand ?? categories).find((item) => item.id === cat)?.name || "Category"} onClose={() => setCat(null)} /> : null}
+          <Pressable onPress={clearAll} style={styles.clearAll}><Text style={styles.clearAllText}>Clear</Text></Pressable>
+        </ScrollView>
+      ) : null}
 
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
         <View style={{ flex: 1, flexShrink: 1 }}>
@@ -418,9 +426,9 @@ export default function Catalog() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={Platform.OS !== "web"}
-        initialNumToRender={Platform.OS === "web" ? 120 : 24}
-        maxToRenderPerBatch={Platform.OS === "web" ? 60 : 24}
-        windowSize={Platform.OS === "web" ? 21 : 11}
+        initialNumToRender={isPhone ? 12 : Platform.OS === "web" ? 40 : 24}
+        maxToRenderPerBatch={isPhone ? 12 : Platform.OS === "web" ? 30 : 24}
+        windowSize={isPhone ? 7 : 11}
         onEndReached={loadMore}
         onEndReachedThreshold={0.45}
         onScroll={(e) => { if (isNearScrollEnd(e.nativeEvent)) loadMore(); }}
@@ -462,9 +470,11 @@ export default function Catalog() {
         visible={filtersOpen}
         onClose={() => setFiltersOpen(false)}
         brands={brands}
+        categories={categoriesForBrand ?? categories}
         subcategories={subcategories}
         seriesList={seriesList}
         brandId={brandId} setBrandId={setBrandId}
+        cat={cat} setCat={setCat}
         subcat={subcat} setSubcat={setSubcat}
         series={series} setSeries={setSeries}
         onReset={resetFilters}
@@ -669,12 +679,13 @@ function SkeletonCard({ tall }: { tall?: boolean }) {
 
 // ---------- Filters bottom sheet ----------
 function FiltersSheet({
-  visible, onClose, brands, subcategories, seriesList,
-  brandId, setBrandId, subcat, setSubcat, series, setSeries, onReset,
+  visible, onClose, brands, categories, subcategories, seriesList,
+  brandId, setBrandId, cat, setCat, subcat, setSubcat, series, setSeries, onReset,
 }: {
   visible: boolean; onClose: () => void;
-  brands: Brand[]; subcategories: string[]; seriesList: string[];
+  brands: Brand[]; categories: Category[]; subcategories: string[]; seriesList: string[];
   brandId: string | null; setBrandId: (v: string | null) => void;
+  cat: string | null; setCat: (v: string | null) => void;
   subcat: string | null; setSubcat: (v: string | null) => void;
   series: string | null; setSeries: (v: string | null) => void;
   onReset: () => void;
@@ -693,6 +704,18 @@ function FiltersSheet({
       }
     >
       <View style={{ gap: spacing.xl }}>
+        <FilterSection title="Brand">
+          <Chip label="Any" active={!brandId} onPress={() => { setBrandId(null); setCat(null); setSubcat(null); setSeries(null); }} />
+          {brands.map((brand) => (
+            <Chip key={brand.id} label={brand.name} active={brandId === brand.id} onPress={() => { setBrandId(brandId === brand.id ? null : brand.id); setCat(null); setSubcat(null); setSeries(null); }} />
+          ))}
+        </FilterSection>
+        <FilterSection title="Category">
+          <Chip label="Any" active={!cat} onPress={() => { setCat(null); setSubcat(null); setSeries(null); }} />
+          {categories.map((category) => (
+            <Chip key={category.id} label={category.name} active={cat === category.id} onPress={() => { setCat(cat === category.id ? null : category.id); setSubcat(null); setSeries(null); }} />
+          ))}
+        </FilterSection>
         {subcategories.length > 0 ? (
           <FilterSection title="Subcategory">
             <Chip label="Any" active={!subcat} onPress={() => { setSubcat(null); setSeries(null); }} testID="subcat-all" />

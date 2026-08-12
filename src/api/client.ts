@@ -26,26 +26,55 @@ const TOKEN_KEY = "forge.jwt";
 const TOKEN_KIND_KEY = "forge.jwt.kind"; // "staff" | "customer"
 const REQUEST_TIMEOUT_MS = 30_000;
 const inflightGets = new Map<string, Promise<unknown>>();
+const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
+let tokenCache: string | null | undefined;
+let tokenKindCache: TokenKind | null | undefined;
+let floorCache: string | null | undefined;
 
 export type TokenKind = "staff" | "customer";
 
 export async function setToken(token: string, kind: TokenKind) {
+  tokenCache = token;
+  tokenKindCache = kind;
   await storage.secureSet(TOKEN_KEY, token);
   await storage.setItem(TOKEN_KIND_KEY, kind);
 }
 
 export async function clearToken() {
+  tokenCache = null;
+  tokenKindCache = null;
+  responseCache.clear();
   await storage.secureRemove(TOKEN_KEY);
   await storage.removeItem(TOKEN_KIND_KEY);
 }
 
 export async function getToken(): Promise<string | null> {
-  return (await storage.secureGet<string>(TOKEN_KEY, "")) || null;
+  if (tokenCache !== undefined) return tokenCache;
+  tokenCache = (await storage.secureGet<string>(TOKEN_KEY, "")) || null;
+  return tokenCache;
 }
 
 export async function getTokenKind(): Promise<TokenKind | null> {
+  if (tokenKindCache !== undefined) return tokenKindCache;
   const v = await storage.getItem<string>(TOKEN_KIND_KEY, "");
-  return (v as TokenKind) || null;
+  tokenKindCache = (v as TokenKind) || null;
+  return tokenKindCache;
+}
+
+/** Publish the active floor synchronously so requests never wait on storage. */
+export function setRequestFloorId(floorId: string) {
+  if (floorCache !== floorId) responseCache.clear();
+  floorCache = floorId;
+}
+
+export function clearApiResponseCache() {
+  responseCache.clear();
+}
+
+async function getRequestFloorId() {
+  if (floorCache !== undefined) return floorCache || "";
+  floorCache = (await storage.getItem<string>(SELECTED_FLOOR_KEY, "")) || "";
+  return floorCache;
 }
 
 export class ApiError extends Error {
@@ -54,13 +83,13 @@ export class ApiError extends Error {
   }
 }
 
-type RequestOptions = { floorId?: string; signal?: AbortSignal };
+type RequestOptions = { floorId?: string; signal?: AbortSignal; cacheMs?: number };
 
 async function request<T>(method: string, path: string, body?: any, opts?: RequestOptions): Promise<T> {
   const token = await getToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const floorId = opts?.floorId ?? (await storage.getItem<string>(SELECTED_FLOOR_KEY, ""));
+  const floorId = opts?.floorId ?? (await getRequestFloorId());
   if (floorId) headers["X-Floor-Id"] = floorId;
 
   const controller = new AbortController();
@@ -113,17 +142,25 @@ export const api = {
     // intentionally in-flight only: dynamic data is never served stale, but
     // StrictMode/remounts and overlapping effects no longer hit the backend
     // twice for the same resource.
-    const key = `${opts?.floorId || "auto"}:${p}`;
+    const key = `${opts?.floorId ?? floorCache ?? "auto"}:${p}`;
+    const cached = responseCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value as T);
+    if (cached) responseCache.delete(key);
     const existing = inflightGets.get(key);
     if (existing) return existing as Promise<T>;
-    const pending = request<T>("GET", p, undefined, opts).finally(() => inflightGets.delete(key));
+    const pending = request<T>("GET", p, undefined, opts)
+      .then((value) => {
+        if (opts?.cacheMs && opts.cacheMs > 0) responseCache.set(key, { expiresAt: Date.now() + opts.cacheMs, value });
+        return value;
+      })
+      .finally(() => inflightGets.delete(key));
     inflightGets.set(key, pending);
     return pending;
   },
-  post: <T>(p: string, b?: any, opts?: RequestOptions) => request<T>("POST", p, b, opts),
-  put: <T>(p: string, b?: any, opts?: RequestOptions) => request<T>("PUT", p, b, opts),
-  patch: <T>(p: string, b?: any, opts?: RequestOptions) => request<T>("PATCH", p, b, opts),
-  delete: <T>(p: string, opts?: RequestOptions) => request<T>("DELETE", p, undefined, opts),
+  post: <T>(p: string, b?: any, opts?: RequestOptions) => { responseCache.clear(); return request<T>("POST", p, b, opts); },
+  put: <T>(p: string, b?: any, opts?: RequestOptions) => { responseCache.clear(); return request<T>("PUT", p, b, opts); },
+  patch: <T>(p: string, b?: any, opts?: RequestOptions) => { responseCache.clear(); return request<T>("PATCH", p, b, opts); },
+  delete: <T>(p: string, opts?: RequestOptions) => { responseCache.clear(); return request<T>("DELETE", p, undefined, opts); },
   // Build a URL for a browser-download endpoint (PDF/xlsx). Browser
   // navigations can't send an Authorization header, so this mints a
   // short-lived single-use download token via a normal authenticated call

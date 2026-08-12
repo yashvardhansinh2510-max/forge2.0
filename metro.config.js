@@ -2,6 +2,7 @@
 const { getDefaultConfig } = require("expo/metro-config");
 const path = require('path');
 const { FileStore } = require('metro-cache');
+const { resolve } = require("metro-resolver");
 
 const config = getDefaultConfig(__dirname);
 
@@ -21,5 +22,18 @@ config.cacheStores = [
 
 // Reduce the number of workers to decrease resource usage
 config.maxWorkers = 2;
+
+const webOnlyShims = {
+  "react-native-reanimated": path.join(__dirname, "src/web/shims/react-native-reanimated.js"),
+  "react-native-gesture-handler": path.join(__dirname, "src/web/shims/react-native-gesture-handler.js"),
+  "@sentry/react-native": path.join(__dirname, "src/web/shims/sentry-react-native.js"),
+  "@expo/vector-icons": path.join(__dirname, "src/web/shims/expo-vector-icons.js"),
+};
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (platform === "web" && webOnlyShims[moduleName]) {
+    return { type: "sourceFile", filePath: webOnlyShims[moduleName] };
+  }
+  return resolve(context, moduleName, platform);
+};
 
 module.exports = config;

@@ -17,6 +17,8 @@ import { TILES_FLOOR_ID } from "@/src/constants/floors";
 export type TileOverallStatus = "Pending" | "Ready" | "Partially Dispatched" | "Dispatched" | "Delivered";
 export type TileLocation = "Pending" | "Ready" | "Dispatched" | "Godown" | "Delivered";
 export type AgeingBand = "green" | "amber" | "red";
+export type PageMeta = { page: number; page_size: number; total: number; has_more: boolean; next_page: number | null };
+export type IdNameRef = { id: string; name: string };
 
 export type CustomerOrderBrand = { brand_id: string | null; brand_name: string; supplier_id: string | null; supplier_name: string; purchase_order_id: string; status: TileOverallStatus };
 
@@ -107,8 +109,8 @@ export type TileOrdersDashboard = {
   pending: number; ready: number; waiting_over_15_days: number; boxes_ordered: number; boxes_pending: number; revenue: number;
 };
 export type CompletedTileOrder = {
-  id: string; customer: string; order_number: string; delivery_date: string; completion_date: string;
-  brands: string[]; products: { product: string; size: string | null; quantity: number; boxes: number; pieces: number | null; quantity_unit: "Box" | "Pieces" }[];
+  id: string; customer_id: string | null; customer: string; order_number: string; delivery_date: string; completion_date: string;
+  brands: string[]; brand_refs: { id: string | null; name: string }[]; products: { product: string; size: string | null; quantity: number; boxes: number; pieces: number | null; quantity_unit: "Box" | "Pieces" }[];
   final_amount: number; delivery_status: "Dispatched" | "Delivered"; delivery_notes: string | null;
   timeline: Record<string, any>[]; chalan_references: { id: string; number: string }[]; dispatch_references: { id: string; number: string }[];
 };
@@ -169,16 +171,17 @@ const GROUND_FLOOR = { floorId: TILES_FLOOR_ID } as const;
 export const tileOrdersApi = {
   // ---- Customer tab ----
   listCustomerOrders: (params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string }) =>
-    api.get<{ orders: CustomerOrderCard[]; page: number; page_size: number; total: number }>(
+    api.get<{ orders: CustomerOrderCard[] } & PageMeta>(
       `/tile-orders/customer-orders${toQuery(params)}`, GROUND_FLOOR,
     ),
   customerOrderDetail: (id: string) => api.get<CustomerOrderDetail>(`/tile-orders/customer-orders/${id}`, GROUND_FLOOR),
   customerOrderTimeline: (id: string) => api.get<{ events: Record<string, any>[] }>(`/tile-orders/customer-orders/${id}/timeline`, GROUND_FLOOR),
 
   // ---- Brands tab ----
-  listBrands: () => api.get<{ brands: BrandLandingCard[] }>("/tile-orders/brands", GROUND_FLOOR),
+  listBrands: (params?: { page?: number; page_size?: number; search?: string }) =>
+    api.get<{ brands: BrandLandingCard[] } & PageMeta>(`/tile-orders/brands${toQuery(params)}`, GROUND_FLOOR),
   brandOrders: (brandId: string, params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string }) =>
-    api.get<{ kpi: BrandOrdersKpi; orders: BrandOrderRow[]; page: number; page_size: number; total: number }>(
+    api.get<{ kpi: BrandOrdersKpi; orders: BrandOrderRow[] } & PageMeta>(
       `/tile-orders/brands/${brandId}/orders${toQuery(params)}`, GROUND_FLOOR,
     ),
   purchaseOrderDetail: (poId: string) => api.get<PurchaseOrderDetail>(`/tile-orders/purchase-orders/${poId}`, GROUND_FLOOR),
@@ -222,13 +225,13 @@ export const tileOrdersApi = {
   listMovements: (params?: {
     customer_id?: string; brand_id?: string; movement_type?: string; date_from?: string; date_to?: string;
     chalan_number?: string; dispatch_number?: string; search?: string; page?: number; page_size?: number;
-  }) => api.get<{ rows: MaterialMovementRow[]; page: number; page_size: number; total: number }>(
+  }) => api.get<{ rows: MaterialMovementRow[] } & PageMeta>(
     `/tile-orders/movements${toQuery(params)}`, GROUND_FLOOR,
   ),
-  listHistory: (params?: { search?: string; customer_id?: string; brand_id?: string; date_from?: string; date_to?: string }) =>
-    api.get<{ rows: CompletedTileOrder[]; total: number }>(`/tile-orders/history${toQuery(params)}`, GROUND_FLOOR),
-  listInventory: (params?: { search?: string }) =>
-    api.get<{ rows: GodownInventoryRow[]; total: number }>(`/tile-orders/inventory${toQuery(params)}`, GROUND_FLOOR),
+  listHistory: (params?: { search?: string; customer_id?: string; brand_id?: string; date_from?: string; date_to?: string; page?: number; page_size?: number }) =>
+    api.get<{ rows: CompletedTileOrder[]; facets: { customers: IdNameRef[]; brands: IdNameRef[] } } & PageMeta>(`/tile-orders/history${toQuery(params)}`, GROUND_FLOOR),
+  listInventory: (params?: { search?: string; page?: number; page_size?: number }) =>
+    api.get<{ rows: GodownInventoryRow[] } & PageMeta>(`/tile-orders/inventory${toQuery(params)}`, GROUND_FLOOR),
 
   itemHistory: (itemId: string) => api.get<{ item_id: string; events: Record<string, any>[] }>(`/tile-orders/items/${itemId}/history`, GROUND_FLOOR),
   dashboard: () => api.get<TileOrdersDashboard>("/tile-orders/dashboard", GROUND_FLOOR),
@@ -238,7 +241,7 @@ export const tileOrdersApi = {
     customer_id?: string; brand_id?: string; product?: string; dispatch_number?: string;
     chalan_number?: string; status?: string; date_from?: string; date_to?: string;
     search?: string; page?: number; page_size?: number;
-  }) => api.get<{ rows: DispatchListRow[]; page: number; page_size: number; total: number }>(
+  }) => api.get<{ rows: DispatchListRow[] } & PageMeta>(
     `/tile-orders/dispatches${toQuery(params)}`, GROUND_FLOOR,
   ),
 };

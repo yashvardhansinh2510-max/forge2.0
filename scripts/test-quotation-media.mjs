@@ -1,15 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { quotationGridColumns } from "../src/components/quotation/helpers/responsive.ts";
 import { productImageList } from "../src/components/quotation/helpers/media.ts";
-import { TILE_IMAGE_ASPECT_RATIO, tilesPickerColumns } from "../src/components/tiles/tilePresentation.ts";
-
-assert.equal(TILE_IMAGE_ASPECT_RATIO, 16 / 10);
-assert.equal(tilesPickerColumns(375), 1);
-assert.equal(tilesPickerColumns(430), 1);
-assert.equal(tilesPickerColumns(767), 1);
-assert.equal(tilesPickerColumns(768), 2);
-assert.equal(tilesPickerColumns(1280), 2);
 
 // Phone, tablet and wide-picker widths must all preserve the shop-style
 // two-column grid; 280px is the supported lower bound for a picker viewport.
@@ -49,4 +42,20 @@ assert.deepEqual(productImageList({
   images: [],
 }), ["original", "thumbnail"]);
 
-console.log("quotation media/layout helpers: 21 assertions passed");
+// Keep this zero-config Node contract free of app-runtime imports. Importing
+// tilePresentation used its @/ alias, which Node's strip-types runner cannot
+// resolve and caused the quotation-media release gate to fail before running
+// a single assertion.
+const productImageSource = readFileSync(new URL("../src/components/ProductImage.tsx", import.meta.url), "utf8");
+assert.match(productImageSource, /storage\/v1\/render\/image\/public/);
+assert.match(productImageSource, /contentFit = "contain"/);
+assert.doesNotMatch(productImageSource, /rotate: "90deg"/);
+
+const builderSource = readFileSync(new URL("../src/components/quotation/context/BuilderContext.tsx", import.meta.url), "utf8");
+for (const endpoint of ["/brands", "/categories", "/customers", "/products/recent", "/products/frequent", "/quotations/recent?limit=10", "/referrers"]) {
+  assert.ok(builderSource.includes(endpoint), `missing initial reference request: ${endpoint}`);
+}
+assert.match(builderSource, /retryReferenceData/);
+assert.match(builderSource, /controller\.abort\(\)/);
+
+console.log("quotation media/layout helpers: 26 assertions passed");

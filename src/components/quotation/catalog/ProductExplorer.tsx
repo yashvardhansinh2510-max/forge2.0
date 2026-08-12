@@ -270,9 +270,9 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
           />
         )}
         removeClippedSubviews={Platform.OS !== "web"}
-        initialNumToRender={24}
-        maxToRenderPerBatch={24}
-        windowSize={21}
+        initialNumToRender={showCompactFilters ? 8 : 16}
+        maxToRenderPerBatch={showCompactFilters ? 8 : 16}
+        windowSize={7}
         onEndReached={() => b.loadMoreProducts()}
         onEndReachedThreshold={0.5}
         onScroll={(e) => { if (isNearScrollEnd(e.nativeEvent, 0.5)) b.loadMoreProducts(); }}

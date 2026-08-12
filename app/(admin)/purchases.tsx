@@ -8,14 +8,15 @@
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useState } from "react";
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Linking, Modal, Platform, Pressable,
+  ActivityIndicator, FlatList, Linking, Modal, Platform, Pressable,
   ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
+import { getPurchasesPage, type PurchaseItem, type PurchasesPage } from "@/src/api/purchases";
 import { useBp } from "@/src/design/responsive";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
@@ -37,36 +38,7 @@ type StageMeta = { key: Stage; label: string; count: number; tone: { bg: string;
 type BrandFacet = { id: string; name: string; count: number };
 type CustomerFacet = { id: string; name: string; count: number; open: number };
 
-type Item = {
-  item_id: string;
-  po_id: string;
-  po_number: string;
-  quotation_id?: string | null;
-  quotation_number?: string | null;
-  product_id: string;
-  sku: string;
-  name: string;
-  image?: string | null;
-  customer_id: string;
-  customer_name: string;
-  brand_id: string;
-  brand_name: string;
-  supplier_id?: string | null;
-  supplier_name?: string | null;
-  stage: Stage;
-  stage_label: string;
-  stage_tone: { bg: string; fg: string };
-  qty: number;
-  unit_cost: number;
-  room?: string | null;
-  last_moved_at: string;
-  last_moved_by_name: string | null;
-  age_days: number;
-  blocked: boolean;
-  sla_days: number;
-};
-
-type ItemsResp = { sla_days: number; count: number; blocked_count: number; items: Item[] };
+type Item = PurchaseItem;
 type BulkMoveResult = {
   item_id: string;
   ok: boolean;
@@ -134,6 +106,7 @@ export default function PurchasesScreen() {
   const [view, setView] = useState<ViewMode>("today");
   const [brand, setBrand] = useState<string>("all");
   const [q, setQ] = useState<string>("");
+  const [committedQ, setCommittedQ] = useState<string>("");
   const [stage, setStage] = useState<Stage | "">("");
 
   // Data
@@ -145,6 +118,14 @@ export default function PurchasesScreen() {
   const [brandsTotal, setBrandsTotal] = useState(0);
   const [stages, setStages] = useState<StageMeta[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [nextSkip, setNextSkip] = useState<number | null>(null);
+  const nextSkipRef = useRef<number | null>(null);
+  const [showMobileFilters, setShowMobileFilters] = useState(false);
+  const [showMobileActions, setShowMobileActions] = useState(false);
+  const requestSeq = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
 
   // Selection (for bulk move)
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -192,35 +173,49 @@ export default function PurchasesScreen() {
     }
   }, []);
 
-  const loadItems = useCallback(async ({ throwOnError = false }: { throwOnError?: boolean } = {}) => {
-    setLoading(true);
+  const loadItems = useCallback(async ({ throwOnError = false, append = false }: { throwOnError?: boolean; append?: boolean } = {}) => {
+    if (append && nextSkipRef.current == null) return;
+    const skip = append ? nextSkipRef.current || 0 : 0;
+    const seq = ++requestSeq.current;
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     try {
-      const qs = new URLSearchParams({ view });
-      if (brand && brand !== "all") qs.set("brand", brand);
-      if (q) qs.set("q", q);
-      if (stage) qs.set("stage", stage);
-      const resp = await api.get<ItemsResp>(`/purchases/items?${qs.toString()}`);
-      setItems(resp.items);
-      setBlockedCount(resp.blocked_count);
-      setSlaDays(resp.sla_days);
+      const resp: PurchasesPage = await getPurchasesPage({ view, brand, q: committedQ, stage, skip, limit: isDesktop ? 100 : 30 }, controller.signal);
+      if (seq !== requestSeq.current) return;
+      setItems((current) => append ? [...current, ...resp.items] : resp.items);
+      setTotal(resp.total);
+      setNextSkip(resp.next_skip);
+      nextSkipRef.current = resp.next_skip;
+      setBlockedCount(resp.summaries.blocked_count);
+      setSlaDays(resp.summaries.sla_days);
       // Prune selection to visible items
-      setSelected((prev) => {
+      if (!append) setSelected((prev) => {
         const visible = new Set(resp.items.map((i) => i.item_id));
         const next = new Set<string>();
         prev.forEach((id) => { if (visible.has(id)) next.add(id); });
         return next;
       });
     } catch (e: any) {
+      if (controller.signal.aborted) return;
       if (throwOnError) throw e;
       toast.error(e?.detail || "Could not load items");
-    } finally { setLoading(false); }
-  }, [view, brand, q, stage]);
+    } finally {
+      if (seq === requestSeq.current) { setLoading(false); setLoadingMore(false); }
+    }
+  }, [view, brand, committedQ, stage, isDesktop]);
 
   useEffect(() => { loadFacets(); }, [loadFacets]);
   useEffect(() => { loadShortages(); }, [loadShortages]);
   useEffect(() => {
-    const t = setTimeout(loadItems, 220);
+    const t = setTimeout(() => setCommittedQ(q.trim()), 300);
     return () => clearTimeout(t);
+  }, [q]);
+  useEffect(() => {
+    loadItems();
+    return () => requestController.current?.abort();
   }, [loadItems]);
 
   const refreshPurchases = useCallback(async ({ strict = false }: { strict?: boolean } = {}) => {
@@ -326,6 +321,107 @@ export default function PurchasesScreen() {
   }, [bulkResponse, bulkRefreshError]);
 
   const activeStageCount = stages.reduce((acc, s) => acc + s.count, 0);
+
+  if (!isDesktop) {
+    const activeFilterCount = (brand !== "all" ? 1 : 0) + (stage ? 1 : 0);
+    return (
+      <SafeAreaView style={styles.mobileSafe} edges={["top"]}>
+        <FlatList
+          testID="purchases-mobile-list"
+          data={items}
+          keyExtractor={(item) => item.item_id}
+          renderItem={({ item }) => (
+            <MobilePurchaseCard
+              item={item}
+              selected={selected.has(item.item_id)}
+              onSelect={() => setSelected((current) => {
+                const next = new Set(current);
+                if (next.has(item.item_id)) next.delete(item.item_id);
+                else next.add(item.item_id);
+                return next;
+              })}
+              onMove={() => setRowMoveTarget(item)}
+              onTransfer={() => setTransferItem(item)}
+              onHistory={() => setHistoryItemId(item.item_id)}
+              onOpenPo={() => router.push(`/(admin)/purchase-orders/${item.po_id}` as any)}
+            />
+          )}
+          contentContainerStyle={styles.mobileListContent}
+          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          onEndReached={() => { if (!loading && !loadingMore && nextSkip != null) loadItems({ append: true }); }}
+          onEndReachedThreshold={0.35}
+          ListHeaderComponent={(
+            <View style={{ gap: 12 }}>
+              <View style={styles.mobileTitleRow}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.overline}>PURCHASES · {VIEW_META[view].label.toUpperCase()}</Text>
+                  <Text style={styles.mobilePageTitle}>Purchases</Text>
+                  <Text style={type.bodyMuted}>{total} tracked · {blockedCount} blocked · SLA {slaDays}d</Text>
+                </View>
+                <Pressable accessibilityLabel="More purchase actions" onPress={() => setShowMobileActions(true)} style={styles.mobileIconButton}>
+                  <Feather name="more-vertical" size={20} color={colors.onSurface} />
+                </Pressable>
+              </View>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mobileChips}>
+                {VIEW_ORDER.map((mode) => (
+                  <Pressable key={mode} testID={`view-${mode}`} onPress={() => { setView(mode); setStage(""); }} style={[styles.mobileChip, view === mode && styles.mobileChipActive]}>
+                    <Feather name={VIEW_META[mode].icon} size={15} color={view === mode ? colors.onBrand : colors.onSurfaceMuted} />
+                    <Text style={[styles.mobileChipText, view === mode && styles.mobileChipTextActive]}>{VIEW_META[mode].label}</Text>
+                    {mode === "today" && blockedCount > 0 ? <Text style={[styles.mobileChipCount, view === mode && { color: colors.onBrand }]}>{blockedCount}</Text> : null}
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <View style={styles.mobileControlRow}>
+                <View style={styles.mobileSearch}>
+                  <Feather name="search" size={18} color={colors.onSurfaceMuted} />
+                  <TextInput testID="purchases-search" value={q} onChangeText={setQ} placeholder="Product, SKU or customer" placeholderTextColor={colors.onSurfaceMuted} style={styles.mobileSearchInput} autoCorrect={false} autoCapitalize="none" returnKeyType="search" onSubmitEditing={() => setCommittedQ(q.trim())} />
+                  {q ? <Pressable accessibilityLabel="Clear search" onPress={() => setQ("")} style={styles.mobileClear}><Feather name="x" size={18} color={colors.onSurfaceMuted} /></Pressable> : null}
+                </View>
+                <Pressable testID="purchases-filter-button" onPress={() => setShowMobileFilters(true)} style={[styles.mobileFilterButton, activeFilterCount > 0 && styles.mobileFilterButtonActive]}>
+                  <Feather name="sliders" size={18} color={activeFilterCount ? colors.onBrand : colors.onSurface} />
+                  {activeFilterCount > 0 ? <Text style={styles.mobileFilterCount}>{activeFilterCount}</Text> : null}
+                </Pressable>
+              </View>
+              {activeFilterCount > 0 ? (
+                <View style={styles.activeFilterRow}>
+                  <Text style={styles.activeFilterText} numberOfLines={2}>
+                    {brand !== "all" ? brands.find((entry) => entry.id === brand)?.name || "Brand" : ""}{brand !== "all" && stage ? " · " : ""}{stage ? stages.find((entry) => entry.key === stage)?.label : ""}
+                  </Text>
+                  <Pressable onPress={() => { setBrand("all"); setStage(""); }} style={styles.clearFiltersButton}><Text style={styles.clearFiltersText}>Clear</Text></Pressable>
+                </View>
+              ) : null}
+              {selected.size > 0 ? (
+                <Pressable testID="mobile-bulk-move" onPress={() => setShowMoveMenu(true)} style={styles.mobileBulkButton}>
+                  <Text style={styles.mobileBulkText}>Move {selected.size} selected</Text><Feather name="chevron-down" size={18} color={colors.onBrand} />
+                </Pressable>
+              ) : null}
+              <View style={styles.mobileOperationalSummary}>
+                <OpsMetric label="Shown" value={items.length} icon="list" />
+                <OpsMetric label="Total" value={total} icon="package" />
+                <OpsMetric label="Blocked" value={blockedCount} icon="alert-triangle" tone={blockedCount ? "risk" : "ok"} />
+              </View>
+              {loading ? <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading purchases…</Text></View> : null}
+              {!loading && items.length === 0 ? <View style={styles.mobileEmpty}><Feather name="package" size={28} color={colors.onSurfaceMuted} /><Text style={styles.actionTitle}>No purchases found</Text><Text style={type.bodyMuted}>Clear filters or try a different search.</Text></View> : null}
+            </View>
+          )}
+          ListFooterComponent={loadingMore ? <View style={styles.mobileFooter}><ActivityIndicator /><Text style={type.caption}>Loading more…</Text></View> : <View style={{ height: 96 }} />}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews={Platform.OS !== "web"}
+          keyboardShouldPersistTaps="handled"
+        />
+        <MobileFiltersSheet visible={showMobileFilters} brands={brands} stages={stages} brand={brand} stage={stage} onBrand={setBrand} onStage={setStage} onClose={() => setShowMobileFilters(false)} />
+        <MobileActionsSheet visible={showMobileActions} shortages={shortages.length} onClose={() => setShowMobileActions(false)} onExport={() => { setShowMobileActions(false); doExport(); }} onShortages={() => { setShowMobileActions(false); setShowShortages(true); }} onSettings={() => { setShowMobileActions(false); setShowSettings(true); }} />
+        <MoveMenu visible={showMoveMenu} stages={stages} onClose={() => setShowMoveMenu(false)} onPick={(s) => bulkMove(s)} title={`Move ${selected.size} item${selected.size === 1 ? "" : "s"}`} busy={bulkBusy} />
+        <MoveStageSheet visible={!!rowMoveTarget} item={rowMoveTarget ? toMovable(rowMoveTarget) : null} onClose={() => setRowMoveTarget(null)} onMoved={async () => { await Promise.all([loadItems(), loadFacets()]); }} />
+        <TransferSheet visible={!!transferItem} item={transferItem ? toMovable(transferItem) : null} onClose={() => setTransferItem(null)} onSuccess={async () => { await Promise.all([loadItems(), loadFacets(), loadShortages()]); }} />
+        <HistorySheet visible={!!historyItemId} itemId={historyItemId} onClose={() => setHistoryItemId(null)} />
+        <ShortagesModal visible={showShortages} shortages={shortages} onClose={() => setShowShortages(false)} onChanged={async () => { await Promise.all([loadShortages(), loadItems(), loadFacets()]); }} />
+        <SettingsModal visible={showSettings} currentSla={slaDays} onClose={() => setShowSettings(false)} onSaved={async (value) => { setSlaDays(value); setShowSettings(false); await loadItems(); }} />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -581,6 +677,11 @@ export default function PurchasesScreen() {
                 onOpenPo={(poId) => router.push(`/(admin)/purchase-orders/${poId}` as any)}
               />
             )}
+            {nextSkip != null ? (
+              <Pressable onPress={() => loadItems({ append: true })} disabled={loadingMore} style={styles.desktopLoadMore}>
+                {loadingMore ? <ActivityIndicator size="small" /> : <Text style={styles.desktopLoadMoreText}>Load more · {items.length} of {total}</Text>}
+              </Pressable>
+            ) : null}
           </View>
         </View>
       </ScrollView>
@@ -629,6 +730,97 @@ export default function PurchasesScreen() {
       />
     </SafeAreaView>
   );
+}
+
+// -----------------------------------------------------------------------------
+// Phone presentation.  It deliberately owns the only vertical scroll on the
+// screen; sheets render outside the FlatList and never compete for gestures.
+// -----------------------------------------------------------------------------
+function MobilePurchaseCard({ item, selected, onSelect, onMove, onTransfer, onHistory, onOpenPo }: {
+  item: Item; selected: boolean; onSelect: () => void; onMove: () => void;
+  onTransfer: () => void; onHistory: () => void; onOpenPo: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const tone = STAGE_TONE[item.stage] || item.stage_tone;
+  return (
+    <View style={[styles.mobilePurchaseCard, item.blocked && styles.mobilePurchaseCardBlocked]}>
+      <View style={styles.mobileCardTop}>
+        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selected }} accessibilityLabel={`Select ${item.name}`} onPress={onSelect} style={styles.mobileSelectTarget}>
+          <View style={[styles.chk, selected && styles.chkOn]}>{selected ? <Feather name="check" size={12} color={colors.onBrand} /> : null}</View>
+        </Pressable>
+        <ProductImage source={item.image} style={styles.mobileCardImage} fallbackLabel={item.sku} disableSkeleton borderRadius={8} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.mobileCardName} numberOfLines={2}>{item.name}</Text>
+          <Text style={styles.mobileCardMeta} numberOfLines={2}>{item.sku || "No SKU"} · {item.brand_name || "Unbranded"}</Text>
+        </View>
+        <Pressable accessibilityLabel={`Actions for ${item.name}`} onPress={() => setMenuOpen(true)} style={styles.mobileIconButton}>
+          <Feather name="more-vertical" size={19} color={colors.onSurface} />
+        </Pressable>
+      </View>
+      <View style={styles.mobileCardDetailRow}>
+        <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.mobileCardLabel}>CUSTOMER</Text><Text style={styles.mobileCardValue} numberOfLines={2}>{item.customer_name || "—"}</Text></View>
+        <View style={{ minWidth: 76 }}><Text style={styles.mobileCardLabel}>QUANTITY</Text><Text style={styles.mobileCardValue}>{item.qty}</Text></View>
+        <View style={{ minWidth: 82, alignItems: "flex-end" }}><Text style={styles.mobileCardLabel}>AGE</Text><Text style={[styles.mobileCardValue, item.blocked && { color: colors.error }]}>{item.age_days}d</Text></View>
+      </View>
+      <View style={styles.mobileCardBottom}>
+        <View style={[styles.stageBadge, { backgroundColor: tone.bg }]}><Text style={{ color: tone.fg, fontWeight: "700", fontSize: 12 }}>{item.stage_label}</Text></View>
+        <Text style={styles.mobileCardPo} numberOfLines={1}>{item.po_number || "No PO"}</Text>
+        {item.blocked ? <View style={styles.mobileBlockedPill}><Text style={styles.mobileBlockedText}>Blocked</Text></View> : null}
+      </View>
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <Pressable style={styles.mobileSheetBackdrop} onPress={() => setMenuOpen(false)}>
+          <Pressable style={styles.mobileSheet} onPress={(event) => event.stopPropagation()}>
+            <Text style={styles.mobileSheetTitle} numberOfLines={2}>{item.name}</Text>
+            <SheetAction icon="repeat" label="Move material" onPress={() => { setMenuOpen(false); onMove(); }} />
+            <SheetAction icon="shuffle" label="Transfer customer" onPress={() => { setMenuOpen(false); onTransfer(); }} />
+            <SheetAction icon="clock" label="Movement history" onPress={() => { setMenuOpen(false); onHistory(); }} />
+            <SheetAction icon="file-text" label="Open purchase order" onPress={() => { setMenuOpen(false); onOpenPo(); }} />
+            <Pressable onPress={() => setMenuOpen(false)} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Cancel</Text></Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </View>
+  );
+}
+
+function SheetAction({ icon, label, onPress }: { icon: keyof typeof Feather.glyphMap; label: string; onPress: () => void }) {
+  return <Pressable onPress={onPress} style={({ pressed }) => [styles.mobileSheetAction, pressed && { backgroundColor: colors.surfaceTertiary }]}><Feather name={icon} size={19} color={colors.onSurface} /><Text style={styles.mobileSheetActionText}>{label}</Text><Feather name="chevron-right" size={18} color={colors.onSurfaceMuted} /></Pressable>;
+}
+
+function MobileFiltersSheet({ visible, brands, stages, brand, stage, onBrand, onStage, onClose }: {
+  visible: boolean; brands: BrandFacet[]; stages: StageMeta[]; brand: string; stage: Stage | "";
+  onBrand: (value: string) => void; onStage: (value: Stage | "") => void; onClose: () => void;
+}) {
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.mobileSheetBackdrop} onPress={onClose}>
+        <Pressable style={[styles.mobileSheet, { maxHeight: "82%" }]} onPress={(event) => event.stopPropagation()}>
+          <View style={styles.mobileSheetHeader}><Text style={styles.mobileSheetTitle}>Filter purchases</Text><Pressable accessibilityLabel="Close filters" onPress={onClose} style={styles.mobileIconButton}><Feather name="x" size={20} color={colors.onSurface} /></Pressable></View>
+          <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>
+            <Text style={styles.sectionLabel}>BRAND</Text>
+            <View style={styles.mobileFilterOptions}>
+              <FilterOption label="All brands" active={brand === "all"} onPress={() => onBrand("all")} />
+              {brands.map((entry) => <FilterOption key={entry.id} label={`${entry.name} (${entry.count})`} active={brand === entry.id} onPress={() => onBrand(entry.id)} />)}
+            </View>
+            <Text style={[styles.sectionLabel, { marginTop: 18 }]}>STAGE</Text>
+            <View style={styles.mobileFilterOptions}>
+              <FilterOption label="All stages" active={!stage} onPress={() => onStage("")} />
+              {stages.map((entry) => <FilterOption key={entry.key} label={`${entry.label} (${entry.count})`} active={stage === entry.key} onPress={() => onStage(entry.key)} />)}
+            </View>
+          </ScrollView>
+          <Pressable testID="apply-purchase-filters" onPress={onClose} style={styles.mobileApplyButton}><Text style={styles.mobileApplyText}>Show results</Text></Pressable>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function FilterOption({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return <Pressable onPress={onPress} style={[styles.mobileFilterOption, active && styles.mobileFilterOptionActive]}><Text style={[styles.mobileFilterOptionText, active && { color: colors.brand, fontWeight: "700" }]} numberOfLines={2}>{label}</Text>{active ? <Feather name="check" size={18} color={colors.brand} /> : null}</Pressable>;
+}
+
+function MobileActionsSheet({ visible, shortages, onClose, onExport, onShortages, onSettings }: { visible: boolean; shortages: number; onClose: () => void; onExport: () => void; onShortages: () => void; onSettings: () => void }) {
+  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.mobileSheetBackdrop} onPress={onClose}><Pressable style={styles.mobileSheet} onPress={(event) => event.stopPropagation()}><Text style={styles.mobileSheetTitle}>Purchase actions</Text><SheetAction icon="download" label="Export Excel" onPress={onExport} />{shortages > 0 ? <SheetAction icon="alert-triangle" label={`${shortages} awaiting reorder`} onPress={onShortages} /> : null}<SheetAction icon="settings" label="Tracker settings" onPress={onSettings} /><Pressable onPress={onClose} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Cancel</Text></Pressable></Pressable></Pressable></Modal>;
 }
 
 // -----------------------------------------------------------------------------
@@ -724,7 +916,11 @@ function StockWorkspace({ loading, rows, shortages, stages, isDesktop, selected,
 }
 
 function CustomerNavigator({ loading, customers, rows, onOpen }: { loading: boolean; customers: CustomerFacet[]; rows: Item[]; onOpen: (id: string) => void }) {
-  const rowCount = useMemo(() => new Map(rows.map((row) => [row.customer_id, (rows.filter((candidate) => candidate.customer_id === row.customer_id)).length])), [rows]);
+  const rowCount = useMemo(() => {
+    const counts = new Map<string, number>();
+    rows.forEach((row) => counts.set(row.customer_id, (counts.get(row.customer_id) || 0) + 1));
+    return counts;
+  }, [rows]);
   if (loading) return <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading customer workspaces…</Text></View>;
   return (
     <View style={{ gap: spacing.lg }}>
@@ -1398,4 +1594,63 @@ const styles = StyleSheet.create({
   openPill: { minWidth: 46, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, alignItems: "center", backgroundColor: colors.surfaceTertiary },
   openPillText: { color: colors.onSurfaceSecondary, fontSize: 10.5, fontWeight: "700" },
   dispatchRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 4 },
+  desktopLoadMore: { minHeight: 44, paddingHorizontal: 18, alignSelf: "center", alignItems: "center", justifyContent: "center", borderRadius: 10, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  desktopLoadMoreText: { color: colors.onSurface, fontSize: 13, fontWeight: "700" },
+
+  // Mobile-first Purchases workspace
+  mobileSafe: { flex: 1, backgroundColor: colors.surface },
+  mobileListContent: { paddingHorizontal: 16, paddingTop: 12 },
+  mobileTitleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  mobilePageTitle: { fontFamily: dsFont.display, fontSize: 28, lineHeight: 34, color: colors.onSurface, letterSpacing: -0.3 },
+  mobileIconButton: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, flexShrink: 0 },
+  mobileChips: { gap: 8, paddingRight: 16 },
+  mobileChip: { minHeight: 44, paddingHorizontal: 14, borderRadius: 22, flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  mobileChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  mobileChipText: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  mobileChipTextActive: { color: colors.onBrand },
+  mobileChipCount: { fontSize: 12, fontWeight: "800", color: colors.error },
+  mobileControlRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  mobileSearch: { flex: 1, height: 48, minWidth: 0, borderWidth: 1, borderColor: colors.border, borderRadius: 12, paddingLeft: 12, flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.surfaceSecondary },
+  mobileSearchInput: { flex: 1, minWidth: 0, height: 46, paddingVertical: 0, fontSize: 15, color: colors.onSurface, ...(Platform.OS === "web" ? { outlineStyle: "none" } as any : {}) },
+  mobileClear: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  mobileFilterButton: { width: 48, height: 48, borderRadius: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center" },
+  mobileFilterButtonActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  mobileFilterCount: { position: "absolute", right: 5, top: 4, minWidth: 16, height: 16, borderRadius: 8, textAlign: "center", color: colors.brand, backgroundColor: colors.onBrand, fontWeight: "800", fontSize: 10, lineHeight: 16 },
+  activeFilterRow: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 12, borderRadius: 10, backgroundColor: ds.brassTint },
+  activeFilterText: { flex: 1, minWidth: 0, color: ds.brassDeep, fontSize: 13, fontWeight: "600" },
+  clearFiltersButton: { minWidth: 64, minHeight: 44, alignItems: "center", justifyContent: "center" },
+  clearFiltersText: { color: ds.brassDeep, fontSize: 13, fontWeight: "800" },
+  mobileBulkButton: { minHeight: 48, paddingHorizontal: 16, borderRadius: 12, backgroundColor: colors.brand, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  mobileBulkText: { color: colors.onBrand, fontSize: 14, fontWeight: "800" },
+  mobileOperationalSummary: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  mobileEmpty: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: 8, padding: 24, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surfaceSecondary },
+  mobileFooter: { height: 96, alignItems: "center", justifyContent: "center", gap: 8 },
+  mobilePurchaseCard: { padding: 12, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surfaceSecondary, gap: 12, overflow: "hidden" },
+  mobilePurchaseCardBlocked: { borderLeftWidth: 4, borderLeftColor: colors.error },
+  mobileCardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  mobileSelectTarget: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginLeft: -10 },
+  mobileCardImage: { width: 58, height: 44 },
+  mobileCardName: { color: colors.onSurface, fontSize: 14, lineHeight: 19, fontWeight: "800" },
+  mobileCardMeta: { marginTop: 2, color: colors.onSurfaceMuted, fontSize: 11.5, lineHeight: 16 },
+  mobileCardDetailRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingHorizontal: 4 },
+  mobileCardLabel: { color: colors.onSurfaceMuted, fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  mobileCardValue: { marginTop: 3, color: colors.onSurface, fontSize: 13, lineHeight: 17, fontWeight: "700" },
+  mobileCardBottom: { minHeight: 30, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 },
+  mobileCardPo: { flex: 1, minWidth: 0, color: colors.onSurfaceMuted, fontSize: 11.5, fontVariant: ["tabular-nums"] },
+  mobileBlockedPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: ds.riskTint },
+  mobileBlockedText: { color: colors.error, fontSize: 11, fontWeight: "800" },
+  mobileSheetBackdrop: { flex: 1, backgroundColor: "rgba(15,17,21,0.45)", justifyContent: "flex-end" },
+  mobileSheet: { width: "100%", maxHeight: "90%", paddingHorizontal: 16, paddingTop: 18, paddingBottom: 24, borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: colors.surfaceSecondary, ...shadow.strong },
+  mobileSheetHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },
+  mobileSheetTitle: { flex: 1, minWidth: 0, color: colors.onSurface, fontSize: 17, lineHeight: 22, fontWeight: "800", marginBottom: 8 },
+  mobileSheetAction: { minHeight: 52, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 8, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  mobileSheetActionText: { flex: 1, minWidth: 0, color: colors.onSurface, fontSize: 15, fontWeight: "600" },
+  mobileSheetCancel: { minHeight: 48, marginTop: 12, borderRadius: 12, borderWidth: 1, borderColor: colors.border, alignItems: "center", justifyContent: "center" },
+  mobileSheetCancelText: { color: colors.onSurface, fontSize: 14, fontWeight: "800" },
+  mobileFilterOptions: { marginTop: 8, gap: 6 },
+  mobileFilterOption: { minHeight: 48, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: colors.border, flexDirection: "row", alignItems: "center", gap: 8 },
+  mobileFilterOptionActive: { borderColor: colors.brand, backgroundColor: ds.brassTint },
+  mobileFilterOptionText: { flex: 1, minWidth: 0, color: colors.onSurface, fontSize: 14, lineHeight: 19 },
+  mobileApplyButton: { minHeight: 50, marginTop: 10, borderRadius: 12, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  mobileApplyText: { color: colors.onBrand, fontSize: 15, fontWeight: "800" },
 });

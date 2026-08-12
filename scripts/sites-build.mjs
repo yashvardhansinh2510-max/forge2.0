@@ -3,9 +3,21 @@ import { spawn } from 'node:child_process';
 
 // Sites packages the Expo web export as a Cloudflare-compatible worker.
 
+// Metro's graph optimizer and used-export pass are required together. They let
+// the static web export remove unused exports from the native runtime and route
+// dependencies while preserving Expo Router's production async-route chunks.
+// Keep these flags scoped to the web export: native development and EAS builds
+// must continue to use Expo's default resolver/runtime behavior.
+const productionWebEnv = {
+  ...process.env,
+  EXPO_UNSTABLE_METRO_OPTIMIZE_GRAPH: '1',
+  EXPO_UNSTABLE_TREE_SHAKING: '1',
+};
+
 const expo = spawn('npx', ['expo', 'export', '--clear', '--platform', 'web', '--output-dir', 'dist/client'], {
   stdio: 'inherit',
   shell: process.platform === 'win32',
+  env: productionWebEnv,
 });
 
 expo.on('exit', async (code, signal) => {

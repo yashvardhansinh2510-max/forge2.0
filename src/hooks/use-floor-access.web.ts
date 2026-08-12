@@ -1,0 +1,90 @@
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "expo-router";
+
+import { api, setRequestFloorId } from "@/src/api/client";
+import { toast } from "@/src/components/Toast";
+import { browserStorage } from "@/src/utils/storage/browser.web";
+
+export type Floor = { id: string; name: string; slug: string };
+export type FloorAccess = { all_floors: boolean; floors: Floor[]; floor_ids: string[] };
+
+const SELECTED_FLOOR_KEY = "forge.active-floor";
+let cache: FloorAccess | null = null;
+let inflight: Promise<FloorAccess> | null = null;
+let selectedFloorCache: string | null = null;
+let selectedFloorRead: Promise<string> | null = null;
+let selectedFloorPersistence: Promise<void> = Promise.resolve();
+const selectedFloorListeners = new Set<(floorId: string) => void>();
+
+async function loadAccess() {
+  if (cache) return cache;
+  if (!inflight) {
+    inflight = api.get<FloorAccess>("/settings/floor-access").then((value) => {
+      cache = value;
+      inflight = null;
+      return value;
+    }).catch((error) => { inflight = null; throw error; });
+  }
+  return inflight;
+}
+
+export async function getSelectedFloorId() {
+  if (selectedFloorCache !== null) return selectedFloorCache;
+  if (!selectedFloorRead) {
+    selectedFloorRead = browserStorage.getItem<string>(SELECTED_FLOOR_KEY, "").then((saved) => {
+      const resolved = saved || "";
+      if (selectedFloorCache === null) selectedFloorCache = resolved;
+      setRequestFloorId(selectedFloorCache || "");
+      return selectedFloorCache || "";
+    }).finally(() => { selectedFloorRead = null; });
+  }
+  return selectedFloorRead;
+}
+
+export function setSelectedFloorId(id: string) {
+  selectedFloorCache = id;
+  setRequestFloorId(id);
+  selectedFloorListeners.forEach((listener) => listener(id));
+  selectedFloorPersistence = selectedFloorPersistence.catch(() => undefined)
+    .then(async () => { await browserStorage.setItem(SELECTED_FLOOR_KEY, id); });
+  return selectedFloorPersistence;
+}
+
+export function useFloorAccess() {
+  const [access, setAccess] = useState<FloorAccess | null>(cache);
+  const [selectedFloorId, setSelectedFloorIdState] = useState(selectedFloorCache || "");
+  useEffect(() => {
+    let alive = true;
+    const onSelectedFloorChange = (floorId: string) => { if (alive) setSelectedFloorIdState(floorId); };
+    selectedFloorListeners.add(onSelectedFloorChange);
+    Promise.all([loadAccess(), getSelectedFloorId()]).then(([value, saved]) => {
+      if (!alive) return;
+      setAccess(value);
+      const fallback = value.floors[0]?.id || "";
+      const valid = saved && value.floor_ids.includes(saved) ? saved : fallback;
+      setSelectedFloorIdState(valid);
+      if (valid !== saved) void setSelectedFloorId(valid);
+    }).catch(() => { if (alive) setAccess(null); });
+    return () => { alive = false; selectedFloorListeners.delete(onSelectedFloorChange); };
+  }, []);
+  const selectFloor = useCallback((id: string) => {
+    const canSelect = Boolean(access && access.floors.some((floor) => floor.id === id) &&
+      (access.all_floors || access.floor_ids.includes(id)));
+    return canSelect ? setSelectedFloorId(id) : Promise.resolve();
+  }, [access]);
+  return { access, floors: access?.floors || [], selectedFloorId, selectFloor };
+}
+
+export function useRequireFloorAccess(floorId: string) {
+  const { access, selectedFloorId, selectFloor } = useFloorAccess();
+  const router = useRouter();
+  useEffect(() => {
+    if (!access) return;
+    if (!(access.all_floors || access.floor_ids.includes(floorId))) {
+      toast.error("You don't have access to that floor");
+      router.replace("/(admin)/dashboard" as any);
+      return;
+    }
+    if (selectedFloorId !== floorId) void selectFloor(floorId);
+  }, [access, floorId, router, selectedFloorId, selectFloor]);
+}

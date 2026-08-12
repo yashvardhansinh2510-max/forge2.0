@@ -254,7 +254,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary, gap: 10,
   },
-  back: { flexDirection: "row", alignItems: "center", gap: 3 },
+  back: { minWidth: 44, minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 3 },
   backLabel: { fontSize: 13, fontWeight: "500", color: colors.onSurface },
   // The mobile topbar keeps the action icons visible, so the title block must
   // be allowed to give up intrinsic width instead of pushing undo/redo past
@@ -290,12 +290,12 @@ const styles = StyleSheet.create({
   fieldValue: { fontSize: 12, fontWeight: "600", color: colors.onSurface, marginTop: 1 },
   fieldInput: { fontSize: 12, fontWeight: "600", color: colors.onSurface, padding: 0, marginTop: 1, borderWidth: 0 },
 
-  workflowBtn: { flexDirection: "row", alignItems: "center", gap: 6, height: 34, paddingHorizontal: 10, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth },
+  workflowBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minWidth: 44, height: 44, paddingHorizontal: 10, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth },
   quotationBtn: { backgroundColor: colors.surface, borderColor: colors.border },
   orderBtn: { backgroundColor: colors.brand, borderColor: colors.brand },
   workflowText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
   iconBtn: {
-    padding: 8, borderRadius: radius.md,
+    width: 44, height: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.md,
     backgroundColor: colors.surfaceTertiary,
   },
   hint: {

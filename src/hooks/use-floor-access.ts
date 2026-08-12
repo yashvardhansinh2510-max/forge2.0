@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useRouter } from "expo-router";
 
-import { api } from "@/src/api/client";
+import { api, setRequestFloorId } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { storage } from "@/src/utils/storage";
 
@@ -40,6 +40,7 @@ export async function getSelectedFloorId() {
       // example immediately after login). Never let that older read win over
       // the already-published in-memory selection.
       if (selectedFloorCache === null) selectedFloorCache = saved || "";
+      setRequestFloorId(selectedFloorCache);
       return selectedFloorCache;
     }).finally(() => {
       selectedFloorRead = null;
@@ -50,6 +51,7 @@ export async function getSelectedFloorId() {
 
 export function setSelectedFloorId(id: string) {
   selectedFloorCache = id;
+  setRequestFloorId(id);
   selectedFloorListeners.forEach((listener) => listener(id));
 
   // Publish first for instant UI updates, then serialize writes so a fast
