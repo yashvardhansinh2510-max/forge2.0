@@ -1,5 +1,8 @@
 // ProductPickerSheet — full-screen mobile picker.
-// Wraps the same CatalogPane, but presented as a modal for one-handed mobile use.
+// Wraps the shared ProductExplorer grid, presented as a modal for one-handed
+// mobile use. Keeping this route on ProductExplorer is what gives Sanitary
+// Bathroom Add Products the same shop-style filters and two-column browsing
+// experience as the inline quotation catalog.
 import { Feather } from "@expo/vector-icons";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";

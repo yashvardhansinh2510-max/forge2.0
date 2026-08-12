@@ -7,7 +7,7 @@ import { Feather } from "@expo/vector-icons";
 import { Slot, useRouter, useSegments } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
   Avatar, FeatherName, Hairline, KeyCap, Menu, Sheet, usePalette,
@@ -19,6 +19,7 @@ import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
+import { MobileViewport } from "@/src/components/mobile/MobileShell";
 import { storage } from "@/src/utils/storage";
 import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID, SANITARY_FLOOR_ID, TILES_FLOOR_ID, floorDisplayLabel, floorLandingPath } from "@/src/constants/floors";
 
@@ -131,17 +132,21 @@ function SearchTrigger() {
 
 function FloorSwitcher({ compact = false }: { compact?: boolean }) {
   const { access, floors, selectedFloorId, selectFloor } = useFloorAccess();
+  const router = useRouter();
+  const segments = useSegments() as string[];
   const selected = floors.find((floor) => floor.id === selectedFloorId);
   if (!access || floors.length < 2) return null;
-  const pick = async (id: string) => {
+  const pick = (id: string) => {
     if (id === selectedFloorId) return;
-    await selectFloor(id);
-    // Data on every mounted screen is scoped by the request header, so a
-    // floor change requires a clean reload to refetch everything. Land on
-    // the dashboard rather than reloading in place: a floor-specific screen
-    // (any Tiles page) re-pins its own floor on mount, so reloading there
-    // would silently undo the switch the user just made.
-    if (Platform.OS === "web" && typeof window !== "undefined") window.location.assign(floorLandingPath(id));
+
+    // The hook publishes synchronously; persistence happens in the
+    // background. Mounted screens that consume the hook update immediately,
+    // while the route only changes when the current screen belongs to the
+    // floor we are leaving.
+    void selectFloor(id).catch(() => {});
+    if (!isRouteCompatibleWithFloor(segments, id)) {
+      router.replace(`/(admin)${floorLandingPath(id)}` as any);
+    }
   };
   // No "All floors" entry: an unscoped selection sends no X-Floor-Id at
   // all, which made every business module (Quotations, Purchases, Tile
@@ -165,12 +170,24 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
   );
 }
 
+const FLOOR_ROUTE_SEGMENTS: Record<string, string[]> = {
+  [SANITARY_FLOOR_ID]: ["quotations", "purchases", "purchase-orders"],
+  [TILES_FLOOR_ID]: ["tiles", "orders"],
+  [KITCHEN_FLOOR_ID]: ["kitchen"],
+  [FURNITURE_FLOOR_ID]: ["furniture"],
+};
+
+function isRouteCompatibleWithFloor(segments: string[], floorId: string) {
+  return !Object.entries(FLOOR_ROUTE_SEGMENTS).some(([restrictedFloor, roots]) => (
+    restrictedFloor !== floorId && roots.some((root) => segments.includes(root))
+  ));
+}
+
 // ── Ground Floor → Tiles module nav ────────────────────────────────────────
 // The tiles document builders (Selection / Quotation) are Ground-floor pages:
 // their catalog search AND the floor stamped onto saved documents both follow
 // the active-floor request header, so opening them from another floor first
-// switches the active floor to Ground floor (same reload semantics as the
-// FloorSwitcher) before navigating.
+// switches the active floor to Ground floor before navigating.
 const TILES_ITEMS: NavItem[] = [
   { href: "/(admin)/tiles", label: "Quotation Tiles", icon: "layers", match: "tiles" },
   { href: "/(admin)/tiles/orders", label: "Tile Orders", icon: "truck", match: "orders" },
@@ -185,15 +202,11 @@ function useTilesNav() {
   // these while "The Sanitary Bathroom" is the active floor is what put
   // Tile Orders and Quotation Tiles in Sanitary's navigation.
   const items = groundAccessible && selectedFloorId === TILES_FLOOR_ID ? TILES_ITEMS : [];
-  const open = async (item: NavItem) => {
+  const open = (item: NavItem) => {
     if (selectedFloorId !== TILES_FLOOR_ID) {
-      await selectFloor(TILES_FLOOR_ID);
-      if (Platform.OS === "web" && typeof window !== "undefined") {
-        // Full reload so every mounted screen refetches under the new floor
-        // scope — mirrors FloorSwitcher.pick().
-        window.location.assign(item.href.replace("/(admin)", ""));
-        return;
-      }
+      // Selection is published synchronously; the destination can mount under
+      // the new request scope without a browser-level reload.
+      void selectFloor(TILES_FLOOR_ID).catch(() => {});
     }
     router.push(item.href as any);
   };
@@ -570,7 +583,7 @@ function PhoneBar() {
 // ── Layout root ─────────────────────────────────────────────────────────────
 export default function AdminLayout() {
   const { isPhone, isTablet } = useBp();
-  const insets = useSafeAreaInsets();
+  const { selectedFloorId } = useFloorAccess();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
@@ -590,14 +603,23 @@ export default function AdminLayout() {
   if (isPhone) {
     return (
       <PaletteProvider>
-        <View style={{ flex: 1, backgroundColor: color.canvas, paddingTop: insets.top }}>
+        <MobileViewport
+          testID="admin-mobile-shell"
+          edges={["top", "left", "right"]}
+          style={{ backgroundColor: color.canvas }}
+        >
           <View style={{ flex: 1 }}>
-            <Slot />
+            {/* A floor key remounts the active route under the new request
+                scope, including screens that do not consume useFloorAccess. */}
+            <Slot key={`floor-${selectedFloorId || "resolving"}`} />
           </View>
-          <View style={{ backgroundColor: color.canvas, borderTopWidth: layout.hairline, borderTopColor: color.line, paddingBottom: insets.bottom }}>
+          <SafeAreaView
+            edges={["bottom"]}
+            style={{ backgroundColor: color.canvas, borderTopWidth: layout.hairline, borderTopColor: color.line }}
+          >
             <PhoneBar />
-          </View>
-        </View>
+          </SafeAreaView>
+        </MobileViewport>
       </PaletteProvider>
     );
   }

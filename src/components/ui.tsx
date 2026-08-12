@@ -75,6 +75,7 @@ export function Button({
   label, onPress, variant = "primary", size = "md", icon, iconRight,
   loading, disabled, fullWidth, testID, style,
 }: ButtonProps) {
+  const { isPhone } = useBp();
   const sizing = {
     sm: { padV: 8,  padH: 12, fs: 13, iconSize: 14, radius: radius.sm, height: 34 },
     md: { padV: 11, padH: 16, fs: 14, iconSize: 16, radius: radius.md, height: 44 },
@@ -106,7 +107,9 @@ export function Button({
           paddingVertical: sizing.padV,
           paddingHorizontal: sizing.padH,
           borderRadius: sizing.radius,
-          minHeight: sizing.height,
+          // Keep every action comfortably tappable on phones, including the
+          // compact buttons used inside cards and list rows.
+          minHeight: isPhone ? Math.max(44, sizing.height) : sizing.height,
           opacity: disabled ? 0.5 : pressed ? 0.88 : 1,
           flexDirection: "row",
           alignItems: "center",
@@ -201,6 +204,7 @@ export function Card({
   padding?: number;
   onPress?: () => void;
 }) {
+  const { isPhone } = useBp();
   const skin = {
     flat:     { bg: colors.surfaceSecondary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, shadow: null as any },
     elevated: { bg: colors.surfaceSecondary, borderWidth: 0,                        borderColor: "transparent",  shadow: elevation.low },
@@ -214,7 +218,7 @@ export function Card({
         borderRadius: radius.lg,
         borderWidth: skin.borderWidth,
         borderColor: skin.borderColor,
-        padding: padding ?? spacing.lg,
+        padding: padding ?? (isPhone ? spacing.md : spacing.lg),
       },
       skin.shadow,
       style,
@@ -1220,13 +1224,15 @@ export function PageHeader({
   testID?: string;
   dense?: boolean;
 }) {
+  const { isPhone } = useBp();
+  const horizontal = isPhone ? spacing.lg : spacing.xl;
   return (
     <View
       testID={testID}
       style={{
-        paddingHorizontal: spacing.xl,
-        paddingTop: dense ? spacing.md : spacing.lg,
-        paddingBottom: dense ? spacing.md : spacing.lg,
+        paddingHorizontal: horizontal,
+        paddingTop: dense ? spacing.sm : isPhone ? spacing.md : spacing.lg,
+        paddingBottom: dense ? spacing.sm : isPhone ? spacing.md : spacing.lg,
         backgroundColor: colors.surface,
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: colors.border,
@@ -1234,8 +1240,8 @@ export function PageHeader({
         zIndex: 20,
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "flex-start", flexWrap: "wrap", gap: spacing.md }}>
-        {back ? <IconButton icon="chevron-left" onPress={back} size={36} tone="surface" accessibilityLabel="Back" /> : null}
+      <View style={{ flexDirection: "row", alignItems: "flex-start", flexWrap: "wrap", gap: isPhone ? spacing.sm : spacing.md }}>
+        {back ? <IconButton icon="chevron-left" onPress={back} size={44} tone="surface" accessibilityLabel="Back" /> : null}
         <View style={{ flex: 1, minWidth: 0 }}>
           {overline ? <Text style={[type.overline, { marginBottom: 4 }]}>{overline}</Text> : null}
           <Text
@@ -1243,14 +1249,14 @@ export function PageHeader({
             style={
               dense
                 ? type.titleLg
-                : { fontFamily: dsFont.display, fontSize: 28, lineHeight: 36, letterSpacing: -0.3, color: colors.onSurface }
+              : { fontFamily: dsFont.display, fontSize: isPhone ? 23 : 28, lineHeight: isPhone ? 30 : 36, letterSpacing: -0.3, color: colors.onSurface }
             }
           >
             {title}
           </Text>
           {subtitle ? <Text numberOfLines={2} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
         </View>
-        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center", flexShrink: 1, justifyContent: "flex-end" }}>{actions}</View> : null}
+        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center", flexShrink: 1, justifyContent: isPhone ? "flex-start" : "flex-end", width: isPhone ? "100%" : undefined }}>{actions}</View> : null}
       </View>
     </View>
   );
