@@ -1,7 +1,7 @@
 """Contract tests for the tile-only quotation defaults and totals."""
 
 from models import QuotationLineItem
-from routes.quotation_routes import _normalize_tile_items, _tile_totals
+from routes.quotation_routes import _normalize_tile_items, _require_tiles_quotation_address, _tile_totals
 
 
 def _item(**kwargs) -> QuotationLineItem:
@@ -48,3 +48,14 @@ def test_transportation_fee_does_not_change_standard_quotation_totals():
     totals = {"subtotal": 250, "grand_total": 225, "discount_total": 25}
 
     assert _tile_totals(totals, 75, "standard") == totals
+
+
+def test_tile_quotation_requires_a_non_blank_address():
+    import pytest
+
+    for address in (None, "", "   "):
+        with pytest.raises(Exception, match="address is required"):
+            _require_tiles_quotation_address("tiles_quotation", address)
+
+    _require_tiles_quotation_address("tiles_quotation", "  12 Ring Road  ")
+    _require_tiles_quotation_address("tiles_selection", None)

@@ -450,6 +450,10 @@ function useTilesDoc(docType: TilesDocType) {
         toast.show("Enter the customer name first");
         return null;
       }
+      if (docType === "tiles_quotation" && !header.address.trim()) {
+        toast.show("Enter the address before saving or generating the quotation");
+        return null;
+      }
       setSaveState("saving");
       try {
       // 1. Resolve the customer — reuse an explicit pick, else create one.
@@ -1483,7 +1487,7 @@ function MobileTilesEditor({
           variant="ghost"
           items={[
             isSelection
-              ? { label: "Print selection", icon: "printer", onPress: doc.print }
+              ? { label: "Generate selection PDF", icon: "file-text", onPress: doc.generatePdf }
               : { label: "Generate quotation PDF", icon: "file-text", onPress: doc.generatePdf },
             ...(primaryAction
               ? [{ label: primaryAction.label, icon: primaryAction.icon, onPress: primaryAction.onPress }]
@@ -1530,7 +1534,7 @@ function MobileTilesEditor({
                   <TextField label="Prepared by" value={doc.header.preparedBy} onChangeText={(t: string) => doc.setHeaderField("preparedBy", t)} testID="mobile-prepared-by" />
                 </View>
               </View>
-              <TextField label="Address" value={doc.header.address} onChangeText={(t: string) => doc.setHeaderField("address", t)} multiline testID="mobile-address" />
+              <TextField label={isSelection ? "Address" : "Address (required)"} value={doc.header.address} onChangeText={(t: string) => doc.setHeaderField("address", t)} multiline testID="mobile-address" />
               {!isSelection ? <TextField label="Transportation Fee" value={doc.header.transportationFee} onChangeText={(t: string) => doc.setHeaderField("transportationFee", t)} keyboardType="decimal-pad" testID="mobile-transportation-fee" /> : null}
             </Card>
 
@@ -1738,7 +1742,7 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
             />
           ) : null}
           <ActionBtn
-            label={isSelection ? "Selection" : "Quotation"}
+            label={isSelection ? "Generate selection PDF" : "Generate quotation PDF"}
             icon="file-text"
             primary
             onPress={doc.generatePdf}

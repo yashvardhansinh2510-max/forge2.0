@@ -45,6 +45,15 @@ async def _next_number() -> str:
 TILES_DOC_TYPES = ("tiles_selection", "tiles_quotation")
 
 
+def _require_tiles_quotation_address(doc_type: str, address: str | None) -> None:
+    """Reject tile quotations that cannot print a complete customer header."""
+    if doc_type == "tiles_quotation" and not str(address or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="An address is required before a tile quotation can be generated.",
+        )
+
+
 def _normalize_tile_items(items: list[QuotationLineItem], doc_type: str) -> list[QuotationLineItem]:
     """Apply tile-only defaults before totals and downstream reads."""
     if doc_type not in TILES_DOC_TYPES:
@@ -199,6 +208,7 @@ async def create_quotation(
     body: QuotationCreate,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
+    _require_tiles_quotation_address(body.doc_type, body.address_snapshot)
     customer = await get_floor_scoped_or_404(
         db.customers, body.customer_id, user, not_found="Customer not found", projection={"_id": 0},
     )
@@ -333,6 +343,10 @@ async def update_quotation(
     user: UserPublic = Depends(require_min_role("sales")),
 ):
     doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
+    _require_tiles_quotation_address(
+        doc.get("doc_type", "standard"),
+        body.address_snapshot if body.address_snapshot is not None else doc.get("address_snapshot"),
+    )
 
     update: dict = {}
     customer_changed_from: str | None = None
@@ -814,6 +828,7 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
     doc_type = doc.get("doc_type") or "standard"
+    _require_tiles_quotation_address(doc_type, doc.get("address_snapshot"))
     if doc_type == "tiles_selection":
         pdf_bytes = build_tiles_selection_pdf({**doc, "items": _enriched_items_for_pdf(doc)}, customer, await _pdf_branding())
         filename = tiles_pdf_filename(doc)

@@ -110,8 +110,6 @@ def _prepare_image_bytes(data: bytes) -> bytes:
         normalized = ImageOps.exif_transpose(img)
         if normalized.height > normalized.width:
             normalized = normalized.transpose(PILImage.Transpose.ROTATE_90)
-        if normalized is img and not img.getexif():
-            return data
         normalized.load()
         if fmt.upper() in ("JPEG", "JPG") and normalized.mode in ("RGBA", "P"):
             normalized = normalized.convert("RGB")

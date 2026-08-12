@@ -522,6 +522,8 @@ class Quotation(TimestampedModel):
     doc_type: Literal["standard", "tiles_selection", "tiles_quotation"] = "standard"
     attended_by: Optional[str] = None
     prepared_by: Optional[str] = None
+    # Required for tiles_quotation documents; optional for standard and
+    # tiles_selection records so the shared quotation model remains compatible.
     address_snapshot: Optional[str] = None    # tiles quotation ADDRESS line
     doc_date: Optional[str] = None            # printed date (selection/quotation dt); None → created_at
     doc_number: Optional[str] = None          # editable printed number; None → `number`
