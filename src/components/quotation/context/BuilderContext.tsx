@@ -280,6 +280,13 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
 
   // ---------- Load reference data ----------
   useEffect(() => {
+    // The initial reference-data batch already loaded the unfiltered category
+    // list. Avoid immediately requesting the same payload again on mount;
+    // only brand changes need a fresh category query.
+    if (!selectedBrandId) {
+      setCategoriesForRail(categories);
+      return;
+    }
     (async () => {
       try {
         const [cs, cats, brs, rec, freq, recentQ, refs] = await Promise.all([
@@ -327,7 +334,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         setCategoriesForRail(cats);
       } catch {}
     })();
-  }, [selectedBrandId]);
+  }, [selectedBrandId, categories]);
 
   const setSelectedBrandId = useCallback((id: string | null) => {
     setSelectedBrandIdState(id);

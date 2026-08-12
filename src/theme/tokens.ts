@@ -174,6 +174,9 @@ export const radius = {
   pill: 999,
 } as const;
 
+// Shared landscape frame for all product imagery.
+export const PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Elevation — LOCKED to 4 subtle levels + none. Very subtle only. No garish shadows.
 //   low      = e1  resting card (barely visible, 1px offset)

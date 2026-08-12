@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { BottomSheet } from "@/src/components/BottomSheet";
 import { EmptyState } from "@/src/components/ui";
 import { ProductImage } from "@/src/components/ProductImage";
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing, type } from "@/src/theme/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { VariantSwatchStrip } from "../shared/VariantChip";
@@ -68,5 +68,5 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
-  thumb: { width: 44, height: 44, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
+  thumb: { width: 64, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
 });

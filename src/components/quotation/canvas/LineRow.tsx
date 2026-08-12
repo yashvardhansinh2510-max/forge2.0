@@ -7,7 +7,7 @@ import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-na
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { Badge } from "@/src/components/ui";
-import { colors, font, money, radius, type } from "@/src/theme/tokens";
+import { colors, font, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
@@ -137,7 +137,7 @@ const styles = StyleSheet.create({
     width: 20, alignItems: "center", justifyContent: "center", alignSelf: "stretch",
     marginRight: -2, marginLeft: -4,
   },
-  thumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
+  thumb: { width: 64, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
   name: { fontSize: 13, fontFamily: font.semibold, fontWeight: "600", color: colors.onSurface, flex: 1, letterSpacing: -0.1 },
   mini: {
     borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, minWidth: 60,
