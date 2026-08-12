@@ -12,7 +12,7 @@ import { ActivityIndicator, FlatList, LayoutChangeEvent, Platform, Pressable, Sc
 import { EmptyState } from "@/src/components/ui";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
-import { colors, money, radius, spacing } from "@/src/theme/tokens";
+import { colors, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { supplierLogoFor } from "@/src/design/BrandLogo";
 import { storage } from "@/src/utils/storage";
@@ -513,10 +513,10 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   cardCompact: { minHeight: 0 },
-  cardMedia: { aspectRatio: 1, backgroundColor: colors.surfaceTertiary, position: "relative" },
+  cardMedia: { aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, backgroundColor: colors.surfaceTertiary, position: "relative" },
   // A landscape crop preserves enough product detail while allowing two rows
   // of cards to remain visible on a standard phone viewport.
-  cardMediaCompact: { aspectRatio: 1.65 },
+  cardMediaCompact: { aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
   thumb: { width: "100%", height: "100%" },
   badgeRow: { position: "absolute", top: 8, left: 8, flexDirection: "row", gap: 4 },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },

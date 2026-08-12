@@ -86,6 +86,8 @@ export function ProductImage({
   const [idx, setIdx] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(sanitizedCandidates.length === 0);
+  const [portrait, setPortrait] = useState(false);
+  const [innerSize, setInnerSize] = useState({ width: 0, height: 0 });
   const candidateKey = sanitizedCandidates.join("|");
 
   // Reset when the candidate list changes (e.g. product swap).
@@ -93,6 +95,7 @@ export function ProductImage({
     setIdx(0);
     setLoaded(false);
     setFailed(sanitizedCandidates.length === 0);
+    setPortrait(false);
   }, [candidateKey, sanitizedCandidates.length]);
 
   const current = sanitizedCandidates[idx];
@@ -105,7 +108,13 @@ export function ProductImage({
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="image"
     >
-      <View style={[styles.inner, { margin: Math.max(0, frameInset), borderRadius: Math.max(0, finalRadius - frameInset) }]}>
+      <View
+        style={[styles.inner, { margin: Math.max(0, frameInset), borderRadius: Math.max(0, finalRadius - frameInset) }]}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          if (width !== innerSize.width || height !== innerSize.height) setInnerSize({ width, height });
+        }}
+      >
         {failed || !current ? (
           <FallbackGlyph label={fallbackLabel} />
         ) : (
@@ -113,18 +122,39 @@ export function ProductImage({
             {!loaded && !disableSkeleton ? <Skeleton /> : null}
             <ExpoImage
               source={{ uri: current }}
-              style={[StyleSheet.absoluteFill, { borderRadius: Math.max(0, finalRadius - frameInset) }]}
+              style={[
+                portrait && innerSize.width > 0 && innerSize.height > 0
+                  ? {
+                      position: "absolute",
+                      width: innerSize.height,
+                      height: innerSize.width,
+                      left: (innerSize.width - innerSize.height) / 2,
+                      top: (innerSize.height - innerSize.width) / 2,
+                      transform: [{ rotate: "90deg" }],
+                    }
+                  : StyleSheet.absoluteFill,
+                { borderRadius: Math.max(0, finalRadius - frameInset) },
+              ]}
               contentFit={contentFit}
               cachePolicy={CACHE_POLICY}
               placeholder={{ blurhash: BLURHASH }}
-              transition={220}
+              // Large virtualized lists become visibly sluggish when every
+              // recycled thumbnail runs a transition animation.
+              transition={0}
               recyclingKey={current}
-              onLoad={() => setLoaded(true)}
+              onLoad={(event: any) => {
+                const source = event?.source || event?.nativeEvent?.source;
+                const width = Number(source?.width || 0);
+                const height = Number(source?.height || 0);
+                if (width > 0 && height > 0) setPortrait(height > width);
+                setLoaded(true);
+              }}
               onError={() => {
                 // Advance to next candidate, or give up.
                 if (idx + 1 < sanitizedCandidates.length) {
                   setIdx(idx + 1);
                   setLoaded(false);
+                  setPortrait(false);
                 } else {
                   setFailed(true);
                 }
