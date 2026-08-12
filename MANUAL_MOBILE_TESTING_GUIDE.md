@@ -43,6 +43,9 @@ Test the FULL add-to-quotation flow at these 3 sizes, one at a time (fresh visit
 - ✅ Catalog opens
 - ✅ Search box visible
 - ✅ Product grid loads
+- ✅ At least four product cards are visible without scrolling the product grid
+- ✅ Products are presented in a two-column, retail-style grid (not a single full-width card)
+- ✅ Search, brand, category, and sort controls remain visible at the top while product results scroll
 
 ---
 

@@ -10,6 +10,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View, ViewStyle } from "react-
 import { PageHeader } from "@/src/components/ui";
 import { useBp } from "@/src/design/responsive";
 import { color, font, layout, radius, space } from "@/src/design/tokens";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export function AdminPage({
   title,
@@ -33,7 +34,8 @@ export function AdminPage({
   headerBorder?: boolean;
 }) {
   const Container: any = scroll ? ScrollView : View;
-  const { gutter } = useBp();
+  const { gutter, isPhone } = useBp();
+  const insets = useSafeAreaInsets();
   const horizontalPadding = gutter;
 
   return (
@@ -51,9 +53,10 @@ export function AdminPage({
               showsVerticalScrollIndicator: false,
               contentContainerStyle: {
                 paddingHorizontal: horizontalPadding,
-                paddingTop: space.x8,
-                paddingBottom: space.x16,
-                gap: space.x5,
+                paddingTop: isPhone ? space.x4 : space.x8,
+                // Keep the final row above the fixed phone navigation bar.
+                paddingBottom: isPhone ? space.x8 + layout.bottomBar + insets.bottom : space.x16,
+                gap: isPhone ? space.x4 : space.x5,
                 ...contentStyle,
               },
             }
@@ -62,7 +65,7 @@ export function AdminPage({
                 {
                   flex: 1,
                   paddingHorizontal: horizontalPadding,
-                  paddingTop: space.x8,
+                  paddingTop: isPhone ? space.x4 : space.x8,
                 },
                 contentStyle,
               ],

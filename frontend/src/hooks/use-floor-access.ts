@@ -13,6 +13,8 @@ const SELECTED_FLOOR_KEY = "forge.active-floor";
 let cache: FloorAccess | null = null;
 let inflight: Promise<FloorAccess> | null = null;
 let selectedFloorCache: string | null = null;
+let selectedFloorRead: Promise<string> | null = null;
+let selectedFloorPersistence: Promise<void> = Promise.resolve();
 const selectedFloorListeners = new Set<(floorId: string) => void>();
 
 async function loadAccess() {
@@ -32,15 +34,30 @@ async function loadAccess() {
 
 export async function getSelectedFloorId() {
   if (selectedFloorCache !== null) return selectedFloorCache;
-  const saved = (await storage.getItem<string>(SELECTED_FLOOR_KEY, "")) || "";
-  selectedFloorCache = saved;
-  return saved;
+  if (!selectedFloorRead) {
+    selectedFloorRead = storage.getItem<string>(SELECTED_FLOOR_KEY, "").then((saved) => {
+      // A floor can be selected while storage is still being read (for
+      // example immediately after login). Never let that older read win over
+      // the already-published in-memory selection.
+      if (selectedFloorCache === null) selectedFloorCache = saved || "";
+      return selectedFloorCache;
+    }).finally(() => {
+      selectedFloorRead = null;
+    });
+  }
+  return selectedFloorRead;
 }
 
-export async function setSelectedFloorId(id: string) {
+export function setSelectedFloorId(id: string) {
   selectedFloorCache = id;
   selectedFloorListeners.forEach((listener) => listener(id));
-  await storage.setItem(SELECTED_FLOOR_KEY, id);
+
+  // Publish first for instant UI updates, then serialize writes so a fast
+  // sequence of floor changes cannot finish out of order in storage.
+  selectedFloorPersistence = selectedFloorPersistence
+    .catch(() => undefined)
+    .then(async () => { await storage.setItem(SELECTED_FLOOR_KEY, id); });
+  return selectedFloorPersistence;
 }
 
 export function useFloorAccess() {
@@ -72,11 +89,15 @@ export function useFloorAccess() {
     };
   }, []);
 
-  const selectFloor = useCallback(async (id: string) => {
+  const selectFloor = useCallback((id: string) => {
     // Only a real, accessible floor can become active — never "" (see the
     // unscoped-default note above).
-    if (!access?.floor_ids.includes(id)) return;
-    await setSelectedFloorId(id);
+    const canSelect = Boolean(
+      access && access.floors.some((floor) => floor.id === id) &&
+      (access.all_floors || access.floor_ids.includes(id)),
+    );
+    if (!canSelect) return Promise.resolve();
+    return setSelectedFloorId(id);
   }, [access]);
 
   return { access, floors: access?.floors || [], selectedFloorId, selectFloor };

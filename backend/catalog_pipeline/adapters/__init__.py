@@ -9,6 +9,7 @@ from .dimore import DimoreAdapter
 from .nexion import NexionAdapter
 from .modulo import ModuloAdapter
 from .donato import DonatoAdapter
+from .renite import ReniteAdapter
 
 REGISTRY = {
     "grohe": GroheAdapter,
@@ -24,6 +25,7 @@ REGISTRY = {
     "nexion": NexionAdapter,
     "modulo": ModuloAdapter,
     "donato": DonatoAdapter,
+    "renite": ReniteAdapter,
 }
 
 

@@ -8,7 +8,7 @@ credentials are supplied — nothing here changes runtime behavior today.
 Required env vars to activate (see backend/.env.example + PRODUCTION.md):
   SENTRY_DSN                  — enables error/crash reporting when set
   SENTRY_ENVIRONMENT          — optional, defaults to "production"
-  SENTRY_TRACES_SAMPLE_RATE   — optional, defaults to "0" (tracing off)
+SENTRY_TRACES_SAMPLE_RATE   — optional, defaults to "0.1" (10% tracing)
 Monitoring is never a hard dependency of application startup.
 """
 from __future__ import annotations
@@ -37,8 +37,10 @@ def init_monitoring() -> dict[str, bool]:
                     StarletteIntegration(transaction_style="endpoint"),
                     FastApiIntegration(transaction_style="endpoint"),
                 ],
-                traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0") or "0"),
-                send_default_pii=False,
+                traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1") or "0.1"),
+                # Include request headers and client IP data for richer issue
+                # context, matching the Sentry project configuration.
+                send_default_pii=True,
                 environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
             )
             status["sentry"] = True

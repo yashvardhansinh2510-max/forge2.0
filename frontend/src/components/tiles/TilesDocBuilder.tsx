@@ -40,7 +40,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
@@ -57,6 +57,7 @@ import { downloadApiFile, printApiFile } from "@/src/utils/downloadFile";
 import { TILES_FLOOR_ID } from "@/src/constants/floors";
 
 import { TilesProductPicker } from "./TilesProductPicker";
+import { TILE_IMAGE_ASPECT_RATIO } from "./tilePresentation";
 import { canPlaceOrder, nextTilesAction, normalizeTilesStatus, tilesStage } from "./tilesStage";
 
 export type TilesDocType = "tiles_selection" | "tiles_quotation";
@@ -76,7 +77,7 @@ function TileImageCell({ uri }: { uri: string }) {
       frameInset={2}
       borderRadius={0}
       disableSkeleton
-      style={{ width: "100%", aspectRatio: 16 / 10 }}
+      style={{ width: "100%", aspectRatio: TILE_IMAGE_ASPECT_RATIO }}
       accessibilityLabel="Quotation product image"
     />
   );
@@ -1362,14 +1363,14 @@ function MobileRowCard({
   const fields = MOBILE_FIELDS[docType];
   return (
     <View style={mobileStyles.rowCard} testID={`mobile-row-${index}`}>
-      <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" }}>
-        <Pressable onPress={onOpenPicker} style={mobileStyles.thumb} testID={`mobile-thumb-${index}`}>
+      <Pressable onPress={onOpenPicker} style={mobileStyles.productImage} testID={`mobile-thumb-${index}`} accessibilityLabel={row.productId ? "Change product image" : "Select product image"}>
           {row.image ? (
-            <ProductImage source={row.image} contentFit="contain" frameInset={2} borderRadius={radius.sm} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
+            <ProductImage source={row.image} contentFit="contain" frameInset={spacing.s4} borderRadius={radius.md} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
           ) : (
             <Feather name="image" size={18} color={colors.onSurfaceMuted} />
           )}
-        </Pressable>
+      </Pressable>
+      <View style={mobileStyles.rowHeading}>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={mobileStyles.rowIndex}>Item {index + 1}</Text>
           {row.productId ? (
@@ -1400,9 +1401,9 @@ function MobileRowCard({
         ) : null}
       </View>
 
-      <View style={mobileStyles.fieldGrid}>
+      <View style={mobileStyles.fieldStack}>
         {fields.map((f) => (
-          <View key={f.key} style={mobileStyles.fieldSlot}>
+          <View key={f.key} style={mobileStyles.fieldFull}>
             <TextField
               label={f.label}
               value={f.key === "total" ? lineTotalInputValue(row) : (row as any)[f.key]}
@@ -1413,7 +1414,7 @@ function MobileRowCard({
             />
           </View>
         ))}
-        <View style={mobileStyles.fieldSlot}>
+        <View style={mobileStyles.fieldFull}>
           <Text style={type.label}>Quantity unit</Text>
           <Dropdown
             label={quantityUnitLabel(row.quantityUnit)}
@@ -1433,6 +1434,7 @@ function MobileRowCard({
 function MobileTilesEditor({
   docType, doc, router, onDelete,
 }: { docType: TilesDocType; doc: ReturnType<typeof useTilesDoc>; router: ReturnType<typeof useRouter>; onDelete: () => void }) {
+  const insets = useSafeAreaInsets();
   const [pickerRow, setPickerRow] = useState<string | null>(null);
   const isSelection = docType === "tiles_selection";
   const title = isSelection ? "Tiles Selection" : "Tiles Quotation";
@@ -1501,7 +1503,7 @@ function MobileTilesEditor({
       ) : (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}>
           <ScrollView
-            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: primaryAction ? 128 : spacing.xxxl }}
+            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: primaryAction ? 104 + insets.bottom : spacing.xxxl }}
             keyboardShouldPersistTaps="handled"
           >
             <SaveStatusPill state={doc.saveState} />
@@ -1511,20 +1513,20 @@ function MobileTilesEditor({
               <Text style={mobileStyles.sectionTitle}>CUSTOMER &amp; DETAILS</Text>
               <FormFieldCustomerName doc={doc} />
               <TextField label="Contact no." value={doc.header.phone} onChangeText={(t: string) => doc.setHeaderField("phone", t)} keyboardType="phone-pad" testID="mobile-phone" />
-              <View style={mobileStyles.fieldGrid}>
-                <View style={mobileStyles.fieldSlot}>
+              <View style={mobileStyles.fieldStack}>
+                <View style={mobileStyles.fieldFull}>
                   <TextField label="Date" value={doc.header.docDate} onChangeText={(t: string) => doc.setHeaderField("docDate", t)} testID="mobile-date" />
                 </View>
-                <View style={mobileStyles.fieldSlot}>
+                <View style={mobileStyles.fieldFull}>
                   <TextField label={isSelection ? "Selection no." : "Quotation no."} value={doc.header.docNumber} onChangeText={(t: string) => doc.setHeaderField("docNumber", t)} testID="mobile-doc-number" />
                 </View>
-                <View style={mobileStyles.fieldSlot}>
+                <View style={mobileStyles.fieldFull}>
                   <TextField label="Reference" value={doc.header.reference} onChangeText={(t: string) => doc.setHeaderField("reference", t)} testID="mobile-reference" />
                 </View>
-                <View style={mobileStyles.fieldSlot}>
+                <View style={mobileStyles.fieldFull}>
                   <TextField label="Attended by" value={doc.header.attendedBy} onChangeText={(t: string) => doc.setHeaderField("attendedBy", t)} testID="mobile-attended-by" />
                 </View>
-                <View style={mobileStyles.fieldSlot}>
+                <View style={mobileStyles.fieldFull}>
                   <TextField label="Prepared by" value={doc.header.preparedBy} onChangeText={(t: string) => doc.setHeaderField("preparedBy", t)} testID="mobile-prepared-by" />
                 </View>
               </View>
@@ -1558,7 +1560,7 @@ function MobileTilesEditor({
       )}
 
       {primaryAction ? (
-        <View style={mobileStyles.bottomBar}>
+        <View style={[mobileStyles.bottomBar, { paddingBottom: Math.max(spacing.lg, insets.bottom + spacing.sm) }]}>
           <Button
             label={primaryAction.label} icon={primaryAction.icon} onPress={primaryAction.onPress}
             loading={primaryAction.loading} variant="primary" size="lg" fullWidth
@@ -1632,18 +1634,19 @@ const mobileStyles = StyleSheet.create({
     backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
   savePillText: { fontSize: 12, fontFamily: type.body.fontFamily, fontWeight: "600" },
-  fieldGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  fieldSlot: { flexBasis: "47%", flexGrow: 1, minWidth: 130 },
+  fieldStack: { gap: spacing.sm },
+  fieldFull: { width: "100%" },
   rowCard: {
     backgroundColor: colors.surface, borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     padding: spacing.md, gap: spacing.md,
   },
-  thumb: {
-    width: 56, height: 56, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary,
+  productImage: {
+    width: "100%", aspectRatio: TILE_IMAGE_ASPECT_RATIO, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  rowHeading: { flexDirection: "row", gap: spacing.sm, alignItems: "flex-start" },
   rowIndex: { ...type.overline, color: colors.onSurfaceMuted, marginBottom: 2 },
   rowTitleInput: {
     fontSize: 14, fontFamily: type.titleMd.fontFamily, fontWeight: "600", color: colors.onSurface,

@@ -139,6 +139,13 @@ async def service_root():
     """Provide a useful response when the service URL is opened directly."""
     return {"name": "Forge API", "version": "0.1.0", "status": "ok"}
 
+
+@app.get("/sentry-debug")
+async def trigger_error():
+    """Trigger a controlled exception to verify Sentry reporting."""
+    division_by_zero = 1 / 0
+    return division_by_zero
+
 # Security headers (defense-in-depth, no behavior change for existing
 # clients) — registered before CORSMiddleware so CORS stays the outermost
 # middleware, unchanged from its current behavior.

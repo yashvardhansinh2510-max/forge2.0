@@ -95,13 +95,21 @@ def _remote_image_bytes(url: str) -> bytes | None:
 
 
 def _prepare_image_bytes(data: bytes) -> bytes:
-    """Normalize EXIF orientation without rotating images lacking EXIF data."""
+    """Normalize metadata, then guarantee a horizontal product-image asset.
+
+    This feeds every quotation-family PDF: the standard quotation plus tile
+    selection and tile quotation. Portrait supplier images are rotated after
+    EXIF normalization so all product cells contain a horizontal image while
+    retaining the existing centered, contain-fit placement contract.
+    """
     from PIL import Image as PILImage, ImageOps
 
     try:
         img = PILImage.open(BytesIO(data))
         fmt = img.format or "PNG"
         normalized = ImageOps.exif_transpose(img)
+        if normalized.height > normalized.width:
+            normalized = normalized.transpose(PILImage.Transpose.ROTATE_90)
         if normalized is img and not img.getexif():
             return data
         normalized.load()
@@ -141,8 +149,10 @@ def _img(url: str | None, width_mm: float = 13, height_mm: float = 13) -> Flowab
     """Render the supplied product image inside the official narrow image cell.
 
     Sized to the largest centered contain box that fits inside the item row
-    without stretching, cropping, or changing source orientation. The row
-    height itself is sized to comfortably fit this image — see ITEM_ROW_MM.
+    without stretching or cropping. `_prepare_image_bytes()` guarantees that
+    the underlying product asset is horizontal before it reaches this cell.
+    The row height itself is sized to comfortably fit this image — see
+    ITEM_ROW_MM.
     """
     if url and str(url).startswith(("https://", "http://")):
         data = _remote_image_bytes(str(url))
@@ -157,11 +167,7 @@ def _img(url: str | None, width_mm: float = 13, height_mm: float = 13) -> Flowab
                 image = Image(
                     BytesIO(prepared), width=image_width * mm, height=image_height * mm,
                 )
-                # Product images belong to the left edge of the image cell in
-                # the sanitary bathroom quotation. Centering made narrow or
-                # portrait supplier images appear detached from their row and
-                # did not match the printed template.
-                image.hAlign = "LEFT"
+                image.hAlign = "CENTER"
                 return image
             except Exception:
                 pass

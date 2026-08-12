@@ -41,6 +41,10 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
   const b = useBuilder();
   const [paneWidth, setPaneWidth] = useState(0);
   const numCols = quotationGridColumns(paneWidth);
+  // The full-screen mobile/tablet picker needs compact cards so two complete
+  // rows fit below its fixed controls. Keep the larger product imagery in the
+  // desktop explorer, where visual inspection has more space.
+  const compactCards = showCompactFilters;
   const brandName = useMemo(() => {
     if (!b.selectedBrandId) return "All brands";
     return b.brands.find((x) => x.id === b.selectedBrandId)?.name || "Brand";
@@ -123,28 +127,6 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
           ) : null}
         </View>
 
-        {!b.q && recentSearches.length > 0 ? (
-          <View style={styles.recentRow}>
-            <Text style={styles.recentLabel}>Recent</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
-              {recentSearches.map((term) => (
-                <Pressable
-                  key={term}
-                  onPress={() => { b.setQ(term); commitSearch(term); }}
-                  style={styles.recentChip}
-                  testID={`recent-search-${term}`}
-                >
-                  <Feather name="clock" size={10} color={colors.onSurfaceSecondary} />
-                  <Text style={styles.recentChipLabel} numberOfLines={1}>{term}</Text>
-                </Pressable>
-              ))}
-              <Pressable onPress={clearRecentSearches} style={styles.recentClear} testID="recent-search-clear">
-                <Text style={styles.recentClearLabel}>Clear</Text>
-              </Pressable>
-            </ScrollView>
-          </View>
-        ) : null}
-
         {/* Mobile-only: brand + category selectors (tablet/desktop already show
             these permanently in BrandRail alongside the grid, so this block is
             redundant there and intentionally hidden). Keeps the phone catalog
@@ -202,22 +184,70 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
           </>
         ) : null}
 
-        <View style={styles.sortRow}>
-          {SORT_OPTIONS.map((opt) => {
-            const on = b.sortKey === opt.k;
-            return (
-              <Pressable
-                key={opt.k}
-                onPress={() => b.setSortKey(opt.k)}
-                style={[styles.sortChip, on && styles.sortChipActive]}
-                testID={`sort-${opt.k}`}
-              >
-                <Feather name={opt.icon} size={11} color={on ? colors.onBrand : colors.onSurfaceSecondary} />
-                <Text style={[styles.sortLabel, on && styles.sortLabelActive]}>{opt.label}</Text>
+        {/* Keep sorting secondary on phones: filters and the first product row
+            should remain reachable without spending the viewport on controls. */}
+        {showCompactFilters ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.mobileSortContent}
+            testID="mobile-sort-selector"
+          >
+            {SORT_OPTIONS.map((opt) => {
+              const on = b.sortKey === opt.k;
+              return (
+                <Pressable
+                  key={opt.k}
+                  onPress={() => b.setSortKey(opt.k)}
+                  style={[styles.sortChip, on && styles.sortChipActive]}
+                  testID={`sort-${opt.k}`}
+                >
+                  <Feather name={opt.icon} size={11} color={on ? colors.onBrand : colors.onSurfaceSecondary} />
+                  <Text style={[styles.sortLabel, on && styles.sortLabelActive]}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : (
+          <View style={styles.sortRow}>
+            {SORT_OPTIONS.map((opt) => {
+              const on = b.sortKey === opt.k;
+              return (
+                <Pressable
+                  key={opt.k}
+                  onPress={() => b.setSortKey(opt.k)}
+                  style={[styles.sortChip, on && styles.sortChipActive]}
+                  testID={`sort-${opt.k}`}
+                >
+                  <Feather name={opt.icon} size={11} color={on ? colors.onBrand : colors.onSurfaceSecondary} />
+                  <Text style={[styles.sortLabel, on && styles.sortLabelActive]}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+
+        {!b.q && recentSearches.length > 0 ? (
+          <View style={styles.recentRow}>
+            <Text style={styles.recentLabel}>Recent searches</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+              {recentSearches.map((term) => (
+                <Pressable
+                  key={term}
+                  onPress={() => { b.setQ(term); commitSearch(term); }}
+                  style={styles.recentChip}
+                  testID={`recent-search-${term}`}
+                >
+                  <Feather name="clock" size={10} color={colors.onSurfaceSecondary} />
+                  <Text style={styles.recentChipLabel} numberOfLines={1}>{term}</Text>
+                </Pressable>
+              ))}
+              <Pressable onPress={clearRecentSearches} style={styles.recentClear} testID="recent-search-clear">
+                <Text style={styles.recentClearLabel}>Clear</Text>
               </Pressable>
-            );
-          })}
-        </View>
+            </ScrollView>
+          </View>
+        ) : null}
       </View>
 
       <FlatList
@@ -232,6 +262,7 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
         renderItem={({ item }) => (
           <ProductGridCard
             product={item}
+            compact={compactCards}
             favourite={b.favouriteIds.includes(item.id)}
             onToggleFav={() => b.toggleFavourite(item.id)}
             onQuickAdd={(p, v) => b.addFromProduct(p, v)}
@@ -285,13 +316,14 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
 // -----------------------------------------------------------------------------
 type CardProps = {
   product: Product;
+  compact: boolean;
   favourite: boolean;
   onToggleFav: () => void;
   onQuickAdd: (p: Product, v?: ProductVariant) => void;
   onOpenModal: (p: Product) => void;
 };
 
-function ProductGridCardImpl({ product, favourite, onToggleFav, onQuickAdd, onOpenModal }: CardProps) {
+function ProductGridCardImpl({ product, compact, favourite, onToggleFav, onQuickAdd, onOpenModal }: CardProps) {
   const badges: { label: string; tone: "popular" | "frequent" | "recent" }[] = [];
   if (product.popular) badges.push({ label: "Popular", tone: "popular" });
   else if (product.frequently_used) badges.push({ label: "Frequently used", tone: "frequent" });
@@ -302,10 +334,10 @@ function ProductGridCardImpl({ product, favourite, onToggleFav, onQuickAdd, onOp
       onPress={() => onOpenModal(product)}
       onLongPress={() => onQuickAdd(product)}
       delayLongPress={220}
-      style={({ pressed }) => [styles.card, pressed && { transform: [{ scale: 0.995 }] }]}
+      style={({ pressed }) => [styles.card, compact && styles.cardCompact, pressed && { transform: [{ scale: 0.995 }] }]}
       testID={`product-card-${product.sku}`}
     >
-      <View style={styles.cardMedia}>
+      <View style={[styles.cardMedia, compact && styles.cardMediaCompact]}>
         <ProductImage source={productImageList(product)} style={styles.thumb} fallbackLabel={product.sku} />
         {/* Overlay: badges + fav heart */}
         <View style={styles.badgeRow}>
@@ -342,8 +374,8 @@ function ProductGridCardImpl({ product, favourite, onToggleFav, onQuickAdd, onOp
         </Pressable>
       </View>
 
-      <View style={styles.cardBody}>
-        <Text style={styles.cardName} numberOfLines={2}>{product.name}</Text>
+      <View style={[styles.cardBody, compact && styles.cardBodyCompact]}>
+        <Text style={[styles.cardName, compact && styles.cardNameCompact]} numberOfLines={compact ? 1 : 2}>{product.name}</Text>
         <Text style={styles.cardSku} numberOfLines={1}>
           {product.sku}{product.brand_name ? ` · ${product.brand_name}` : ""}
         </Text>
@@ -359,10 +391,13 @@ function ProductGridCardImpl({ product, favourite, onToggleFav, onQuickAdd, onOp
             onAdd={() => onQuickAdd(product)}
             toastText={`${product.name} added to quotation`}
             testID={`add-${product.sku}`}
+            circular={compact}
+            circularSize={28}
+            iconSize={14}
           />
         </View>
 
-        <View style={styles.variantSlot}>
+        <View style={[styles.variantSlot, compact && styles.variantSlotCompact]}>
           <VariantSwatchStrip
             product={product}
             onSelect={(v) => {
@@ -382,6 +417,7 @@ const ProductGridCard = memo(
   (a, b) =>
     a.product.id === b.product.id &&
     a.product.price === b.product.price &&
+    a.compact === b.compact &&
     a.favourite === b.favourite,
 );
 
@@ -461,6 +497,7 @@ const styles = StyleSheet.create({
   filterPillCountActive: { color: colors.onBrand, opacity: 0.85 },
 
   sortRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
+  mobileSortContent: { gap: 6, paddingRight: 4 },
   sortChip: {
     flexDirection: "row", alignItems: "center", gap: 4,
     paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill,
@@ -475,7 +512,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     overflow: "hidden",
   },
+  cardCompact: { minHeight: 0 },
   cardMedia: { aspectRatio: 1, backgroundColor: colors.surfaceTertiary, position: "relative" },
+  // A landscape crop preserves enough product detail while allowing two rows
+  // of cards to remain visible on a standard phone viewport.
+  cardMediaCompact: { aspectRatio: 1.65 },
   thumb: { width: "100%", height: "100%" },
   badgeRow: { position: "absolute", top: 8, left: 8, flexDirection: "row", gap: 4 },
   badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
@@ -490,13 +531,16 @@ const styles = StyleSheet.create({
   // its row height even when a product has no variants — this is what
   // keeps every card in the grid the same height regardless of content.
   cardBody: { padding: 10, gap: 6 },
+  cardBodyCompact: { padding: 8, gap: 3 },
   cardName: { fontSize: 13, fontWeight: "600", color: colors.onSurface, lineHeight: 17, minHeight: 34 },
+  cardNameCompact: { fontSize: 12, lineHeight: 15, minHeight: 15 },
   cardSku: { fontSize: 11, color: colors.onSurfaceMuted, fontVariant: ["tabular-nums"] },
   priceRow: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 32 },
   priceCol: { flex: 1, minWidth: 0 },
   price: { fontSize: 14, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"], letterSpacing: -0.1 },
   mrp: { fontSize: 10, color: colors.onSurfaceMuted, textDecorationLine: "line-through", fontVariant: ["tabular-nums"] },
   variantSlot: { minHeight: 26, justifyContent: "center" },
+  variantSlotCompact: { minHeight: 22 },
   endOfList: {
     textAlign: "center", fontSize: 11, color: colors.onSurfaceMuted,
     paddingVertical: 20, paddingHorizontal: 24,

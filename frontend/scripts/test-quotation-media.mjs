@@ -2,11 +2,29 @@ import assert from "node:assert/strict";
 
 import { quotationGridColumns } from "../src/components/quotation/helpers/responsive.ts";
 import { productImageList } from "../src/components/quotation/helpers/media.ts";
+import { TILE_IMAGE_ASPECT_RATIO, tilesPickerColumns } from "../src/components/tiles/tilePresentation.ts";
 
-assert.equal(quotationGridColumns(640), 1);
+assert.equal(TILE_IMAGE_ASPECT_RATIO, 16 / 10);
+assert.equal(tilesPickerColumns(375), 1);
+assert.equal(tilesPickerColumns(430), 1);
+assert.equal(tilesPickerColumns(767), 1);
+assert.equal(tilesPickerColumns(768), 2);
+assert.equal(tilesPickerColumns(1280), 2);
+
+// Phone, tablet and wide-picker widths must all preserve the shop-style
+// two-column grid; 280px is the supported lower bound for a picker viewport.
+assert.equal(quotationGridColumns(280), 2);
+assert.equal(quotationGridColumns(320), 2);
+assert.equal(quotationGridColumns(375), 2);
+assert.equal(quotationGridColumns(390), 2);
+assert.equal(quotationGridColumns(430), 2);
+assert.equal(quotationGridColumns(640), 2);
 assert.equal(quotationGridColumns(768), 2);
+assert.equal(quotationGridColumns(800), 2);
+assert.equal(quotationGridColumns(810), 2);
 assert.equal(quotationGridColumns(1040), 2);
 assert.equal(quotationGridColumns(1920), 2);
+assert.equal(quotationGridColumns(279), 1);
 assert.deepEqual(productImageList({
   hero_image_url: "hero",
   gallery: [{ url: "gallery" }, { url: "hero" }],
@@ -31,4 +49,4 @@ assert.deepEqual(productImageList({
   images: [],
 }), ["original", "thumbnail"]);
 
-console.log("quotation media/layout helpers: 7 assertions passed");
+console.log("quotation media/layout helpers: 21 assertions passed");
