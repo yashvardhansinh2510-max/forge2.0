@@ -1,4 +1,4 @@
-"""Regression tests for quotation product-image orientation and fit geometry."""
+"""Regression tests for upright quotation product images and fit geometry."""
 
 from io import BytesIO
 
@@ -34,27 +34,27 @@ def test_contain_box_centers_a_horizontal_product_image():
     assert y == 6
 
 
-def test_pdf_image_bytes_rotate_portrait_sources_horizontal():
+def test_pdf_image_bytes_keep_portrait_sources_upright():
     source = _png_bytes(60, 120)
 
     assert callable(getattr(pdf_generator, "_prepare_image_bytes", None))
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (120, 60)
+        assert image.size == (60, 120)
 
 
-def test_pdf_img_uses_contain_fit_after_rotating_portrait_source(monkeypatch):
+def test_pdf_img_uses_contain_fit_without_rotating_portrait_source(monkeypatch):
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
 
     image = pdf_generator._img("https://example.test/product.png")
 
-    assert image.drawWidth == 10.5 * pdf_generator.mm
-    assert image.drawHeight == 5.25 * pdf_generator.mm
+    assert image.drawWidth == 5.25 * pdf_generator.mm
+    assert image.drawHeight == 10.5 * pdf_generator.mm
     assert image.hAlign == "CENTER"
 
 
-def test_exif_orientation_is_honored_once_and_remains_horizontal():
+def test_exif_orientation_six_is_honored_once():
     source = _jpeg_with_orientation(60, 120, 6)
 
     prepared = pdf_generator._prepare_image_bytes(source)
@@ -63,8 +63,17 @@ def test_exif_orientation_is_honored_once_and_remains_horizontal():
         assert image.size == (120, 60)
 
 
-def test_standard_selection_and_tiles_quotation_pdfs_all_use_horizontal_images(monkeypatch):
-    """All product-bearing PDF variants must share the horizontal renderer."""
+def test_exif_orientation_eight_is_honored_once():
+    source = _jpeg_with_orientation(60, 120, 8)
+
+    prepared = pdf_generator._prepare_image_bytes(source)
+
+    with PILImage.open(BytesIO(prepared)) as image:
+        assert image.size == (120, 60)
+
+
+def test_standard_selection_and_tiles_quotation_pdfs_keep_products_upright(monkeypatch):
+    """All variants use landscape cells while preserving portrait content."""
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
     original_img = pdf_generator._img
     rendered_sizes: list[tuple[float, float]] = []
@@ -77,8 +86,8 @@ def test_standard_selection_and_tiles_quotation_pdfs_all_use_horizontal_images(m
     monkeypatch.setattr(pdf_generator, "_img", capture_img)
     monkeypatch.setattr(pdf_tiles, "_img", capture_img)
     item = {
-        "image": "https://example.test/portrait.png", "sku": "HORIZONTAL-1",
-        "name": "Horizontal Product", "room": "Living", "qty": 1,
+        "image": "https://example.test/portrait.png", "sku": "UPRIGHT-1",
+        "name": "Upright Product", "room": "Living", "qty": 1,
         "unit_price": 1000, "rate_sqft": 100, "rate_box": 1000,
         "offer_rate": 100, "net_amount": 1000, "quantity_unit": "Box",
     }
@@ -89,4 +98,32 @@ def test_standard_selection_and_tiles_quotation_pdfs_all_use_horizontal_images(m
     assert pdf_tiles.build_tiles_selection_pdf(tiles, {"name": "PDF Test"}).startswith(b"%PDF-")
     assert pdf_tiles.build_tiles_quotation_pdf(tiles, {"name": "PDF Test"}).startswith(b"%PDF-")
     assert len(rendered_sizes) == 3
-    assert all(width > height for width, height in rendered_sizes)
+    assert all(height > width for width, height in rendered_sizes)
+
+
+def test_product_images_are_prefetched_concurrently(monkeypatch):
+    import threading
+    import time
+
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def fetch(_url):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.03)
+        with lock:
+            active -= 1
+        return None
+
+    monkeypatch.setattr(pdf_generator, "_remote_image_bytes", fetch)
+    pdf_generator.prefetch_product_images(
+        [{"image": f"https://example.test/{index}.png"} for index in range(8)],
+        workers=4,
+        timeout=1,
+    )
+
+    assert peak == 4

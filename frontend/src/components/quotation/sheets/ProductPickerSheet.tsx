@@ -24,7 +24,7 @@ export function ProductPickerSheet() {
     >
       <SafeAreaView edges={["top", "bottom"]} style={{ flex: 1, backgroundColor: colors.surface }}>
         <View style={styles.head}>
-          <Pressable onPress={() => b.setPickerSheetOpen(false)} hitSlop={12} testID="picker-sheet-close">
+          <Pressable onPress={() => b.setPickerSheetOpen(false)} style={styles.close} testID="picker-sheet-close" accessibilityLabel="Close product picker">
             <Feather name="x" size={22} color={colors.onSurface} />
           </Pressable>
           <Text style={type.titleMd}>Add products</Text>
@@ -47,4 +47,5 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface,
   },
+  close: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginLeft: -11 },
 });

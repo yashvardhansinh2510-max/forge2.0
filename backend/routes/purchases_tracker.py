@@ -27,6 +27,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional, TypeVar
 from uuid import uuid4
@@ -223,7 +224,7 @@ async def _iter_items(
     match: dict = {"status": {"$ne": "cancelled"}}
     if floor_ids is not None:
         match["floor_id"] = {"$in": floor_ids}
-    if q:
+    if q and q.strip():
         term = {"$regex": q, "$options": "i"}
         match["$or"] = [
             {"number": term},
@@ -271,7 +272,7 @@ async def _iter_items(
 
     # Item-level search (for the sub-doc match already done, but also allow
     # customer_name text search post-unwind).
-    if q:
+    if q and q.strip():
         term = q.lower()
         rows = [r for r in rows if any(term in str(r.get(k) or "").lower() for k in ("sku", "name", "customer_name", "po_number", "brand_name"))]
 
@@ -289,6 +290,122 @@ async def _iter_items(
         rows.sort(key=lambda r: r.get("last_moved_at") or "", reverse=True)
 
     return rows[:limit]
+
+
+def _items_page_pipeline(
+    *,
+    view: str,
+    brand: Optional[str],
+    customer: Optional[str],
+    stage: Optional[str],
+    q: Optional[str],
+    product_id: Optional[str],
+    floor_ids: Optional[list[str]],
+    sla_days: int,
+    skip: int,
+    limit: int,
+) -> list[dict]:
+    """Build the paged tracker query.
+
+    Filtering happens after unwind so a search matching one line does not leak
+    every other line from the same PO into the result.  The final facet keeps
+    page rows, totals and summary counts in one bounded database round-trip.
+    """
+    po_match: dict[str, Any] = {"status": {"$ne": "cancelled"}}
+    if floor_ids is not None:
+        po_match["floor_id"] = {"$in": floor_ids}
+
+    item_match: dict[str, Any] = {}
+    if brand and brand.lower() != "all":
+        item_match["brand_id"] = brand
+    if customer:
+        item_match["customer_id"] = customer
+    if stage:
+        if stage not in PURCHASE_STAGES:
+            raise HTTPException(status_code=400, detail=f"Unknown stage '{stage}'")
+        item_match["stage"] = stage
+    if product_id:
+        item_match["product_id"] = product_id
+    if q and q.strip():
+        term = {"$regex": re.escape(q.strip()), "$options": "i"}
+        item_match["$or"] = [
+            {"sku": term}, {"name": term}, {"customer_name": term},
+            {"po_number": term}, {"brand_name": term},
+        ]
+    if view == "dispatch_record":
+        item_match["stage"] = {"$in": list(DISPATCH_STAGES)}
+    elif view == "today":
+        item_match.setdefault("stage", {"$in": [*EARLY_STAGES, "dispatched"]})
+
+    cutoff = datetime.now(timezone.utc).timestamp() - (sla_days * 86400)
+    cutoff_iso = datetime.fromtimestamp(cutoff, timezone.utc).isoformat()
+    sort: dict[str, int]
+    if view == "today":
+        sort = {"blocked": -1, "age_sort": 1, "last_moved_at": -1, "item_id": 1}
+    elif view == "customers":
+        sort = {"customer_name": 1, "po_number": 1, "item_id": 1}
+    elif view == "stock":
+        sort = {"delivered_sort": 1, "last_moved_at": 1, "item_id": 1}
+    else:
+        sort = {"last_moved_at": -1, "item_id": 1}
+
+    return [
+        {"$match": po_match},
+        {"$unwind": "$items"},
+        {"$project": {
+            "_id": 0,
+            "item_id": "$items.id", "po_id": "$id", "po_number": "$number",
+            "po_status": "$status", "quotation_id": 1, "quotation_number": 1,
+            "quotation_line_id": "$items.quotation_line_id", "product_id": "$items.product_id",
+            "sku": "$items.sku", "name": "$items.name", "image": "$items.image",
+            "finish": "$items.finish", "colour": "$items.colour",
+            "customer_id": {"$ifNull": ["$items.customer_id", "$customer_id"]},
+            "customer_name": {"$ifNull": ["$items.customer_name", "$customer_name"]},
+            "brand_id": {"$ifNull": ["$items.brand_id", "$brand_id"]},
+            "brand_name": {"$ifNull": ["$items.brand_name", "$brand_name"]},
+            "supplier_id": 1, "supplier_name": 1,
+            "stage": {"$ifNull": ["$items.stage", "order_in_company"]},
+            "qty": {"$ifNull": ["$items.qty", 0]},
+            "unit_cost": {"$ifNull": ["$items.unit_cost", 0]},
+            "room": "$items.room", "expected_delivery_at": 1,
+            "last_moved_at": {"$ifNull": ["$items.last_moved_at", "$created_at"]},
+            "last_moved_by_name": {"$ifNull": ["$items.last_moved_by_name", "$created_by_name"]},
+            "split_from_item_id": "$items.split_from_item_id",
+            "transferred_from_item_id": "$items.transferred_from_item_id",
+            "transferred_from_customer_id": "$items.transferred_from_customer_id",
+        }},
+        *([{"$match": item_match}] if item_match else []),
+        {"$set": {
+            "blocked": {"$and": [
+                {"$in": ["$stage", list(EARLY_STAGES)]},
+                {"$lte": ["$last_moved_at", cutoff_iso]},
+            ]},
+            "age_sort": "$last_moved_at",
+            "delivered_sort": {"$cond": [{"$eq": ["$stage", "delivered"]}, 1, 0]},
+        }},
+        {"$facet": {
+            "items": [{"$sort": sort}, {"$skip": skip}, {"$limit": limit}],
+            "total": [{"$count": "value"}],
+            "blocked": [{"$match": {"blocked": True}}, {"$count": "value"}],
+            "stages": [{"$group": {"_id": "$stage", "count": {"$sum": 1}}}],
+        }},
+    ]
+
+
+def _hydrate_page_item(row: dict, sla_days: int) -> dict:
+    """Add presentation fields which are cheaper and clearer in application code."""
+    result = dict(row)
+    stage = result.get("stage") or "order_in_company"
+    result["stage"] = stage
+    result["stage_label"] = STAGE_LABELS.get(stage, stage)
+    result["stage_tone"] = STAGE_TONES.get(stage, {"bg": "#F4F4F5", "fg": "#3F3F46"})
+    result["qty"] = float(result.get("qty") or 0)
+    result["unit_cost"] = float(result.get("unit_cost") or 0)
+    result["age_days"] = _age_days(result.get("last_moved_at")) or 0
+    result["sla_days"] = sla_days
+    result.pop("age_sort", None)
+    result.pop("delivered_sort", None)
+    return result
 
 
 # =============================================================================
@@ -513,6 +630,50 @@ async def list_items(
         "count": len(rows),
         "blocked_count": blocked_count,
         "items": rows,
+    }
+
+
+@router.get("/items/page")
+async def list_items_page(
+    view: str = Query("stock", regex="^(today|stock|customers|dispatch_record)$"),
+    brand: Optional[str] = None,
+    customer: Optional[str] = None,
+    stage: Optional[str] = None,
+    q: Optional[str] = None,
+    product_id: Optional[str] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=100),
+    user: UserPublic = Depends(get_current_user),
+):
+    """Database-paged tracker rows for mobile and other incremental clients.
+
+    The legacy ``/items`` response remains available while callers migrate.
+    Summary counts cover the complete filtered result, not only this page.
+    """
+    settings = await _load_settings()
+    pipeline = _items_page_pipeline(
+        view=view, brand=brand, customer=customer, stage=stage, q=q,
+        product_id=product_id, floor_ids=floor_scope_ids(user),
+        sla_days=settings.sla_days, skip=skip, limit=limit,
+    )
+    result = await db.purchase_orders.aggregate(pipeline).to_list(1)
+    facet = result[0] if result else {}
+    total = int((facet.get("total") or [{}])[0].get("value", 0)) if facet.get("total") else 0
+    blocked_count = int((facet.get("blocked") or [{}])[0].get("value", 0)) if facet.get("blocked") else 0
+    stage_counts = {row.get("_id"): int(row.get("count", 0)) for row in facet.get("stages") or []}
+    items = [_hydrate_page_item(row, settings.sla_days) for row in facet.get("items") or []]
+    next_skip = skip + len(items)
+    has_more = next_skip < total
+    return {
+        "items": items,
+        "total": total,
+        "has_more": has_more,
+        "next_skip": next_skip if has_more else None,
+        "summaries": {
+            "sla_days": settings.sla_days,
+            "blocked_count": blocked_count,
+            "stage_counts": stage_counts,
+        },
     }
 
 

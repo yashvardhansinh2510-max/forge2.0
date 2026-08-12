@@ -35,6 +35,30 @@ def test_catalog_search_passes_floor_scope_ids(monkeypatch):
     assert kwargs["floor_ids"] == ["ground-floor"]
 
 
+def test_recent_products_passes_active_floor_scope(monkeypatch):
+    fake = AsyncMock(return_value=[])
+    monkeypatch.setattr(catalog_routes.catalog_service, "recent_or_frequent_products", fake)
+    user = _user("ground-floor")
+
+    asyncio.run(catalog_routes.recent_products(limit=7, user=user))
+
+    fake.assert_awaited_once_with(
+        user.id, limit=7, recent=True, floor_ids=["ground-floor"],
+    )
+
+
+def test_frequent_products_passes_active_floor_scope(monkeypatch):
+    fake = AsyncMock(return_value=[])
+    monkeypatch.setattr(catalog_routes.catalog_service, "recent_or_frequent_products", fake)
+    user = _user("first-floor")
+
+    asyncio.run(catalog_routes.frequent_products(limit=9, user=user))
+
+    fake.assert_awaited_once_with(
+        user.id, limit=9, recent=False, floor_ids=["first-floor"],
+    )
+
+
 def test_create_brand_stamps_floor_for_write(monkeypatch):
     inserted = {}
 

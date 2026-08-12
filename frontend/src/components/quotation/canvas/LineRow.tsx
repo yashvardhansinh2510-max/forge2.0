@@ -2,8 +2,8 @@
 // Tapping the row focuses it in the Assistant pane (right pane / mobile sheet).
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { memo } from "react";
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { memo, useState } from "react";
+import { Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { Badge } from "@/src/components/ui";
@@ -27,6 +27,8 @@ function LineRowImpl({
   roomDiscs?: Record<string, RoomDiscount>;
 }) {
   const b = useBuilder();
+  const isPhone = useWindowDimensions().width < 600;
+  const [menuOpen, setMenuOpen] = useState(false);
   const l = line;
   const eff = effectivePct(l, roomDiscs || {}, catDiscs, projDisc);
   // Use the same all-line breakdown as the footer. A room-level flat discount
@@ -49,6 +51,7 @@ function LineRowImpl({
       onPress={focus}
       style={[
         styles.row,
+        isPhone && styles.rowPhone,
         focused && { borderColor: ds.brassLine, backgroundColor: ds.brassTint },
         isActive && { opacity: 0.75, transform: [{ scale: 0.99 }] },
       ]}
@@ -62,16 +65,16 @@ function LineRowImpl({
       >
         <Feather name="menu" size={14} color={colors.onSurfaceMuted} />
       </Pressable>
-      <ProductImage source={l.image} style={styles.thumb} fallbackLabel={l.sku} />
+      <ProductImage source={l.image} style={[styles.thumb, isPhone ? styles.thumbPhone : {}]} fallbackLabel={l.sku} />
       <View style={{ flex: 1, gap: 4, minWidth: 0 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Text style={styles.name} numberOfLines={1}>{l.name}</Text>
+          <Text style={styles.name} numberOfLines={isPhone ? 2 : 1}>{l.name}</Text>
           {l.finish ? <FinishSwatch finish={l.finish} size={10} /> : null}
           {badge ? <Badge tone={badge.tone} label={badge.label} /> : null}
         </View>
         <Text style={type.caption} numberOfLines={1}>{l.sku}</Text>
         {l.description ? <Text style={type.caption} numberOfLines={2}>{l.description}</Text> : null}
-        <View style={{ flexDirection: "row", gap: 6, marginTop: 2, flexWrap: "wrap" }}>
+        <View style={[styles.controls, isPhone && styles.controlsPhone]}>
           <View style={styles.mini}>
             <Text style={styles.miniLabel}>QTY</Text>
             <TextInput
@@ -104,25 +107,44 @@ function LineRowImpl({
             {l.discount_pct == null && eff.source !== "none" ? <Feather name="link" size={9} color={colors.onSurfaceMuted} /> : null}
           </Pressable>
 
-          <Pressable testID={`line-desc-${l.id}`} onPress={() => b.setDescSheet({ line_id: l.id })} style={styles.icon}>
-            <Feather name="align-left" size={13} color={colors.onSurfaceMuted} />
-          </Pressable>
-          <Pressable testID={`line-swap-${l.id}`} onPress={() => b.openSwap(l)} style={styles.icon}>
-            <Feather name="refresh-cw" size={13} color={colors.onSurfaceMuted} />
-          </Pressable>
-          <Pressable testID={`line-dup-${l.id}`} onPress={() => b.duplicateLine(l.id)} style={styles.icon}>
-            <Feather name="copy" size={13} color={colors.onSurfaceMuted} />
-          </Pressable>
-          <Pressable testID={`line-move-${l.id}`} onPress={() => b.moveLineToNextRoom(l.id)} style={styles.icon}>
-            <Feather name="corner-up-right" size={13} color={colors.onSurfaceMuted} />
-          </Pressable>
-          <Pressable testID={`line-del-${l.id}`} onPress={() => b.removeLine(l.id)} style={styles.icon}>
-            <Feather name="trash-2" size={13} color={colors.error} />
-          </Pressable>
+          {isPhone ? (
+            <Pressable
+              testID={`line-actions-${l.id}`}
+              accessibilityLabel="Line item actions"
+              onPress={() => setMenuOpen((open) => !open)}
+              style={styles.icon}
+            >
+              <Feather name="more-horizontal" size={18} color={colors.onSurfaceMuted} />
+            </Pressable>
+          ) : <LineActions line={l} />}
         </View>
+        {isPhone && menuOpen ? <View style={styles.mobileActions}><LineActions line={l} /></View> : null}
       </View>
-      <Text style={styles.total}>{money(total)}</Text>
+      <Text style={[styles.total, isPhone && styles.totalPhone]}>{money(total)}</Text>
     </Pressable>
+  );
+}
+
+function LineActions({ line }: { line: Line }) {
+  const b = useBuilder();
+  return (
+    <>
+      <Pressable testID={`line-desc-${line.id}`} accessibilityLabel="Edit description" onPress={() => b.setDescSheet({ line_id: line.id })} style={styles.icon}>
+        <Feather name="align-left" size={16} color={colors.onSurfaceMuted} />
+      </Pressable>
+      <Pressable testID={`line-swap-${line.id}`} accessibilityLabel="Swap product" onPress={() => b.openSwap(line)} style={styles.icon}>
+        <Feather name="refresh-cw" size={16} color={colors.onSurfaceMuted} />
+      </Pressable>
+      <Pressable testID={`line-dup-${line.id}`} accessibilityLabel="Duplicate item" onPress={() => b.duplicateLine(line.id)} style={styles.icon}>
+        <Feather name="copy" size={16} color={colors.onSurfaceMuted} />
+      </Pressable>
+      <Pressable testID={`line-move-${line.id}`} accessibilityLabel="Move to next room" onPress={() => b.moveLineToNextRoom(line.id)} style={styles.icon}>
+        <Feather name="corner-up-right" size={16} color={colors.onSurfaceMuted} />
+      </Pressable>
+      <Pressable testID={`line-del-${line.id}`} accessibilityLabel="Delete item" onPress={() => b.removeLine(line.id)} style={styles.icon}>
+        <Feather name="trash-2" size={16} color={colors.error} />
+      </Pressable>
+    </>
   );
 }
 
@@ -133,18 +155,24 @@ const styles = StyleSheet.create({
     flexDirection: "row", gap: 10, padding: 10, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  rowPhone: { padding: 12, gap: 8, alignItems: "flex-start", flexWrap: "wrap" },
   dragHandle: {
     width: 20, alignItems: "center", justifyContent: "center", alignSelf: "stretch",
     marginRight: -2, marginLeft: -4,
   },
   thumb: { width: 64, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
+  thumbPhone: { width: 88 },
   name: { fontSize: 13, fontFamily: font.semibold, fontWeight: "600", color: colors.onSurface, flex: 1, letterSpacing: -0.1 },
   mini: {
-    borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, minWidth: 60,
+    borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, minWidth: 60, minHeight: 44,
     backgroundColor: colors.surfaceTertiary,
   },
   miniLabel: { fontSize: 9, fontFamily: font.semibold, color: colors.onSurfaceMuted, fontWeight: "600", letterSpacing: 0.8 },
   miniVal: { fontSize: 13, fontFamily: font.medium, fontWeight: "500", color: colors.onSurface, padding: 0, minWidth: 40, fontVariant: ["tabular-nums"] },
-  icon: { width: 28, height: 28, borderRadius: 7, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary },
+  controls: { flexDirection: "row", gap: 6, marginTop: 2, flexWrap: "wrap" },
+  controlsPhone: { marginLeft: -98, paddingTop: 8 },
+  icon: { width: 44, height: 44, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary },
+  mobileActions: { flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2, marginLeft: -98 },
   total: { fontFamily: font.semibold, fontSize: 13, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"], letterSpacing: -0.1 },
+  totalPhone: { position: "absolute", right: 12, top: 12, paddingLeft: 6, backgroundColor: colors.surfaceSecondary },
 });

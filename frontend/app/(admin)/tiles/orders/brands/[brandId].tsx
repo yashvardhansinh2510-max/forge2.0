@@ -6,7 +6,7 @@
 // once per-brand at order-placement time). Ordered/Released/Remaining are
 // the only columns here; tapping a row opens the order for Release only.
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
 import { tileOrdersApi, type BrandOrderRow, type BrandOrdersKpi } from "@/src/api/tileOrders";
@@ -27,25 +27,36 @@ export default function BrandDashboardScreen() {
   const [orders, setOrders] = useState<BrandOrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const requestId = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (nextPage = 1) => {
     if (!brandId) return;
-    setLoading(true);
+    const currentRequest = ++requestId.current;
+    if (nextPage === 1) setLoading(true);
     setLoadError(null);
     try {
-      const r = await tileOrdersApi.brandOrders(brandId);
+      const r = await tileOrdersApi.brandOrders(brandId, { page: nextPage, page_size: 30 });
+      if (currentRequest !== requestId.current) return;
       setKpi(r.kpi);
-      setOrders(r.orders);
+      setOrders((previous) => nextPage === 1 ? r.orders : [...previous, ...r.orders]);
+      setPage(nextPage);
+      setHasMore(r.has_more);
     } catch (e: any) {
+      if (currentRequest !== requestId.current) return;
       const message = e?.detail || "Could not load brand orders";
       setLoadError(message);
       toast.error(message);
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
   }, [brandId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void load(1);
+    return () => { requestId.current += 1; };
+  }, [load]);
 
   const openOrder = (poId: string) => router.push(`/(admin)/tiles/orders/po/${poId}` as any);
 
@@ -144,6 +155,11 @@ export default function BrandDashboardScreen() {
               onRowPress={(order) => openOrder(order.po_id)}
               emptyMessage="No orders for this brand yet."
             />
+            {hasMore ? (
+              <View style={styles.loadMore}>
+                <Button label="Load more" size="lg" testID="tile-brand-queue-load-more" onPress={() => void load(page + 1)} />
+              </View>
+            ) : null}
           </Section>
         </>
       )}
@@ -153,4 +169,5 @@ export default function BrandDashboardScreen() {
 
 const styles = StyleSheet.create({
   errorBlock: { alignItems: "flex-start", gap: spacing.lg },
+  loadMore: { alignItems: "center", paddingTop: spacing.lg },
 });

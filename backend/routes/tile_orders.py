@@ -1030,7 +1030,11 @@ async def list_suppliers(user: UserPublic = Depends(require_min_role("sales"))):
 
 
 @router.get("/brands")
-async def list_brands(user: UserPublic = Depends(require_min_role("sales"))):
+async def list_brands(
+    page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=100),
+    search: Optional[str] = None,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
     """Tile Orders 'Brands' tab landing — one card per Brand (Qutone,
     Dimore, Kajaria…), NOT per dealer/supplier company. A brand and its
     supplier can differ (Supplier.name is 'a dealership we buy from,
@@ -1038,20 +1042,36 @@ async def list_brands(user: UserPublic = Depends(require_min_role("sales"))):
     PurchaseOrder.brand_id/brand_name, which is set once per-brand at
     order-placement time (services/domain_outbox.py), so this always
     matches the brand the customer actually ordered, never the dealer."""
-    pos = await db.purchase_orders.find(tiles_floor_query(user, {"customer_order_id": {"$ne": None}}), {"_id": 0}).to_list(5000)
-    grouped: dict[str, dict] = {}
-    for po in pos:
-        key = po.get("brand_id") or "unassigned"
-        bucket = grouped.setdefault(key, {
-            "brand_id": po.get("brand_id"), "brand_name": po.get("brand_name") or "Unassigned",
-            "active_orders": 0, "max_supplier_silent_days": 0,
-        })
-        if po.get("overall_status") != "Delivered":
-            bucket["active_orders"] += 1
-        silent = supplier_silent_days(po.get("last_supplier_activity_at"), po["created_at"])
-        bucket["max_supplier_silent_days"] = max(bucket["max_supplier_silent_days"], silent)
-    brands = sorted(grouped.values(), key=lambda g: g["brand_name"])
-    return {"brands": brands}
+    page = page if isinstance(page, int) else 1
+    page_size = page_size if isinstance(page_size, int) else 30
+    match = tiles_floor_query(user, {"customer_order_id": {"$ne": None}})
+    if search:
+        match["brand_name"] = {"$regex": re.escape(search[:80]), "$options": "i"}
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": {"$ifNull": ["$brand_id", "unassigned"]},
+            "brand_id": {"$first": "$brand_id"},
+            "brand_name": {"$first": {"$ifNull": ["$brand_name", "Unassigned"]}},
+            "active_orders": {"$sum": {"$cond": [{"$ne": ["$overall_status", "Delivered"]}, 1, 0]}},
+            "oldest_activity_at": {"$min": {"$ifNull": ["$last_supplier_activity_at", "$created_at"]}},
+        }},
+        {"$sort": {"brand_name": 1}},
+        {"$facet": {
+            "rows": [{"$skip": (page - 1) * page_size}, {"$limit": page_size}],
+            "meta": [{"$count": "total"}],
+        }},
+    ]
+    result = await db.purchase_orders.aggregate(pipeline).to_list(1)
+    bucket = result[0] if result else {"rows": [], "meta": []}
+    total = bucket.get("meta", [{}])[0].get("total", 0) if bucket.get("meta") else 0
+    brands = [{
+        "brand_id": row.get("brand_id"), "brand_name": row.get("brand_name") or "Unassigned",
+        "active_orders": row.get("active_orders", 0),
+        "max_supplier_silent_days": supplier_silent_days(None, row.get("oldest_activity_at") or now_iso()),
+    } for row in bucket.get("rows", [])]
+    return {"brands": brands, "page": page, "page_size": page_size, "total": total,
+            "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None}
 
 
 @router.get("/brands/{brand_id}/orders")
@@ -1070,21 +1090,52 @@ async def brand_orders(
     if status:
         filters["overall_status"] = status
     if search:
+        safe_search = {"$regex": re.escape(search[:80]), "$options": "i"}
         filters["$or"] = [
-            {"customer_name": {"$regex": search, "$options": "i"}},
-            {"number": {"$regex": search, "$options": "i"}},
+            {"customer_name": safe_search},
+            {"number": safe_search},
         ]
-    all_pos = await db.purchase_orders.find(tiles_floor_query(user, filters), {"_id": 0}).to_list(5000)
+    query = tiles_floor_query(user, filters)
+    cursor = db.purchase_orders.find(query, {"_id": 0})
+    database_paging = hasattr(db.purchase_orders, "count_documents") and hasattr(cursor, "sort")
+    if database_paging:
+        total = await db.purchase_orders.count_documents(query)
+        direction = 1 if sort != "waiting_asc" else -1
+        all_pos = await cursor.sort("created_at", direction).skip((page - 1) * page_size).limit(page_size).to_list(page_size)
+        metric_docs = await db.purchase_orders.aggregate([
+            {"$match": query},
+            {"$group": {
+                "_id": None,
+                "pending": {"$sum": {"$cond": [{"$eq": ["$overall_status", "Pending"]}, 1, 0]}},
+                "ready": {"$sum": {"$cond": [{"$eq": ["$overall_status", "Ready"]}, 1, 0]}},
+                "partially_dispatched": {"$sum": {"$cond": [{"$eq": ["$overall_status", "Partially Dispatched"]}, 1, 0]}},
+                "completed": {"$sum": {"$cond": [{"$in": ["$overall_status", ["Dispatched", "Delivered"]]}, 1, 0]}},
+                "boxes_remaining": {"$sum": {"$ifNull": ["$pending_boxes", 0]}},
+                "boxes_released": {"$sum": {"$ifNull": ["$ready_boxes", 0]}},
+                "boxes_dispatched": {"$sum": {"$ifNull": ["$dispatched_boxes", 0]}},
+                "oldest_pending_at": {"$min": {"$cond": [{"$eq": ["$overall_status", "Pending"]}, "$created_at", "9999-12-31T23:59:59+00:00"]}},
+            }},
+        ]).to_list(1)
+        metric = metric_docs[0] if metric_docs else {}
+        kpi = {"orders": total, "pending": metric.get("pending", 0), "ready": metric.get("ready", 0),
+               "partially_dispatched": metric.get("partially_dispatched", 0), "completed": metric.get("completed", 0),
+               "boxes_remaining": float(metric.get("boxes_remaining") or 0), "boxes_released": float(metric.get("boxes_released") or 0),
+               "boxes_dispatched": float(metric.get("boxes_dispatched") or 0),
+               "oldest_pending_days": waiting_days(metric["oldest_pending_at"]) if metric.get("pending") and metric.get("oldest_pending_at") else 0}
+    else:
+        all_pos = await cursor.to_list(5000)
+        total = len(all_pos)
 
-    kpi = {"orders": len(all_pos), "pending": 0, "ready": 0, "partially_dispatched": 0, "completed": 0,
-           "boxes_remaining": 0.0, "boxes_released": 0.0, "boxes_dispatched": 0.0, "oldest_pending_days": 0}
-    for po in all_pos:
-        kpi[_STATUS_TO_KPI_KEY.get(po.get("overall_status"), "pending")] += 1
-        kpi["boxes_remaining"] += float(po.get("pending_boxes") or 0)
-        kpi["boxes_released"] += float(po.get("ready_boxes") or 0)
-        kpi["boxes_dispatched"] += float(po.get("dispatched_boxes") or 0)
-        if po.get("overall_status") == "Pending":
-            kpi["oldest_pending_days"] = max(kpi["oldest_pending_days"], waiting_days(po["created_at"]))
+    if not database_paging:
+        kpi = {"orders": len(all_pos), "pending": 0, "ready": 0, "partially_dispatched": 0, "completed": 0,
+               "boxes_remaining": 0.0, "boxes_released": 0.0, "boxes_dispatched": 0.0, "oldest_pending_days": 0}
+        for po in all_pos:
+            kpi[_STATUS_TO_KPI_KEY.get(po.get("overall_status"), "pending")] += 1
+            kpi["boxes_remaining"] += float(po.get("pending_boxes") or 0)
+            kpi["boxes_released"] += float(po.get("ready_boxes") or 0)
+            kpi["boxes_dispatched"] += float(po.get("dispatched_boxes") or 0)
+            if po.get("overall_status") == "Pending":
+                kpi["oldest_pending_days"] = max(kpi["oldest_pending_days"], waiting_days(po["created_at"]))
 
     rows = []
     for po in all_pos:
@@ -1100,9 +1151,11 @@ async def brand_orders(
             "boxes_released": boxes_released, "boxes_remaining": boxes_remaining,
             "overall_status": po.get("overall_status"), "completion_percentage": po.get("completion_percentage"),
         })
-    rows.sort(key=lambda r: r["waiting_days"], reverse=(sort != "waiting_asc"))
-    start = (page - 1) * page_size
-    return {"kpi": kpi, "orders": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+    if not database_paging:
+        rows.sort(key=lambda r: r["waiting_days"], reverse=(sort != "waiting_asc"))
+        rows = rows[(page - 1) * page_size:page * page_size]
+    return {"kpi": kpi, "orders": rows, "page": page, "page_size": page_size, "total": total,
+            "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None}
 
 
 @router.get("/purchase-orders/{po_id}")
@@ -1229,20 +1282,33 @@ async def supplier_analytics(supplier_id: str, user: UserPublic = Depends(requir
 
 @router.get("/customer-orders")
 async def list_customer_orders(
-    page: int = 1, page_size: int = 20, sort: str = "waiting_desc",
+    page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=100), sort: str = "waiting_desc",
     status: Optional[str] = None, search: Optional[str] = None,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
+    page = page if isinstance(page, int) else 1
+    page_size = page_size if isinstance(page_size, int) else 30
     filters: dict = {"is_deleted": False}
     if status:
         filters["overall_status"] = status
     if search:
+        safe_search = {"$regex": re.escape(search[:80]), "$options": "i"}
         filters["$or"] = [
-            {"customer_name": {"$regex": search, "$options": "i"}},
-            {"customer_phone": {"$regex": search, "$options": "i"}},
-            {"number": {"$regex": search, "$options": "i"}},
+            {"customer_name": safe_search},
+            {"customer_phone": safe_search},
+            {"number": safe_search},
         ]
-    docs = await db.customer_orders.find(tiles_floor_query(user, filters), {"_id": 0}).to_list(5000)
+    query = tiles_floor_query(user, filters)
+    cursor = db.customer_orders.find(query, {"_id": 0})
+    if hasattr(db.customer_orders, "count_documents") and hasattr(cursor, "sort"):
+        total = await db.customer_orders.count_documents(query)
+        direction = 1 if sort == "waiting_desc" else -1
+        docs = await cursor.sort("created_at", direction).skip((page - 1) * page_size).limit(page_size).to_list(page_size)
+    else:  # lightweight unit-test collections retain the same semantics
+        all_docs = await cursor.to_list(5000)
+        all_docs.sort(key=lambda row: row.get("created_at", ""), reverse=(sort == "waiting_asc"))
+        total = len(all_docs)
+        docs = all_docs[(page - 1) * page_size:page * page_size]
     rows = []
     for co in docs:
         days = waiting_days(co["created_at"])
@@ -1254,9 +1320,8 @@ async def list_customer_orders(
             "total_value": co.get("total_value"), "overall_status": co.get("overall_status"),
             "completion_percentage": co.get("completion_percentage"),
         })
-    rows.sort(key=lambda r: r["waiting_days"], reverse=(sort != "waiting_asc"))
-    start = (page - 1) * page_size
-    return {"orders": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+    return {"orders": rows, "page": page, "page_size": page_size, "total": total,
+            "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None}
 
 
 @router.get("/customer-orders/{co_id}")
@@ -1345,6 +1410,59 @@ async def list_dispatches(
         if date_to:
             date_filter["$lte"] = date_to
         filters["dispatch_date"] = date_filter
+    if hasattr(db.dispatches, "aggregate"):
+        pipeline: list[dict] = [
+            {"$match": tiles_floor_query(user, filters)},
+            {"$lookup": {"from": "chalans", "localField": "chalan_id", "foreignField": "id", "as": "chalan"}},
+            {"$unwind": "$chalan"},
+            {"$match": {"chalan.floor_id": TILES_FLOOR_ID, "chalan.is_deleted": False}},
+            {"$unwind": "$chalan.items"},
+            {"$lookup": {"from": "purchase_orders", "localField": "purchase_order_id", "foreignField": "id", "as": "po"}},
+            {"$unwind": {"path": "$po", "preserveNullAndEmptyArrays": True}},
+            {"$project": {
+                "_id": 0,
+                "dispatch_id": "$id", "dispatch_number": 1, "dispatch_date": 1,
+                "customer_id": 1, "customer_name": 1, "customer_order_id": 1,
+                "brand_id": "$po.brand_id", "brand_name": {"$ifNull": ["$po.brand_name", {"$ifNull": ["$supplier_name", "Unassigned"]}]},
+                "tile_name": "$chalan.items.tile_name", "tile_size": "$chalan.items.size",
+                "boxes": "$chalan.items.boxes", "quantity_unit": {"$ifNull": ["$chalan.items.quantity_unit", "Box"]},
+                "source": {"$cond": [{"$eq": ["$source", "godown"]}, "Godown", "Released"]},
+                "chalan_id": "$chalan.id", "chalan_number": "$chalan.number",
+                "vehicle_number": "$chalan.vehicle_number", "driver_name": "$chalan.driver_name",
+                "status": {"$switch": {"branches": [
+                    {"case": {"$ne": [{"$ifNull": ["$delivered_at", ""]}, ""]}, "then": "Delivered"},
+                    {"case": {"$ne": [{"$ifNull": ["$godown_received_at", ""]}, ""]}, "then": "At Godown"},
+                ], "default": "Dispatched"}},
+                "performed_by_name": "$created_by_name",
+            }},
+        ]
+        line_filters: list[dict] = []
+        contains = lambda value: {"$regex": re.escape(value[:80]), "$options": "i"}
+        if brand_id: line_filters.append({"brand_id": brand_id})
+        if product: line_filters.append({"tile_name": contains(product)})
+        if chalan_number: line_filters.append({"chalan_number": contains(chalan_number)})
+        if status: line_filters.append({"status": status})
+        if search:
+            safe_search = contains(search)
+            line_filters.append({"$or": [
+                {"customer_name": safe_search}, {"brand_name": safe_search}, {"tile_name": safe_search},
+                {"dispatch_number": safe_search}, {"chalan_number": safe_search},
+            ]})
+        if line_filters:
+            pipeline.append({"$match": {"$and": line_filters}})
+        pipeline.extend([
+            {"$sort": {"dispatch_date": 1 if sort == "date_asc" else -1}},
+            {"$facet": {
+                "rows": [{"$skip": (page - 1) * page_size}, {"$limit": page_size}],
+                "meta": [{"$count": "total"}],
+            }},
+        ])
+        result = await db.dispatches.aggregate(pipeline).to_list(1)
+        bucket = result[0] if result else {"rows": [], "meta": []}
+        total = bucket.get("meta", [{}])[0].get("total", 0) if bucket.get("meta") else 0
+        return {"rows": bucket.get("rows", []), "page": page, "page_size": page_size, "total": total,
+                "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None}
+
     dispatches = await db.dispatches.find(tiles_floor_query(user, filters), {"_id": 0}).to_list(5000)
     chalan_ids = [d["chalan_id"] for d in dispatches]
     chalans = await db.chalans.find(
@@ -1398,7 +1516,9 @@ async def list_dispatches(
             rows.append(row)
     rows.sort(key=lambda r: r["dispatch_date"] or "", reverse=(sort != "date_asc"))
     start = (page - 1) * page_size
-    return {"rows": rows[start:start + page_size], "page": page, "page_size": page_size, "total": len(rows)}
+    total = len(rows)
+    return {"rows": rows[start:start + page_size], "page": page, "page_size": page_size, "total": total,
+            "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None}
 
 
 @router.get("/items/{item_id}/history")
@@ -1442,7 +1562,9 @@ async def tile_orders_dashboard(user: UserPublic = Depends(require_min_role("sal
 async def completed_tile_order_history(
     search: Optional[str] = None, customer_id: Optional[str] = None,
     brand_id: Optional[str] = None, date_from: Optional[str] = None,
-    date_to: Optional[str] = None, user: UserPublic = Depends(require_min_role("sales")),
+    date_to: Optional[str] = None, page: int = Query(1, ge=1),
+    page_size: int = Query(30, ge=1, le=100),
+    user: UserPublic = Depends(require_min_role("sales")),
 ):
     """Permanent completed-delivery ledger, derived from live Tile Orders.
 
@@ -1450,18 +1572,60 @@ async def completed_tile_order_history(
     when its workflow status is Delivered and all linked dispatches remain
     available as the historical references.
     """
+    page = page if isinstance(page, int) else 1
+    page_size = page_size if isinstance(page_size, int) else 30
     # Do not trust the denormalized customer-order rollup as the inclusion
     # gate. A concurrent status update can leave that parent field stale even
     # though every linked PO/item and dispatch is complete.
     filters: dict = {"is_deleted": False}
-    if customer_id:
-        filters["customer_id"] = customer_id
     orders = await db.customer_orders.find(tiles_floor_query(user, filters), {"_id": 0}).to_list(5000)
+    order_ids = [order["id"] for order in orders]
+    if not order_ids:
+        return {"rows": [], "total": 0, "page": page, "page_size": page_size,
+                "has_more": False, "next_page": None, "facets": {"customers": [], "brands": []}}
+
+    # Four bounded batch reads replace the former four reads PER customer
+    # order. This keeps query count constant as history grows.
+    all_pos = await db.purchase_orders.find(
+        tiles_floor_query(user, {"customer_order_id": {"$in": order_ids}}), {"_id": 0}
+    ).to_list(5000)
+    all_dispatches = await db.dispatches.find(
+        tiles_floor_query(user, {"customer_order_id": {"$in": order_ids}, "is_deleted": False}), {"_id": 0}
+    ).to_list(5000)
+    all_chalans = await db.chalans.find(
+        tiles_floor_query(user, {"customer_order_id": {"$in": order_ids}, "is_deleted": False}), {"_id": 0}
+    ).to_list(5000)
+    po_ids = [po["id"] for po in all_pos]
+    all_events = await db.activity_events.find(
+        {"floor_id": TILES_FLOOR_ID, "$or": [
+            {"entity_type": "tile_customer_order", "entity_id": {"$in": order_ids}},
+            {"purchase_id": {"$in": po_ids}},
+        ]}, {"_id": 0}
+    ).to_list(5000)
+
+    def grouped(rows: list[dict], key: str) -> dict[str, list[dict]]:
+        result: dict[str, list[dict]] = {}
+        for row in rows:
+            value = row.get(key)
+            if value:
+                result.setdefault(value, []).append(row)
+        return result
+
+    pos_by_order = grouped(all_pos, "customer_order_id")
+    dispatches_by_order = grouped(all_dispatches, "customer_order_id")
+    chalans_by_order = grouped(all_chalans, "customer_order_id")
+    events_by_order: dict[str, list[dict]] = {}
+    order_by_po = {po["id"]: po.get("customer_order_id") for po in all_pos}
+    for event in all_events:
+        order_id = event.get("entity_id") if event.get("entity_type") == "tile_customer_order" else order_by_po.get(event.get("purchase_id"))
+        if order_id:
+            events_by_order.setdefault(order_id, []).append(event)
+
     rows = []
     for order in orders:
-        pos = await db.purchase_orders.find(
-            tiles_floor_query(user, {"customer_order_id": order["id"]}), {"_id": 0}
-        ).to_list(100)
+        if customer_id and order.get("customer_id") != customer_id:
+            continue
+        pos = pos_by_order.get(order["id"], [])
         if not pos:
             continue
         if brand_id and not any(po.get("brand_id") == brand_id for po in pos):
@@ -1469,14 +1633,10 @@ async def completed_tile_order_history(
         haystack = " ".join([order.get("customer_name") or "", order.get("number") or ""] + [po.get("brand_name") or "" for po in pos]).lower()
         if search and search.lower() not in haystack:
             continue
-        dispatches = await db.dispatches.find(
-            tiles_floor_query(user, {"customer_order_id": order["id"], "is_deleted": False}), {"_id": 0}
-        ).to_list(5000)
+        dispatches = dispatches_by_order.get(order["id"], [])
         if not _is_fully_dispatched(pos, dispatches):
             continue
-        chalans = await db.chalans.find(
-            tiles_floor_query(user, {"customer_order_id": order["id"], "is_deleted": False}), {"_id": 0}
-        ).to_list(5000)
+        chalans = chalans_by_order.get(order["id"], [])
         completion_date = max(
             (d.get("delivered_at") or d.get("created_at") or "" for d in dispatches),
             default=None,
@@ -1494,13 +1654,19 @@ async def completed_tile_order_history(
                 try: pieces = float(item.get("boxes_dispatched") or 0) if quantity_unit == "Pieces" else float(item.get("boxes_dispatched") or 0) * float(pieces_per_box)
                 except (TypeError, ValueError): pass
                 products.append({"product": item.get("name"), "size": item.get("size"), "quantity": item.get("qty"), "boxes": item.get("boxes_dispatched") or 0, "pieces": pieces, "quantity_unit": quantity_unit})
-        events = await db.activity_events.find(
-            {"floor_id": TILES_FLOOR_ID, "$or": [{"entity_type": "tile_customer_order", "entity_id": order["id"]}, {"purchase_id": {"$in": [po["id"] for po in pos]}}]}, {"_id": 0}
-        ).to_list(5000)
+        events = events_by_order.get(order["id"], [])
+        brand_refs = []
+        seen_brands = set()
+        for po in pos:
+            ref = (po.get("brand_id"), po.get("brand_name") or "Unassigned")
+            if ref not in seen_brands:
+                seen_brands.add(ref)
+                brand_refs.append({"id": ref[0], "name": ref[1]})
         rows.append({
-            "id": order["id"], "customer": order.get("customer_name"), "order_number": order.get("number"),
+            "id": order["id"], "customer_id": order.get("customer_id"),
+            "customer": order.get("customer_name"), "order_number": order.get("number"),
             "delivery_date": completion_date, "completion_date": completion_date,
-            "brands": [po.get("brand_name") or "Unassigned" for po in pos], "products": products,
+            "brands": [ref["name"] for ref in brand_refs], "brand_refs": brand_refs, "products": products,
             "final_amount": order.get("total_value") or 0,
             "delivery_status": "Delivered" if all(d.get("delivered_at") for d in dispatches) else "Dispatched",
             "delivery_notes": next((d.get("delivery_note") for d in dispatches if d.get("delivery_note")), None),
@@ -1509,7 +1675,18 @@ async def completed_tile_order_history(
             "dispatch_references": [{"id": d.get("id"), "number": d.get("dispatch_number")} for d in dispatches],
         })
     rows.sort(key=lambda row: row.get("completion_date") or "", reverse=True)
-    return {"rows": rows, "total": len(rows)}
+    # Facets are computed before the selected customer/brand filter, so the
+    # controls remain populated even when the current combination has no rows.
+    customer_facets = sorted({(order.get("customer_id"), order.get("customer_name") or "Unassigned") for order in orders}, key=lambda item: item[1])
+    brand_facets = sorted({(po.get("brand_id"), po.get("brand_name") or "Unassigned") for po in all_pos}, key=lambda item: item[1])
+    total = len(rows)
+    start = (page - 1) * page_size
+    return {"rows": rows[start:start + page_size], "total": total, "page": page, "page_size": page_size,
+            "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None,
+            "facets": {
+                "customers": [{"id": item[0], "name": item[1]} for item in customer_facets if item[0]],
+                "brands": [{"id": item[0], "name": item[1]} for item in brand_facets if item[0]],
+            }}
 
 
 @router.get("/history/export")
@@ -1523,7 +1700,7 @@ async def export_completed_tile_order_history(
         raise HTTPException(status_code=400, detail="format must be csv or xlsx")
     payload = await completed_tile_order_history(
         search=search, customer_id=customer_id, brand_id=brand_id,
-        date_from=date_from, date_to=date_to, user=user,
+        date_from=date_from, date_to=date_to, page=1, page_size=5000, user=user,
     )
     rows = []
     for row in payload["rows"]:
@@ -1554,13 +1731,49 @@ async def export_completed_tile_order_history(
 @router.get("/inventory")
 async def godown_inventory(
     search: Optional[str] = None,
+    page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=100),
     user: UserPublic = Depends(require_min_role("sales")),
 ):
+    page = page if isinstance(page, int) else 1
+    page_size = page_size if isinstance(page_size, int) else 30
     """Live go-down inventory read model from Tile PurchaseOrder item counters."""
     # Older Tile PurchaseOrder documents predate the shared soft-delete field
     # and therefore omit `is_deleted` entirely. Treat missing as active so
     # valid Godown stock is not silently hidden by the read model.
     active_po = {"$or": [{"is_deleted": False}, {"is_deleted": {"$exists": False}}]}
+    if hasattr(db.purchase_orders, "aggregate"):
+        pipeline: list[dict] = [
+            {"$match": tiles_floor_query(user, active_po)},
+            {"$unwind": "$items"},
+            {"$match": {"items.boxes_godown": {"$gt": 1e-9}}},
+            {"$project": {
+                "_id": 0,
+                "id": {"$concat": ["$id", ":", "$items.id"]},
+                "customer": "$customer_name", "name": "$items.name",
+                "brand": {"$ifNull": ["$brand_name", "Unassigned"]},
+                "product": "$items.sku", "size": "$items.size",
+                "arrival_date": {"$ifNull": ["$items.godown_arrived_at", {"$ifNull": ["$latest_ready_date", "$created_at"]}]},
+            }},
+        ]
+        if search:
+            safe_search = {"$regex": re.escape(search[:80]), "$options": "i"}
+            pipeline.append({"$match": {"$or": [
+                {"customer": safe_search}, {"name": safe_search}, {"brand": safe_search},
+                {"product": safe_search}, {"size": safe_search},
+            ]}})
+        pipeline.extend([
+            {"$sort": {"name": 1, "customer": 1}},
+            {"$facet": {
+                "rows": [{"$skip": (page - 1) * page_size}, {"$limit": page_size}],
+                "meta": [{"$count": "total"}],
+            }},
+        ])
+        result = await db.purchase_orders.aggregate(pipeline).to_list(1)
+        bucket = result[0] if result else {"rows": [], "meta": []}
+        total = bucket.get("meta", [{}])[0].get("total", 0) if bucket.get("meta") else 0
+        return {"rows": bucket.get("rows", []), "total": total, "page": page, "page_size": page_size,
+                "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None}
+
     pos = await db.purchase_orders.find(tiles_floor_query(user, active_po), {"_id": 0}).to_list(5000)
     rows = []
     for po in pos:
@@ -1581,7 +1794,10 @@ async def godown_inventory(
             if search and search.lower() not in haystack: continue
             rows.append(row)
     rows.sort(key=lambda row: ((row["name"] or "").lower(), (row["customer"] or "").lower()))
-    return {"rows": rows, "total": len(rows)}
+    total = len(rows)
+    start = (page - 1) * page_size
+    return {"rows": rows[start:start + page_size], "total": total, "page": page, "page_size": page_size,
+            "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None}
 
 
 @router.get("/purchase-orders/{po_id}/items/{item_id}/ready-batches")
@@ -1641,4 +1857,5 @@ async def list_material_movements(
     total = await db.material_movements.count_documents(query)
     start = (page - 1) * page_size
     rows = await db.material_movements.find(query, {"_id": 0}).sort("created_at", -1).skip(start).limit(page_size).to_list(page_size)
-    return {"rows": rows, "page": page, "page_size": page_size, "total": total}
+    return {"rows": rows, "page": page, "page_size": page_size, "total": total,
+            "has_more": page * page_size < total, "next_page": page + 1 if page * page_size < total else None}

@@ -22,7 +22,7 @@ const webCursor = Platform.OS === "web" ? ({ cursor: "pointer" } as any) : null;
 /** Page gutter — the single answer to "how far from the edge does content sit". */
 export function usePageGutter() {
   const { isPhone, isTablet } = useBreakpoint();
-  return isPhone ? 20 : isTablet ? 24 : 32;
+  return isPhone ? 16 : isTablet ? 24 : 32;
 }
 
 export function PageShell({
@@ -135,7 +135,9 @@ export function Button({
   testID?: string;
   fullWidth?: boolean;
 }) {
+  const { isPhone } = useBreakpoint();
   const metrics = SIZE_METRICS[size];
+  const height = isPhone ? Math.max(44, metrics.height) : metrics.height;
   return (
     <Pressable
       testID={testID}
@@ -144,7 +146,7 @@ export function Button({
       style={({ hovered, pressed }: any) => [
         styles.buttonBase,
         {
-          height: metrics.height,
+          height,
           paddingHorizontal: metrics.paddingHorizontal,
           alignSelf: fullWidth ? "stretch" : "flex-start",
         },
@@ -244,28 +246,37 @@ export function TabBar<K extends string>({
   onChange: (key: K) => void;
   testIDPrefix?: string;
 }) {
+  const { isPhone } = useBreakpoint();
+  const tabsContent = tabs.map(([key, label]) => {
+    const active = key === value;
+    return (
+      <Pressable
+        key={key}
+        testID={testIDPrefix ? `${testIDPrefix}-${key}` : undefined}
+        onPress={() => onChange(key)}
+        style={({ hovered }: any) => [
+          styles.tab,
+          active ? styles.tabActive : null,
+          hovered && !active ? styles.tabHovered : null,
+          webCursor,
+        ]}
+      >
+        <Text numberOfLines={1} style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>
+          {label}
+        </Text>
+      </Pressable>
+    );
+  });
+  if (isPhone) {
+    return (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroller} contentContainerStyle={styles.tabBar}>
+        {tabsContent}
+      </ScrollView>
+    );
+  }
   return (
     <View style={styles.tabBar}>
-      {tabs.map(([key, label]) => {
-        const active = key === value;
-        return (
-          <Pressable
-            key={key}
-            testID={testIDPrefix ? `${testIDPrefix}-${key}` : undefined}
-            onPress={() => onChange(key)}
-            style={({ hovered }: any) => [
-              styles.tab,
-              active ? styles.tabActive : null,
-              hovered && !active ? styles.tabHovered : null,
-              webCursor,
-            ]}
-          >
-            <Text numberOfLines={1} style={[styles.tabLabel, active ? styles.tabLabelActive : null]}>
-              {label}
-            </Text>
-          </Pressable>
-        );
-      })}
+      {tabsContent}
     </View>
   );
 }
@@ -275,11 +286,16 @@ export function TabBar<K extends string>({
  * the right, wrapping as coherent groups instead of a ragged button soup.
  */
 export function Toolbar({ search, filters, actions }: { search?: ReactNode; filters?: ReactNode; actions?: ReactNode }) {
+  const { isPhone } = useBreakpoint();
   return (
-    <View style={styles.toolbar}>
+    <View style={[styles.toolbar, isPhone ? styles.toolbarPhone : null]}>
       {search ? <View style={styles.toolbarSearch}>{search}</View> : null}
-      <View style={styles.toolbarTrailing}>
-        {filters ? <View style={styles.toolbarFilters}>{filters}</View> : null}
+      <View style={[styles.toolbarTrailing, isPhone ? styles.toolbarTrailingPhone : null]}>
+        {filters ? (isPhone ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.toolbarFilterScroller} contentContainerStyle={styles.toolbarFilters}>
+            {filters}
+          </ScrollView>
+        ) : <View style={styles.toolbarFilters}>{filters}</View>) : null}
         {actions ? <View style={styles.toolbarActions}>{actions}</View> : null}
       </View>
     </View>
@@ -331,7 +347,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.s8,
     alignSelf: "flex-start",
-    height: 32,
+    minHeight: 44,
     paddingRight: spacing.s8,
     marginBottom: spacing.lg,
   },
@@ -398,7 +414,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.s8,
-    height: 40,
+    height: 44,
     minWidth: 260,
     paddingHorizontal: spacing.lg,
     borderWidth: 1,
@@ -418,7 +434,7 @@ const styles = StyleSheet.create({
   chip: {
     // 40px matches the search field and the toolbar's primary button, so the
     // whole control band reads as one aligned row rather than three sizes.
-    height: 40,
+    height: 44,
     justifyContent: "center",
     paddingHorizontal: spacing.lg,
     borderRadius: radius.pill,
@@ -431,13 +447,13 @@ const styles = StyleSheet.create({
   chipLabel: { ...type.captionStrong, fontSize: 12 },
   chipLabelActive: { color: colors.brandHover },
 
+  tabScroller: { width: "100%" },
   tabBar: {
     flexDirection: "row",
     alignItems: "stretch",
     gap: spacing.s24,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
-    flexWrap: "wrap",
   },
   tab: { height: 44, justifyContent: "center", borderBottomWidth: 2, borderBottomColor: "transparent" },
   tabActive: { borderBottomColor: colors.brand },
@@ -453,8 +469,11 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
     flexWrap: "wrap",
   },
+  toolbarPhone: { alignItems: "stretch" },
   toolbarSearch: { flexShrink: 1, flexGrow: 1, maxWidth: 420, minWidth: 240 },
   toolbarTrailing: { flexDirection: "row", alignItems: "center", gap: spacing.lg, flexWrap: "wrap" },
+  toolbarTrailingPhone: { width: "100%", alignItems: "stretch" },
+  toolbarFilterScroller: { width: "100%" },
   // 12px is the module's floor for separation between two controls; 8px read
   // as chips touching each other.
   toolbarFilters: { flexDirection: "row", alignItems: "center", gap: spacing.s12, flexWrap: "wrap" },

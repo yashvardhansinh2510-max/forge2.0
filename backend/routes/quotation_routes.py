@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from auth import (
     TILES_FLOOR_ID, accessible_floor_ids, floor_for_write, floor_inherit, floor_query,
@@ -35,6 +36,11 @@ from services.sequence import next_number
 from services.tiles_stage import can_move_to_quotation, can_place_order
 
 router = APIRouter(prefix="/quotations", tags=["quotations"])
+
+
+async def _render_pdf(builder, document: dict, customer: dict, branding: dict) -> bytes:
+    """Keep CPU-bound ReportLab/Pillow work off the async request loop."""
+    return await run_in_threadpool(builder, document, customer, branding)
 
 
 async def _next_number() -> str:
@@ -829,15 +835,16 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
     doc_type = doc.get("doc_type") or "standard"
     _require_tiles_quotation_address(doc_type, doc.get("address_snapshot"))
+    branding = await _pdf_branding()
     if doc_type == "tiles_selection":
-        pdf_bytes = build_tiles_selection_pdf({**doc, "items": _enriched_items_for_pdf(doc)}, customer, await _pdf_branding())
+        pdf_bytes = await _render_pdf(build_tiles_selection_pdf, {**doc, "items": _enriched_items_for_pdf(doc)}, customer, branding)
         filename = tiles_pdf_filename(doc)
     elif doc_type == "tiles_quotation":
-        pdf_bytes = build_tiles_quotation_pdf({**doc, "items": _enriched_items_for_pdf(doc)}, customer, await _pdf_branding())
+        pdf_bytes = await _render_pdf(build_tiles_quotation_pdf, {**doc, "items": _enriched_items_for_pdf(doc)}, customer, branding)
         filename = tiles_pdf_filename(doc)
     else:
         pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
-        pdf_bytes = build_quotation_pdf(pdf_doc, customer, await _pdf_branding())
+        pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, customer, branding)
         filename = f'{doc["number"]}.pdf'
     revision = len(doc.get("revisions") or [])
     key = f"quotation-generated:{quotation_id}:revision:{revision}"
@@ -874,7 +881,7 @@ async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_curre
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
-    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict(), await _pdf_branding())
+    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{doc["number"]}.pdf"'})
 
 
@@ -904,7 +911,7 @@ async def portal_pdf_revision(
         room_discs,
     )
     pdf_doc = {**merged, **totals, "items": _enriched_items_for_pdf(merged)}
-    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict(), await _pdf_branding())
+    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
     filename = f'{doc["number"]}-rev{revision_no}.pdf'
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
@@ -943,7 +950,7 @@ async def portal_pdf_brand(
     )
     filtered_doc = {**doc, "items": filtered}
     pdf_doc = {**filtered_doc, **totals, "items": _enriched_items_for_pdf(filtered_doc)}
-    pdf_bytes = build_quotation_pdf(pdf_doc, cust.dict(), await _pdf_branding())
+    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
     brand_doc = None if is_unassigned else await db.brands.find_one({"id": brand_id}, {"_id": 0, "name": 1})
     brand_label = (brand_doc or {}).get("name") or "Other"
     filename = f'{doc["number"]}-{brand_label}.pdf'.replace(" ", "-")

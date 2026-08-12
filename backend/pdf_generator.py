@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 import functools
 from functools import lru_cache
@@ -84,7 +85,7 @@ def _escape(value: object) -> str:
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=512)
 def _remote_image_bytes(url: str) -> bytes | None:
     try:
         response = httpx.get(url, timeout=6.0, follow_redirects=True)
@@ -95,12 +96,11 @@ def _remote_image_bytes(url: str) -> bytes | None:
 
 
 def _prepare_image_bytes(data: bytes) -> bytes:
-    """Normalize metadata, then guarantee a horizontal product-image asset.
+    """Apply EXIF orientation while keeping the photographed product upright.
 
     This feeds every quotation-family PDF: the standard quotation plus tile
-    selection and tile quotation. Portrait supplier images are rotated after
-    EXIF normalization so all product cells contain a horizontal image while
-    retaining the existing centered, contain-fit placement contract.
+    selection and tile quotation. The *cell* is landscape; portrait source
+    content is contained inside it and is never rotated merely to fill space.
     """
     from PIL import Image as PILImage, ImageOps
 
@@ -108,8 +108,6 @@ def _prepare_image_bytes(data: bytes) -> bytes:
         img = PILImage.open(BytesIO(data))
         fmt = img.format or "PNG"
         normalized = ImageOps.exif_transpose(img)
-        if normalized.height > normalized.width:
-            normalized = normalized.transpose(PILImage.Transpose.ROTATE_90)
         normalized.load()
         if fmt.upper() in ("JPEG", "JPG") and normalized.mode in ("RGBA", "P"):
             normalized = normalized.convert("RGB")
@@ -118,6 +116,27 @@ def _prepare_image_bytes(data: bytes) -> bytes:
         return out.getvalue()
     except Exception:
         return data
+
+
+def prefetch_product_images(items: Iterable[dict], *, workers: int = 6, timeout: float = 8.0) -> None:
+    """Warm the bounded image cache concurrently under one total deadline.
+
+    ReportLab itself remains synchronous, but after this pass every `_img`
+    lookup is normally an in-memory cache hit. Missing, corrupt and timed-out
+    images retain the existing placeholder behavior.
+    """
+    urls = list(dict.fromkeys(
+        str(item.get("image")) for item in items
+        if str(item.get("image") or "").startswith(("https://", "http://"))
+    ))
+    if not urls:
+        return
+    executor = ThreadPoolExecutor(max_workers=max(1, min(workers, 8)), thread_name_prefix="quotation-image")
+    futures = [executor.submit(_remote_image_bytes, url) for url in urls]
+    _, pending = wait(futures, timeout=max(0.1, timeout))
+    for future in pending:
+        future.cancel()
+    executor.shutdown(wait=False, cancel_futures=True)
 
 
 def contain_box(
@@ -146,11 +165,8 @@ def contain_box(
 def _img(url: str | None, width_mm: float = 13, height_mm: float = 13) -> Flowable:
     """Render the supplied product image inside the official narrow image cell.
 
-    Sized to the largest centered contain box that fits inside the item row
-    without stretching or cropping. `_prepare_image_bytes()` guarantees that
-    the underlying product asset is horizontal before it reaches this cell.
-    The row height itself is sized to comfortably fit this image — see
-    ITEM_ROW_MM.
+    Sized to the largest centered contain box that fits inside the landscape
+    cell without stretching, cropping, or changing the product's orientation.
     """
     if url and str(url).startswith(("https://", "http://")):
         data = _remote_image_bytes(str(url))
@@ -277,6 +293,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     partial dict) renders the same document as before.
     """
     b = branding or {}
+    prefetch_product_images(quotation.get("items") or [])
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,

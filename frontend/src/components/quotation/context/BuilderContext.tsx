@@ -57,6 +57,9 @@ export type BuilderApi = {
   referrers: Referrer[];
   categories: Category[];
   categoryById: Record<string, string>;
+  referenceLoading: boolean;
+  referenceError: string | null;
+  retryReferenceData: () => void;
 
   // Product picker
   q: string;
@@ -277,27 +280,30 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   // Referrer reference data + switcher sheet
   const [referrers, setReferrers] = useState<Referrer[]>([]);
   const [referrerSwitcherOpen, setReferrerSwitcherOpen] = useState(false);
+  const [referenceLoading, setReferenceLoading] = useState(true);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
+  const [referenceRetry, setReferenceRetry] = useState(0);
+  const retryReferenceData = useCallback(() => setReferenceRetry((value) => value + 1), []);
 
-  // ---------- Load reference data ----------
+// ---------- Load reference data ----------
   useEffect(() => {
-    // The initial reference-data batch already loaded the unfiltered category
-    // list. Avoid immediately requesting the same payload again on mount;
-    // only brand changes need a fresh category query.
-    if (!selectedBrandId) {
-      setCategoriesForRail(categories);
-      return;
-    }
+    const controller = new AbortController();
+    let current = true;
+    setReferenceLoading(true);
+    setReferenceError(null);
     (async () => {
       try {
+        const request = { floorId: "first-floor", signal: controller.signal };
         const [cs, cats, brs, rec, freq, recentQ, refs] = await Promise.all([
-          api.get<Customer[]>("/customers", { floorId: "first-floor" }),
-          api.get<Category[]>("/categories", { floorId: "first-floor" }),
-          api.get<Brand[]>("/brands", { floorId: "first-floor" }),
-          api.get<Product[]>("/products/recent", { floorId: "first-floor" }),
-          api.get<Product[]>("/products/frequent", { floorId: "first-floor" }),
-          api.get<RecentQuotation[]>("/quotations/recent?limit=10"),
-          api.get<Referrer[]>("/referrers"),
+          api.get<Customer[]>("/customers", request),
+          api.get<Category[]>("/categories", request),
+          api.get<Brand[]>("/brands", request),
+          api.get<Product[]>("/products/recent", request),
+          api.get<Product[]>("/products/frequent", request),
+          api.get<RecentQuotation[]>("/quotations/recent?limit=10", request),
+          api.get<Referrer[]>("/referrers", request),
         ]);
+        if (!current) return;
         setCustomers(cs);
         setCategories(cats);
         setBrands(brs);
@@ -309,8 +315,20 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         if (cs[0] && !history.state.customerId) {
           history.replace({ ...history.state, customerId: cs[0].id });
         }
-      } catch (e) {
+      } catch (e: any) {
+        if (!current) return;
+        // In React StrictMode the first mount is intentionally torn down.
+        // The API client may briefly deduplicate the replacement mount onto
+        // that just-aborted promise; schedule one fresh generation rather
+        // than leaving the builder empty.
+        if (e?.name === "AbortError") {
+          setTimeout(() => { if (current) retryReferenceData(); }, 0);
+          return;
+        }
+        setReferenceError(e?.detail || e?.message || "Could not load quotation data");
         console.warn("Failed to load builder reference data", e);
+      } finally {
+        if (current) setReferenceLoading(false);
       }
     })();
     // Load favourites from localStorage (web) — safe no-op elsewhere.
@@ -320,20 +338,40 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         if (raw) setFavouriteIds(JSON.parse(raw));
       } catch {}
     }
+    return () => {
+      current = false;
+      controller.abort();
+    };
+    // history is intentionally not a dependency: reference retries must not
+    // restart just because the undoable quotation document changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [referenceRetry]);
 
   // ---------- Re-fetch categories when brand changes ----------
   useEffect(() => {
+    if (!selectedBrandId) {
+      setCategoriesForRail(categories);
+      return;
+    }
+    const controller = new AbortController();
+    let current = true;
     (async () => {
       try {
         const cats = await api.get<Category[]>(
-          selectedBrandId ? `/categories?brand_id=${selectedBrandId}` : "/categories",
-          { floorId: "first-floor" },
+          `/categories?brand_id=${selectedBrandId}`,
+          { floorId: "first-floor", signal: controller.signal },
         );
-        setCategoriesForRail(cats);
-      } catch {}
+        if (current) setCategoriesForRail(cats);
+      } catch (e: any) {
+        if (current && e?.name !== "AbortError") {
+          console.warn("Failed to load brand categories", e);
+        }
+      }
     })();
+    return () => {
+      current = false;
+      controller.abort();
+    };
   }, [selectedBrandId, categories]);
 
   const setSelectedBrandId = useCallback((id: string | null) => {
@@ -356,7 +394,10 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
 
   // ---------- Product explorer fetch (page 1 on filter/search/sort change) ----------
   const PRODUCT_PAGE_SIZE = 60;
+  const productRequestGeneration = useRef(0);
   useEffect(() => {
+    const generation = ++productRequestGeneration.current;
+    const controller = new AbortController();
     let cancelled = false;
     setProductLoading(true);
     const t = setTimeout(async () => {
@@ -367,24 +408,27 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         const params = new URLSearchParams();
         params.set("limit", String(PRODUCT_PAGE_SIZE));
         params.set("skip", "0");
+        params.set("request_generation", String(generation));
         params.set("sort", sortKey);
         if (q) params.set("q", q);
         if (selectedBrandId) params.set("brand_id", selectedBrandId);
         if (selectedCategoryId) params.set("category_id", selectedCategoryId);
-        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`, { floorId: "first-floor" });
-        if (cancelled) return;
+        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`, { floorId: "first-floor", signal: controller.signal });
+        if (cancelled || generation !== productRequestGeneration.current) return;
         const items = res.items || [];
         setProducts(items);
         setProductTotal(res.total || 0);
         setProductHasMore(items.length < (res.total || 0));
       } catch (e) {
-        if (!cancelled) { setProducts([]); setProductTotal(0); setProductHasMore(false); console.warn("Product search failed", e); }
+        if (!cancelled && generation === productRequestGeneration.current && (e as any)?.name !== "AbortError") {
+          setProducts([]); setProductTotal(0); setProductHasMore(false); console.warn("Product search failed", e);
+        }
       } finally {
         clearTimeout(safety);
         if (!cancelled) setProductLoading(false);
       }
     }, 180);
-    return () => { cancelled = true; clearTimeout(t); };
+    return () => { cancelled = true; controller.abort(); clearTimeout(t); };
   }, [q, selectedBrandId, selectedCategoryId, sortKey]);
 
   // ---------- Infinite scroll — fetch the next page and append ----------
@@ -998,7 +1042,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   // actually depends on changes.
   const value: BuilderApi = useMemo(() => ({
     history, s,
-    customers, referrers, categories, categoryById,
+    customers, referrers, categories, categoryById, referenceLoading, referenceError, retryReferenceData,
     q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading,
     productHasMore, productLoadingMore, loadMoreProducts, recent, frequent, searchRef,
     brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
@@ -1026,7 +1070,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     assistantFocus, setAssistantFocus, assistantOpenMobile, setAssistantOpenMobile,
   }), [
     history, s,
-    customers, referrers, categories, categoryById,
+    customers, referrers, categories, categoryById, referenceLoading, referenceError, retryReferenceData,
     q, setQ, pickerTab, setPickerTab, pickerList, products, productTotal, productLoading,
     productHasMore, productLoadingMore, loadMoreProducts, recent, frequent, searchRef,
     brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,

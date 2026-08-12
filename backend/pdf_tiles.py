@@ -33,7 +33,8 @@ from reportlab.platypus import (
 )
 
 from pdf_generator import (
-    LOGO_PATH, LOGO_RATIO, _draw_footer, _draw_room_watermark, _escape, _img, _money, brand_partners_table,
+    LOGO_PATH, LOGO_RATIO, _draw_footer, _draw_room_watermark, _escape, _img, _money,
+    brand_partners_table, prefetch_product_images,
 )
 
 INK = colors.HexColor("#111111")
@@ -300,6 +301,7 @@ _SEL_COLS = [10 * mm, 46 * mm, 28 * mm, 52 * mm, 24 * mm, 34 * mm]  # SR/IMAGE/A
 
 def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
     b = branding or {}
+    prefetch_product_images(quotation.get("items") or [])
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4, leftMargin=8 * mm, rightMargin=8 * mm,
@@ -377,6 +379,7 @@ _QUO_COLS = [9 * mm, 25 * mm, 17 * mm, 33 * mm, 16 * mm, 18 * mm, 16 * mm, 16 * 
 
 def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
     b = branding or {}
+    prefetch_product_images(quotation.get("items") or [])
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4, leftMargin=8 * mm, rightMargin=8 * mm,

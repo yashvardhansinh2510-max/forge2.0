@@ -8,17 +8,17 @@ export function isSentryEnabled(): boolean {
 export function initSentry(): void {
   const dsn = (process.env.EXPO_PUBLIC_SENTRY_DSN || "").trim();
   if (!dsn) return;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Sentry = require("@sentry/react-native");
+  // Keep the monitoring SDK out of the startup bundle. When configured it is
+  // fetched after the shell can paint; when unconfigured no SDK bytes load.
+  void import("@sentry/react-native").then((Sentry) => {
     Sentry.init({
       dsn,
       environment: process.env.EXPO_PUBLIC_SENTRY_ENVIRONMENT || "production",
       tracesSampleRate: 0,
     });
-  } catch (e) {
+  }).catch((e) => {
     console.warn("[monitoring] Sentry configured but failed to initialize:", e);
-  }
+  });
 }
 
 /**

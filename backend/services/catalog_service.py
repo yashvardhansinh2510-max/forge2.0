@@ -537,7 +537,9 @@ async def list_categories_with_counts(brand_id: Optional[str], floor_ids: Option
     return out
 
 
-async def recent_or_frequent_products(user_id: str, *, limit: int, recent: bool) -> list[dict]:
+async def recent_or_frequent_products(
+    user_id: str, *, limit: int, recent: bool, floor_ids: Optional[list[str]] = None,
+) -> list[dict]:
     snapshot = await get_catalog_snapshot()
     rows = list(snapshot.usage_by_user.get(user_id, {}).values())
     if recent:
@@ -545,10 +547,12 @@ async def recent_or_frequent_products(user_id: str, *, limit: int, recent: bool)
     else:
         rows.sort(key=lambda row: -int(row.get("count", 0)))
     out = []
-    for usage in rows[:limit]:
+    for usage in rows:
         product = snapshot.product_by_id.get(usage.get("product_id"))
-        if product:
+        if product and (floor_ids is None or product.get("floor_id") in floor_ids):
             out.append(hydrate_product(product, snapshot))
+            if len(out) >= limit:
+                break
     return out
 
 

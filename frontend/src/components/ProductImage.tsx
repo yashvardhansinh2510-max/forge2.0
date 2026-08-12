@@ -19,7 +19,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image as ExpoImage, ImageContentFit } from "expo-image";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, Text, View, ViewStyle } from "react-native";
+import { Animated, Easing, PixelRatio, StyleSheet, Text, View, ViewStyle } from "react-native";
 
 import { colors, radius, spacing } from "@/src/theme/tokens";
 
@@ -49,14 +49,23 @@ const CACHE_POLICY = "memory-disk" as const;
 // Small transparent placeholder shown by expo-image while the real image
 // loads. Prevents a flash of layout-shifting default.
 const BLURHASH = "L6PZfSjE.AyE_3t7t7R**0o#DgR4";
+const SUPABASE_PUBLIC_OBJECT = "/storage/v1/object/public/";
+
+export function supabaseSizedImageUrl(uri: string, requestedWidth: number): string | null {
+  if (!uri.startsWith("http") || !uri.includes(SUPABASE_PUBLIC_OBJECT)) return null;
+  const width = requestedWidth <= 320 ? 320 : 640;
+  const rendered = uri.replace(SUPABASE_PUBLIC_OBJECT, "/storage/v1/render/image/public/");
+  const separator = rendered.includes("?") ? "&" : "?";
+  return `${rendered}${separator}width=${width}&resize=contain&quality=82`;
+}
 
 export function ProductImage({
   source,
   style,
-  // `scale-down` preserves the normalized frame for good assets but refuses
-  // to enlarge thumbnail-grade sources, which is the only honest way to keep
-  // low-resolution supplier artwork from looking artificially blurry.
-  contentFit = "scale-down",
+  // Product frames are landscape, but their contents must remain upright.
+  // `contain` preserves the source aspect ratio without the old runtime
+  // portrait rotation that made basins and tile samples appear sideways.
+  contentFit = "contain",
   frameInset = spacing.s4,
   testID,
   accessibilityLabel = "Product image",
@@ -64,6 +73,7 @@ export function ProductImage({
   borderRadius,
   fallbackLabel,
 }: ProductImageProps) {
+  const [frameWidth, setFrameWidth] = useState(0);
   // Normalise `source` into an ordered list of candidates. Empty / null entries
   // are stripped so we don't waste a load attempt on them.
   const candidates: string[] = useMemo(() => {
@@ -78,16 +88,19 @@ export function ProductImage({
   // identity. Only remove duplicate candidates.
   const sanitizedCandidates: string[] = useMemo(() => {
     const seen = new Set<string>();
-    return candidates.filter((uri) => !seen.has(uri) && seen.add(uri));
-  }, [candidates]);
+    const requestedWidth = Math.max(1, frameWidth || 160) * PixelRatio.get();
+    const expanded = candidates.flatMap((uri) => {
+      const sized = supabaseSizedImageUrl(uri, requestedWidth);
+      return sized ? [sized, uri] : [uri];
+    });
+    return expanded.filter((uri) => !seen.has(uri) && seen.add(uri));
+  }, [candidates, frameWidth]);
 
   // Track the current candidate index. On error we advance; once we run out
   // of candidates we render the fallback glyph.
   const [idx, setIdx] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(sanitizedCandidates.length === 0);
-  const [portrait, setPortrait] = useState(false);
-  const [innerSize, setInnerSize] = useState({ width: 0, height: 0 });
   const candidateKey = sanitizedCandidates.join("|");
 
   // Reset when the candidate list changes (e.g. product swap).
@@ -95,7 +108,6 @@ export function ProductImage({
     setIdx(0);
     setLoaded(false);
     setFailed(sanitizedCandidates.length === 0);
-    setPortrait(false);
   }, [candidateKey, sanitizedCandidates.length]);
 
   const current = sanitizedCandidates[idx];
@@ -107,13 +119,13 @@ export function ProductImage({
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="image"
+      onLayout={(event) => {
+        const width = Math.round(event.nativeEvent.layout.width);
+        if (width > 0 && width !== frameWidth) setFrameWidth(width);
+      }}
     >
       <View
         style={[styles.inner, { margin: Math.max(0, frameInset), borderRadius: Math.max(0, finalRadius - frameInset) }]}
-        onLayout={(event) => {
-          const { width, height } = event.nativeEvent.layout;
-          if (width !== innerSize.width || height !== innerSize.height) setInnerSize({ width, height });
-        }}
       >
         {failed || !current ? (
           <FallbackGlyph label={fallbackLabel} />
@@ -123,16 +135,7 @@ export function ProductImage({
             <ExpoImage
               source={{ uri: current }}
               style={[
-                portrait && innerSize.width > 0 && innerSize.height > 0
-                  ? {
-                      position: "absolute",
-                      width: innerSize.height,
-                      height: innerSize.width,
-                      left: (innerSize.width - innerSize.height) / 2,
-                      top: (innerSize.height - innerSize.width) / 2,
-                      transform: [{ rotate: "90deg" }],
-                    }
-                  : StyleSheet.absoluteFill,
+                StyleSheet.absoluteFill,
                 { borderRadius: Math.max(0, finalRadius - frameInset) },
               ]}
               contentFit={contentFit}
@@ -142,19 +145,12 @@ export function ProductImage({
               // recycled thumbnail runs a transition animation.
               transition={0}
               recyclingKey={current}
-              onLoad={(event: any) => {
-                const source = event?.source || event?.nativeEvent?.source;
-                const width = Number(source?.width || 0);
-                const height = Number(source?.height || 0);
-                if (width > 0 && height > 0) setPortrait(height > width);
-                setLoaded(true);
-              }}
+              onLoad={() => setLoaded(true)}
               onError={() => {
                 // Advance to next candidate, or give up.
                 if (idx + 1 < sanitizedCandidates.length) {
                   setIdx(idx + 1);
                   setLoaded(false);
-                  setPortrait(false);
                 } else {
                   setFailed(true);
                 }

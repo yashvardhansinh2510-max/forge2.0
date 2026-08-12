@@ -69,6 +69,28 @@ def test_size_is_a_search_field():
     assert "size" in _SEARCH_FIELDS
 
 
+def test_recent_products_skip_usage_from_other_floors(monkeypatch):
+    products = [
+        {"id": "tile", "sku": "T-1", "floor_id": "ground-floor"},
+        {"id": "basin", "sku": "S-1", "floor_id": "first-floor"},
+    ]
+    usage = [
+        {"user_id": "u1", "product_id": "tile", "count": 8, "last_used_at": "2026-08-13T12:00:00Z"},
+        {"user_id": "u1", "product_id": "basin", "count": 2, "last_used_at": "2026-08-12T12:00:00Z"},
+    ]
+    snapshot = _build_snapshot(products, [], [], [], usage)
+
+    async def fake_get_catalog_snapshot():
+        return snapshot
+
+    monkeypatch.setattr(catalog_service, "get_catalog_snapshot", fake_get_catalog_snapshot)
+    result = asyncio.run(catalog_service.recent_or_frequent_products(
+        "u1", limit=12, recent=True, floor_ids=["first-floor"],
+    ))
+
+    assert [row["id"] for row in result] == ["basin"]
+
+
 def test_facet_buckets_includes_sizes():
     import asyncio
     from unittest.mock import AsyncMock, patch

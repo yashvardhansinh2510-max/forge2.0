@@ -4,7 +4,7 @@
 // pagination/filter/cache contract. Requests are de-duplicated, successful
 // pages/reference data are cached briefly, and pagination is merged by product
 // identity so repeated onEndReached events cannot introduce duplicates.
-import { api } from "@/src/api/client";
+import { api, clearApiResponseCache } from "@/src/api/client";
 
 export const CATALOG_PAGE_SIZE = 60;
 export type CatalogSort = "popular" | "recent" | "price_asc" | "price_desc" | "name";
@@ -22,9 +22,6 @@ export type CatalogQuery = {
 
 export type CatalogPage<T> = { total: number; items: T[] };
 
-type CacheEntry = { expiresAt: number; value: unknown };
-const pageCache = new Map<string, CacheEntry>();
-const pending = new Map<string, Promise<unknown>>();
 const PAGE_TTL_MS = 60_000;
 const REFERENCE_TTL_MS = 5 * 60_000;
 
@@ -42,18 +39,9 @@ function stableParams(query: CatalogQuery, skip: number, limit: number): URLSear
 }
 
 async function cachedGet<T>(path: string, ttlMs: number): Promise<T> {
-  const cached = pageCache.get(path);
-  if (cached && cached.expiresAt > Date.now()) return cached.value as T;
-  const existing = pending.get(path);
-  if (existing) return existing as Promise<T>;
-  const request = api.get<T>(path)
-    .then((value) => {
-      pageCache.set(path, { value, expiresAt: Date.now() + ttlMs });
-      return value;
-    })
-    .finally(() => pending.delete(path));
-  pending.set(path, request);
-  return request;
+  // The API cache includes the active floor in its key. A path-only cache here
+  // used to show the previous floor's catalog after switching business units.
+  return api.get<T>(path, { cacheMs: ttlMs });
 }
 
 export function catalogQueryKey(query: CatalogQuery): string {
@@ -95,6 +83,5 @@ export const catalogReferences = {
 };
 
 export function clearCatalogCache(): void {
-  pageCache.clear();
-  pending.clear();
+  clearApiResponseCache();
 }

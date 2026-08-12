@@ -9,7 +9,7 @@
 //   * else           → Mobile: Quotation only + FAB → picker sheet, product modal
 // -----------------------------------------------------------------------------
 import { useEffect, useState } from "react";
-import { KeyboardAvoidingView, LayoutChangeEvent, Platform, StyleSheet, View } from "react-native";
+import { ActivityIndicator, KeyboardAvoidingView, LayoutChangeEvent, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors } from "@/src/theme/tokens";
 import { storage } from "@/src/utils/storage";
@@ -88,6 +88,28 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
     >
       <BuilderTopbar onBack={onBack} isPhone={isPhone} isDesktop={threePane} />
 
+      {b.referenceError ? (
+        <View style={styles.referenceError} testID="builder-reference-error">
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.referenceErrorTitle}>Quotation data did not load</Text>
+            <Text style={styles.referenceErrorBody} numberOfLines={2}>{b.referenceError}</Text>
+          </View>
+          <Pressable
+            onPress={b.retryReferenceData}
+            style={({ pressed }) => [styles.retryButton, pressed && { opacity: 0.72 }]}
+            accessibilityRole="button"
+            testID="builder-reference-retry"
+          >
+            <Text style={styles.retryLabel}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : b.referenceLoading ? (
+        <View style={styles.referenceLoading} testID="builder-reference-loading">
+          <ActivityIndicator size="small" color={colors.onSurfaceMuted} />
+          <Text style={styles.referenceLoadingText}>Loading brands and customers…</Text>
+        </View>
+      ) : null}
+
       {w === 0 ? (
         <View style={{ flex: 1, backgroundColor: colors.surface }} />
       ) : threePane ? (
@@ -137,3 +159,24 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
     </KeyboardAvoidingView>
   );
 }
+
+const styles = StyleSheet.create({
+  referenceLoading: {
+    minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingHorizontal: 16, backgroundColor: colors.surfaceSecondary,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+  },
+  referenceLoadingText: { fontSize: 12, color: colors.onSurfaceMuted },
+  referenceError: {
+    minHeight: 56, flexDirection: "row", alignItems: "center", gap: 12,
+    paddingHorizontal: 16, paddingVertical: 6, backgroundColor: colors.surfaceSecondary,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.error,
+  },
+  referenceErrorTitle: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  referenceErrorBody: { fontSize: 11, color: colors.onSurfaceMuted, marginTop: 2 },
+  retryButton: {
+    minWidth: 72, minHeight: 44, paddingHorizontal: 14, borderRadius: 10,
+    alignItems: "center", justifyContent: "center", backgroundColor: colors.onSurface,
+  },
+  retryLabel: { fontSize: 13, fontWeight: "700", color: colors.surface },
+});

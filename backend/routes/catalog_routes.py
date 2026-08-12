@@ -348,7 +348,7 @@ async def recent_products(
 ):
     """Products this user has recently added to a quotation."""
     return await catalog_service.recent_or_frequent_products(
-        user.id, limit=limit, recent=True,
+        user.id, limit=limit, recent=True, floor_ids=floor_scope_ids(user),
     )
 
 
@@ -359,7 +359,7 @@ async def frequent_products(
 ):
     """Products this user adds most often."""
     return await catalog_service.recent_or_frequent_products(
-        user.id, limit=limit, recent=False,
+        user.id, limit=limit, recent=False, floor_ids=floor_scope_ids(user),
     )
 
 

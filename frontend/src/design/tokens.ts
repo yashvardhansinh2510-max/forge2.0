@@ -79,13 +79,13 @@ export const color = {
 
 // ── Fonts ────────────────────────────────────────────────────────────────────
 export const font = {
-  regular: "Inter-Regular",
-  medium: "Inter-Medium",
-  semibold: "Inter-SemiBold",
-  bold: "Inter-Bold",
-  display: "Fraunces-Light",        // the single serif voice — greetings, auth
-  displayItalic: "Fraunces-LightItalic",
-  serif: "Fraunces-Regular",
+  regular: Platform.OS === "web" ? "system-ui" : "Inter-Regular",
+  medium: Platform.OS === "web" ? "system-ui" : "Inter-Medium",
+  semibold: Platform.OS === "web" ? "system-ui" : "Inter-SemiBold",
+  bold: Platform.OS === "web" ? "system-ui" : "Inter-Bold",
+  display: Platform.OS === "web" ? "Georgia" : "Fraunces-Light",        // the single serif voice — greetings, auth
+  displayItalic: Platform.OS === "web" ? "Georgia" : "Fraunces-LightItalic",
+  serif: Platform.OS === "web" ? "Georgia" : "Fraunces-Regular",
   mono: Platform.select({ ios: "Menlo", android: "monospace", default: "ui-monospace" }) as string,
 } as const;
 
