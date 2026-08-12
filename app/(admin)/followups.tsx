@@ -15,7 +15,7 @@ import {
   StyleSheet, Text, TextInput, useWindowDimensions, View,
   KeyboardAvoidingView,
 } from "react-native";
-import { Swipeable } from "react-native-gesture-handler";
+import { Swipeable } from "@/src/components/Swipeable";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";

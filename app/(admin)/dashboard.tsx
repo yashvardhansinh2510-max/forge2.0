@@ -5,7 +5,6 @@
 // column, and nothing else.
 // ─────────────────────────────────────────────────────────────────────────────
 import { Feather } from "@expo/vector-icons";
-import dayjs from "dayjs";
 import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Linking, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
@@ -40,6 +39,10 @@ function greeting(): string {
   if (h < 17) return "Good afternoon";
   return "Good evening";
 }
+
+const todayLabel = () => new Intl.DateTimeFormat("en-IN", {
+  weekday: "long", day: "numeric", month: "long",
+}).format(new Date());
 
 // ── Queue row — hover reveals actions on desktop; touch gets the suggested
 // channel + done, always visible. One contextual action, not an icon pile.
@@ -366,7 +369,7 @@ export default function Today() {
         {/* ── Hero ── */}
         <FadeIn>
           <View style={{ paddingTop: isPhone ? space.x6 : space.x12, paddingBottom: isPhone ? space.x6 : space.x10, gap: 10 }}>
-            <Txt v="eyebrow">{dayjs().format("dddd, D MMMM")}</Txt>
+            <Txt v="eyebrow">{todayLabel()}</Txt>
             <Txt v="display" style={isPhone ? { fontSize: 28, lineHeight: 36 } : undefined}>
               {greeting()}, {name}.
             </Txt>
