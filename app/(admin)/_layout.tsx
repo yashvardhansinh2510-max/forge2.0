@@ -489,7 +489,6 @@ function PhoneBar() {
   return (
     <>
       <View style={styles.phoneBar}>
-        <FloorSwitcher compact />
         {phoneTabs.map((t) => <Tab key={t.href} item={t} />)}
         <View style={styles.fabSlot}>
           {fabAction ? (
@@ -531,6 +530,9 @@ function PhoneBar() {
           <Feather name="search" size={17} color={color.inkMid} />
           <Text style={styles.moreLabel}>Search everything</Text>
         </Pressable>
+        <View style={{ paddingVertical: 6 }}>
+          <FloorSwitcher />
+        </View>
         <Hairline style={{ marginVertical: 6 }} />
         {hasAccess("quotations") && tilesNav.items.map((n) => (
           <Pressable
@@ -583,7 +585,6 @@ function PhoneBar() {
 // ── Layout root ─────────────────────────────────────────────────────────────
 export default function AdminLayout() {
   const { isPhone, isTablet } = useBp();
-  const { selectedFloorId } = useFloorAccess();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
@@ -609,9 +610,7 @@ export default function AdminLayout() {
           style={{ backgroundColor: color.canvas }}
         >
           <View style={{ flex: 1 }}>
-            {/* A floor key remounts the active route under the new request
-                scope, including screens that do not consume useFloorAccess. */}
-            <Slot key={`floor-${selectedFloorId || "resolving"}`} />
+            <Slot />
           </View>
           <SafeAreaView
             edges={["bottom"]}
