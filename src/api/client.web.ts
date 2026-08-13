@@ -72,9 +72,18 @@ async function request<T>(method: string, path: string, body?: unknown, opts?: R
       method, headers, body: body ? JSON.stringify(body) : undefined, signal: controller.signal,
     });
     const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
+    let data: unknown = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        if (response.ok) throw new ApiError(502, "The server returned an invalid response. Please try again.");
+      }
+    }
     if (!response.ok) {
-      const detail = data?.detail || `HTTP ${response.status}`;
+      const detail = data && typeof data === "object" && "detail" in data
+        ? (data as { detail?: unknown }).detail
+        : text || `HTTP ${response.status}`;
       throw new ApiError(response.status, typeof detail === "string" ? detail : JSON.stringify(detail));
     }
     return data as T;
