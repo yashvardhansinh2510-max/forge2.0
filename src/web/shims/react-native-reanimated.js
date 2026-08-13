@@ -12,6 +12,7 @@ const Animated = Object.assign({}, RN.Animated, {
   Text: RN.Text,
   Image: RN.Image,
   ScrollView: RN.ScrollView,
+  FlatList: RN.FlatList,
   createAnimatedComponent: (Component) => Component,
 });
 
