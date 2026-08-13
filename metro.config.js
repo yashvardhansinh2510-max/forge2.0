@@ -27,7 +27,6 @@ const webOnlyShims = {
   "react-native-reanimated": path.join(__dirname, "src/web/shims/react-native-reanimated.js"),
   "react-native-gesture-handler": path.join(__dirname, "src/web/shims/react-native-gesture-handler.js"),
   "@sentry/react-native": path.join(__dirname, "src/web/shims/sentry-react-native.js"),
-  "@expo/vector-icons": path.join(__dirname, "src/web/shims/expo-vector-icons.js"),
 };
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (platform === "web" && webOnlyShims[moduleName]) {

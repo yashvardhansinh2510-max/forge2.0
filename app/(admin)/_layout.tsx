@@ -161,7 +161,7 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
   const currentLabel = selected ? floorDisplayLabel(selected) : "Select floor";
   return (
     <Menu align={compact ? "right" : "left"} items={items}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, height: 40, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: layout.hairline, borderColor: color.line }}>
+      <View testID="floor-switcher" style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, height: 40, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: layout.hairline, borderColor: color.line }}>
         <Feather name="layers" size={15} color={color.brass} />
         {!compact ? <Text numberOfLines={1} style={{ flex: 1, fontFamily: font.medium, fontSize: 12.5, color: color.ink }}>{currentLabel}</Text> : null}
         <Feather name="chevron-down" size={14} color={color.inkSoft} />
@@ -489,6 +489,7 @@ function PhoneBar() {
   return (
     <>
       <View style={styles.phoneBar}>
+        <FloorSwitcher compact />
         {phoneTabs.map((t) => <Tab key={t.href} item={t} />)}
         <View style={styles.fabSlot}>
           {fabAction ? (
@@ -530,7 +531,6 @@ function PhoneBar() {
           <Feather name="search" size={17} color={color.inkMid} />
           <Text style={styles.moreLabel}>Search everything</Text>
         </Pressable>
-        <View style={{ paddingVertical: 6 }}><FloorSwitcher /></View>
         <Hairline style={{ marginVertical: 6 }} />
         {hasAccess("quotations") && tilesNav.items.map((n) => (
           <Pressable
