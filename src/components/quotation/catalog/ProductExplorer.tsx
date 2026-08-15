@@ -550,7 +550,7 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   skeletonMedia: {
-    aspectRatio: 1, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary,
+    aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary,
   },
   skeletonLine: {
     height: 11, borderRadius: 4, backgroundColor: colors.surfaceTertiary,

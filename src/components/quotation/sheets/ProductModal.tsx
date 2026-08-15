@@ -440,7 +440,7 @@ const styles = StyleSheet.create({
 
   hero: { width: "100%", aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   repImageNote: { fontSize: 10, color: colors.onSurfaceMuted, fontStyle: "italic", marginTop: -4 },
-  thumb: { width: 52, height: 52, borderRadius: 8, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
+  thumb: { width: 52, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
   thumbActive: { borderWidth: 2, borderColor: ds.brass },
   zoomHint: {
     position: "absolute", bottom: 8, right: 8, width: 26, height: 26, borderRadius: 999,

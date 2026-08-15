@@ -194,7 +194,7 @@ const styles = StyleSheet.create({
   cardPressed: { opacity: 0.82, borderColor: colors.brand },
   image: { width: "100%", aspectRatio: TILE_IMAGE_ASPECT_RATIO, borderRadius: 0, backgroundColor: colors.surfaceTertiary },
   phoneCard: { flexDirection: "row", alignItems: "stretch", minHeight: 100 },
-  phoneImage: { width: 128, height: 80, aspectRatio: undefined, alignSelf: "center", marginLeft: spacing.sm, borderRadius: radius.sm },
+  phoneImage: { width: 128, aspectRatio: TILE_IMAGE_ASPECT_RATIO, alignSelf: "center", marginLeft: spacing.sm, borderRadius: radius.sm },
   cardBody: { flex: 1, minWidth: 0, padding: spacing.sm, gap: 3 },
   brand: { fontSize: 10, fontWeight: "700", letterSpacing: 0.45, textTransform: "uppercase", color: colors.onSurfaceMuted },
   name: { minHeight: 34, fontSize: 13, lineHeight: 17, fontWeight: "700", color: colors.onSurface },
