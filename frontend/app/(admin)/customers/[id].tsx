@@ -24,7 +24,7 @@ import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
 import { canManageDestructiveData } from "@/src/constants/roles";
-import { colors, icon as iconSize, money, moneyShort, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, icon as iconSize, money, moneyShort, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing, type } from "@/src/theme/tokens";
 import {
   HistorySheet, MovableItem, MoveStageSheet, STAGE_TONE, TransferSheet,
 } from "@/src/components/purchases/MovementEngine";
@@ -867,7 +867,7 @@ export default function CustomerDetail() {
                       <ProductImage
                         source={p.image}
                         style={[styles.prodThumb, !isDesktop ? styles.prodThumbMobile : {}]}
-                        contentFit="cover"
+                        contentFit="contain"
                         disableSkeleton
                         fallbackLabel={p.sku}
                         borderRadius={6}
@@ -1055,10 +1055,10 @@ const styles = StyleSheet.create({
   barTrack: { height: 6, borderRadius: 3, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
   barFill: { height: 6, borderRadius: 3 },
   prodThumb: {
-    width: 36, height: 36, borderRadius: 6, backgroundColor: colors.surfaceTertiary,
+    width: 36, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 6, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
-  prodThumbMobile: { width: 52, height: 52 },
+  prodThumbMobile: { width: 52, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
   stagePillSm: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
   itemActionBtn: {
     width: 44, height: 44, borderRadius: radius.sm, alignItems: "center", justifyContent: "center",

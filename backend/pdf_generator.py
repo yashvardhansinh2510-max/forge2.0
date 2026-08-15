@@ -65,7 +65,15 @@ TOP_MARGIN_MM = 13.0
 BOTTOM_MARGIN_MM = 22.0
 AREA_HEADER_BLOCK_MM = 21.0     # brand/area title block + rule + spacers above the table
 ITEM_HEADER_ROW_MM = 10.0
-ITEM_ROW_MM = 16.0
+# The printable part of the standard quotation image column is 27 mm wide
+# (33 mm column less 3 mm padding on either side).  Keep every product-image
+# target at 16:10 and leave enough row height for that box plus vertical
+# padding.  Source images are still contained inside this target, never
+# cropped or rotated to fill it.
+PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10
+STANDARD_PRODUCT_IMAGE_WIDTH_MM = 27.0
+STANDARD_PRODUCT_IMAGE_HEIGHT_MM = STANDARD_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
+ITEM_ROW_MM = 21.0
 ITEM_TOTAL_ROW_MM = 8.0
 SUMMARY_HEADER_ROW_MM = 7.0
 SUMMARY_ROW_MM = 5.6
@@ -162,11 +170,16 @@ def contain_box(
     )
 
 
-def _img(url: str | None, width_mm: float = 13, height_mm: float = 13) -> Flowable:
+def _img(
+    url: str | None,
+    width_mm: float = STANDARD_PRODUCT_IMAGE_WIDTH_MM,
+    height_mm: float = STANDARD_PRODUCT_IMAGE_HEIGHT_MM,
+) -> Flowable:
     """Render the supplied product image inside the official narrow image cell.
 
-    Sized to the largest centered contain box that fits inside the landscape
-    cell without stretching, cropping, or changing the product's orientation.
+    Sized to the largest centered contain box that fits inside a 16:10
+    landscape cell without stretching, cropping, or changing the product's
+    orientation.
     """
     if url and str(url).startswith(("https://", "http://")):
         data = _remote_image_bytes(str(url))

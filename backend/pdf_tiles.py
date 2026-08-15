@@ -34,7 +34,7 @@ from reportlab.platypus import (
 
 from pdf_generator import (
     LOGO_PATH, LOGO_RATIO, _draw_footer, _draw_room_watermark, _escape, _img, _money,
-    brand_partners_table, prefetch_product_images,
+    PRODUCT_IMAGE_ASPECT_RATIO, brand_partners_table, prefetch_product_images,
 )
 
 INK = colors.HexColor("#111111")
@@ -297,6 +297,9 @@ def _price_summary_table(total_boxes: float, subtotal: float, transportation_fee
 # TILES SELECTION
 # ===========================================================================
 _SEL_COLS = [10 * mm, 46 * mm, 28 * mm, 52 * mm, 24 * mm, 34 * mm]  # SR/IMAGE/AREA/DETAIL/SIZE/RATE-SQFT
+# Image column width less the table's 2 mm padding on each side.
+SELECTION_PRODUCT_IMAGE_WIDTH_MM = 42.0
+SELECTION_PRODUCT_IMAGE_HEIGHT_MM = SELECTION_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
 
 
 def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
@@ -341,7 +344,11 @@ def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | 
     for index, item in enumerate(items, 1):
         rows.append([
             Paragraph(str(index), styles["cell"]),
-            _img(item.get("image"), width_mm=42, height_mm=24),
+            _img(
+                item.get("image"),
+                width_mm=SELECTION_PRODUCT_IMAGE_WIDTH_MM,
+                height_mm=SELECTION_PRODUCT_IMAGE_HEIGHT_MM,
+            ),
             Paragraph(_escape(item.get("room") or ""), styles["cell"]),
             Paragraph(_escape(item.get("name") or ""), styles["cellBold"]),
             Paragraph(_escape(item.get("size") or ""), styles["cell"]),
@@ -375,6 +382,9 @@ def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | 
 # SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
 # RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — sums to PAGE_W_MM (194mm).
 _QUO_COLS = [9 * mm, 25 * mm, 17 * mm, 33 * mm, 16 * mm, 18 * mm, 16 * mm, 16 * mm, 14 * mm, 13 * mm, 23 * mm]
+# Image column width less the table's 2 mm padding on each side.
+QUOTATION_PRODUCT_IMAGE_WIDTH_MM = 21.0
+QUOTATION_PRODUCT_IMAGE_HEIGHT_MM = QUOTATION_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
 
 
 def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | None = None) -> bytes:
@@ -438,7 +448,11 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
         quantity_unit = item.get("quantity_unit") or "Box"
         rows.append([
             Paragraph(str(index), styles["cell"]),
-            _img(item.get("image"), width_mm=22, height_mm=18),
+            _img(
+                item.get("image"),
+                width_mm=QUOTATION_PRODUCT_IMAGE_WIDTH_MM,
+                height_mm=QUOTATION_PRODUCT_IMAGE_HEIGHT_MM,
+            ),
             Paragraph(_escape(item.get("room") or ""), styles["cell"]),
             Paragraph(_escape(item.get("name") or ""), styles["cellBold"]),
             Paragraph(_escape(item.get("size") or ""), styles["cell"]),
@@ -465,7 +479,12 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
     ]
     for r in range(2, len(rows) - 1, 2):  # zebra every 2nd item row (not the trailing TOTAL row)
         style_cmds.append(("BACKGROUND", (0, r), (-1, r), ZEBRA))
-    table = Table(rows, colWidths=_QUO_COLS, repeatRows=1)
+    table = Table(
+        rows,
+        colWidths=_QUO_COLS,
+        rowHeights=[9 * mm] + [19 * mm] * len(items) + [10 * mm],
+        repeatRows=1,
+    )
     table.setStyle(TableStyle(style_cmds))
     story.append(table)
 

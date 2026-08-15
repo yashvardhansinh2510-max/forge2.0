@@ -19,6 +19,7 @@ from media_storage import get_media_storage, StorageError
 from media_storage.factory import public_bucket, private_bucket
 from models import ProductMedia, MediaSourceType, MediaRole, MediaQuality, UserPublic
 from services.activity_log import log_event
+from services.product_image_normalizer import normalize_product_image
 
 logger = logging.getLogger("forge.media_service")
 
@@ -111,6 +112,9 @@ async def upload_and_register(
     just-uploaded object rather than leaving an untracked file behind in
     Supabase with no `product_media` row pointing at it.
     """
+    # Every ingestion path (manual upload, replacement and catalog import)
+    # passes here, so normalize once before hashing/deduplicating/storing.
+    data, mime = normalize_product_image(data, mime)
     sha1 = hashlib.sha1(data).hexdigest()
 
     # Dedupe check

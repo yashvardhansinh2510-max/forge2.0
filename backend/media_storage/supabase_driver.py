@@ -108,6 +108,12 @@ class SupabaseStorageDriver(MediaStorage):
 
     # ---- reads -----------------------------------------------------------
 
+    async def download(self, *, bucket: str, key: str) -> bytes:
+        resp = await self._request("GET", self._object_url(bucket, key), headers=self._headers())
+        if resp.status_code >= 300:
+            raise StorageError(f"Supabase download failed [{resp.status_code}]: {resp.text}")
+        return resp.content
+
     async def exists(self, *, bucket: str, key: str) -> bool:
         # HEAD isn't officially documented — use the info endpoint instead.
         info_url = f"{self.url}/storage/v1/object/info/{'authenticated' if not self._is_public(bucket) else 'public'}/{bucket}/{key}"

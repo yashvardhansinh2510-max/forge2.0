@@ -21,7 +21,7 @@ import { BottomSheet } from "@/src/components/BottomSheet";
 import { Chip, EmptyState, IconButton, PriceTag, ScreenTitle, SegmentedControl, Skeleton, Button } from "@/src/components/ui";
 import { catalogReferences, fetchCatalogPage } from "@/src/services/catalogService";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing, type } from "@/src/theme/tokens";
 import { supplierLogoFor } from "@/src/design/BrandLogo";
 import { isNearScrollEnd } from "@/src/utils/scrollEnd";
 import { Image as ExpoImage } from "expo-image";
@@ -776,10 +776,10 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
   imageWrap: {
-    width: "100%", aspectRatio: 1, backgroundColor: colors.surfaceTertiary, position: "relative",
+    width: "100%", aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, backgroundColor: colors.surfaceTertiary, position: "relative",
   },
   imageWrapTile: {
-    aspectRatio: 16 / 10,
+    aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO,
   },
   brandOverlay: {
     position: "absolute", top: 10, left: 10,

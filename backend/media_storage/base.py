@@ -53,6 +53,10 @@ class MediaStorage(ABC):
     # ---- reads -----------------------------------------------------------
 
     @abstractmethod
+    async def download(self, *, bucket: str, key: str) -> bytes:
+        """Return raw object bytes using the storage provider credentials."""
+
+    @abstractmethod
     async def exists(self, *, bucket: str, key: str) -> bool: ...
 
     @abstractmethod

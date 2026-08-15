@@ -49,8 +49,8 @@ def test_pdf_img_uses_contain_fit_without_rotating_portrait_source(monkeypatch):
 
     image = pdf_generator._img("https://example.test/product.png")
 
-    assert image.drawWidth == 5.25 * pdf_generator.mm
-    assert image.drawHeight == 10.5 * pdf_generator.mm
+    assert image.drawWidth == 7.1875 * pdf_generator.mm
+    assert image.drawHeight == 14.375 * pdf_generator.mm
     assert image.hAlign == "CENTER"
 
 
@@ -72,13 +72,18 @@ def test_exif_orientation_eight_is_honored_once():
         assert image.size == (120, 60)
 
 
-def test_standard_selection_and_tiles_quotation_pdfs_keep_products_upright(monkeypatch):
-    """All variants use landscape cells while preserving portrait content."""
+def test_standard_selection_and_tiles_quotation_pdfs_use_16_by_10_cells_and_keep_products_upright(monkeypatch):
+    """All variants use landscape target cells while preserving portrait content."""
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
     original_img = pdf_generator._img
     rendered_sizes: list[tuple[float, float]] = []
+    requested_boxes: list[tuple[float, float]] = []
 
     def capture_img(*args, **kwargs):
+        requested_boxes.append((
+            kwargs.get("width_mm", pdf_generator.STANDARD_PRODUCT_IMAGE_WIDTH_MM),
+            kwargs.get("height_mm", pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM),
+        ))
         image = original_img(*args, **kwargs)
         rendered_sizes.append((image.drawWidth, image.drawHeight))
         return image
@@ -98,6 +103,12 @@ def test_standard_selection_and_tiles_quotation_pdfs_keep_products_upright(monke
     assert pdf_tiles.build_tiles_selection_pdf(tiles, {"name": "PDF Test"}).startswith(b"%PDF-")
     assert pdf_tiles.build_tiles_quotation_pdf(tiles, {"name": "PDF Test"}).startswith(b"%PDF-")
     assert len(rendered_sizes) == 3
+    assert requested_boxes == [
+        (pdf_generator.STANDARD_PRODUCT_IMAGE_WIDTH_MM, pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM),
+        (pdf_tiles.SELECTION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.SELECTION_PRODUCT_IMAGE_HEIGHT_MM),
+        (pdf_tiles.QUOTATION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.QUOTATION_PRODUCT_IMAGE_HEIGHT_MM),
+    ]
+    assert all(width / height == pdf_generator.PRODUCT_IMAGE_ASPECT_RATIO for width, height in requested_boxes)
     assert all(height > width for width, height in rendered_sizes)
 
 

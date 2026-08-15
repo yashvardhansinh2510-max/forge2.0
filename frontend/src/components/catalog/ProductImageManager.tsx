@@ -5,7 +5,7 @@
 // automatic catalog-cache refresh). This component is the first UI consumer
 // of that pipeline — no backend redesign, purely wiring.
 //
-// Flow: pick from library -> native crop (ImagePicker allowsEditing) ->
+// Flow: pick from library -> native 16:10 crop (ImagePicker allowsEditing) ->
 // preview screen (Save / choose another / cancel) -> multipart upload.
 // "Replace" reuses the exact same pick+preview flow, just tagged with the
 // media id being swapped so the backend keeps its role/primary/position.
@@ -18,7 +18,7 @@ import { api, getToken } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { Badge, Button, ConfirmDialog, EmptyState, Sheet } from "@/src/components/ds";
 import { ProductImage } from "@/src/components/ProductImage";
-import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing, type } from "@/src/theme/tokens";
 import { uriToBlob } from "@/src/utils/uriToBlob";
 
 type MediaItem = {
@@ -66,7 +66,7 @@ export function ProductImageManagerBody({
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) { toast.show("Photo library permission is needed"); return; }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"], quality: 0.85, allowsEditing: true, aspect: [1, 1],
+      mediaTypes: ["images"], quality: 0.85, allowsEditing: true, aspect: [16, 10],
     });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
@@ -244,14 +244,14 @@ export function ProductImageManager({
 const styles = StyleSheet.create({
   previewWrap: { padding: spacing.lg, gap: spacing.lg, alignItems: "center" },
   previewImage: {
-    width: 220, height: 220, borderRadius: radius.md, overflow: "hidden",
+    width: 220, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.md, overflow: "hidden",
     backgroundColor: colors.surfaceTertiary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
   previewActions: { flexDirection: "row", gap: spacing.sm, width: "100%" },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   tile: { gap: 6 },
   thumbWrap: {
-    aspectRatio: 1, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary,
+    aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     alignItems: "center", justifyContent: "center", position: "relative",
   },

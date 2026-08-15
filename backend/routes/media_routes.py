@@ -13,6 +13,7 @@ from auth import floor_inherit, floor_query, floor_scope_ids, get_current_user, 
 from db import db
 from models import ProductMedia, UserPublic
 from services import catalog_service, media_service
+from services.product_image_normalizer import ProductImageNormalizationError
 
 logger = logging.getLogger("forge.media_routes")
 router = APIRouter(tags=["media"])
@@ -123,14 +124,17 @@ async def upload_product_media(
     slug, brand_id, family_key, floor_id = await _brand_slug_for_product(product_id, user)
     data = await _read_bounded_upload(file)
     mime = file.content_type or "application/octet-stream"
-    doc = await media_service.upload_and_register(
-        data=data, mime=mime, brand_slug=slug,
-        product_id=product_id, family_key=family_key, brand_id=brand_id,
-        floor_id=floor_id,
-        source_type=source_type, role=role,  # type: ignore[arg-type]
-        is_primary=is_primary, sort_order=sort_order,
-        uploaded_by=user.id, notes=notes, actor=user,
-    )
+    try:
+        doc = await media_service.upload_and_register(
+            data=data, mime=mime, brand_slug=slug,
+            product_id=product_id, family_key=family_key, brand_id=brand_id,
+            floor_id=floor_id,
+            source_type=source_type, role=role,  # type: ignore[arg-type]
+            is_primary=is_primary, sort_order=sort_order,
+            uploaded_by=user.id, notes=notes, actor=user,
+        )
+    except ProductImageNormalizationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     catalog_service.schedule_catalog_refresh()
     return doc
 
@@ -153,10 +157,13 @@ async def replace_product_media(
         raise HTTPException(status_code=404, detail="Media not found")
     data = await _read_bounded_upload(file)
     mime = file.content_type or "application/octet-stream"
-    doc = await media_service.replace_media(
-        media_id, data=data, mime=mime, brand_slug=slug,
-        uploaded_by=user.id, notes=notes, actor=user,
-    )
+    try:
+        doc = await media_service.replace_media(
+            media_id, data=data, mime=mime, brand_slug=slug,
+            uploaded_by=user.id, notes=notes, actor=user,
+        )
+    except ProductImageNormalizationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not doc:
         raise HTTPException(status_code=404, detail="Media not found")
     catalog_service.schedule_catalog_refresh()
@@ -184,14 +191,17 @@ async def upload_family_media(
     slug = (brand or {}).get("slug") or (brand or {}).get("name") or "unknown"
     data = await _read_bounded_upload(file)
     mime = file.content_type or "application/octet-stream"
-    doc = await media_service.upload_and_register(
-        data=data, mime=mime, brand_slug=slug,
-        family_key=family_key, brand_id=sample["brand_id"],
-        floor_id=floor_inherit(sample),
-        source_type=source_type, role=role,  # type: ignore[arg-type]
-        is_primary=is_primary, sort_order=sort_order,
-        uploaded_by=user.id, notes=notes,
-    )
+    try:
+        doc = await media_service.upload_and_register(
+            data=data, mime=mime, brand_slug=slug,
+            family_key=family_key, brand_id=sample["brand_id"],
+            floor_id=floor_inherit(sample),
+            source_type=source_type, role=role,  # type: ignore[arg-type]
+            is_primary=is_primary, sort_order=sort_order,
+            uploaded_by=user.id, notes=notes,
+        )
+    except ProductImageNormalizationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     catalog_service.schedule_catalog_refresh()
     return doc
 

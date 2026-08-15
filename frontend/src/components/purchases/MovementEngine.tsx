@@ -17,6 +17,7 @@ import { Button, Field, Input, Sheet, Tabs, Txt } from "@/src/design/components"
 import { color as ds, radius, space } from "@/src/design/tokens";
 import { api, ApiError } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
+import { PRODUCT_IMAGE_ASPECT_RATIO } from "@/src/theme/tokens";
 
 // -----------------------------------------------------------------------------
 // Shared types
@@ -84,10 +85,10 @@ export function Thumb({ image, size = 40 }: { image?: string | null; size?: numb
     <ProductImage
       source={image}
       fallbackLabel="SKU"
-      contentFit="cover"
+      contentFit="contain"
       disableSkeleton
       borderRadius={8}
-      style={{ width: size, height: size }}
+      style={{ width: size, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO }}
     />
   );
 }
