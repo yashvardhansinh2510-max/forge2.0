@@ -20,7 +20,7 @@ import { getPurchasesPage, type PurchaseItem, type PurchasesPage } from "@/src/a
 import { useBp } from "@/src/design/responsive";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
-import { colors, radius, shadow, spacing, type } from "@/src/theme/tokens";
+import { colors, PRODUCT_IMAGE_ASPECT_RATIO, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import { color as ds, font as dsFont } from "@/src/design/tokens";
 import {
   HistorySheet, MovableItem, MoveStageSheet, TransferSheet,
@@ -1048,7 +1048,7 @@ function ItemRow(props: {
         <ProductImage
           source={row.image}
           style={styles.thumb}
-          contentFit="cover"
+          contentFit="contain"
           disableSkeleton
           fallbackLabel={row.sku}
           borderRadius={8}
@@ -1109,7 +1109,7 @@ function BlockedCard({ row, onOpenMove, onTransfer, onHistory }: {
       <ProductImage
         source={row.image}
         style={styles.blockedThumb}
-        contentFit="cover"
+        contentFit="contain"
         disableSkeleton
         fallbackLabel={row.sku}
         borderRadius={8}
@@ -1430,7 +1430,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, marginBottom: 6,
   },
   blockedThumb: {
-    width: 40, height: 40, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
+    width: 40, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
   orderInPill: {
@@ -1466,11 +1466,11 @@ const styles = StyleSheet.create({
   mobileTransferBtn: { width: 44, height: 44, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   mobileMoveBtn: { minWidth: 70, minHeight: 44, paddingHorizontal: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   mobileThumb: {
-    width: 48, height: 48, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
+    width: 48, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
   thumb: {
-    width: 44, height: 44, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
+    width: 44, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
   mono: { fontSize: 11, color: colors.onSurfaceMuted, fontVariant: ["tabular-nums"] },
@@ -1582,7 +1582,7 @@ const styles = StyleSheet.create({
   workspaceCard: { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md },
   workspaceTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.sm },
   actionRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  actionThumb: { width: 40, height: 40 },
+  actionThumb: { width: 40, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
   actionTitle: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   workspaceAction: { height: 32, paddingHorizontal: 10, borderRadius: radius.sm, justifyContent: "center", backgroundColor: colors.brand },
   workspaceActionText: { color: colors.onBrand, fontSize: 12, fontWeight: "700" },
@@ -1629,7 +1629,7 @@ const styles = StyleSheet.create({
   mobilePurchaseCardBlocked: { borderLeftWidth: 4, borderLeftColor: colors.error },
   mobileCardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   mobileSelectTarget: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginLeft: -10 },
-  mobileCardImage: { width: 58, height: 44 },
+  mobileCardImage: { width: 58, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
   mobileCardName: { color: colors.onSurface, fontSize: 14, lineHeight: 19, fontWeight: "800" },
   mobileCardMeta: { marginTop: 2, color: colors.onSurfaceMuted, fontSize: 11.5, lineHeight: 16 },
   mobileCardDetailRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingHorizontal: 4 },

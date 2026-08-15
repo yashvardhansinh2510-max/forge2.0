@@ -32,7 +32,7 @@ import { ProductEditor } from "@/src/components/catalog/ProductEditor";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing, type } from "@/src/theme/tokens";
 import {
   HistorySheet, MovableItem, MoveStageSheet, STAGE_TONE, TransferSheet,
 } from "@/src/components/purchases/MovementEngine";
@@ -212,8 +212,8 @@ export default function ProductDetail() {
       {isWide ? (
         // Tablet: static hero image + thumb strip (no pager — plays nicer with flex)
         <View>
-          <View style={{ aspectRatio: 1, backgroundColor: colors.surfaceTertiary, borderRadius: radius.lg, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
-            <View style={{ width: "80%", aspectRatio: 1 }}>
+          <View style={{ aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, backgroundColor: colors.surfaceTertiary, borderRadius: radius.lg, overflow: "hidden", alignItems: "center", justifyContent: "center" }}>
+            <View style={{ width: "80%", aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO }}>
               <ProductImage
                 source={galleryUrls[imageIdx] ? [galleryUrls[imageIdx]] : []}
                 style={StyleSheet.absoluteFill as any}
@@ -245,7 +245,7 @@ export default function ProductDetail() {
         </View>
       ) : (
         // Phone: full-bleed swipeable pager
-        <View style={{ backgroundColor: colors.surfaceTertiary, aspectRatio: 1 }}>
+        <View style={{ backgroundColor: colors.surfaceTertiary, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO }}>
           {galleryW > 0 ? (
             <FlatList
               ref={galleryRef}
@@ -259,8 +259,8 @@ export default function ProductDetail() {
                 setImageIdx(i);
               }}
               renderItem={({ item }) => (
-                <View style={{ width: galleryW, aspectRatio: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary }}>
-                  <View style={{ width: "80%", aspectRatio: 1 }}>
+                <View style={{ width: galleryW, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary }}>
+                  <View style={{ width: "80%", aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO }}>
                     <ProductImage
                       source={item ? [item] : []}
                       style={StyleSheet.absoluteFill as any}
@@ -510,7 +510,7 @@ export default function ProductDetail() {
                   onPress={() => router.replace(`/(admin)/catalog/${a.id}` as any)}
                   style={{ width: 180 }}
                 >
-                  <View style={{ aspectRatio: 1, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+                  <View style={{ aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
                     <ProductImage
                       source={productImageList(a as any)}
                       style={StyleSheet.absoluteFill as any}
@@ -614,7 +614,7 @@ const styles = StyleSheet.create({
   repImageNote: { fontSize: 11, color: colors.onSurfaceMuted, fontStyle: "italic", padding: 8, textAlign: "center" },
 
   thumb: {
-    width: 64, height: 64, borderRadius: radius.sm, overflow: "hidden",
+    width: 64, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.sm, overflow: "hidden",
     backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border,
   },
 

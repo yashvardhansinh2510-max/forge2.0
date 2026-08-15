@@ -24,7 +24,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
 import { Badge, EmptyState } from "@/src/components/ui";
-import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { colors, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing, type } from "@/src/theme/tokens";
 
 import { useBuilder } from "../context/BuilderContext";
 import { effectivePct } from "../helpers/pricing";
@@ -192,7 +192,7 @@ export function AssistantPane({ onClose }: { onClose?: () => void }) {
               smoothly instead of a hard remount/flash. */}
           <ProductImage
             source={heroImages}
-            style={{ width: "100%", aspectRatio: 1, borderRadius: radius.md }}
+            style={{ width: "100%", aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.md }}
             fallbackLabel={activeVariant?.sku || product.sku}
           />
           {heroImages.length && heroIsFallback ? (
@@ -468,7 +468,7 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 8, padding: 8, borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,
   },
-  suggestionThumb: { width: 56, aspectRatio: 16 / 10, borderRadius: 6, backgroundColor: colors.surfaceTertiary },
+  suggestionThumb: { width: 56, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 6, backgroundColor: colors.surfaceTertiary },
   suggestionAdd: {
     width: 28, height: 28, borderRadius: 999, backgroundColor: colors.brand,
     alignItems: "center", justifyContent: "center",
