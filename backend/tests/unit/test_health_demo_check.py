@@ -45,8 +45,9 @@ def test_health_degraded_when_demo_account_still_on_default_password(monkeypatch
     monkeypatch.setattr(server, "_check_demo_accounts", _matches)
 
     result = asyncio.run(server.health())
-    assert result["status"] == "degraded"
-    assert "owner@forge.app" in result["reasons"][0]
+    assert result.status_code == 503
+    assert b'"status":"degraded"' in result.body
+    assert b"owner@forge.app" not in result.body
 
 
 def test_health_demo_check_is_ttl_cached(monkeypatch):

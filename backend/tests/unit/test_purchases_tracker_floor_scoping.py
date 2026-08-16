@@ -225,6 +225,39 @@ def test_get_item_404s_when_item_is_on_a_different_floor(monkeypatch):
     assert getattr(exc.value, "status_code", None) == 404
 
 
+def test_get_item_uses_the_purchase_order_floor_not_the_stale_active_floor(monkeypatch):
+    """A shared-floor user can open a sanitary item after switching the UI
+    header to Ground Floor; the item endpoint must not turn that into a 404."""
+    class _RecordingPo:
+        def __init__(self):
+            self.query = None
+
+        async def find_one(self, query, *_args, **_kwargs):
+            self.query = query
+            return {
+                "id": "po-1", "floor_id": "first-floor", "status": "open",
+                "created_at": "2026-08-01T00:00:00+00:00",
+                "items": [{"id": "item-1", "stage": "in_box", "qty": 1, "name": "Basin"}],
+            }
+
+    class _Db:
+        purchase_orders = _RecordingPo()
+
+        class _Settings:
+            async def find_one(self, *_args, **_kwargs):
+                return None
+
+        settings = _Settings()
+
+    fake_db = _Db()
+    monkeypatch.setattr(tracker, "db", fake_db)
+
+    item = asyncio.run(tracker.get_item("item-1", user=_user("ground-floor")))
+
+    assert item["item_id"] == "item-1"
+    assert fake_db.purchase_orders.query == {"items.id": "item-1"}
+
+
 def test_item_transfer_history_404s_when_item_is_on_a_different_floor(monkeypatch):
     class _Db:
         purchase_orders = _FakeSinglePo({"id": "po-1", "floor_id": "first-floor"})

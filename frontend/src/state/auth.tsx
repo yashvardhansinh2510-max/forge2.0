@@ -1,6 +1,7 @@
 // Auth store. Single React context that any screen consumes.
 // Supports staff + customer email/password login.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { Platform } from "react-native";
 
 import { api, clearToken, getToken, getTokenKind, setToken, TokenKind } from "@/src/api/client";
 import { getSelectedFloorId, setSelectedFloorId } from "@/src/hooks/use-floor-access";
@@ -49,8 +50,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hydrate = useCallback(async () => {
     try {
       // Restore a previously-stored session, if any.
-      const token = await getToken();
       const k = await getTokenKind();
+      const token = Platform.OS === "web" ? "cookie-session" : await getToken();
       if (!token || !k) {
         setStaff(null); setCustomer(null); setKind(null);
         return;

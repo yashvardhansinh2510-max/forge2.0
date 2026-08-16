@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import os
 
-from auth import accessible_floor_ids, floor_for_write, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, require_min_role
+from auth import accessible_floor_ids, floor_for_write, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, require_min_role, revoke_all_sessions
 from db import db
 from models import FloorCreatePayload, FloorPublic, TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from services.activity_log import log_event
@@ -224,6 +224,8 @@ async def list_team(_: UserPublic = Depends(require_min_role("manager"))):
 
 @router.post("/team")
 async def create_team_member(body: TeamCreatePayload, user: UserPublic = Depends(require_min_role("admin"))):
+    if body.role == "owner" and user.role != "owner":
+        raise HTTPException(status_code=403, detail="Only an owner can create another owner")
     if await db.users.find_one({"email": body.email.lower()}, {"_id": 0, "id": 1}):
         raise HTTPException(status_code=409, detail="A team member with this email already exists")
     doc = UserPublic(
@@ -260,6 +262,13 @@ async def update_team_member(
     patch = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
     if not patch:
         raise HTTPException(status_code=400, detail="Nothing to update")
+    target_is_owner = before.get("role") == "owner"
+    promoting_to_owner = patch.get("role") == "owner" and not target_is_owner
+    if user.role != "owner" and (target_is_owner or promoting_to_owner):
+        raise HTTPException(status_code=403, detail="Only an owner can manage owner accounts")
+    removes_owner = target_is_owner and (patch.get("active") is False or ("role" in patch and patch["role"] != "owner"))
+    if removes_owner and await db.users.count_documents({"role": "owner", "active": {"$ne": False}}) <= 1:
+        raise HTTPException(status_code=400, detail="At least one active owner is required")
     patch["updated_at"] = now_iso()
     await db.users.update_one({"id": user_id}, {"$set": patch})
     doc = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
@@ -290,6 +299,8 @@ async def reset_team_member_password(user_id: str, user: UserPublic = Depends(re
     target = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Team member not found")
+    if target.get("role") == "owner" and user.role != "owner":
+        raise HTTPException(status_code=403, detail="Only an owner can reset an owner password")
     temp_pw = generate_temp_password()
     expires_at = temp_password_expiry_iso()
     await db.users.update_one(
@@ -301,7 +312,7 @@ async def reset_team_member_password(user_id: str, user: UserPublic = Depends(re
             "updated_at": now_iso(),
         }},
     )
-    invalidate_principal_cache("staff", user_id)
+    await revoke_all_sessions("staff", user_id)
     result = await get_invite_service().deliver(
         recipient_email=target.get("email"), recipient_name=target.get("full_name", "this team member"),
         temp_password=temp_pw, expires_at=expires_at, kind="staff_reset",

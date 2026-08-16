@@ -133,11 +133,10 @@ export function BuilderTopbar({
       ) : null}
 
       <View style={{ flexDirection: "row", gap: 4, alignItems: "center" }}>
-        {/* Always rendered — these are the only way to generate the official
-            quotation PDF or place an order from inside the builder. They used
-            to disappear below the phone breakpoint with no fallback anywhere
-            else on screen; now they just shrink to icon-only. */}
-        <Pressable
+        {/* On phone, keep only the order action here. The persistent checkout
+            footer owns draft completion; suppressing secondary actions avoids
+            squeezing six touch targets into one row. */}
+        {!isPhone ? <Pressable
           testID="generate-quotation"
           onPress={b.generateOfficialQuotation}
           disabled={b.workflowBusy || b.s.lines.length === 0}
@@ -145,7 +144,7 @@ export function BuilderTopbar({
         >
           <Feather name="file-text" size={14} color={colors.onSurface} />
           {isPhone ? null : <Text style={styles.workflowText}>Quotation</Text>}
-        </Pressable>
+        </Pressable> : null}
         <Pressable
           testID="place-order"
           onPress={b.placeOrder}
@@ -166,7 +165,7 @@ export function BuilderTopbar({
             <Text style={styles.hintKey}>⌘K</Text>
           </View>
         ) : null}
-        <Pressable
+        {!isPhone ? <Pressable
           testID="undo-btn"
           onPress={b.history.undo}
           disabled={!b.history.canUndo}
@@ -174,8 +173,8 @@ export function BuilderTopbar({
           hitSlop={6}
         >
           <Feather name="corner-up-left" size={16} color={colors.onSurface} />
-        </Pressable>
-        <Pressable
+        </Pressable> : null}
+        {!isPhone ? <Pressable
           testID="redo-btn"
           onPress={b.history.redo}
           disabled={!b.history.canRedo}
@@ -183,7 +182,7 @@ export function BuilderTopbar({
           hitSlop={6}
         >
           <Feather name="corner-up-right" size={16} color={colors.onSurface} />
-        </Pressable>
+        </Pressable> : null}
         {canManageDestructiveData(staff?.role) && b.quotationId ? (
           <Pressable
             testID="builder-delete-quotation"

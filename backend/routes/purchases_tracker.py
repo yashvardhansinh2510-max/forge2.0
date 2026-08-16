@@ -39,7 +39,10 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
 
-from auth import TILES_FLOOR_ID, floor_inherit, floor_query, floor_scope_ids, get_current_user, require_min_role
+from auth import (
+    TILES_FLOOR_ID, floor_inherit, floor_query, floor_scope_ids,
+    get_current_user, get_floor_scoped_or_404, require_min_role,
+)
 from db import client, db
 from models import (
     Chalan, ChalanLineItem, PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
@@ -695,12 +698,19 @@ async def dispatch_record(
 
 @router.get("/items/{item_id}")
 async def get_item(item_id: str, user: UserPublic = Depends(get_current_user)):
-    po = await db.purchase_orders.find_one(floor_query(user, {"items.id": item_id}), {"_id": 0})
-    if not po:
-        raise HTTPException(status_code=404, detail="Item not found")
-    floor_ids = floor_scope_ids(user)
-    if floor_ids is not None and po.get("floor_id") not in floor_ids:
-        raise HTTPException(status_code=404, detail="Item not found")
+    # An item link can outlive the floor header that was active when the
+    # tracker rendered it (notably after a mobile floor switch).  Authorize
+    # against the PO's own floor, rather than pre-filtering by ambient state;
+    # otherwise a user assigned to both floors receives a false "Item not
+    # found" for a perfectly accessible item.
+    po = await get_floor_scoped_or_404(
+        db.purchase_orders,
+        item_id,
+        user,
+        id_field="items.id",
+        not_found="Item not found",
+        projection={"_id": 0},
+    )
     it = next((i for i in po.get("items", []) if i.get("id") == item_id), None)
     if not it:
         raise HTTPException(status_code=404, detail="Item not found")

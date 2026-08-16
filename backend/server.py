@@ -7,10 +7,12 @@ from typing import Any
 from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from middleware import SecurityHeadersMiddleware
 
 from bootstrap import _check_demo_accounts, run_bootstrap
+from settings import settings
 from services.monitoring import init_monitoring
 
 from db import db  # noqa: E402
@@ -95,10 +97,8 @@ async def health():
 
     demo_accounts = await _demo_accounts_detected()
     if demo_accounts:
-        return {
-            "status": "degraded",
-            "reasons": [f"Demo account still using known default password: {email}" for email in demo_accounts],
-        }
+        logger.critical("Production demo credentials detected for %d account(s)", len(demo_accounts))
+        return JSONResponse(status_code=503, content={"status": "degraded", "reasons": ["unsafe demo credentials detected"]})
     return {"status": "ok"}
 
 
@@ -140,9 +140,11 @@ async def service_root():
     return {"name": "Forge API", "version": "0.1.0", "status": "ok"}
 
 
-@app.get("/sentry-debug")
+@app.get("/sentry-debug", include_in_schema=False)
 async def trigger_error():
     """Trigger a controlled exception to verify Sentry reporting."""
+    if settings.environment == "production":
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
     division_by_zero = 1 / 0
     return division_by_zero
 
@@ -150,6 +152,9 @@ async def trigger_error():
 # clients) — registered before CORSMiddleware so CORS stays the outermost
 # middleware, unchanged from its current behavior.
 app.add_middleware(SecurityHeadersMiddleware)
+# Mobile clients and the hosted web app receive several JSON-heavy responses.
+# Compress them at the API boundary; images already use their native formats.
+app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 
 # Security audit (Phase 1, 2026-08): Forge authenticates exclusively via a
 # Bearer JWT stored client-side (see frontend/src/api/client.ts) — it never

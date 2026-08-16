@@ -6,9 +6,19 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from auth import floor_query
 from models import UserPublic
 from routes import dashboard_routes
+from services.analytics import cache
+
+
+@pytest.fixture(autouse=True)
+def _reset_dashboard_cache():
+    cache.reset_memory_state()
+    yield
+    cache.reset_memory_state()
 
 
 def _user(floor_id: str) -> UserPublic:
@@ -22,13 +32,18 @@ class _Recorder:
     def __init__(self):
         self.last_find_filter: dict | None = None
         self.last_count_filter: dict | None = None
+        self.last_aggregate_pipeline: list[dict] | None = None
 
     def find(self, query, *_args, **_kwargs):
         self.last_find_filter = query
         return self
 
+    def aggregate(self, pipeline):
+        self.last_aggregate_pipeline = pipeline
+        return self
+
     async def to_list(self, _n):
-        return []
+        return [{}] if self.last_aggregate_pipeline is not None else []
 
     async def count_documents(self, query):
         self.last_count_filter = query

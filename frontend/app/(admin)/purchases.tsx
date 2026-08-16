@@ -351,7 +351,7 @@ export default function PurchasesScreen() {
           onEndReached={() => { if (!loading && !loadingMore && nextSkip != null) loadItems({ append: true }); }}
           onEndReachedThreshold={0.35}
           ListHeaderComponent={(
-            <View style={{ gap: 12 }}>
+            <View style={styles.mobileHeaderContent}>
               <View style={styles.mobileTitleRow}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.overline}>PURCHASES · {VIEW_META[view].label.toUpperCase()}</Text>
@@ -395,11 +395,12 @@ export default function PurchasesScreen() {
                   <Text style={styles.mobileBulkText}>Move {selected.size} selected</Text><Feather name="chevron-down" size={18} color={colors.onBrand} />
                 </Pressable>
               ) : null}
-              <View style={styles.mobileOperationalSummary}>
-                <OpsMetric label="Shown" value={items.length} icon="list" />
-                <OpsMetric label="Total" value={total} icon="package" />
-                <OpsMetric label="Blocked" value={blockedCount} icon="alert-triangle" tone={blockedCount ? "risk" : "ok"} />
-              </View>
+              {blockedCount > 0 ? (
+                <View style={styles.mobileAttentionRow}>
+                  <Feather name="alert-triangle" size={16} color={colors.error} />
+                  <Text style={styles.mobileAttentionText}>{blockedCount} item{blockedCount === 1 ? "" : "s"} need attention</Text>
+                </View>
+              ) : null}
               {loading ? <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading purchases…</Text></View> : null}
               {!loading && items.length === 0 ? <View style={styles.mobileEmpty}><Feather name="package" size={28} color={colors.onSurfaceMuted} /><Text style={styles.actionTitle}>No purchases found</Text><Text style={type.bodyMuted}>Clear filters or try a different search.</Text></View> : null}
             </View>
@@ -1599,7 +1600,8 @@ const styles = StyleSheet.create({
 
   // Mobile-first Purchases workspace
   mobileSafe: { flex: 1, backgroundColor: colors.surface },
-  mobileListContent: { paddingHorizontal: 16, paddingTop: 12 },
+  mobileListContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
+  mobileHeaderContent: { gap: spacing.md, paddingBottom: spacing.md },
   mobileTitleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   mobilePageTitle: { fontFamily: dsFont.display, fontSize: 28, lineHeight: 34, color: colors.onSurface, letterSpacing: -0.3 },
   mobileIconButton: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, flexShrink: 0 },
@@ -1622,10 +1624,11 @@ const styles = StyleSheet.create({
   clearFiltersText: { color: ds.brassDeep, fontSize: 13, fontWeight: "800" },
   mobileBulkButton: { minHeight: 48, paddingHorizontal: 16, borderRadius: 12, backgroundColor: colors.brand, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   mobileBulkText: { color: colors.onBrand, fontSize: 14, fontWeight: "800" },
-  mobileOperationalSummary: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  mobileAttentionRow: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: ds.riskTint },
+  mobileAttentionText: { flex: 1, color: colors.error, fontSize: 13, fontWeight: "700" },
   mobileEmpty: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: 8, padding: 24, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surfaceSecondary },
   mobileFooter: { height: 96, alignItems: "center", justifyContent: "center", gap: 8 },
-  mobilePurchaseCard: { padding: 12, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surfaceSecondary, gap: 12, overflow: "hidden" },
+  mobilePurchaseCard: { padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, gap: spacing.md, overflow: "hidden" },
   mobilePurchaseCardBlocked: { borderLeftWidth: 4, borderLeftColor: colors.error },
   mobileCardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   mobileSelectTarget: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginLeft: -10 },

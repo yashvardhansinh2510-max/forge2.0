@@ -118,7 +118,7 @@ def _notebook_conflict(error: NotebookConflictError) -> HTTPException:
 # Automation
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post("/reconcile")
-async def reconcile(_: UserPublic = Depends(get_current_user)):
+async def reconcile(_: UserPublic = Depends(require_min_role("manager"))):
     return await reconcile_followups()
 
 

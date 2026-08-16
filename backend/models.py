@@ -124,7 +124,7 @@ class CustomerBase(BaseModel):
 
 
 class CustomerCreate(CustomerBase):
-    password: Optional[str] = None  # for portal login
+    password: Optional[str] = Field(default=None, min_length=12, max_length=72)  # for portal login
 
 
 class CustomerUpdatePayload(BaseModel):
@@ -176,8 +176,8 @@ class CustomerTokenResponse(BaseModel):
 
 
 class ChangePasswordPayload(BaseModel):
-    current_password: str
-    new_password: str = Field(..., min_length=8)
+    current_password: str = Field(..., max_length=72)
+    new_password: str = Field(..., min_length=12, max_length=72)
 
 
 # ---------- Team management (Settings) ----------
@@ -186,7 +186,7 @@ class TeamCreatePayload(BaseModel):
     full_name: str
     role: Role
     phone: Optional[str] = None
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=12, max_length=72)
     floor_ids: list[str] = Field(default_factory=list)
 
 
@@ -913,9 +913,9 @@ class PurchaseReceivePayload(BaseModel):
 
 
 class PurchaseAttachmentCreate(BaseModel):
-    filename: str
+    filename: str = Field(min_length=1, max_length=160)
     mime: str = "application/octet-stream"
-    data_url: str
+    data_url: str = Field(min_length=16, max_length=15 * 1024 * 1024)
     note: Optional[str] = None
 
 

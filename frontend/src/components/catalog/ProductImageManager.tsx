@@ -14,7 +14,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
-import { api, getToken } from "@/src/api/client";
+import { api, csrfHeaders, getToken } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { Badge, Button, ConfirmDialog, EmptyState, Sheet } from "@/src/components/ds";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -87,7 +87,7 @@ export function ProductImageManagerBody({
         : `${api.base}/api/products/${productId}/media`;
       const r = await fetch(url, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...csrfHeaders() },
         body: form,
       });
       const text = await r.text();

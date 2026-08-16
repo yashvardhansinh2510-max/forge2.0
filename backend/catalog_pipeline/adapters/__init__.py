@@ -10,6 +10,7 @@ from .nexion import NexionAdapter
 from .modulo import ModuloAdapter
 from .donato import DonatoAdapter
 from .renite import ReniteAdapter
+from .tile_per_piece import KenzoAdapter, MilagroAdapter
 
 REGISTRY = {
     "grohe": GroheAdapter,
@@ -26,6 +27,8 @@ REGISTRY = {
     "modulo": ModuloAdapter,
     "donato": DonatoAdapter,
     "renite": ReniteAdapter,
+    "milagro": MilagroAdapter,
+    "kenzo": KenzoAdapter,
 }
 
 

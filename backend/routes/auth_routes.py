@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from auth import (
-    create_session, create_token, decode_token, get_current_customer, get_current_user,
+    create_session, create_token, decode_token, get_current_customer, get_current_session, get_current_user,
     hash_password, invalidate_principal_cache, verify_password,
 )
 from db import db
@@ -213,9 +213,9 @@ async def logout_current_session(authorization: Optional[str] = Header(None)):
 
 
 @router.get("/sessions", response_model=list[SessionInfo])
-async def list_sessions(authorization: Optional[str] = Header(None)):
+async def list_sessions(session: tuple[str, str, str] = Depends(get_current_session)):
     """Active devices/browsers for the signed-in user — 'remember trusted devices'."""
-    kind, sub, current_sid = _principal_from_token(authorization)
+    kind, sub, current_sid = session
     docs = await db.user_sessions.find(
         {"user_type": kind, "user_id": sub, "revoked": {"$ne": True}}, {"_id": 0},
     ).sort("last_seen_at", -1).to_list(100)
@@ -229,9 +229,9 @@ async def list_sessions(authorization: Optional[str] = Header(None)):
 
 
 @router.post("/sessions/logout-all")
-async def logout_all_sessions(authorization: Optional[str] = Header(None)):
+async def logout_all_sessions(session: tuple[str, str, str] = Depends(get_current_session)):
     """Revoke every active session for this user — 'logout from all devices'."""
-    kind, sub, _ = _principal_from_token(authorization)
+    kind, sub, _ = session
     invalidate_principal_cache(kind, sub)
     res = await db.user_sessions.update_many(
         {"user_type": kind, "user_id": sub, "revoked": {"$ne": True}}, {"$set": {"revoked": True}},
@@ -240,8 +240,8 @@ async def logout_all_sessions(authorization: Optional[str] = Header(None)):
 
 
 @router.delete("/sessions/{session_id}")
-async def revoke_one_session(session_id: str, authorization: Optional[str] = Header(None)):
-    kind, sub, _ = _principal_from_token(authorization)
+async def revoke_one_session(session_id: str, session: tuple[str, str, str] = Depends(get_current_session)):
+    kind, sub, _ = session
     invalidate_principal_cache(kind, sub, session_id)
     res = await db.user_sessions.update_one(
         {"id": session_id, "user_type": kind, "user_id": sub}, {"$set": {"revoked": True}},

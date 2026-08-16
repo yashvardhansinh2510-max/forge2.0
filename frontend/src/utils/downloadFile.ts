@@ -9,13 +9,13 @@ import { toast } from "@/src/components/Toast";
 
 async function fetchApiBlob(path: string, errorLabel: string, floorId?: string): Promise<Blob | null> {
   const token = await getToken();
-  if (!token) {
+  if (!token && Platform.OS !== "web") {
     toast.show("Please sign in again");
     return null;
   }
   try {
     const res = await fetch(`${api.base}/api${path}`, {
-      headers: { Authorization: `Bearer ${token}`, ...(floorId ? { "X-Floor-Id": floorId } : {}) },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(floorId ? { "X-Floor-Id": floorId } : {}) }, credentials: "same-origin",
     });
     if (!res.ok) {
       toast.show(res.status === 404 ? `That ${errorLabel} isn't available` : `Couldn't download the ${errorLabel}`);
@@ -85,13 +85,13 @@ export async function printApiFile(path: string, errorLabel = "file", floorId?: 
 
 export async function openApiFile(path: string, errorLabel = "file", floorId?: string): Promise<void> {
   const token = await getToken();
-  if (!token) {
+  if (!token && Platform.OS !== "web") {
     toast.show("Please sign in again");
     return;
   }
   try {
     const res = await fetch(`${api.base}/api${path}`, {
-      headers: { Authorization: `Bearer ${token}`, ...(floorId ? { "X-Floor-Id": floorId } : {}) },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(floorId ? { "X-Floor-Id": floorId } : {}) }, credentials: "same-origin",
     });
     if (!res.ok) {
       toast.show(res.status === 404 ? `That ${errorLabel} isn't available` : `Couldn't download the ${errorLabel}`);

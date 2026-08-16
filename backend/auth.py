@@ -145,6 +145,20 @@ async def _load_active_principal(payload: dict, *, kind: str, collection: str) -
     return principal
 
 
+def _enforce_password_change(principal: dict, request: Request | None, *, kind: str) -> None:
+    """Keep a temporary-password session from becoming a normal long-lived one."""
+    if not principal.get("must_change_password"):
+        return
+    path = request.url.path if request else ""
+    allowed = {
+        "/api/auth/change-password" if kind == "staff" else "/api/auth/customer/change-password",
+        "/api/auth/logout",
+        "/api/auth/me" if kind == "staff" else "/api/auth/customer/me",
+    }
+    if path not in allowed:
+        raise HTTPException(status_code=403, detail="password_change_required")
+
+
 def _device_label(user_agent: Optional[str]) -> str:
     if not user_agent:
         return "Unknown device"
@@ -246,6 +260,7 @@ async def get_current_user(
     if payload.get("kind") != "staff":
         raise HTTPException(status_code=403, detail="Not a staff token")
     doc = await _load_active_principal(payload, kind="staff", collection="users")
+    _enforce_password_change(doc, request, kind="staff")
     user = UserPublic(**doc)
     user.session_id = payload.get("session_id")
     if x_floor_id:
@@ -256,12 +271,40 @@ async def get_current_user(
     return user
 
 
-async def get_current_customer(authorization: Optional[str] = Header(None)) -> CustomerPublic:
+async def get_current_customer(
+    request: Request = None,
+    authorization: Optional[str] = Header(None),
+) -> CustomerPublic:
     payload = decode_token(_extract_token(authorization))
     if payload.get("kind") != "customer":
         raise HTTPException(status_code=403, detail="Not a customer token")
     doc = await _load_active_principal(payload, kind="customer", collection="customers")
+    _enforce_password_change(doc, request, kind="customer")
     return CustomerPublic(**doc)
+
+
+async def get_current_session(authorization: Optional[str] = Header(None)) -> tuple[str, str, str]:
+    """Authenticated, unrevoked session identity for session-management APIs."""
+    payload = decode_token(_extract_token(authorization))
+    kind = payload.get("kind")
+    if kind not in ("staff", "customer"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    subject = payload.get("sub")
+    session_id = payload.get("session_id")
+    if not subject or not session_id:
+        raise HTTPException(status_code=401, detail="Session expired or was signed out. Please sign in again.")
+    await _load_active_principal(payload, kind=kind, collection="users" if kind == "staff" else "customers")
+    return kind, subject, session_id
+
+
+async def revoke_all_sessions(kind: str, subject: str) -> int:
+    """Invalidate every session after an administrator resets credentials."""
+    invalidate_principal_cache(kind, subject)
+    result = await db.user_sessions.update_many(
+        {"user_type": kind, "user_id": subject, "revoked": {"$ne": True}},
+        {"$set": {"revoked": True}},
+    )
+    return result.modified_count
 
 
 # RBAC — capability sets keyed by role. Kept intentionally simple: routes just

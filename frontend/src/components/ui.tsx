@@ -3,7 +3,7 @@
 // typography allowed anywhere else. Feels closer to Linear / Stripe / Notion.
 
 import { Feather } from "@expo/vector-icons";
-import { isValidElement, useMemo, useRef } from "react";
+import { isValidElement, useEffect, useRef } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -377,13 +377,15 @@ export function Divider({ vertical, style, inset }: { vertical?: boolean; style?
 
 export function Skeleton({ w = "100%", h = 14, style, radius: r }: { w?: number | string; h?: number; style?: ViewStyle; radius?: number }) {
   const pulse = useRef(new Animated.Value(0.5)).current;
-  useMemo(() => {
-    Animated.loop(
+  useEffect(() => {
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
         Animated.timing(pulse, { toValue: 0.5, duration: 900, useNativeDriver: true }),
       ]),
-    ).start();
+    );
+    loop.start();
+    return () => loop.stop();
   }, [pulse]);
 
   return (

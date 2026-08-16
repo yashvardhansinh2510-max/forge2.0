@@ -2,10 +2,11 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 
 from auth import (
-    floor_for_write, floor_inherit, floor_query, get_current_customer, get_current_user, get_floor_scoped_or_404,
-    hash_password, invalidate_principal_cache, require_min_role,
+    TILES_FLOOR_ID, floor_for_write, floor_inherit, floor_query, get_current_customer, get_current_user,
+    get_floor_scoped_or_404, hash_password, invalidate_principal_cache, require_floor_access, require_min_role, revoke_all_sessions,
 )
 from db import db
 from models import (
@@ -15,6 +16,13 @@ from services.activity_log import log_event
 from services.invite_service import generate_temp_password, get_invite_service, temp_password_expiry_iso
 
 router = APIRouter(tags=["customers"])
+
+
+class ImportCustomerFromFloorPayload(BaseModel):
+    """Import a customer profile into another floor without carrying product
+    lines across two independent catalogues."""
+    source_customer_id: str
+    target_floor_id: str
 
 
 # ---------- Staff-side ----------
@@ -69,6 +77,116 @@ async def create_customer(
         customer_id=cust.id, actor=user, summary="Customer Created",
     )
     return cust
+
+
+def _import_defaults(source: dict, latest_quotation: dict | None) -> dict:
+    """Fields a new builder can apply to its header after profile import.
+
+    Product lines deliberately do not appear here: Ground Floor tiles and
+    Sanitary Bathroom products are different catalogues.
+    """
+    quotation = latest_quotation or {}
+    return {
+        "project_name": quotation.get("project_name"),
+        "phone": quotation.get("phone_snapshot") or source.get("phone"),
+        "address": quotation.get("address_snapshot") or source.get("address"),
+        "notes": quotation.get("notes") or source.get("notes"),
+        "source_quotation_id": quotation.get("id"),
+        "source_quotation_number": quotation.get("number"),
+    }
+
+
+async def _latest_floor_quotation(customer_id: str, floor_id: str) -> dict | None:
+    docs = await db.quotations.find(
+        {"customer_id": customer_id, "floor_id": floor_id}, {"_id": 0},
+    ).sort("updated_at", -1).limit(1).to_list(1)
+    return docs[0] if docs else None
+
+
+@router.get("/customers/import-sources/ground-floor")
+async def list_ground_floor_import_sources(
+    limit: int = Query(100, ge=1, le=500),
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Customers and their latest Ground Floor document for the sanitary
+    builder's "reuse bathroom details" chooser."""
+    require_floor_access(TILES_FLOOR_ID, user)
+    customers = await db.customers.find(
+        {"floor_id": TILES_FLOOR_ID}, {"_id": 0, "password_hash": 0},
+    ).sort("updated_at", -1).limit(limit).to_list(limit)
+    results = []
+    for customer in customers:
+        latest = await _latest_floor_quotation(customer["id"], TILES_FLOOR_ID)
+        results.append({
+            "customer": CustomerPublic(**customer).dict(),
+            "latest_quotation": ({
+                "id": latest.get("id"), "number": latest.get("number"),
+                "project_name": latest.get("project_name"), "updated_at": latest.get("updated_at"),
+            } if latest else None),
+            "defaults": _import_defaults(customer, latest),
+        })
+    return results
+
+
+@router.post("/customers/import-from-floor")
+async def import_customer_from_floor(
+    body: ImportCustomerFromFloorPayload,
+    user: UserPublic = Depends(require_min_role("sales")),
+):
+    """Create or select the target-floor customer matching a Ground Floor
+    profile.  The returned header defaults let the caller populate a fresh
+    quotation without copying incompatible tile line items."""
+    require_floor_access(TILES_FLOOR_ID, user)
+    require_floor_access(body.target_floor_id, user)
+    source = await get_floor_scoped_or_404(
+        db.customers, body.source_customer_id, user,
+        not_found="Customer not found", projection={"_id": 0, "password_hash": 0},
+    )
+    if source.get("floor_id") != TILES_FLOOR_ID:
+        raise HTTPException(status_code=400, detail="Only Ground Floor customers can be imported")
+
+    latest = await _latest_floor_quotation(source["id"], TILES_FLOOR_ID)
+    identity = []
+    if source.get("phone"):
+        identity.append({"phone": source["phone"]})
+    if source.get("email"):
+        identity.append({"email": str(source["email"]).lower()})
+    if not identity:
+        identity.append({"name": source["name"], "company": source.get("company")})
+    target = await db.customers.find_one(
+        {"floor_id": body.target_floor_id, "$or": identity}, {"_id": 0, "password_hash": 0},
+    )
+    if target:
+        return {
+            "customer": CustomerPublic(**target).dict(),
+            "defaults": _import_defaults(source, latest),
+            "created": False,
+        }
+
+    copied = {
+        key: source.get(key) for key in (
+            "name", "company", "phone", "address", "city", "state", "pincode", "gstin", "tier", "notes",
+            "avatar_url", "alternate_phone", "preferred_contact_method", "preferred_contact_time", "assigned_branch",
+            "tags", "lead_temperature",
+        )
+    }
+    # The current database protects customer email globally, while profiles
+    # are floor-local. Preserve the usable contact details (phone/address)
+    # and avoid an index conflict; a later per-floor email migration can add
+    # this field back without changing the import contract.
+    target_customer = CustomerPublic(floor_id=body.target_floor_id, **copied)
+    await db.customers.insert_one(target_customer.dict(exclude={"email"}))
+    await log_event(
+        event_type="customer.imported", entity_type="customer", entity_id=target_customer.id,
+        customer_id=target_customer.id, actor=user, floor_id=body.target_floor_id,
+        summary=f"Imported customer profile from Ground Floor: {target_customer.name}",
+        payload={"source_customer_id": source["id"], "source_quotation_id": (latest or {}).get("id")},
+    )
+    return {
+        "customer": target_customer.dict(),
+        "defaults": _import_defaults(source, latest),
+        "created": True,
+    }
 
 
 @router.get("/customers/{customer_id}", response_model=CustomerPublic)
@@ -240,7 +358,7 @@ async def _issue_temp_password(customer_id: str, *, kind: str, user: UserPublic)
             "updated_at": now_iso(),
         }},
     )
-    invalidate_principal_cache("customer", customer_id)
+    await revoke_all_sessions("customer", customer_id)
     result = await get_invite_service().deliver(
         recipient_email=target["email"], recipient_name=target.get("name", "this customer"),
         temp_password=temp_pw, expires_at=expires_at, kind=kind,

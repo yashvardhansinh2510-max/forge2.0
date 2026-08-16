@@ -125,7 +125,8 @@ async def _check_redis(r, limits: list[tuple[str, int]]) -> None:
     try:
         counts = await r.mget([key for key, _ in limits])
     except Exception as exc:  # noqa: BLE001 — a Redis outage must not take down login
-        logger.warning("Redis unavailable for rate-limit check, allowing request: %s", exc)
+        logger.warning("Redis unavailable for rate-limit check; using bounded local fallback: %s", exc)
+        _check_memory(limits)
         return
     for (_key, limit), count in zip(limits, counts):
         if count is not None and int(count) >= limit:
@@ -151,7 +152,8 @@ async def _record_redis(r, keys: list[str]) -> None:
         if any_new:
             await expire_pipe.execute()
     except Exception as exc:  # noqa: BLE001 — best-effort; a Redis outage must not break login
-        logger.warning("Redis unavailable for rate-limit record, skipping: %s", exc)
+        logger.warning("Redis unavailable for rate-limit record; using bounded local fallback: %s", exc)
+        _record_memory(keys)
 
 
 async def _clear_redis(r, keys: list[str]) -> None:

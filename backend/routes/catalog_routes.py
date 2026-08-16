@@ -117,7 +117,7 @@ async def _usage_ranked_product_page(
 # ---------- Products ----------
 @router.get("/products")
 async def list_products(
-    q: Optional[str] = Query(None, description="Free text search on name/sku/description/series/family/finish/colour/tags"),
+    q: Optional[str] = Query(None, max_length=120, description="Literal free text search on name/sku/description/series/family/finish/colour/tags"),
     brand_id: Optional[str] = None,
     category_id: Optional[str] = None,
     subcategory: Optional[str] = None,

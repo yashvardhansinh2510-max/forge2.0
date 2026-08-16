@@ -13,6 +13,7 @@ from auth import floor_for_write, floor_inherit, floor_query, get_current_user, 
 from catalog_pipeline.orchestrator import import_accepted, rollback_job, run_pipeline
 from db import db
 from models import CatalogImportJob, UserPublic
+from settings import settings
 
 from services import catalog_service
 
@@ -25,6 +26,21 @@ MISSING = "[MISSING DATA]"
 # Security audit (Phase 1, 2026-08): supplier pricelists (PDF/XLSX) legitimately
 # run tens of MB with embedded imagery — cap generously but not unbounded.
 MAX_IMPORT_BYTES = 80 * 1024 * 1024
+
+
+async def _read_limited_upload(file: UploadFile) -> bytes:
+    """Read a multipart upload incrementally so the limit is enforced before RAM is exhausted."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_IMPORT_BYTES:
+            raise HTTPException(status_code=413, detail=f"File exceeds {MAX_IMPORT_BYTES // (1024 * 1024)}MB limit")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _validate_public_host(url: str) -> None:
@@ -89,6 +105,8 @@ async def _fetch_public_url(url: str, *, max_redirects: int = 5) -> bytes:
                 current = str(httpx.URL(current).join(r.headers["location"]))
                 continue
             r.raise_for_status()
+            if len(r.content) > MAX_IMPORT_BYTES:
+                raise HTTPException(status_code=413, detail=f"Fetched file exceeds {MAX_IMPORT_BYTES // (1024 * 1024)}MB limit")
             return r.content
     raise HTTPException(status_code=502, detail="Too many redirects while fetching URL")
 
@@ -138,9 +156,7 @@ async def upload_and_extract(
 ):
     if brand not in SUPPORTED_BRANDS:
         raise HTTPException(status_code=400, detail=f"Unsupported brand. Choose from: {SUPPORTED_BRANDS}")
-    data = await file.read()
-    if len(data) > MAX_IMPORT_BYTES:
-        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_IMPORT_BYTES // (1024 * 1024)}MB limit")
+    data = await _read_limited_upload(file)
     filename = file.filename or "upload"
     lower = filename.lower()
     if not lower.endswith((".xlsx", ".xls", ".pdf", ".csv")):
@@ -167,6 +183,11 @@ async def import_from_url(
         raise HTTPException(status_code=400, detail=f"Unsupported brand. Choose from: {SUPPORTED_BRANDS}")
     if not url or not isinstance(url, str) or not url.startswith("http"):
         raise HTTPException(status_code=400, detail="Provide a valid public https URL")
+    # Direct outbound URL imports are disabled in production until they run
+    # through a DNS-pinning egress proxy. A validate-then-connect client can
+    # otherwise be raced by DNS rebinding between those two operations.
+    if settings.environment == "production":
+        raise HTTPException(status_code=503, detail="URL imports are disabled in production; upload the supplier file instead")
 
     try:
         data = await _fetch_public_url(url)
@@ -174,9 +195,6 @@ async def import_from_url(
         raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Could not fetch file: {e}") from e
-
-    if len(data) > MAX_IMPORT_BYTES:
-        raise HTTPException(status_code=413, detail=f"Fetched file exceeds {MAX_IMPORT_BYTES // (1024 * 1024)}MB limit")
 
     lower = filename.lower()
     source_type = "excel" if lower.endswith((".xlsx", ".xls")) else ("pdf" if lower.endswith(".pdf") else "csv")

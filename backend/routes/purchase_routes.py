@@ -13,6 +13,9 @@ Design notes:
 """
 from __future__ import annotations
 from datetime import datetime, timezone
+import base64
+import binascii
+from pathlib import PurePath
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,6 +30,34 @@ from models import (
 from services.activity_log import log_event
 
 router = APIRouter(prefix="/purchase-orders", tags=["purchase-orders"])
+
+_ATTACHMENT_MAGIC: dict[str, tuple[bytes, ...]] = {
+    "application/pdf": (b"%PDF-",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/webp": (b"RIFF",),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": (b"PK\x03\x04",),
+}
+
+
+def _validated_attachment(body: PurchaseAttachmentCreate) -> tuple[str, bytes, str]:
+    mime = body.mime.lower().split(";", 1)[0].strip()
+    if mime not in _ATTACHMENT_MAGIC:
+        raise HTTPException(status_code=415, detail="Only PDF, JPEG, PNG, WebP, and XLSX attachments are supported")
+    if not body.data_url.startswith(f"data:{mime};base64,"):
+        raise HTTPException(status_code=400, detail="Attachment data does not match its declared content type")
+    try:
+        raw = base64.b64decode(body.data_url.split(",", 1)[1], validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(status_code=400, detail="Attachment content is not valid base64") from exc
+    if not raw.startswith(_ATTACHMENT_MAGIC[mime]):
+        raise HTTPException(status_code=415, detail="Attachment content does not match its declared type")
+    if mime == "image/webp" and raw[8:12] != b"WEBP":
+        raise HTTPException(status_code=415, detail="Attachment content does not match its declared type")
+    filename = PurePath(body.filename).name.replace("\x00", "")
+    if not filename or filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid attachment filename")
+    return filename, raw, mime
 
 
 # -----------------------------------------------------------------------------
@@ -428,12 +459,13 @@ async def add_attachment(
     if size > 15 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Attachment exceeds 15MB limit")
 
+    filename, raw, mime = _validated_attachment(body)
     att = PurchaseAttachment(
         by_user_id=user.id,
         by_user_name=user.full_name,
-        filename=body.filename,
-        mime=body.mime,
-        size_bytes=size,
+        filename=filename,
+        mime=mime,
+        size_bytes=len(raw),
         note=body.note,
     )
 
@@ -444,17 +476,12 @@ async def add_attachment(
     # photos. Only the storage key + metadata is persisted; a signed URL is
     # minted on demand (GET /{po_id}/attachments/{id}/url).
     try:
-        import base64
-
         from media_storage.factory import get_media_storage, private_bucket
-
-        head, b64 = body.data_url.split(",", 1)
-        raw = base64.b64decode(b64)
         storage = get_media_storage()
-        key = f"purchase-orders/{po_id}/{att.id}-{body.filename}"
+        key = f"purchase-orders/{po_id}/{att.id}-{filename}"
         stored = await storage.upload(
             bucket=private_bucket(), key=key, data=raw,
-            content_type=body.mime or "application/octet-stream",
+            content_type=mime,
             cache_control="private, max-age=0",
         )
         att.storage_key = stored.key

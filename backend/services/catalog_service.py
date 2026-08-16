@@ -419,10 +419,9 @@ def _matches_search(product: dict, pattern: re.Pattern | None) -> bool:
 def _compile_search(query: Optional[str]) -> re.Pattern | None:
     if not query:
         return None
-    try:
-        return re.compile(query, re.IGNORECASE)
-    except re.error:
-        return re.compile(re.escape(query), re.IGNORECASE)
+    # Search input is user data, never a regular-expression language. Escaping
+    # it avoids catastrophic backtracking across the in-memory catalog.
+    return re.compile(re.escape(query[:120]), re.IGNORECASE)
 
 
 def _iso_timestamp(value: object) -> float:
