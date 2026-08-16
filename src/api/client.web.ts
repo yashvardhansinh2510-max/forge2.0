@@ -5,9 +5,13 @@ import { browserStorage } from "@/src/utils/storage/browser.web";
 
 const SELECTED_FLOOR_KEY = "forge.active-floor";
 const configuredBase = process.env.EXPO_PUBLIC_BACKEND_URL || "";
-const BASE = !__DEV__ && (!configuredBase || configuredBase.startsWith("http://localhost"))
-  ? ""
-  : configuredBase;
+// Sites' worker is the web authentication boundary: it turns a successful
+// login into an HttpOnly session cookie and forwards that cookie to Railway
+// as a Bearer token.  A production browser must therefore always call the
+// same-origin `/api` proxy.  Using EXPO_PUBLIC_BACKEND_URL here bypassed the
+// worker, so login intentionally discarded the returned token yet subsequent
+// requests went straight to Railway unauthenticated.
+const BASE = __DEV__ ? configuredBase : "";
 const TOKEN_KIND_KEY = "forge.jwt.kind";
 const REQUEST_TIMEOUT_MS = 30_000;
 const inflightGets = new Map<string, Promise<unknown>>();
