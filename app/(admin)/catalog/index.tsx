@@ -21,6 +21,7 @@ import { BottomSheet } from "@/src/components/BottomSheet";
 import { Chip, EmptyState, IconButton, PriceTag, ScreenTitle, SegmentedControl, Skeleton, Button } from "@/src/components/ui";
 import { catalogReferences, fetchCatalogPage } from "@/src/services/catalogService";
 import { useBreakpoint } from "@/src/hooks/use-breakpoint";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing, type } from "@/src/theme/tokens";
 import { supplierLogoFor } from "@/src/design/BrandLogo";
 import { isNearScrollEnd } from "@/src/utils/scrollEnd";
@@ -102,6 +103,7 @@ function swatchColor(colour?: string | null, finish?: string | null): string {
 export default function Catalog() {
   const router = useRouter();
   const { productCols, pad, isPhone } = useBreakpoint();
+  const { selectedFloorId } = useFloorAccess();
 
   const [brands, setBrands] = useState<Brand[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -117,6 +119,7 @@ export default function Catalog() {
   const [hasMore, setHasMore] = useState(false);
   const loadingMoreRef = useRef(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<string | null>(null);
@@ -130,26 +133,31 @@ export default function Catalog() {
     (async () => {
       try {
         const [bs, cs] = await Promise.all([
-          catalogReferences.brands<Brand[]>(),
-          catalogReferences.categories<Category[]>(),
+          catalogReferences.brands<Brand[]>({ floorId: selectedFloorId || undefined }),
+          catalogReferences.categories<Category[]>({ floorId: selectedFloorId || undefined }),
         ]);
         setBrands(bs); setCategories(cs);
-      } catch { /* ignore */ }
+        setLoadError(null);
+      } catch {
+        setBrands([]); setCategories([]);
+        setLoadError("Catalog filters could not be loaded. Refresh and sign in again if this persists.");
+      }
     })();
-  }, []);
+  }, [selectedFloorId]);
 
   // Hierarchy is invariant across filter changes. Load and parse it once; the
   // filter-derived rail options below are computed from this stable snapshot.
   useEffect(() => {
     (async () => {
       try {
-        const res = await catalogReferences.hierarchy<{ tree: any[] }>();
+        const res = await catalogReferences.hierarchy<{ tree: any[] }>({ floorId: selectedFloorId || undefined });
         setHierarchyTree(res.tree);
       } catch {
         setHierarchyTree([]);
+        setLoadError("Catalog data could not be loaded. Refresh and sign in again if this persists.");
       }
     })();
-  }, []);
+  }, [selectedFloorId]);
 
   // Hierarchy → derive brand counts, brand-scoped categories, subcategory & series options
   useEffect(() => {
@@ -195,24 +203,26 @@ export default function Catalog() {
       if (mode === "families") {
         const res = await fetchCatalogPage<Family>({
           mode: "families", q, brandId, categoryId: cat, subcategory: subcat, series,
-        }, 0, PAGE_SIZE);
+        }, 0, PAGE_SIZE, { floorId: selectedFloorId || undefined });
         if (requestId !== requestIdRef.current) return;
         const items = res.items || [];
         setFamilies(items); setTotal(res.total); setHasMore(items.length < res.total);
       } else {
         const res = await fetchCatalogPage<Product>({
           mode: "products", q, brandId, categoryId: cat, subcategory: subcat, series, sort: "popular",
-        }, 0, PAGE_SIZE);
+        }, 0, PAGE_SIZE, { floorId: selectedFloorId || undefined });
         if (requestId !== requestIdRef.current) return;
         const items = res.items || [];
         setProducts(items); setTotal(res.total); setHasMore(items.length < res.total);
       }
+      setLoadError(null);
     } catch {
       if (requestId !== requestIdRef.current) return;
       if (mode === "families") setFamilies([]); else setProducts([]);
       setTotal(0); setHasMore(false);
+      setLoadError("Catalog products could not be loaded. Refresh and sign in again if this persists.");
     }
-  }, [q, cat, brandId, subcat, series, mode]);
+  }, [q, cat, brandId, subcat, series, mode, selectedFloorId]);
 
   useEffect(() => {
     const t = setTimeout(load, 250);
@@ -230,7 +240,7 @@ export default function Catalog() {
         const currentFamilies = families || [];
         const res = await fetchCatalogPage<Family>({
           mode: "families", q, brandId, categoryId: cat, subcategory: subcat, series,
-        }, currentLength, PAGE_SIZE);
+        }, currentLength, PAGE_SIZE, { floorId: selectedFloorId || undefined });
         if (requestId !== requestIdRef.current) return;
         const incoming = res.items || [];
         const known = new Set(currentFamilies.map((item) => item.family_key));
@@ -241,7 +251,7 @@ export default function Catalog() {
         const currentProducts = products || [];
         const res = await fetchCatalogPage<Product>({
           mode: "products", q, brandId, categoryId: cat, subcategory: subcat, series, sort: "popular",
-        }, currentLength, PAGE_SIZE);
+        }, currentLength, PAGE_SIZE, { floorId: selectedFloorId || undefined });
         if (requestId !== requestIdRef.current) return;
         const incoming = res.items || [];
         const known = new Set(currentProducts.map((item) => item.id));
@@ -441,6 +451,10 @@ export default function Catalog() {
                   <SkeletonCard tall={mode === "families"} />
                 </View>
               ))}
+            </View>
+          ) : loadError ? (
+            <View style={{ paddingHorizontal: gridPadding }}>
+              <EmptyState icon="alert-triangle" title="Couldn't load the catalog" subtitle={loadError} action={<Button label="Try again" variant="secondary" onPress={load} />} />
             </View>
           ) : showEmpty ? (
             <View style={{ paddingHorizontal: gridPadding }}>

@@ -5,7 +5,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View,
+  ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -33,6 +33,7 @@ type Customer = {
   id: string; name: string; company?: string | null; email: string;
   phone?: string | null; city?: string | null; tier: "retail" | "trade" | "vip";
   address?: string | null;
+  property_name?: string | null;
 };
 type Quotation = { id: string; number: string; status: string; doc_type?: string; grand_total: number; created_at: string; items: any[] };
 type PO = { id: string; number: string; brand_name?: string | null; status: string; grand_total: number; created_at: string };
@@ -126,7 +127,7 @@ export default function CustomerDetail() {
   }>();
   const router = useRouter();
   const { staff } = useAuth();
-  const { isDesktop } = useBp();
+  const { isDesktop, isPhone } = useBp();
   const { selectedFloorId } = useFloorAccess();
   const isTilesFloor = selectedFloorId === TILES_FLOOR_ID;
   const id = firstParam(rawId) || "";
@@ -430,7 +431,7 @@ export default function CustomerDetail() {
         }
       />
 
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
+      <ScrollView contentContainerStyle={{ padding: isPhone ? spacing.md : spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
         {/* Identity row */}
         <Card>
           <View style={{ flexDirection: "row", gap: spacing.lg, alignItems: "center", flexWrap: "wrap" }}>
@@ -506,6 +507,14 @@ export default function CustomerDetail() {
         {/* Body */}
         {tab === "overview" ? (
           <>
+            <Card>
+              <Text style={[type.overline, { marginBottom: spacing.md }]}>Property & site</Text>
+              <View style={{ gap: spacing.sm }}>
+                <Text style={type.bodyStrong}>{customer.property_name || "No property/project recorded"}</Text>
+                <Text style={type.bodyMuted}>{customer.address || "Add an address to give the team a clear site view."}</Text>
+                {customer.address ? <Button label="View on map" icon="map-pin" variant="secondary" size="sm" onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(customer.address || "")}`)} /> : null}
+              </View>
+            </Card>
             <Card>
               <Text style={[type.overline, { marginBottom: spacing.md }]}>Latest activity</Text>
               <ActivityTimeline events={timeline.slice(0, 8)} dense emptyLabel="No activity yet" />
@@ -884,7 +893,7 @@ export default function CustomerDetail() {
                         {p.stage_label}
                       </Text>
                     </View>
-                    <View style={{ flexDirection: "row", gap: 6 }}>
+                    <View style={{ flexDirection: "row", gap: 6, width: isDesktop ? undefined : "100%", justifyContent: isDesktop ? "flex-start" : "flex-end" }}>
                       <Pressable testID={`ws-history-${p.item_id}`} onPress={() => setHistoryItemId(p.item_id)} style={styles.itemActionBtn} hitSlop={6}>
                         <Feather name="clock" size={12} color={colors.onSurface} />
                       </Pressable>

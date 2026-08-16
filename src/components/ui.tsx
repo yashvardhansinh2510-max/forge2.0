@@ -1226,7 +1226,7 @@ export function PageHeader({
   testID?: string;
   dense?: boolean;
 }) {
-  const { isPhone } = useBp();
+  const { isPhone, isDesktop } = useBp();
   const horizontal = isPhone ? spacing.lg : spacing.xl;
   return (
     <View
@@ -1258,7 +1258,7 @@ export function PageHeader({
           </Text>
           {subtitle ? <Text numberOfLines={2} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
         </View>
-        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center", flexShrink: 1, justifyContent: isPhone ? "flex-start" : "flex-end", width: isPhone ? "100%" : undefined }}>{actions}</View> : null}
+        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center", flexShrink: 1, justifyContent: isDesktop ? "flex-end" : "flex-start", width: isDesktop ? undefined : "100%" }}>{actions}</View> : null}
       </View>
     </View>
   );

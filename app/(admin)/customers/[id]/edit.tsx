@@ -27,6 +27,7 @@ type Tier = "retail" | "trade" | "vip";
 type Customer = {
   id: string; name: string; company?: string | null; email?: string | null;
   phone?: string | null; city?: string | null; address?: string | null;
+  property_name?: string | null;
   state?: string | null; pincode?: string | null;
   gstin?: string | null; tier: Tier; notes?: string | null; portal_enabled: boolean;
   referrer_id?: string | null; referrer_name?: string | null; referrer_type?: "architect" | "interior_designer" | null;
@@ -44,6 +45,7 @@ export default function EditCustomer() {
   const [phone, setPhone] = useState("");
   const [city, setCity] = useState("");
   const [address, setAddress] = useState("");
+  const [propertyName, setPropertyName] = useState("");
   const [stateField, setStateField] = useState("");
   const [pincode, setPincode] = useState("");
   const [gstin, setGstin] = useState("");
@@ -68,6 +70,7 @@ export default function EditCustomer() {
     setPhone(c.phone || "");
     setCity(c.city || "");
     setAddress(c.address || "");
+    setPropertyName(c.property_name || "");
     setStateField(c.state || "");
     setPincode(c.pincode || "");
     setGstin(c.gstin || "");
@@ -107,6 +110,7 @@ export default function EditCustomer() {
         phone: phone.trim() || null,
         city: city.trim() || null,
         address: address.trim() || null,
+        property_name: propertyName.trim() || null,
         state: stateField.trim() || null,
         pincode: pincode.trim() || null,
         gstin: gstin.trim() || null,
@@ -203,6 +207,7 @@ export default function EditCustomer() {
           />
           <TextField label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" testID="edit-customer-phone" />
           <TextField label="City" value={city} onChangeText={setCity} testID="edit-customer-city" />
+          <TextField label="Property / project" value={propertyName} onChangeText={setPropertyName} placeholder="e.g. Riverfront Residence" testID="edit-customer-property-name" />
           <TextField label="Address" value={address} onChangeText={setAddress} multiline numberOfLines={3} style={{ minHeight: 72, textAlignVertical: "top" }} testID="edit-customer-address" />
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             <TextField label="State" value={stateField} onChangeText={setStateField} containerStyle={{ flex: 1 }} testID="edit-customer-state" />
