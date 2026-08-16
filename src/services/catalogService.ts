@@ -21,6 +21,7 @@ export type CatalogQuery = {
 };
 
 export type CatalogPage<T> = { total: number; items: T[] };
+export type CatalogRequestOptions = { floorId?: string; signal?: AbortSignal };
 
 const PAGE_TTL_MS = 60_000;
 const REFERENCE_TTL_MS = 5 * 60_000;
@@ -38,10 +39,10 @@ function stableParams(query: CatalogQuery, skip: number, limit: number): URLSear
   return p;
 }
 
-async function cachedGet<T>(path: string, ttlMs: number): Promise<T> {
+async function cachedGet<T>(path: string, ttlMs: number, options?: CatalogRequestOptions): Promise<T> {
   // The API cache includes the active floor in its key. A path-only cache here
   // used to show the previous floor's catalog after switching business units.
-  return api.get<T>(path, { cacheMs: ttlMs });
+  return api.get<T>(path, { ...options, cacheMs: ttlMs });
 }
 
 export function catalogQueryKey(query: CatalogQuery): string {
@@ -52,10 +53,11 @@ export async function fetchCatalogPage<T>(
   query: CatalogQuery,
   skip = 0,
   limit = CATALOG_PAGE_SIZE,
+  options?: CatalogRequestOptions,
 ): Promise<CatalogPage<T>> {
   const params = stableParams(query, skip, limit);
   const endpoint = query.mode === "families" ? "/products/families" : "/products";
-  return cachedGet<CatalogPage<T>>(`${endpoint}?${params.toString()}`, PAGE_TTL_MS);
+  return cachedGet<CatalogPage<T>>(`${endpoint}?${params.toString()}`, PAGE_TTL_MS, options);
 }
 
 export function mergeCatalogPage<T extends { id?: string; family_key?: string }>(
@@ -74,12 +76,13 @@ export function mergeCatalogPage<T extends { id?: string; family_key?: string }>
 }
 
 export const catalogReferences = {
-  brands: <T>() => cachedGet<T>("/brands", REFERENCE_TTL_MS),
-  categories: <T>(brandId?: string | null) => cachedGet<T>(
+  brands: <T>(options?: CatalogRequestOptions) => cachedGet<T>("/brands", REFERENCE_TTL_MS, options),
+  categories: <T>(brandId?: string | null, options?: CatalogRequestOptions) => cachedGet<T>(
     brandId ? `/categories?brand_id=${encodeURIComponent(brandId)}` : "/categories",
     REFERENCE_TTL_MS,
+    options,
   ),
-  hierarchy: <T>() => cachedGet<T>("/catalog/hierarchy", REFERENCE_TTL_MS),
+  hierarchy: <T>(options?: CatalogRequestOptions) => cachedGet<T>("/catalog/hierarchy", REFERENCE_TTL_MS, options),
 };
 
 export function clearCatalogCache(): void {

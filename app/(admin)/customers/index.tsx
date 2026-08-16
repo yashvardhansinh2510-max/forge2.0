@@ -40,7 +40,7 @@ type TierFilter = "all" | "vip" | "trade" | "retail";
 
 export default function Customers() {
   const router = useRouter();
-  const { isDesktop } = useBp();
+  const { isDesktop, isPhone } = useBp();
   const { staff } = useAuth();
 
   const [items, setItems] = useState<Customer[] | null>(null);
@@ -99,7 +99,7 @@ export default function Customers() {
         }
       />
 
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
+      <ScrollView contentContainerStyle={[styles.content, isPhone && styles.contentPhone]}>
         {/* Stats */}
         <View style={[styles.statsRow, !isDesktop && styles.statsRowMobile]}>
           <StatTile
@@ -108,6 +108,8 @@ export default function Customers() {
             icon="users"
             tone="brand"
             sub="All active accounts"
+            dense={isPhone}
+            style={isPhone ? styles.statPhone : undefined}
           />
           <StatTile
             label="VIP"
@@ -115,6 +117,8 @@ export default function Customers() {
             icon="star"
             tone="success"
             sub="Premium tier"
+            dense={isPhone}
+            style={isPhone ? styles.statPhone : undefined}
           />
           <StatTile
             label="Trade"
@@ -122,6 +126,8 @@ export default function Customers() {
             icon="briefcase"
             tone="brand"
             sub="Trade partners"
+            dense={isPhone}
+            style={isPhone ? styles.statPhone : undefined}
           />
           <StatTile
             label="Retail"
@@ -129,6 +135,8 @@ export default function Customers() {
             icon="user"
             tone="neutral"
             sub="Direct buyers"
+            dense={isPhone}
+            style={isPhone ? styles.statPhone : undefined}
           />
         </View>
 
@@ -270,8 +278,11 @@ export default function Customers() {
 }
 
 const styles = StyleSheet.create({
+  content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
+  contentPhone: { paddingHorizontal: spacing.md, paddingTop: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxl },
   statsRow: { flexDirection: "row", gap: spacing.md },
   statsRowMobile: { flexWrap: "wrap" },
+  statPhone: { minWidth: "47%", flexBasis: "47%" },
   card: {
     flexDirection: "row",
     alignItems: "center",

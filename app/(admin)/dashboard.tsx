@@ -130,12 +130,12 @@ export default function Today() {
     // ever sit on a skeleton for. Same "soft" semantics as before — we just
     // no longer block the critical render path on it.
     const [m, fus, st, ps, rq, sh] = await Promise.allSettled([
-      api.get<Mission>("/followups/mission"),
-      api.get<Fu[]>("/followups?limit=12"),
-      api.get<DashStats>("/dashboard/stats"),
-      api.get<PayStats>("/payments/stats"),
-      api.get<RecentQ[]>("/quotations/recent?limit=5"),
-      api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder"),
+      api.get<Mission>("/followups/mission", { cacheMs: 15_000 }),
+      api.get<Fu[]>("/followups?limit=12", { cacheMs: 15_000 }),
+      api.get<DashStats>("/dashboard/stats", { cacheMs: 15_000 }),
+      api.get<PayStats>("/payments/stats", { cacheMs: 15_000 }),
+      api.get<RecentQ[]>("/quotations/recent?limit=5", { cacheMs: 15_000 }),
+      api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder", { cacheMs: 15_000 }),
     ]);
     if (m.status === "fulfilled") setMission(m.value);
     if (fus.status === "fulfilled") setQueue((Array.isArray(fus.value) ? fus.value : []).filter((f) => f.status === "open").slice(0, 6));

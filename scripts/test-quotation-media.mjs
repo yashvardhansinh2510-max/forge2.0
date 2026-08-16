@@ -52,10 +52,17 @@ assert.match(productImageSource, /contentFit = "contain"/);
 assert.doesNotMatch(productImageSource, /rotate: "90deg"/);
 
 const builderSource = readFileSync(new URL("../src/components/quotation/context/BuilderContext.tsx", import.meta.url), "utf8");
-for (const endpoint of ["/brands", "/categories", "/customers", "/products/recent", "/products/frequent", "/quotations/recent?limit=10", "/referrers"]) {
-  assert.ok(builderSource.includes(endpoint), `missing initial reference request: ${endpoint}`);
+const catalogServiceSource = readFileSync(new URL("../src/services/catalogService.ts", import.meta.url), "utf8");
+assert.ok(builderSource.includes('api.get<Customer[]>("/customers", request)'), "missing essential customer bootstrap request");
+assert.match(builderSource, /catalogReferences\.categories<Category\[\]>\(null, request\)/);
+assert.match(builderSource, /catalogReferences\.brands<Brand\[\]>\(request\)/);
+for (const endpoint of ["/products/recent", "/products/frequent", "/quotations/recent?limit=10", "/referrers"]) {
+  assert.ok(builderSource.includes(endpoint), `missing lazy quotation request: ${endpoint}`);
 }
+assert.match(builderSource, /q\.trim\(\) \? 300 : 0/);
+assert.match(builderSource, /loadMoreController\.current\?\.abort\(\)/);
+assert.match(catalogServiceSource, /signal\?: AbortSignal/);
 assert.match(builderSource, /retryReferenceData/);
 assert.match(builderSource, /controller\.abort\(\)/);
 
-console.log("quotation media/layout helpers: 26 assertions passed");
+console.log("quotation media/layout helpers: 30 assertions passed");
