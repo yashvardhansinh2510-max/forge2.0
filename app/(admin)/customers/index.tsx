@@ -240,7 +240,7 @@ export default function Customers() {
                     <IconButton
                       icon="edit-2"
                       onPress={() => router.push(`/(admin)/customers/${c.id}/edit` as any)}
-                      size={30}
+                      size={isDesktop ? 30 : 44}
                       accessibilityLabel={`Edit ${c.name}`}
                       testID={`edit-customer-${c.id}`}
                     />
@@ -248,7 +248,7 @@ export default function Customers() {
                       <IconButton
                         icon="trash-2"
                         onPress={() => setDeleteTarget(c)}
-                        size={30}
+                        size={isDesktop ? 30 : 44}
                         tone="danger"
                         accessibilityLabel={`Delete ${c.name}`}
                         testID={`delete-customer-${c.id}`}
@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
   cardMobile: { flexDirection: "column", alignItems: "stretch", gap: spacing.sm },
   customerMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: spacing.md },
   customerMainMobile: { width: "100%", alignItems: "flex-start" },
-  customerActionsMobile: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  customerActionsMobile: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: spacing.xs, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   dot: {
     width: 3, height: 3, borderRadius: 999,
     backgroundColor: colors.onSurfaceSubtle,

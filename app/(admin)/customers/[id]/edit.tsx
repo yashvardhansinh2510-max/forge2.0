@@ -18,6 +18,7 @@ import {
 import { ConfirmDialog } from "@/src/components/ds";
 import { TempPasswordDialog, TempPasswordResult } from "@/src/components/TempPasswordDialog";
 import { toast } from "@/src/components/Toast";
+import { ReferrerField } from "@/src/components/customer/ReferrerField";
 import { useAuth } from "@/src/state/auth";
 import { canManageDestructiveData } from "@/src/constants/roles";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
@@ -28,6 +29,7 @@ type Customer = {
   phone?: string | null; city?: string | null; address?: string | null;
   state?: string | null; pincode?: string | null;
   gstin?: string | null; tier: Tier; notes?: string | null; portal_enabled: boolean;
+  referrer_id?: string | null; referrer_name?: string | null; referrer_type?: "architect" | "interior_designer" | null;
 };
 
 export default function EditCustomer() {
@@ -46,6 +48,7 @@ export default function EditCustomer() {
   const [pincode, setPincode] = useState("");
   const [gstin, setGstin] = useState("");
   const [tier, setTier] = useState<Tier>("retail");
+  const [referrer, setReferrer] = useState<{ id: string; name: string; type: "architect" | "interior_designer" } | null>(null);
   const [notes, setNotes] = useState("");
   const [portalEnabled, setPortalEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +72,7 @@ export default function EditCustomer() {
     setPincode(c.pincode || "");
     setGstin(c.gstin || "");
     setTier(c.tier || "retail");
+    setReferrer(c.referrer_id && c.referrer_name && c.referrer_type ? { id: c.referrer_id, name: c.referrer_name, type: c.referrer_type } : null);
     setNotes(c.notes || "");
     setPortalEnabled(!!c.portal_enabled);
     setLoaded(true);
@@ -107,6 +111,7 @@ export default function EditCustomer() {
         pincode: pincode.trim() || null,
         gstin: gstin.trim() || null,
         tier,
+        referrer_id: referrer?.id || null,
         notes: notes.trim() || null,
         portal_enabled: portalEnabled,
       });
@@ -204,6 +209,7 @@ export default function EditCustomer() {
             <TextField label="Pincode" value={pincode} onChangeText={setPincode} keyboardType="number-pad" containerStyle={{ flex: 1 }} testID="edit-customer-pincode" />
           </View>
           <TextField label="GSTIN" value={gstin} onChangeText={setGstin} autoCapitalize="characters" testID="edit-customer-gstin" />
+          <ReferrerField value={referrer} onChange={setReferrer} />
           <TextField label="Notes" value={notes} onChangeText={setNotes} multiline numberOfLines={2} style={{ minHeight: 56, textAlignVertical: "top" }} testID="edit-customer-notes" />
 
           <View style={{ gap: 6 }}>

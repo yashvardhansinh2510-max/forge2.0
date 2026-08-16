@@ -139,7 +139,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
         </View>
       ) : (
         <View style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <QuotationPane compact={compactCatalog} phone />
+          <QuotationPane compact={compactCatalog} />
         </View>
       )}
 

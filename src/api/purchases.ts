@@ -33,6 +33,17 @@ export type PurchaseItem = {
   sla_days: number;
 };
 
+/** Floor-scoped customer record used by the Purchases lifecycle navigator. */
+export type PurchaseCustomer = {
+  id: string;
+  name: string;
+  company?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  city?: string | null;
+  tier?: "retail" | "trade" | "vip";
+};
+
 export type PurchasesPage = {
   items: PurchaseItem[];
   total: number;
@@ -68,4 +79,13 @@ export function purchasesPagePath(query: PurchasesPageQuery): string {
 
 export function getPurchasesPage(query: PurchasesPageQuery, signal?: AbortSignal) {
   return api.get<PurchasesPage>(purchasesPagePath(query), { signal });
+}
+
+/** This deliberately uses the CRM collection, not the purchase-item facet. */
+export function getPurchaseCustomers(signal?: AbortSignal) {
+  return api.get<PurchaseCustomer[]>("/customers", { signal, cacheMs: 10_000 });
+}
+
+export function cancelPurchaseItem(itemId: string, reason?: string) {
+  return api.post(`/purchases/items/${itemId}/cancel`, reason?.trim() ? { reason: reason.trim() } : {});
 }

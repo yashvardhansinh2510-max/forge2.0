@@ -19,6 +19,7 @@ import { Platform, TextInput } from "react-native";
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { useHistory, useUndoRedoShortcuts } from "@/src/hooks/useHistory";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import type { HistoryApi } from "@/src/hooks/useHistory";
 import { playAddProductSound } from "@/src/services/soundService";
 import { catalogReferences, CATALOG_PAGE_SIZE, fetchCatalogPage } from "@/src/services/catalogService";
@@ -93,6 +94,7 @@ export type BuilderApi = {
   // V4 header fields
   setProjectName: (v: string) => void;
   setPhone: (v: string) => void;
+  setAddress: (v: string) => void;
   setReferenceSource: (v: string) => void;
 
   // V4 sheets
@@ -212,6 +214,10 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   initialProductId?: string | null;
   children: React.ReactNode;
 }) {
+  const { selectedFloorId, floors } = useFloorAccess();
+  // The selected floor is published synchronously by the app shell. The
+  // fallback only covers the brief initial storage-read window.
+  const activeFloorId = selectedFloorId || floors[0]?.id || "";
   // Reference data — not part of undoable state.
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -295,7 +301,8 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     setReferenceError(null);
     (async () => {
       try {
-        const request = { floorId: "first-floor", signal: controller.signal, cacheMs: 60_000 };
+        if (!activeFloorId) return;
+        const request = { floorId: activeFloorId, signal: controller.signal, cacheMs: 60_000 };
         // These three datasets are needed to render and edit the quotation.
         // Everything else is fetched only when its corresponding panel is used,
         // keeping the first mobile screen from competing with seven requests.
@@ -310,7 +317,14 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         setBrands(brs);
         setCategoriesForRail(cats);
         if (cs[0] && !history.state.customerId) {
-          history.replace({ ...history.state, customerId: cs[0].id });
+          history.replace({ ...history.state, customerId: cs[0].id, header: {
+            ...history.state.header,
+            phone: history.state.header.phone || cs[0].phone || "",
+            address: history.state.header.address || cs[0].address || "",
+            referrerId: cs[0].referrer_id || null,
+            referrerName: cs[0].referrer_name || "",
+            referrerType: cs[0].referrer_type || null,
+          } });
         }
       } catch (e: any) {
         if (!current) return;
@@ -342,7 +356,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     // history is intentionally not a dependency: reference retries must not
     // restart just because the undoable quotation document changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [referenceRetry]);
+  }, [referenceRetry, activeFloorId]);
 
   // Product shortcuts are useful but non-essential. Fetch them on first use
   // rather than making every builder launch pay for both endpoints.
@@ -350,7 +364,8 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     if (pickerTab === "search") return;
     const controller = new AbortController();
     const endpoint = pickerTab === "recent" ? "/products/recent" : "/products/frequent";
-    api.get<Product[]>(endpoint, { floorId: "first-floor", signal: controller.signal, cacheMs: 60_000 })
+    if (!activeFloorId) return;
+    api.get<Product[]>(endpoint, { floorId: activeFloorId, signal: controller.signal, cacheMs: 60_000 })
       .then((items) => {
         if (pickerTab === "recent") setRecent(items);
         else setFrequent(items);
@@ -359,7 +374,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         if (error?.name !== "AbortError") console.warn(`Failed to load ${pickerTab} products`, error);
       });
     return () => controller.abort();
-  }, [pickerTab]);
+  }, [pickerTab, activeFloorId]);
 
   // The recent-quotation rail is intentionally deferred until the first frame
   // has painted. It remains available immediately afterwards, without
@@ -367,27 +382,29 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   useEffect(() => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
+      if (!activeFloorId) return;
       api.get<RecentQuotation[]>("/quotations/recent?limit=10", {
-        floorId: "first-floor", signal: controller.signal, cacheMs: 30_000,
+        floorId: activeFloorId, signal: controller.signal, cacheMs: 30_000,
       }).then(setRecentQuotations).catch((error: any) => {
         if (error?.name !== "AbortError") console.warn("Failed to load recent quotations", error);
       });
     }, 250);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [referenceRetry]);
+  }, [referenceRetry, activeFloorId]);
 
   // Referrers are only needed when their sheet opens, so defer their list
   // until that user intent instead of including it in builder bootstrap.
   useEffect(() => {
     if (!referrerSwitcherOpen) return;
     const controller = new AbortController();
-    api.get<Referrer[]>("/referrers", { floorId: "first-floor", signal: controller.signal, cacheMs: 5 * 60_000 })
+    if (!activeFloorId) return;
+    api.get<Referrer[]>("/referrers", { floorId: activeFloorId, signal: controller.signal, cacheMs: 5 * 60_000 })
       .then(setReferrers)
       .catch((error: any) => {
         if (error?.name !== "AbortError") console.warn("Failed to load referrers", error);
       });
     return () => controller.abort();
-  }, [referrerSwitcherOpen]);
+  }, [referrerSwitcherOpen, activeFloorId]);
 
   // ---------- Re-fetch categories when brand changes ----------
   useEffect(() => {
@@ -400,7 +417,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     (async () => {
       try {
         const cats = await catalogReferences.categories<Category[]>(selectedBrandId, {
-          floorId: "first-floor", signal: controller.signal,
+          floorId: activeFloorId, signal: controller.signal,
         });
         if (current) setCategoriesForRail(cats);
       } catch (e: any) {
@@ -413,7 +430,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       current = false;
       controller.abort();
     };
-  }, [selectedBrandId, categories]);
+  }, [selectedBrandId, categories, activeFloorId]);
 
   const setSelectedBrandId = useCallback((id: string | null) => {
     setSelectedBrandIdState(id);
@@ -438,6 +455,10 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   const productRequestGeneration = useRef(0);
   const loadMoreController = useRef<AbortController | null>(null);
   useEffect(() => {
+    if (!activeFloorId) {
+      setProducts([]); setProductTotal(0); setProductHasMore(false);
+      return;
+    }
     const generation = ++productRequestGeneration.current;
     const controller = new AbortController();
     let cancelled = false;
@@ -449,7 +470,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       try {
         const res = await fetchCatalogPage<Product>({
           q, brandId: selectedBrandId, categoryId: selectedCategoryId, sort: sortKey,
-        }, 0, CATALOG_PAGE_SIZE, { floorId: "first-floor", signal: controller.signal });
+        }, 0, CATALOG_PAGE_SIZE, { floorId: activeFloorId, signal: controller.signal });
         if (cancelled || generation !== productRequestGeneration.current) return;
         const items = res.items || [];
         setProducts(items);
@@ -470,7 +491,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       loadMoreController.current?.abort();
       clearTimeout(t);
     };
-  }, [q, selectedBrandId, selectedCategoryId, sortKey]);
+  }, [q, selectedBrandId, selectedCategoryId, sortKey, activeFloorId]);
 
   // ---------- Infinite scroll — fetch the next page and append ----------
   const loadingMoreRef = useRef(false);
@@ -487,7 +508,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       try {
         const res = await fetchCatalogPage<Product>({
           q, brandId: selectedBrandId, categoryId: selectedCategoryId, sort: sortKey,
-        }, skipAt, CATALOG_PAGE_SIZE, { floorId: "first-floor", signal: controller.signal });
+        }, skipAt, CATALOG_PAGE_SIZE, { floorId: activeFloorId, signal: controller.signal });
         if (controller.signal.aborted || generation !== productRequestGeneration.current) return;
         const items = res.items || [];
         setProducts((cur) => {
@@ -506,7 +527,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         }
       }
     })();
-  }, [productLoading, productHasMore, products.length, q, selectedBrandId, selectedCategoryId, sortKey]);
+  }, [productLoading, productHasMore, products.length, q, selectedBrandId, selectedCategoryId, sortKey, activeFloorId]);
 
   // ---------- Autosave ----------
   const persist = useCallback(async (): Promise<string | null> => {
@@ -519,6 +540,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         notes: s.notes,
         project_name: s.header.projectName || null,
         phone_snapshot: s.header.phone || null,
+        address_snapshot: s.header.address.trim() || null,
         reference_source: s.header.referenceSource || null,
         referrer_type: s.header.referrerType,
         referrer_id: s.header.referrerId,
@@ -535,14 +557,14 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         setSaveState("saving");
         let persistedId = persistedIdRef.current || quotationId;
         if (!persistedId) {
-          const created = await api.post<{ id: string; number: string }>("/quotations", payload, { floorId: "first-floor" });
+          const created = await api.post<{ id: string; number: string }>("/quotations", payload, { floorId: activeFloorId });
           setQuotationId(created.id);
           setQuotationNumber(created.number);
           persistedIdRef.current = created.id;
           persistedId = created.id;
         } else {
           const upd: any = { ...payload, silent: true, collapsed_rooms: Object.keys(s.collapsedRooms).filter((k) => s.collapsedRooms[k]) };
-          await api.patch(`/quotations/${persistedId}`, upd);
+          await api.patch(`/quotations/${persistedId}`, upd, { floorId: activeFloorId });
         }
         setSaveState("saved");
         setSavedAt(new Date());
@@ -554,7 +576,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       }
     };
     return enqueueQuotationPersist(persistQueue, run);
-  }, [s, quotationId, selectedBrandId, selectedCategoryId, sortKey]);
+  }, [s, quotationId, selectedBrandId, selectedCategoryId, sortKey, activeFloorId]);
 
   useEffect(() => {
     if (!s.customerId) return;
@@ -585,14 +607,14 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   // ---------- Restore an existing quotation ----------
   const refreshRecentQuotations = useCallback(async () => {
     try {
-      const rq = await api.get<RecentQuotation[]>("/quotations/recent?limit=10");
+      const rq = await api.get<RecentQuotation[]>("/quotations/recent?limit=10", { floorId: activeFloorId });
       setRecentQuotations(rq);
     } catch {}
-  }, []);
+  }, [activeFloorId]);
 
   const restoreQuotation = useCallback(async (id: string) => {
     try {
-      const doc = await api.get<any>(`/quotations/${id}`);
+      const doc = await api.get<any>(`/quotations/${id}`, { floorId: activeFloorId });
       const collapsed: Record<string, boolean> = {};
       for (const r of doc.collapsed_rooms || []) collapsed[r] = true;
       const ui: any = doc.ui_state || {};
@@ -601,6 +623,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         header: {
           projectName: doc.project_name || "",
           phone: doc.phone_snapshot || "",
+          address: doc.address_snapshot || "",
           referenceSource: doc.reference_source || "",
           referrerType: doc.referrer_type || null,
           referrerId: doc.referrer_id || null,
@@ -636,12 +659,12 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     } catch (e: any) {
       toast.error(e?.detail || "Could not restore quotation");
     }
-  }, [history]);
+  }, [history, activeFloorId]);
 
   const deleteQuotation = useCallback(async (id = quotationId) => {
     if (!id) return false;
     try {
-      await api.delete(`/quotations/${id}`);
+      await api.delete(`/quotations/${id}`, { floorId: activeFloorId });
       setRecentQuotations((current) => current.filter((q) => q.id !== id));
       if (id === quotationId) {
         history.replace(INITIAL_BUILDER_STATE);
@@ -657,7 +680,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       toast.error(e?.detail || "Could not delete quotation");
       return false;
     }
-  }, [history, quotationId]);
+  }, [history, quotationId, activeFloorId]);
 
   const startNewQuotation = useCallback(() => {
     history.replace(INITIAL_BUILDER_STATE);
@@ -669,7 +692,17 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     setSelectedBrandIdState(null);
     setSelectedCategoryIdState(null);
     setQ("");
-    if (customers[0]) history.replace({ ...INITIAL_BUILDER_STATE, customerId: customers[0].id });
+    if (customers[0]) {
+      history.replace({
+        ...INITIAL_BUILDER_STATE,
+        customerId: customers[0].id,
+        header: {
+          ...INITIAL_BUILDER_STATE.header,
+          phone: customers[0].phone || "",
+          address: customers[0].address || "",
+        },
+      });
+    }
   }, [history, customers]);
 
   // Product modal helpers
@@ -718,36 +751,57 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   const setCustomer = useCallback((id: string) => {
     if (id === history.state.customerId) return;
     Haptics.selectionAsync();
-    history.apply((cur) => ({ ...cur, customerId: id }));
+    const customer = customers.find((item) => item.id === id);
+    history.apply((cur) => ({
+      ...cur,
+      customerId: id,
+      header: {
+        ...cur.header,
+        phone: customer?.phone || "",
+        // A selected customer supplies the default, but the draft owns this
+        // snapshot after that so customer-profile edits cannot rewrite a quote.
+        address: customer?.address || "",
+        referrerId: customer?.referrer_id || null,
+        referrerName: customer?.referrer_name || "",
+        referrerType: customer?.referrer_type || null,
+      },
+    }));
     // Persist the customer change immediately (not the 900ms debounce) so a
     // switch is never lost and the change is visible in activity/version
     // history right away — products/rooms/notes are untouched, as required.
     if (quotationId) {
-      api.patch(`/quotations/${quotationId}`, { customer_id: id, silent: false })
+      api.patch(`/quotations/${quotationId}`, {
+        customer_id: id, address_snapshot: customer?.address || null, silent: false,
+      }, { floorId: activeFloorId })
         .then(() => { setSaveState("saved"); setSavedAt(new Date()); toast.success("Customer updated"); })
         .catch((e: any) => toast.error(e?.detail || "Could not change customer"));
     }
-  }, [history, quotationId]);
+  }, [history, quotationId, customers, activeFloorId]);
 
   const createCustomer = useCallback(async (data: { name: string; phone?: string; project?: string; address?: string }) => {
     try {
       const created = await api.post<Customer>("/customers", {
         name: data.name, phone: data.phone || null, project: data.project || null, address: data.address || null,
-      }, { floorId: "first-floor" });
+      }, { floorId: activeFloorId });
       setCustomers((cur) => [created, ...cur]);
       setCustomer(created.id);
+      // React has not applied setCustomers yet, so setCustomer cannot see the
+      // new profile in its closure. Preserve the created contact snapshot.
+      history.apply((current) => ({ ...current, header: {
+        ...current.header, phone: created.phone || current.header.phone, address: created.address || "",
+      } }));
       toast.success(`${created.name} added`);
       return created.id;
     } catch (e: any) {
       toast.error(e?.detail || "Could not create customer");
       return null;
     }
-  }, [setCustomer]);
+  }, [setCustomer, activeFloorId, history]);
 
   const importCustomerFromGround = useCallback(async (sourceCustomerId: string) => {
     try {
       const result = await api.post<{ customer: Customer; defaults?: { phone?: string; project_name?: string; notes?: string } }>(
-        "/customers/import-from-floor", { source_customer_id: sourceCustomerId, target_floor_id: "first-floor" },
+        "/customers/import-from-floor", { source_customer_id: sourceCustomerId, target_floor_id: activeFloorId }, { floorId: activeFloorId },
       );
       setCustomers((current) => current.some((customer) => customer.id === result.customer.id)
         ? current : [result.customer, ...current]);
@@ -758,6 +812,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         header: {
           ...current.header,
           phone: result.defaults?.phone || current.header.phone,
+          address: result.customer.address || current.header.address,
           projectName: result.defaults?.project_name || current.header.projectName,
         },
       }));
@@ -767,16 +822,16 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       toast.error(e?.detail || "Could not import Ground Floor customer");
       return false;
     }
-  }, [history]);
+  }, [history, activeFloorId]);
 
   const setReferrer = useCallback((type: "architect" | "interior_designer", id: string, name: string) => {
     history.apply((cur) => ({ ...cur, header: { ...cur.header, referrerType: type, referrerId: id, referrerName: name } }));
     if (quotationId) {
-      api.patch(`/quotations/${quotationId}`, { referrer_type: type, referrer_id: id })
+      api.patch(`/quotations/${quotationId}`, { referrer_type: type, referrer_id: id }, { floorId: activeFloorId })
         .then(() => { setSaveState("saved"); setSavedAt(new Date()); })
         .catch((e: any) => toast.error(e?.detail || "Could not set referrer"));
     }
-  }, [history, quotationId]);
+  }, [history, quotationId, activeFloorId]);
 
   const clearReferrer = useCallback(() => {
     history.apply((cur) => ({ ...cur, header: { ...cur.header, referrerType: null, referrerId: null, referrerName: "" } }));
@@ -787,15 +842,15 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       // the clear. An empty string passes the `is not None` gate and then
       // hits the existing falsy-string branch that already clears all three
       // referrer fields (see Task 2, update_quotation).
-      api.patch(`/quotations/${quotationId}`, { referrer_type: null, referrer_id: "" })
+      api.patch(`/quotations/${quotationId}`, { referrer_type: null, referrer_id: "" }, { floorId: activeFloorId })
         .then(() => { setSaveState("saved"); setSavedAt(new Date()); })
         .catch((e: any) => toast.error(e?.detail || "Could not clear referrer"));
     }
-  }, [history, quotationId]);
+  }, [history, quotationId, activeFloorId]);
 
   const createReferrer = useCallback(async (data: { name: string; type: "architect" | "interior_designer" }) => {
     try {
-      const created = await api.post<Referrer>("/referrers", data);
+      const created = await api.post<Referrer>("/referrers", data, { floorId: activeFloorId });
       setReferrers((cur) => [...cur, created].sort((a, b) => a.name.localeCompare(b.name)));
       setReferrer(created.type, created.id, created.name);
       toast.success(`${created.name} added`);
@@ -804,7 +859,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       toast.error(e?.detail || "Could not create referrer");
       return null;
     }
-  }, [setReferrer]);
+  }, [setReferrer, activeFloorId]);
 
   const addFromProduct = useCallback((p: Product, variant?: ProductVariant) => {
     Haptics.selectionAsync();
@@ -838,18 +893,18 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   // ---------- Seed from Catalog's "Add to quotation" CTA ----------
   const appliedInitialProductRef = useRef(false);
   useEffect(() => {
-    if (!initialProductId || appliedInitialProductRef.current) return;
+    if (!initialProductId || !activeFloorId || appliedInitialProductRef.current) return;
     appliedInitialProductRef.current = true;
     (async () => {
       try {
-        const prod = await api.get<Product>(`/products/${initialProductId}`);
+        const prod = await api.get<Product>(`/products/${initialProductId}`, { floorId: activeFloorId });
         addFromProduct(prod);
         toast.success(`${prod.name} added to quotation`);
       } catch {
         toast.error("Could not add that product automatically — search for it below");
       }
     })();
-  }, [initialProductId, addFromProduct]);
+  }, [initialProductId, addFromProduct, activeFloorId]);
 
   const updateLine = useCallback((id: string, patch: Partial<Line>, coalesceKey?: string) =>
     history.apply(
@@ -975,6 +1030,9 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   const setPhone = useCallback((v: string) =>
     history.apply((cur) => ({ ...cur, header: { ...cur.header, phone: v } }), { coalesceKey: "hdr-phone" }),
   [history]);
+  const setAddress = useCallback((v: string) =>
+    history.apply((cur) => ({ ...cur, header: { ...cur.header, address: v } }), { coalesceKey: "hdr-address" }),
+  [history]);
   const setReferenceSource = useCallback((v: string) =>
     history.apply((cur) => ({ ...cur, header: { ...cur.header, referenceSource: v } }), { coalesceKey: "hdr-ref" }),
   [history]);
@@ -1000,14 +1058,14 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     setSwapSheet({ line_id: l.id, product_id: l.product_id });
     setSwapLoading(true); setSwapItems([]);
     try {
-      const res = await api.get<{ items: Product[] }>(`/products/${l.product_id}/alternates?limit=20`);
+      const res = await api.get<{ items: Product[] }>(`/products/${l.product_id}/alternates?limit=20`, { floorId: activeFloorId });
       setSwapItems(res.items || []);
     } catch (e: any) {
       toast.error(e?.detail || "Could not load alternates");
     } finally {
       setSwapLoading(false);
     }
-  }, []);
+  }, [activeFloorId]);
 
   const commitSwap = useCallback((target: Product, variant?: ProductVariant) => {
     const cur = swapSheet;
@@ -1072,7 +1130,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     try {
       const result = await api.post<{ count?: number; idempotent?: boolean }>(`/quotations/${persistedId}/place-order/confirm`, {
         project_name: s.header.projectName || null,
-      });
+      }, { floorId: activeFloorId });
       await refreshRecentQuotations();
       toast.success(result.idempotent ? "Existing order opened safely" : `Order placed · ${result.count || 0} purchase order(s)`);
       onFinalize?.(persistedId);
@@ -1081,7 +1139,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     } finally {
       setWorkflowBusy(false);
     }
-  }, [persist, s.header.projectName, refreshRecentQuotations, onFinalize]);
+  }, [persist, s.header.projectName, refreshRecentQuotations, onFinalize, activeFloorId]);
 
   // Web-only: cmd/ctrl+K focuses search
   useEffect(() => {
@@ -1116,7 +1174,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     productHasMore, productLoadingMore, loadMoreProducts, recent, frequent, searchRef,
     brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
     sortKey, setSortKey, favouriteIds, toggleFavourite,
-    setProjectName, setPhone, setReferenceSource,
+    setProjectName, setPhone, setAddress, setReferenceSource,
     productModal, openProductModal, closeProductModal, patchProduct,
     customProductSheetOpen, setCustomProductSheetOpen,
     recentQuotations, refreshRecentQuotations, restoreQuotation, deleteQuotation, startNewQuotation,
@@ -1144,7 +1202,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     productHasMore, productLoadingMore, loadMoreProducts, recent, frequent, searchRef,
     brands, categoriesForRail, selectedBrandId, setSelectedBrandId, selectedCategoryId, setSelectedCategoryId,
     sortKey, setSortKey, favouriteIds, toggleFavourite,
-    setProjectName, setPhone, setReferenceSource,
+    setProjectName, setPhone, setAddress, setReferenceSource,
     productModal, openProductModal, closeProductModal, patchProduct,
     customProductSheetOpen, setCustomProductSheetOpen,
     recentQuotations, refreshRecentQuotations, restoreQuotation, deleteQuotation, startNewQuotation,

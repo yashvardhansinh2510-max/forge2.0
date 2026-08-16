@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
-import { getPurchasesPage, type PurchaseItem, type PurchasesPage } from "@/src/api/purchases";
+import { cancelPurchaseItem, getPurchaseCustomers, getPurchasesPage, type PurchaseCustomer, type PurchaseItem, type PurchasesPage } from "@/src/api/purchases";
 import { useBp } from "@/src/design/responsive";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
@@ -36,8 +36,6 @@ type Stage =
 type StageMeta = { key: Stage; label: string; count: number; tone: { bg: string; fg: string } };
 
 type BrandFacet = { id: string; name: string; count: number };
-type CustomerFacet = { id: string; name: string; count: number; open: number };
-
 type Item = PurchaseItem;
 type BulkMoveResult = {
   item_id: string;
@@ -64,7 +62,7 @@ const VIEW_ORDER: ViewMode[] = ["today", "stock", "customers", "dispatch_record"
 const VIEW_META: Record<ViewMode, { label: string; icon: keyof typeof Feather.glyphMap; sub: string }> = {
   today:            { label: "Today",           icon: "sun",       sub: "Attention today" },
   stock:            { label: "Stock",           icon: "package",   sub: "All stock items" },
-  customers:        { label: "Customers",       icon: "users",     sub: "Grouped by customer" },
+  customers:        { label: "Customers",       icon: "users",     sub: "Customer lifecycle" },
   dispatch_record:  { label: "Dispatch Record", icon: "truck",     sub: "Dispatched history" },
 };
 
@@ -114,7 +112,8 @@ export default function PurchasesScreen() {
   const [blockedCount, setBlockedCount] = useState(0);
   const [slaDays, setSlaDays] = useState(7);
   const [brands, setBrands] = useState<BrandFacet[]>([]);
-  const [customers, setCustomers] = useState<CustomerFacet[]>([]);
+  const [customers, setCustomers] = useState<PurchaseCustomer[]>([]);
+  const [loadingCustomers, setLoadingCustomers] = useState(true);
   const [brandsTotal, setBrandsTotal] = useState(0);
   const [stages, setStages] = useState<StageMeta[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,6 +141,7 @@ export default function PurchasesScreen() {
   const [historyItemId, setHistoryItemId] = useState<string | null>(null);
   const [shortages, setShortages] = useState<Shortage[]>([]);
   const [showShortages, setShowShortages] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<Item | null>(null);
 
   const loadShortages = useCallback(async () => {
     try {
@@ -161,16 +161,22 @@ export default function PurchasesScreen() {
   // -----------------------------------
   const loadFacets = useCallback(async ({ throwOnError = false }: { throwOnError?: boolean } = {}) => {
     try {
-      const [b, s, c] = await Promise.all([
+      const [b, s] = await Promise.all([
         api.get<{ all: number; brands: BrandFacet[] }>("/purchases/brands"),
         api.get<StageMeta[]>("/purchases/stages"),
-        api.get<CustomerFacet[]>("/purchases/customers"),
       ]);
-      setBrands(b.brands); setBrandsTotal(b.all); setStages(s); setCustomers(c);
+      setBrands(b.brands); setBrandsTotal(b.all); setStages(s);
     } catch (e) {
       if (throwOnError) throw e;
       /* Purchases remains usable when a secondary facet cannot load. */
     }
+  }, []);
+
+  const loadCustomers = useCallback(async () => {
+    setLoadingCustomers(true);
+    try { setCustomers(await getPurchaseCustomers()); }
+    catch (e: any) { toast.error(e?.detail || "Could not load customers"); }
+    finally { setLoadingCustomers(false); }
   }, []);
 
   const loadItems = useCallback(async ({ throwOnError = false, append = false }: { throwOnError?: boolean; append?: boolean } = {}) => {
@@ -208,15 +214,17 @@ export default function PurchasesScreen() {
   }, [view, brand, committedQ, stage, isDesktop]);
 
   useEffect(() => { loadFacets(); }, [loadFacets]);
+  useEffect(() => { loadCustomers(); }, [loadCustomers]);
   useEffect(() => { loadShortages(); }, [loadShortages]);
   useEffect(() => {
     const t = setTimeout(() => setCommittedQ(q.trim()), 300);
     return () => clearTimeout(t);
   }, [q]);
   useEffect(() => {
+    if (view === "customers") return;
     loadItems();
     return () => requestController.current?.abort();
-  }, [loadItems]);
+  }, [loadItems, view]);
 
   const refreshPurchases = useCallback(async ({ strict = false }: { strict?: boolean } = {}) => {
     await Promise.all([
@@ -224,6 +232,19 @@ export default function PurchasesScreen() {
       loadFacets({ throwOnError: strict }),
     ]);
   }, [loadItems, loadFacets]);
+
+  const cancelItem = useCallback(async (reason?: string) => {
+    if (!cancelTarget) return;
+    try {
+      await cancelPurchaseItem(cancelTarget.item_id, reason);
+      toast.success(`${cancelTarget.name} removed from active purchases`);
+      setCancelTarget(null);
+      await Promise.all([refreshPurchases({ strict: true }), loadCustomers(), loadShortages()]);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not remove product");
+      throw e;
+    }
+  }, [cancelTarget, refreshPurchases, loadCustomers, loadShortages]);
 
   // -----------------------------------
   // Mutations
@@ -321,6 +342,11 @@ export default function PurchasesScreen() {
   }, [bulkResponse, bulkRefreshError]);
 
   const activeStageCount = stages.reduce((acc, s) => acc + s.count, 0);
+  const visibleCustomers = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return customers;
+    return customers.filter((customer) => `${customer.name} ${customer.company || ""} ${customer.phone || ""} ${customer.email || ""} ${customer.city || ""}`.toLowerCase().includes(needle));
+  }, [customers, q]);
 
   if (!isDesktop) {
     const activeFilterCount = (brand !== "all" ? 1 : 0) + (stage ? 1 : 0);
@@ -328,7 +354,7 @@ export default function PurchasesScreen() {
       <SafeAreaView style={styles.mobileSafe} edges={["top"]}>
         <FlatList
           testID="purchases-mobile-list"
-          data={items}
+          data={view === "customers" ? [] : items}
           keyExtractor={(item) => item.item_id}
           renderItem={({ item }) => (
             <MobilePurchaseCard
@@ -344,11 +370,12 @@ export default function PurchasesScreen() {
               onTransfer={() => setTransferItem(item)}
               onHistory={() => setHistoryItemId(item.item_id)}
               onOpenPo={() => router.push(`/(admin)/purchase-orders/${item.po_id}` as any)}
+              onCancel={() => setCancelTarget(item)}
             />
           )}
           contentContainerStyle={styles.mobileListContent}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-          onEndReached={() => { if (!loading && !loadingMore && nextSkip != null) loadItems({ append: true }); }}
+          onEndReached={() => { if (view !== "customers" && !loading && !loadingMore && nextSkip != null) loadItems({ append: true }); }}
           onEndReachedThreshold={0.35}
           ListHeaderComponent={(
             <View style={styles.mobileHeaderContent}>
@@ -402,10 +429,11 @@ export default function PurchasesScreen() {
                 </View>
               ) : null}
               {loading ? <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading purchases…</Text></View> : null}
-              {!loading && items.length === 0 ? <View style={styles.mobileEmpty}><Feather name="package" size={28} color={colors.onSurfaceMuted} /><Text style={styles.actionTitle}>No purchases found</Text><Text style={type.bodyMuted}>Clear filters or try a different search.</Text></View> : null}
+              {view === "customers" ? <CustomerNavigator loading={loadingCustomers} customers={visibleCustomers} onOpen={(customerId) => router.push(`/(admin)/customers/${customerId}` as any)} /> : null}
+              {!loading && view !== "customers" && items.length === 0 ? <View style={styles.mobileEmpty}><Feather name="package" size={28} color={colors.onSurfaceMuted} /><Text style={styles.actionTitle}>No purchases found</Text><Text style={type.bodyMuted}>Clear filters or try a different search.</Text></View> : null}
             </View>
           )}
-          ListFooterComponent={loadingMore ? <View style={styles.mobileFooter}><ActivityIndicator /><Text style={type.caption}>Loading more…</Text></View> : <View style={{ height: 96 }} />}
+          ListFooterComponent={view !== "customers" && loadingMore ? <View style={styles.mobileFooter}><ActivityIndicator /><Text style={type.caption}>Loading more…</Text></View> : <View style={{ height: 96 }} />}
           initialNumToRender={8}
           maxToRenderPerBatch={8}
           windowSize={7}
@@ -420,6 +448,7 @@ export default function PurchasesScreen() {
         <HistorySheet visible={!!historyItemId} itemId={historyItemId} onClose={() => setHistoryItemId(null)} />
         <ShortagesModal visible={showShortages} shortages={shortages} onClose={() => setShowShortages(false)} onChanged={async () => { await Promise.all([loadShortages(), loadItems(), loadFacets()]); }} />
         <SettingsModal visible={showSettings} currentSla={slaDays} onClose={() => setShowSettings(false)} onSaved={async (value) => { setSlaDays(value); setShowSettings(false); await loadItems(); }} />
+        <CancelPurchaseModal item={cancelTarget} onClose={() => setCancelTarget(null)} onConfirm={cancelItem} />
       </SafeAreaView>
     );
   }
@@ -662,12 +691,12 @@ export default function PurchasesScreen() {
                 onTransfer={setTransferItem}
                 onHistory={setHistoryItemId}
                 onOpenPo={(poId) => router.push(`/(admin)/purchase-orders/${poId}` as any)}
+                onCancel={setCancelTarget}
               />
             ) : view === "customers" ? (
               <CustomerNavigator
-                loading={loading}
-                customers={customers}
-                rows={items}
+                loading={loadingCustomers}
+                customers={visibleCustomers}
                 onOpen={(customerId) => router.push(`/(admin)/customers/${customerId}` as any)}
               />
             ) : (
@@ -678,7 +707,7 @@ export default function PurchasesScreen() {
                 onOpenPo={(poId) => router.push(`/(admin)/purchase-orders/${poId}` as any)}
               />
             )}
-            {nextSkip != null ? (
+            {view !== "customers" && nextSkip != null ? (
               <Pressable onPress={() => loadItems({ append: true })} disabled={loadingMore} style={styles.desktopLoadMore}>
                 {loadingMore ? <ActivityIndicator size="small" /> : <Text style={styles.desktopLoadMoreText}>Load more · {items.length} of {total}</Text>}
               </Pressable>
@@ -729,6 +758,7 @@ export default function PurchasesScreen() {
           await loadItems();
         }}
       />
+      <CancelPurchaseModal item={cancelTarget} onClose={() => setCancelTarget(null)} onConfirm={cancelItem} />
     </SafeAreaView>
   );
 }
@@ -737,9 +767,9 @@ export default function PurchasesScreen() {
 // Phone presentation.  It deliberately owns the only vertical scroll on the
 // screen; sheets render outside the FlatList and never compete for gestures.
 // -----------------------------------------------------------------------------
-function MobilePurchaseCard({ item, selected, onSelect, onMove, onTransfer, onHistory, onOpenPo }: {
+function MobilePurchaseCard({ item, selected, onSelect, onMove, onTransfer, onHistory, onOpenPo, onCancel }: {
   item: Item; selected: boolean; onSelect: () => void; onMove: () => void;
-  onTransfer: () => void; onHistory: () => void; onOpenPo: () => void;
+  onTransfer: () => void; onHistory: () => void; onOpenPo: () => void; onCancel: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const tone = STAGE_TONE[item.stage] || item.stage_tone;
@@ -776,6 +806,7 @@ function MobilePurchaseCard({ item, selected, onSelect, onMove, onTransfer, onHi
             <SheetAction icon="shuffle" label="Transfer customer" onPress={() => { setMenuOpen(false); onTransfer(); }} />
             <SheetAction icon="clock" label="Movement history" onPress={() => { setMenuOpen(false); onHistory(); }} />
             <SheetAction icon="file-text" label="Open purchase order" onPress={() => { setMenuOpen(false); onOpenPo(); }} />
+            {item.stage !== "delivered" ? <SheetAction icon="trash-2" label="Remove from active purchases" onPress={() => { setMenuOpen(false); onCancel(); }} /> : null}
             <Pressable onPress={() => setMenuOpen(false)} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Cancel</Text></Pressable>
           </Pressable>
         </Pressable>
@@ -892,9 +923,9 @@ function TodayWorkspace({ loading, rows, blockedRows, slaDays, onMove, onTransfe
   );
 }
 
-function StockWorkspace({ loading, rows, shortages, stages, isDesktop, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo }: {
+function StockWorkspace({ loading, rows, shortages, stages, isDesktop, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo, onCancel }: {
   loading: boolean; rows: Item[]; shortages: Shortage[]; stages: StageMeta[]; isDesktop: boolean; selected: Set<string>;
-  setSelected: Dispatch<SetStateAction<Set<string>>>; onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void;
+  setSelected: Dispatch<SetStateAction<Set<string>>>; onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void; onCancel: (item: Item) => void;
 }) {
   const pending = rows.filter((r) => ["order_in_company", "company_billing", "in_box"].includes(r.stage));
   const receiving = rows.filter((r) => ["company_billing", "in_box"].includes(r.stage));
@@ -911,27 +942,21 @@ function StockWorkspace({ loading, rows, shortages, stages, isDesktop, selected,
         <OpsMetric label="Stock shortages" value={shortages.length} icon="alert-triangle" tone={shortages.length ? "risk" : "ok"} />
       </View>
       {shortages.length > 0 ? <View style={styles.shortageBanner}><Feather name="alert-triangle" size={15} color={colors.error} /><Text style={{ color: colors.error, fontWeight: "700" }}>{shortages.length} shortage{shortages.length === 1 ? "" : "s"} awaiting reorder</Text></View> : null}
-      <TrackerRows rows={rows} isDesktop={isDesktop} selected={selected} setSelected={setSelected} onMove={onMove} onTransfer={onTransfer} onHistory={onHistory} onOpenPo={onOpenPo} />
+      <TrackerRows rows={rows} isDesktop={isDesktop} selected={selected} setSelected={setSelected} onMove={onMove} onTransfer={onTransfer} onHistory={onHistory} onOpenPo={onOpenPo} onCancel={onCancel} />
     </View>
   );
 }
 
-function CustomerNavigator({ loading, customers, rows, onOpen }: { loading: boolean; customers: CustomerFacet[]; rows: Item[]; onOpen: (id: string) => void }) {
-  const rowCount = useMemo(() => {
-    const counts = new Map<string, number>();
-    rows.forEach((row) => counts.set(row.customer_id, (counts.get(row.customer_id) || 0) + 1));
-    return counts;
-  }, [rows]);
+function CustomerNavigator({ loading, customers, onOpen }: { loading: boolean; customers: PurchaseCustomer[]; onOpen: (id: string) => void }) {
   if (loading) return <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading customer workspaces…</Text></View>;
   return (
     <View style={{ gap: spacing.lg }}>
-      <View><Text style={styles.overline}>CUSTOMER WORKSPACES</Text><Text style={type.bodyMuted}>Select a customer to open their live purchases, shortages, payments and timeline.</Text></View>
+      <View><Text style={styles.overline}>CUSTOMER WORKSPACES</Text><Text style={type.bodyMuted}>All customers on this floor. Select one for their purchases, quotations, payments and lifecycle timeline.</Text></View>
       <View style={styles.workspaceCard}>
-        {customers.length === 0 ? <Text style={type.bodyMuted}>No customer purchase workspaces yet.</Text> : customers.map((customer, index) => (
+        {customers.length === 0 ? <Text style={type.bodyMuted}>No customers found on this floor.</Text> : customers.map((customer, index) => (
           <Pressable key={customer.id} testID={`customer-workspace-${customer.id}`} onPress={() => onOpen(customer.id)} style={({ pressed }) => [styles.customerNavRow, index > 0 && styles.customerNavDivider, pressed && { backgroundColor: colors.surfaceTertiary }]}>
             <View style={styles.customerAvatar}><Text style={styles.customerAvatarText}>{customer.name.slice(0, 1).toUpperCase()}</Text></View>
-            <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.actionTitle} numberOfLines={1}>{customer.name}</Text><Text style={type.caption}>{customer.open} open · {customer.count} tracked · {rowCount.get(customer.id) || 0} in current view</Text></View>
-            <View style={[styles.openPill, customer.open > 0 && { backgroundColor: ds.brassTint }]}><Text style={styles.openPillText}>{customer.open} open</Text></View>
+            <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.actionTitle} numberOfLines={1}>{customer.name}</Text><Text style={type.caption} numberOfLines={1}>{customer.company || customer.phone || customer.email || customer.city || "Customer lifecycle"}</Text></View>
             <Feather name="chevron-right" size={16} color={colors.onSurfaceMuted} />
           </Pressable>
         ))}
@@ -977,9 +1002,9 @@ function DispatchWorkspace({ loading, rows, onHistory, onOpenPo }: { loading: bo
 const TABLE_FULL = 900;
 const TABLE_STACK = 620;
 
-function TrackerRows({ rows, isDesktop, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo }: {
+function TrackerRows({ rows, isDesktop, selected, setSelected, onMove, onTransfer, onHistory, onOpenPo, onCancel }: {
   rows: Item[]; isDesktop: boolean; selected: Set<string>; setSelected: Dispatch<SetStateAction<Set<string>>>;
-  onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void;
+  onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (id: string) => void; onOpenPo: (id: string) => void; onCancel: (item: Item) => void;
 }) {
   const [tableW, setTableW] = useState(Infinity);
   if (rows.length === 0) return <View style={styles.workspaceCard}><Text style={type.bodyMuted}>No inventory items match this stock view.</Text></View>;
@@ -990,7 +1015,7 @@ function TrackerRows({ rows, isDesktop, selected, setSelected, onMove, onTransfe
           key={row.item_id} row={row} isDesktop={isDesktop} tableW={tableW}
           checked={selected.has(row.item_id)}
           onToggle={() => setSelected((current) => { const next = new Set(current); if (next.has(row.item_id)) next.delete(row.item_id); else next.add(row.item_id); return next; })}
-          onOpenMove={() => onMove(row)} onTransfer={() => onTransfer(row)} onHistory={() => onHistory(row.item_id)} onOpenPo={() => onOpenPo(row.po_id)}
+          onOpenMove={() => onMove(row)} onTransfer={() => onTransfer(row)} onHistory={() => onHistory(row.item_id)} onOpenPo={() => onOpenPo(row.po_id)} onCancel={() => onCancel(row)}
         />
       ))}
     </View>
@@ -1002,9 +1027,9 @@ function TrackerRows({ rows, isDesktop, selected, setSelected, onMove, onTransfe
 // -----------------------------------------------------------------------------
 function ItemRow(props: {
   row: Item; isDesktop: boolean; tableW: number; checked: boolean;
-  onToggle: () => void; onOpenMove: () => void; onTransfer: () => void; onHistory: () => void; onOpenPo: () => void;
+  onToggle: () => void; onOpenMove: () => void; onTransfer: () => void; onHistory: () => void; onOpenPo: () => void; onCancel: () => void;
 }) {
-  const { row, isDesktop, tableW, checked, onToggle, onOpenMove, onTransfer, onHistory, onOpenPo } = props;
+  const { row, isDesktop, tableW, checked, onToggle, onOpenMove, onTransfer, onHistory, onOpenPo, onCancel } = props;
   const desktopTable = isDesktop && tableW >= TABLE_STACK;
   if (!desktopTable) {
     return (
@@ -1033,6 +1058,7 @@ function ItemRow(props: {
             <Pressable onPress={onHistory} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="clock" size={14} color={colors.onSurface} /></Pressable>
             <Pressable onPress={onOpenMove} style={styles.mobileMoveBtn} hitSlop={6}><Text style={styles.moveBtnText}>Move</Text></Pressable>
             <Pressable onPress={onTransfer} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="repeat" size={14} color={colors.onSurface} /></Pressable>
+            {row.stage !== "delivered" ? <Pressable accessibilityLabel={`Remove ${row.name}`} onPress={onCancel} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="trash-2" size={14} color={colors.error} /></Pressable> : null}
           </View>
         </View>
       </View>
@@ -1097,6 +1123,7 @@ function ItemRow(props: {
         <Pressable onPress={onTransfer} testID={`row-transfer-${row.item_id}`} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}>
           <Feather name="repeat" size={12} color={colors.onSurface} />
         </Pressable>
+        {row.stage !== "delivered" ? <Pressable accessibilityLabel={`Remove ${row.name}`} testID={`row-cancel-${row.item_id}`} onPress={onCancel} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}><Feather name="trash-2" size={12} color={colors.error} /></Pressable> : null}
       </View>
     </View>
   );
@@ -1157,6 +1184,38 @@ function BulkChk({ checked, onToggle }: { checked: boolean; onToggle: () => void
     <Pressable onPress={onToggle} hitSlop={8} style={[styles.chk, checked && styles.chkOn]}>
       {checked ? <Feather name="check" size={11} color="#fff" /> : null}
     </Pressable>
+  );
+}
+
+function CancelPurchaseModal({ item, onClose, onConfirm }: {
+  item: Item | null; onClose: () => void; onConfirm: (reason?: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (item) setReason(""); }, [item]);
+  const confirm = async () => {
+    setBusy(true);
+    try { await onConfirm(reason); }
+    catch { /* toast is surfaced by the caller; keep this confirmation open. */ }
+    finally { setBusy(false); }
+  };
+  return (
+    <Modal visible={!!item} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={busy ? undefined : onClose}>
+        <Pressable style={styles.settingsCard} onPress={(event) => event.stopPropagation()}>
+          <Text style={type.titleMd}>Remove active purchase?</Text>
+          <Text style={[type.caption, { marginTop: 6 }]}>{item?.name} will be removed from active tracking. This keeps its cancellation history and cannot be undone here.</Text>
+          <View style={{ marginTop: 14 }}>
+            <Text style={styles.fieldLabel}>REASON (OPTIONAL)</Text>
+            <TextInput value={reason} onChangeText={setReason} placeholder="Why is this product being removed?" placeholderTextColor={colors.onSurfaceMuted} style={styles.input} editable={!busy} multiline />
+          </View>
+          <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
+            <Pressable onPress={onClose} disabled={busy} style={[styles.cancelBtn, { flex: 1, opacity: busy ? 0.6 : 1 }]}><Text style={{ color: colors.onSurface, fontWeight: "600" }}>Keep product</Text></Pressable>
+            <Pressable testID={`confirm-cancel-${item?.item_id || "item"}`} onPress={confirm} disabled={busy} style={[styles.removePurchaseBtn, { flex: 1, opacity: busy ? 0.6 : 1 }]}>{busy ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.removePurchaseText}>Remove product</Text>}</Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -1431,7 +1490,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, marginBottom: 6,
   },
   blockedThumb: {
-    width: 40, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
+    width: 64, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
   orderInPill: {
@@ -1457,7 +1516,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8, textTransform: "uppercase",
   },
   tr: {
-    flexDirection: "row", alignItems: "center", gap: 8, minHeight: 72,
+    flexDirection: "row", alignItems: "center", gap: 8, minHeight: 84,
     paddingHorizontal: spacing.md, paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
@@ -1467,11 +1526,11 @@ const styles = StyleSheet.create({
   mobileTransferBtn: { width: 44, height: 44, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   mobileMoveBtn: { minWidth: 70, minHeight: 44, paddingHorizontal: 12, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
   mobileThumb: {
-    width: 48, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
+    width: 68, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
   thumb: {
-    width: 44, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
+    width: 64, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary,
     alignItems: "center", justifyContent: "center", overflow: "hidden",
   },
   mono: { fontSize: 11, color: colors.onSurfaceMuted, fontVariant: ["tabular-nums"] },
@@ -1565,6 +1624,8 @@ const styles = StyleSheet.create({
     height: 40, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: colors.border,
     alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary,
   },
+  removePurchaseBtn: { height: 40, paddingHorizontal: 14, borderRadius: 8, backgroundColor: colors.error, alignItems: "center", justifyContent: "center" },
+  removePurchaseText: { color: "#fff", fontWeight: "700" },
 
   settingsCard: {
     width: 340, padding: spacing.lg, borderRadius: radius.md,
@@ -1583,7 +1644,7 @@ const styles = StyleSheet.create({
   workspaceCard: { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md },
   workspaceTitle: { fontSize: 14, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.sm },
   actionRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  actionThumb: { width: 40, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
+  actionThumb: { width: 56, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
   actionTitle: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
   workspaceAction: { height: 32, paddingHorizontal: 10, borderRadius: radius.sm, justifyContent: "center", backgroundColor: colors.brand },
   workspaceActionText: { color: colors.onBrand, fontSize: 12, fontWeight: "700" },
@@ -1632,7 +1693,7 @@ const styles = StyleSheet.create({
   mobilePurchaseCardBlocked: { borderLeftWidth: 4, borderLeftColor: colors.error },
   mobileCardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   mobileSelectTarget: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginLeft: -10 },
-  mobileCardImage: { width: 58, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
+  mobileCardImage: { width: 80, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
   mobileCardName: { color: colors.onSurface, fontSize: 14, lineHeight: 19, fontWeight: "800" },
   mobileCardMeta: { marginTop: 2, color: colors.onSurfaceMuted, fontSize: 11.5, lineHeight: 16 },
   mobileCardDetailRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingHorizontal: 4 },

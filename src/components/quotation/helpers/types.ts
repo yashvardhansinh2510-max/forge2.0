@@ -45,7 +45,11 @@ export type Brand = { id: string; name: string; slug?: string; product_count?: n
 
 export type Category = { id: string; name: string; product_count?: number };
 
-export type Customer = { id: string; name: string; company?: string | null; email?: string | null; phone?: string | null };
+export type Customer = {
+  id: string; name: string; company?: string | null; email?: string | null; phone?: string | null; address?: string | null;
+  referrer_id?: string | null; referrer_name?: string | null;
+  referrer_type?: "architect" | "interior_designer" | null;
+};
 
 export type Referrer = {
   id: string; name: string; type: "architect" | "interior_designer";
@@ -56,6 +60,8 @@ export type Referrer = {
 export type QuotationHeader = {
   projectName: string;
   phone: string;
+  /** Frozen per-quotation delivery/site address, independent of the customer profile. */
+  address: string;
   referenceSource: string;
   referrerType: "architect" | "interior_designer" | null;
   referrerId: string | null;
@@ -133,7 +139,7 @@ export const DEFAULT_ROOMS = [
 
 export const INITIAL_BUILDER_STATE: BuilderState = {
   customerId: null,
-  header: { projectName: "", phone: "", referenceSource: "", referrerType: null, referrerId: null, referrerName: "" },
+  header: { projectName: "", phone: "", address: "", referenceSource: "", referrerType: null, referrerId: null, referrerName: "" },
   lines: [],
   rooms: [DEFAULT_ROOMS[0]],
   collapsedRooms: {},
