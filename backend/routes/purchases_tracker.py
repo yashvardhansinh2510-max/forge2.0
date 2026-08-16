@@ -58,6 +58,7 @@ from services.domain_outbox import (
     enqueue_after_primary_commit,
 )
 from services.followup_engine import reconcile_followups
+from services.catalog_service import get_catalog_snapshot, hydrate_product
 from services.notifications import notify
 from services.sequence import next_number
 from services.transfer_workflow import execute_transfer, transfer_history
@@ -183,6 +184,7 @@ def _flatten_item(po: dict, it: dict, sla_days: int) -> dict:
         "quotation_number": po.get("quotation_number"),
         "quotation_line_id": it.get("quotation_line_id"),
         "product_id": it.get("product_id"),
+        "floor_id": po.get("floor_id"),
         "sku": it.get("sku"),
         "name": it.get("name"),
         "image": it.get("image"),
@@ -210,6 +212,27 @@ def _flatten_item(po: dict, it: dict, sla_days: int) -> dict:
         "transferred_from_item_id": it.get("transferred_from_item_id"),
         "transferred_from_customer_id": it.get("transferred_from_customer_id"),
     }
+
+
+async def _hydrate_workspace_images(rows: list[dict]) -> None:
+    """Replace stale PO image snapshots with current catalog hero images.
+
+    Purchase orders preserve the original line details, but old image URLs can
+    be empty or expired. The catalog snapshot is in memory, so this resolves
+    every workspace row without N+1 database queries or cross-floor leakage.
+    """
+    if not rows:
+        return
+    snapshot = await get_catalog_snapshot()
+    for row in rows:
+        product_id = row.get("product_id")
+        product = snapshot.product_by_id.get(product_id) if product_id else None
+        if not product or product.get("floor_id") != row.get("floor_id"):
+            continue
+        hero = hydrate_product(product, snapshot).get("hero_image_url")
+        if hero:
+            row["image_snapshot"] = row.get("image")
+            row["image"] = hero
 
 
 async def _iter_items(
@@ -518,6 +541,7 @@ async def customer_workspace(
         "stock", brand, customer_id, stage, q, settings.sla_days, limit=2000,
         floor_ids=floor_scope_ids(user),
     )
+    await _hydrate_workspace_images(rows)
     pos = await db.purchase_orders.find(floor_query(user, {"customer_id": customer_id}), {"_id": 0}).sort("created_at", -1).to_list(200)
 
     total_value = round(sum(r["qty"] * r["unit_cost"] for r in rows), 2)

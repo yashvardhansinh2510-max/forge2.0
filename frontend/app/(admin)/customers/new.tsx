@@ -31,6 +31,7 @@ export default function NewCustomer() {
   const [phone, setPhone] = useState("");
   const [city, setCity] = useState("");
   const [address, setAddress] = useState("");
+  const [propertyName, setPropertyName] = useState("");
   const [stateField, setStateField] = useState("");
   const [pincode, setPincode] = useState("");
   const [gstin, setGstin] = useState("");
@@ -53,6 +54,7 @@ export default function NewCustomer() {
         phone: phone.trim() || null,
         city: city.trim() || null,
         address: address.trim() || null,
+        property_name: propertyName.trim() || null,
         state: stateField.trim() || null,
         pincode: pincode.trim() || null,
         gstin: gstin.trim() || null,
@@ -122,6 +124,7 @@ export default function NewCustomer() {
             onChangeText={setCity}
             testID="new-customer-city"
           />
+          <TextField label="Property / project" placeholder="e.g. Riverfront Residence" value={propertyName} onChangeText={setPropertyName} testID="new-customer-property-name" />
           <TextField
             label="Address"
             placeholder="Street, area, pincode"

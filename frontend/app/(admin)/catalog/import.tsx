@@ -11,7 +11,7 @@ import {
 import { AdminPage } from "@/src/components/AdminPage";
 import { Badge, Button, Card, EmptyState } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
-import { api, getToken } from "@/src/api/client";
+import { api, csrfHeaders, getToken } from "@/src/api/client";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 import { uriToBlob } from "@/src/utils/uriToBlob";
 
@@ -82,8 +82,12 @@ export default function CatalogImport() {
 
       const r = await fetch(`${api.base}/api/catalog/imports`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        // This multipart request bypasses the JSON API wrapper, so it must
+        // explicitly carry the browser session's double-submit CSRF header.
+        // (On web getToken() is intentionally null: auth is cookie-backed.)
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...csrfHeaders() },
         body: form,
+        credentials: "same-origin",
       });
       const text = await r.text();
       if (!r.ok) {
