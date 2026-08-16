@@ -10,6 +10,7 @@
 import { useState } from "react";
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
@@ -57,6 +58,7 @@ function NotesAndDiscount({ b }: { b: ReturnType<typeof useBuilder> }) {
 
 export function BuilderFooter({ compact = false }: { compact?: boolean }) {
   const b = useBuilder();
+  const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState(false);
 
   const canFinish = !!b.s.customerId && b.s.lines.length > 0;
@@ -70,34 +72,30 @@ export function BuilderFooter({ compact = false }: { compact?: boolean }) {
           </View>
         ) : null}
 
-        <Pressable testID="mobile-footer-toggle" onPress={() => setExpanded((v) => !v)} style={styles.phoneBar}>
-          <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={[styles.phoneBar, { paddingBottom: Math.max(spacing.md, insets.bottom + spacing.sm) }]}>
+          <Pressable testID="mobile-footer-toggle" onPress={() => setExpanded((v) => !v)} style={styles.phoneSummary}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
               <Text style={type.caption} numberOfLines={1}>{b.s.lines.length} items · {b.saveLabel}</Text>
               <Feather name={expanded ? "chevron-down" : "chevron-up"} size={13} color={colors.onSurfaceMuted} />
             </View>
             <Text style={styles.phoneTotal} numberOfLines={1}>{money(b.totals.grand)}</Text>
+          </Pressable>
+          <View style={styles.phoneActions}>
+            <Pressable testID="mobile-add-first" onPress={() => b.setPickerSheetOpen(true)} style={styles.secondary}>
+              <Feather name="plus" size={16} color={colors.onSurface} />
+              <Text style={styles.secondaryText}>Add</Text>
+            </Pressable>
+            <Pressable
+              testID="mobile-finalize"
+              onPress={() => { if (canFinish) b.finalize(); }}
+              disabled={!canFinish}
+              style={({ pressed }) => [styles.primary, { opacity: !canFinish ? 0.4 : pressed ? 0.9 : 1 }]}
+            >
+              <Feather name="check" size={16} color={ds.canvas} />
+              <Text style={styles.saveBtnTextSm}>Finish</Text>
+            </Pressable>
           </View>
-          <Pressable
-            testID="mobile-add-first"
-            onPress={(e: any) => { e?.stopPropagation?.(); b.setPickerSheetOpen(true); }}
-            style={styles.secondary}
-            hitSlop={6}
-          >
-            <Feather name="plus" size={16} color={colors.onSurface} />
-            <Text style={styles.secondaryText}>Add</Text>
-          </Pressable>
-          <Pressable
-            testID="mobile-finalize"
-            onPress={(e: any) => { e?.stopPropagation?.(); if (canFinish) b.finalize(); }}
-            disabled={!canFinish}
-            style={({ pressed }) => [styles.primary, { opacity: !canFinish ? 0.4 : pressed ? 0.9 : 1 }]}
-            hitSlop={6}
-          >
-            <Feather name="check" size={16} color={ds.canvas} />
-            <Text style={styles.saveBtnTextSm}>Finish</Text>
-          </Pressable>
-        </Pressable>
+        </View>
       </View>
     );
   }
@@ -160,17 +158,19 @@ const styles = StyleSheet.create({
     padding: spacing.md, gap: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
-  phoneBar: { flexDirection: "row", alignItems: "center", gap: 8, padding: spacing.md },
+  phoneBar: { gap: 8, paddingHorizontal: spacing.md, paddingTop: spacing.md },
+  phoneSummary: { minHeight: 44, justifyContent: "center" },
+  phoneActions: { flexDirection: "row", gap: 8 },
   phoneTotal: { fontSize: 19, fontFamily: font.regular, letterSpacing: -0.3, color: colors.onSurface, fontVariant: ["tabular-nums"] },
   secondary: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.md,
+    minHeight: 44, flex: 1, justifyContent: "center", paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border,
   },
   secondaryText: { fontSize: 13, fontWeight: "600", color: colors.onSurface },
   primary: {
     flexDirection: "row", alignItems: "center", gap: 6,
-    paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md,
+    minHeight: 44, flex: 1, justifyContent: "center", paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md,
     backgroundColor: ds.brass,
   },
   saveBtnTextSm: { color: ds.canvas, fontSize: 13, fontFamily: font.semibold, fontWeight: "600" },

@@ -66,15 +66,18 @@ function LineRowImpl({
         <Feather name="menu" size={14} color={colors.onSurfaceMuted} />
       </Pressable>
       <ProductImage source={l.image} style={[styles.thumb, isPhone ? styles.thumbPhone : {}]} fallbackLabel={l.sku} />
-      <View style={{ flex: 1, gap: 4, minWidth: 0 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Text style={styles.name} numberOfLines={isPhone ? 2 : 1}>{l.name}</Text>
-          {l.finish ? <FinishSwatch finish={l.finish} size={10} /> : null}
-          {badge ? <Badge tone={badge.tone} label={badge.label} /> : null}
+      <View style={styles.content}>
+        <View style={styles.heading}>
+          <View style={styles.nameGroup}>
+            <Text style={styles.name} numberOfLines={isPhone ? 2 : 1}>{l.name}</Text>
+            {l.finish ? <FinishSwatch finish={l.finish} size={10} /> : null}
+            {badge ? <Badge tone={badge.tone} label={badge.label} /> : null}
+          </View>
+          <Text style={styles.total}>{money(total)}</Text>
         </View>
         <Text style={type.caption} numberOfLines={1}>{l.sku}</Text>
         {l.description ? <Text style={type.caption} numberOfLines={2}>{l.description}</Text> : null}
-        <View style={[styles.controls, isPhone && styles.controlsPhone]}>
+        <View style={styles.controls}>
           <View style={styles.mini}>
             <Text style={styles.miniLabel}>QTY</Text>
             <TextInput
@@ -120,7 +123,6 @@ function LineRowImpl({
         </View>
         {isPhone && menuOpen ? <View style={styles.mobileActions}><LineActions line={l} /></View> : null}
       </View>
-      <Text style={[styles.total, isPhone && styles.totalPhone]}>{money(total)}</Text>
     </Pressable>
   );
 }
@@ -155,13 +157,16 @@ const styles = StyleSheet.create({
     flexDirection: "row", gap: 10, padding: 10, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
-  rowPhone: { padding: 12, gap: 8, alignItems: "flex-start", flexWrap: "wrap" },
+  rowPhone: { padding: 12, gap: 8, alignItems: "flex-start" },
   dragHandle: {
     width: 20, alignItems: "center", justifyContent: "center", alignSelf: "stretch",
     marginRight: -2, marginLeft: -4,
   },
   thumb: { width: 64, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
   thumbPhone: { width: 88 },
+  content: { flex: 1, minWidth: 0, gap: 4 },
+  heading: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  nameGroup: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
   name: { fontSize: 13, fontFamily: font.semibold, fontWeight: "600", color: colors.onSurface, flex: 1, letterSpacing: -0.1 },
   mini: {
     borderRadius: 7, paddingHorizontal: 8, paddingVertical: 4, minWidth: 60, minHeight: 44,
@@ -170,9 +175,7 @@ const styles = StyleSheet.create({
   miniLabel: { fontSize: 9, fontFamily: font.semibold, color: colors.onSurfaceMuted, fontWeight: "600", letterSpacing: 0.8 },
   miniVal: { fontSize: 13, fontFamily: font.medium, fontWeight: "500", color: colors.onSurface, padding: 0, minWidth: 40, fontVariant: ["tabular-nums"] },
   controls: { flexDirection: "row", gap: 6, marginTop: 2, flexWrap: "wrap" },
-  controlsPhone: { marginLeft: -98, paddingTop: 8 },
   icon: { width: 44, height: 44, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceTertiary },
-  mobileActions: { flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2, marginLeft: -98 },
+  mobileActions: { flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 2 },
   total: { fontFamily: font.semibold, fontSize: 13, fontWeight: "600", color: colors.onSurface, fontVariant: ["tabular-nums"], letterSpacing: -0.1 },
-  totalPhone: { position: "absolute", right: 12, top: 12, paddingLeft: 6, backgroundColor: colors.surfaceSecondary },
 });
