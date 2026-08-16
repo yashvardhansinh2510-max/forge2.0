@@ -12,10 +12,8 @@
 import { useLocalSearchParams } from "expo-router";
 
 import { LazyQuotationBuilder } from "@/src/components/quotation/LazyQuotationBuilder";
-import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 
 export default function QuotationBuilderScreen() {
-  useRequireFloorAccess("first-floor");
   // Optional ?productId=... — set by Catalog's "Add to quotation" CTA so
   // starting a new quotation from a product's detail page actually seeds
   // that product instead of landing on an empty builder.

@@ -18,6 +18,22 @@ from services.invite_service import generate_temp_password, get_invite_service, 
 router = APIRouter(tags=["customers"])
 
 
+async def _referrer_fields(referrer_id: str | None, user: UserPublic) -> dict:
+    """Resolve referral attribution server-side; never trust a display name."""
+    if not referrer_id:
+        return {"referrer_id": None, "referrer_name": None, "referrer_type": None}
+    referrer = await get_floor_scoped_or_404(
+        db.referrers, referrer_id, user, not_found="Referrer not found", projection={"_id": 0},
+    )
+    if referrer.get("active") is False:
+        raise HTTPException(status_code=400, detail="This referrer is archived")
+    return {
+        "referrer_id": referrer["id"],
+        "referrer_name": referrer["name"],
+        "referrer_type": referrer["type"],
+    }
+
+
 class ImportCustomerFromFloorPayload(BaseModel):
     """Import a customer profile into another floor without carrying product
     lines across two independent catalogues."""
@@ -55,6 +71,7 @@ async def create_customer(
         raise HTTPException(status_code=400, detail="Customer name is required")
     data = body.dict()
     data["floor_id"] = floor_for_write(user)
+    data.update(await _referrer_fields(body.referrer_id, user))
     if data.get("email"):
         data["email"] = data["email"].lower()
     else:
@@ -207,6 +224,13 @@ async def update_customer(
     existing = await get_floor_scoped_or_404(db.customers, customer_id, user, not_found="Customer not found", projection={"_id": 0})
 
     patch = body.dict(exclude_unset=True)
+    if "referrer_id" in patch:
+        patch.update(await _referrer_fields(patch["referrer_id"], user))
+    # Display/type fields are derived from the selected id, never accepted as
+    # independent customer attribution input.
+    if "referrer_id" not in patch:
+        patch.pop("referrer_name", None)
+        patch.pop("referrer_type", None)
     if "email" in patch and patch["email"]:
         patch["email"] = patch["email"].lower()
         dupe = await db.customers.find_one({"email": patch["email"], "id": {"$ne": customer_id}}, {"_id": 0, "id": 1})

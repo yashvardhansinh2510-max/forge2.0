@@ -17,6 +17,10 @@ QuotationStatus = Literal[
     "ordered",  # order placed — POs generated
 ]
 
+# Architects and interior designers who refer business. Kept close to the
+# customer model because a customer's referrer is the attribution source.
+ReferrerType = Literal["architect", "interior_designer"]
+
 # Purchase Order lifecycle. Ordering matters — the frontend Kanban / status
 # selectors reflect this canonical sequence.
 PurchaseStatus = Literal[
@@ -121,6 +125,11 @@ class CustomerBase(BaseModel):
     assigned_branch: Optional[str] = None
     tags: list[str] = []
     lead_temperature: Optional[Literal["cold", "warm", "hot"]] = None
+    # The customer's single source of referral attribution.  Quotes copy this
+    # into their immutable snapshot so reporting remains historically stable.
+    referrer_id: Optional[str] = None
+    referrer_name: Optional[str] = None
+    referrer_type: Optional[ReferrerType] = None
 
 
 class CustomerCreate(CustomerBase):
@@ -148,6 +157,9 @@ class CustomerUpdatePayload(BaseModel):
     assigned_branch: Optional[str] = None
     tags: Optional[list[str]] = None
     lead_temperature: Optional[Literal["cold", "warm", "hot"]] = None
+    referrer_id: Optional[str] = None
+    referrer_name: Optional[str] = None
+    referrer_type: Optional[ReferrerType] = None
 
 
 class CustomerPublic(CustomerBase, TimestampedModel):
@@ -492,12 +504,12 @@ class RoomDiscountCfg(BaseModel):
 # untouched; these fields are only used when a quotation's referrer_type is
 # architect/interior_designer. See
 # docs/superpowers/specs/2026-07-27-sales-data-dashboard-design.md.
-ReferrerType = Literal["architect", "interior_designer"]
-
-
 class Referrer(TimestampedModel):
     name: str
     type: ReferrerType
+    floor_id: str
+    normalized_name: str
+    active: bool = True
     phone: Optional[str] = None
     company: Optional[str] = None
     created_by: str
@@ -685,6 +697,15 @@ class PurchaseStageEvent(BaseModel):
     qty: Optional[float] = None          # units affected — set for split events
 
 
+class PurchaseCancellationEvent(BaseModel):
+    """Immutable record of an explicit tracked-item cancellation."""
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    at: str = Field(default_factory=now_iso)
+    by_user_id: str
+    by_user_name: str
+    reason: Optional[str] = None
+
+
 class PurchaseOrderItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     product_id: str
@@ -714,6 +735,14 @@ class PurchaseOrderItem(BaseModel):
     last_moved_by_name: Optional[str] = None
     # Immutable stage history — append-only.
     stage_history: list[PurchaseStageEvent] = []
+    # Cancellation is deliberately item-level: a cancelled line stays on its
+    # PO for audit/history, but is excluded from active tracker views.
+    cancelled: bool = False
+    cancelled_at: Optional[str] = None
+    cancelled_by: Optional[str] = None
+    cancelled_by_name: Optional[str] = None
+    cancellation_reason: Optional[str] = None
+    cancellation_history: list[PurchaseCancellationEvent] = []
     # Transfer bookkeeping
     transferred_from_item_id: Optional[str] = None   # set on the destination item
     transferred_from_po_id: Optional[str] = None

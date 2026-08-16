@@ -132,18 +132,23 @@ async def _track_product_usage(user_id: str, product_ids: list[str]):
     await catalog_service.note_product_usage(user_id, product_ids, now)
 
 
-def _referrer_fields(referrer_type: str | None, referrer_doc: dict | None) -> dict:
-    """Denormalizes a referrer's name at write time from an already-fetched
-    Referrer doc, mirroring how customer_name is resolved from the fetched
-    customer doc rather than trusted from the client. Returns the three
-    Quotation fields to merge; all None when there is no referrer."""
-    if not referrer_doc:
+def _customer_referrer_fields(customer: dict) -> dict:
+    """Freeze customer-owned referral attribution onto a quotation."""
+    if not customer.get("referrer_id"):
         return {"referrer_type": None, "referrer_id": None, "referrer_name": None}
     return {
-        "referrer_type": referrer_type,
-        "referrer_id": referrer_doc["id"],
-        "referrer_name": referrer_doc["name"],
+        "referrer_type": customer.get("referrer_type"),
+        "referrer_id": customer["referrer_id"],
+        "referrer_name": customer.get("referrer_name"),
     }
+
+
+# Compatibility helper retained for historical unit coverage and legacy data
+# repair scripts. New quotation writes must use _customer_referrer_fields.
+def _referrer_fields(referrer_type: str | None, referrer_doc: dict | None) -> dict:
+    if not referrer_doc:
+        return {"referrer_type": None, "referrer_id": None, "referrer_name": None}
+    return {"referrer_type": referrer_type, "referrer_id": referrer_doc["id"], "referrer_name": referrer_doc["name"]}
 
 
 @router.get("")
@@ -231,12 +236,6 @@ async def create_quotation(
             if p.get("floor_id"):
                 item_floor_ids.add(p["floor_id"])
 
-    referrer_doc = None
-    if body.referrer_id:
-        referrer_doc = await db.referrers.find_one({"id": body.referrer_id}, {"_id": 0, "id": 1, "name": 1})
-        if not referrer_doc:
-            raise HTTPException(status_code=404, detail="Referrer not found")
-
     totals = _tile_totals(
         _recalc(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {}),
         body.transportation_fee, body.doc_type,
@@ -254,7 +253,7 @@ async def create_quotation(
         project_name=body.project_name,
         phone_snapshot=body.phone_snapshot or customer.get("phone"),
         reference_source=body.reference_source,
-        **_referrer_fields(body.referrer_type, referrer_doc),
+        **_customer_referrer_fields(customer),
         items=items,
         rooms=body.rooms or [],
         project_discount_pct=body.project_discount_pct or 0,
@@ -367,6 +366,7 @@ async def update_quotation(
             customer_changed_from = doc.get("customer_name")
         update["customer_id"] = new_customer["id"]
         update["customer_name"] = new_customer.get("company") or new_customer["name"]
+        update.update(_customer_referrer_fields(new_customer))
         # Refresh the frozen phone snapshot to the new customer's phone unless
         # this same request is also explicitly setting one.
         if body.phone_snapshot is None:
@@ -426,13 +426,6 @@ async def update_quotation(
         update["phone_snapshot"] = body.phone_snapshot
     if body.reference_source is not None:
         update["reference_source"] = body.reference_source
-    if body.referrer_id is not None:
-        referrer_doc = None
-        if body.referrer_id:
-            referrer_doc = await db.referrers.find_one({"id": body.referrer_id}, {"_id": 0, "id": 1, "name": 1})
-            if not referrer_doc:
-                raise HTTPException(status_code=404, detail="Referrer not found")
-        update.update(_referrer_fields(body.referrer_type, referrer_doc))
     if body.attended_by is not None:
         update["attended_by"] = body.attended_by
     if body.prepared_by is not None:

@@ -357,11 +357,19 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         [Paragraph(_escape(customer.get("company") or customer.get("name") or quotation.get("customer_name")), styles["body"]), Paragraph(_escape(quotation.get("phone_snapshot") or customer.get("phone") or ""), styles["body"]), Paragraph(created, styles["body"])],
         [Paragraph("QUOTATION NO.", styles["label"]), Paragraph("REFERENCE", styles["label"]), Paragraph("PROJECT", styles["label"])],
         [Paragraph(_escape(quotation.get("number")), styles["body"]), Paragraph(_escape(quotation.get("reference_source") or ""), styles["body"]), Paragraph(_escape(quotation.get("project_name") or ""), styles["body"])],
+        [Paragraph("REFERRED BY", styles["label"]), "", ""],
+        [Paragraph(_escape(quotation.get("referrer_name") or ""), styles["body"]), "", ""],
+        [Paragraph("SITE / DELIVERY ADDRESS", styles["label"]), "", ""],
+        [Paragraph(_escape(quotation.get("address_snapshot") or customer.get("address") or ""), styles["body"]), "", ""],
     ]
-    meta_table = Table(meta, colWidths=[60 * mm, 60 * mm, 50 * mm], rowHeights=[7 * mm, 7 * mm, 7 * mm, 7 * mm])
+    meta_table = Table(meta, colWidths=[60 * mm, 60 * mm, 50 * mm], rowHeights=[7 * mm, 7 * mm, 7 * mm, 7 * mm, 6 * mm, 7 * mm, 6 * mm, 10 * mm])
     meta_table.setStyle(TableStyle([
         ("LINEBELOW", (0, 1), (-1, 1), 0.4, LINE),
         ("LINEBELOW", (0, 3), (-1, 3), 0.4, LINE),
+        ("SPAN", (0, 4), (-1, 4)), ("SPAN", (0, 5), (-1, 5)),
+        ("SPAN", (0, 6), (-1, 6)), ("SPAN", (0, 7), (-1, 7)),
+        ("LINEBELOW", (0, 5), (-1, 5), 0.4, LINE),
+        ("LINEBELOW", (0, 7), (-1, 7), 0.4, LINE),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),

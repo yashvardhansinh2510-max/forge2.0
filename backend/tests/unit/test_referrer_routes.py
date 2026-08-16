@@ -9,7 +9,7 @@ from routes import referrer_routes
 
 
 def _user(role="sales"):
-    return UserPublic(id="user-1", email="s@forge.app", full_name="Sales", role=role)
+    return UserPublic(id="user-1", email="s@forge.app", full_name="Sales", role=role, floor_ids=["first-floor"], active_floor_id="first-floor")
 
 
 class _Cursor:
@@ -29,7 +29,15 @@ class _Collection:
         self.inserted = None
 
     def find(self, query, *_a, **_kw):
-        matched = [d for d in self._docs if all(d.get(k) == v for k, v in query.items())]
+        def matches(doc):
+            for key, value in query.items():
+                if isinstance(value, dict) and "$in" in value:
+                    if doc.get(key) not in value["$in"]:
+                        return False
+                elif doc.get(key) != value:
+                    return False
+            return True
+        matched = [d for d in self._docs if matches(d)]
         return _Cursor(matched)
 
     async def insert_one(self, doc):
@@ -43,8 +51,8 @@ class _FakeDb:
 
 def test_list_referrers_filters_by_type(monkeypatch):
     fake_db = _FakeDb([
-        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "created_at": "t", "updated_at": "t", "created_by": "u"},
-        {"id": "r2", "name": "Nikita Shah", "type": "interior_designer", "created_at": "t", "updated_at": "t", "created_by": "u"},
+        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "floor_id": "first-floor", "normalized_name": "rakesh sharma", "created_at": "t", "updated_at": "t", "created_by": "u"},
+        {"id": "r2", "name": "Nikita Shah", "type": "interior_designer", "floor_id": "first-floor", "normalized_name": "nikita shah", "created_at": "t", "updated_at": "t", "created_by": "u"},
     ])
     monkeypatch.setattr(referrer_routes, "db", fake_db)
 
@@ -55,8 +63,8 @@ def test_list_referrers_filters_by_type(monkeypatch):
 
 def test_list_referrers_no_filter_returns_all(monkeypatch):
     fake_db = _FakeDb([
-        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "created_at": "t", "updated_at": "t", "created_by": "u"},
-        {"id": "r2", "name": "Nikita Shah", "type": "interior_designer", "created_at": "t", "updated_at": "t", "created_by": "u"},
+        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "floor_id": "first-floor", "normalized_name": "rakesh sharma", "created_at": "t", "updated_at": "t", "created_by": "u"},
+        {"id": "r2", "name": "Nikita Shah", "type": "interior_designer", "floor_id": "first-floor", "normalized_name": "nikita shah", "created_at": "t", "updated_at": "t", "created_by": "u"},
     ])
     monkeypatch.setattr(referrer_routes, "db", fake_db)
 
@@ -79,7 +87,7 @@ def test_create_referrer_stamps_created_by(monkeypatch):
 
 def test_create_referrer_with_new_name_creates_a_new_record(monkeypatch):
     fake_db = _FakeDb([
-        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "created_at": "t", "updated_at": "t", "created_by": "u"},
+        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "floor_id": "first-floor", "normalized_name": "rakesh sharma", "created_at": "t", "updated_at": "t", "created_by": "u"},
     ])
     monkeypatch.setattr(referrer_routes, "db", fake_db)
 
@@ -94,7 +102,7 @@ def test_create_referrer_with_new_name_creates_a_new_record(monkeypatch):
 
 def test_create_referrer_same_name_and_type_returns_existing_record_not_a_duplicate(monkeypatch):
     fake_db = _FakeDb([
-        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "created_at": "t", "updated_at": "t", "created_by": "u"},
+        {"id": "r1", "name": "Rakesh Sharma", "type": "architect", "floor_id": "first-floor", "normalized_name": "rakesh sharma", "created_at": "t", "updated_at": "t", "created_by": "u"},
     ])
     monkeypatch.setattr(referrer_routes, "db", fake_db)
 

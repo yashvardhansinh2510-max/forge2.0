@@ -45,7 +45,7 @@ from auth import (
 )
 from db import client, db
 from models import (
-    Chalan, ChalanLineItem, PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
+    Chalan, ChalanLineItem, PurchaseCancellationEvent, PurchaseOrder, PurchaseOrderItem, PurchaseShortage, PurchaseStageEvent, PurchaseStatusEvent,
     PURCHASE_STAGES, PurchaseStage, Quotation, QuotationLineItem, UserPublic, now_iso,
 )
 from routes.purchase_routes import ALLOWED_TRANSITIONS, STATUS_LABELS
@@ -245,6 +245,7 @@ async def _iter_items(
     pipeline: list[dict] = [
         {"$match": match},
         {"$unwind": "$items"},
+        {"$match": {"items.cancelled": {"$ne": True}}},
         {"$project": {
             "_id": 0,
             "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
@@ -355,6 +356,7 @@ def _items_page_pipeline(
     return [
         {"$match": po_match},
         {"$unwind": "$items"},
+        {"$match": {"items.cancelled": {"$ne": True}}},
         {"$project": {
             "_id": 0,
             "item_id": "$items.id", "po_id": "$id", "po_number": "$number",
@@ -424,6 +426,7 @@ async def stage_catalog(user: UserPublic = Depends(get_current_user)):
     pipeline = [
         {"$match": match},
         {"$unwind": "$items"},
+        {"$match": {"items.cancelled": {"$ne": True}}},
         {"$group": {"_id": {"$ifNull": ["$items.stage", "order_in_company"]}, "count": {"$sum": 1}}},
     ]
     rows = await db.purchase_orders.aggregate(pipeline).to_list(20)
@@ -444,6 +447,7 @@ async def brand_facets(user: UserPublic = Depends(get_current_user)):
     pipeline = [
         {"$match": match},
         {"$unwind": "$items"},
+        {"$match": {"items.cancelled": {"$ne": True}}},
         {"$group": {
             "_id": {"id": "$brand_id", "name": "$brand_name"},
             "count": {"$sum": 1},
@@ -469,6 +473,7 @@ async def customer_facets(user: UserPublic = Depends(get_current_user)):
     pipeline = [
         {"$match": match},
         {"$unwind": "$items"},
+        {"$match": {"items.cancelled": {"$ne": True}}},
         {"$group": {
             "_id": {"id": "$customer_id", "name": "$customer_name"},
             "count": {"$sum": 1},
@@ -745,6 +750,90 @@ class TransferBody(BaseModel):
     idempotency_key: Optional[str] = None
 
 
+class CancelItemBody(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+
+async def _cancel_parent_po_if_empty(po: dict, user: UserPublic, now: str, reason: Optional[str]) -> bool:
+    """Cancel the PO iff every line has been cancelled.
+
+    The conditional update makes the parent transition safe when two final
+    active lines are cancelled concurrently. A cancelled PO still retains all
+    of its line and cancellation history for detail/audit views.
+    """
+    status_event = PurchaseStatusEvent(
+        from_status=po.get("status"), to_status="cancelled",
+        by_user_id=user.id, by_user_name=user.full_name,
+        note="All purchase items cancelled" + (f": {reason}" if reason else ""),
+    ).dict()
+    result = await db.purchase_orders.update_one(
+        {
+            "id": po["id"],
+            "status": {"$ne": "cancelled"},
+            "items": {"$not": {"$elemMatch": {"cancelled": {"$ne": True}}}},
+        },
+        {"$set": {"status": "cancelled", "updated_at": now}, "$push": {"status_history": status_event}},
+    )
+    return bool(result.matched_count)
+
+
+async def _cancel_item(
+    item_id: str,
+    reason: Optional[str],
+    user: UserPublic,
+    purchase_filter: Optional[dict] = None,
+) -> dict:
+    po = await db.purchase_orders.find_one(
+        purchase_filter or floor_query(user, {"items.id": item_id}), {"_id": 0}
+    )
+    if not po:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if po.get("status") == "cancelled":
+        raise HTTPException(status_code=409, detail="Purchase order is already cancelled")
+    item = next((candidate for candidate in po.get("items", []) if candidate.get("id") == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if item.get("cancelled"):
+        raise HTTPException(status_code=409, detail="Item is already cancelled")
+    if (item.get("stage") or "order_in_company") == "delivered":
+        raise HTTPException(status_code=400, detail="Delivered items cannot be cancelled")
+
+    now = now_iso()
+    cancellation = PurchaseCancellationEvent(
+        by_user_id=user.id, by_user_name=user.full_name, reason=reason,
+    ).dict()
+    # The element match is a compare-and-set guard: a concurrent cancellation
+    # or delivery move cannot overwrite this item's active state.
+    result = await db.purchase_orders.update_one(
+        {"id": po["id"], "items": {"$elemMatch": {
+            "id": item_id, "cancelled": {"$ne": True}, "stage": {"$ne": "delivered"},
+        }}},
+        {"$set": {
+            "items.$.cancelled": True,
+            "items.$.cancelled_at": now,
+            "items.$.cancelled_by": user.id,
+            "items.$.cancelled_by_name": user.full_name,
+            "items.$.cancellation_reason": reason,
+            "updated_at": now,
+        }, "$push": {"items.$.cancellation_history": cancellation}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Item changed concurrently — refresh and try again")
+
+    parent_cancelled = await _cancel_parent_po_if_empty(po, user, now, reason)
+    await log_event(
+        event_type="purchase.cancelled", entity_type="purchase", entity_id=po["id"], actor=user,
+        customer_id=po.get("customer_id"), purchase_id=po["id"], floor_id=floor_inherit(po),
+        summary=f"Cancelled {item.get('name') or 'purchase item'}" + (f" · {reason}" if reason else ""),
+        payload={
+            "item_id": item_id, "po_number": po.get("number"), "sku": item.get("sku"),
+            "qty": item.get("qty"), "reason": reason, "parent_po_cancelled": parent_cancelled,
+            "cancellation": cancellation,
+        },
+    )
+    return {"po_id": po["id"], "item_id": item_id, "cancelled": True, "parent_po_cancelled": parent_cancelled}
+
+
 def _derive_po_status_from_stages(items: list[dict], current_status: str) -> Optional[str]:
     """Reconcile the PO-level `status` (purchase_routes.py state machine) with
     the per-item `stage` (Material Tracker). These are two views of the same
@@ -893,6 +982,8 @@ async def _attempt_stage_change(
     it = next((i for i in po.get("items", []) if i.get("id") == item_id), None)
     if not it:
         raise HTTPException(status_code=404, detail="Item not found")
+    if it.get("cancelled"):
+        raise HTTPException(status_code=409, detail="Cancelled items cannot be moved")
     from_stage = it.get("stage") or "order_in_company"
     full_qty = float(it.get("qty") or 0)
     move_qty = float(qty) if qty is not None else full_qty
@@ -1074,6 +1165,19 @@ async def move_item(
     if body.stage not in PURCHASE_STAGES:
         raise HTTPException(status_code=400, detail=f"Unknown stage '{body.stage}'")
     return await _apply_stage_change(item_id, body.stage, user, body.note, body.qty)
+
+
+@router.post("/items/{item_id}/cancel")
+async def cancel_item(
+    item_id: str,
+    body: CancelItemBody,
+    user: UserPublic = Depends(require_min_role("warehouse")),
+):
+    """Cancel one active, undelivered purchase item without deleting history."""
+    return await _cancel_item(
+        item_id, body.reason, user,
+        purchase_filter=floor_query(user, {"items.id": item_id}),
+    )
 
 
 def _bulk_move_error_payload(exc: HTTPException) -> dict:

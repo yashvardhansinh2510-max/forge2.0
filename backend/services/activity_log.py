@@ -47,6 +47,7 @@ PURCHASE_EVENTS = {
     "purchase.assigned",
     "purchase.supplier_changed",
     "purchase.items_updated",
+    "purchase.cancelled",
     "purchase.dispatched",
 }
 

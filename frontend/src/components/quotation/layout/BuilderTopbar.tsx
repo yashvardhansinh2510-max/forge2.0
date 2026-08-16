@@ -110,25 +110,27 @@ export function BuilderTopbar({
             testID="hdr-project"
           />
           <FieldPill
+            label="Address"
+            value={b.s.header.address}
+            onChange={b.setAddress}
+            placeholder="Site / delivery address"
+            testID="hdr-address"
+          />
+          <FieldPill
             label="Ref"
             value={b.s.header.referenceSource}
             onChange={b.setReferenceSource}
             placeholder="Walk-in · Architect · Instagram"
             testID="hdr-ref"
           />
-          <Pressable
-            testID="hdr-referrer"
-            onPress={() => b.setReferrerSwitcherOpen(true)}
-            style={({ pressed }) => [styles.field, styles.fieldPressable, pressed && styles.fieldPressed]}
-          >
+          <View testID="hdr-referrer" style={styles.field}>
             <Text style={styles.fieldLabel}>Referred By</Text>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
               <Text style={styles.fieldValue} numberOfLines={1}>
                 {b.s.header.referrerName || "None"}
               </Text>
-              <Feather name="chevron-down" size={11} color={colors.onSurfaceMuted} />
             </View>
-          </Pressable>
+          </View>
         </ScrollView>
       ) : null}
 

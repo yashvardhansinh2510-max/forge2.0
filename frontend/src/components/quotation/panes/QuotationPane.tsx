@@ -17,7 +17,7 @@ import { RoomChipRow } from "../canvas/RoomChipRow";
 import { QuotationCanvas } from "../canvas/QuotationCanvas";
 import { BuilderFooter } from "../footer/BuilderFooter";
 
-export function QuotationPane({ compact = false, phone = false }: { compact?: boolean; phone?: boolean }) {
+export function QuotationPane({ compact = false }: { compact?: boolean }) {
   const b = useBuilder();
 
   const customer = b.customers.find((c) => c.id === b.s.customerId);
@@ -54,7 +54,7 @@ export function QuotationPane({ compact = false, phone = false }: { compact?: bo
         {/* The top bar intentionally stays compact on phone and two-pane
             layouts. Keep every customer/project field here instead of making
             the salesperson scroll past the quotation table to find them. */}
-        {compact ? <CompactHeaderFields phone={phone} /> : null}
+        {compact ? <CompactHeaderFields /> : null}
 
         <RoomChipRow />
       </View>
@@ -68,7 +68,7 @@ export function QuotationPane({ compact = false, phone = false }: { compact?: bo
   );
 }
 
-function CompactHeaderFields({ phone }: { phone: boolean }) {
+function CompactHeaderFields() {
   const b = useBuilder();
   const customer = b.customers.find((c) => c.id === b.s.customerId);
 
@@ -86,28 +86,27 @@ function CompactHeaderFields({ phone }: { phone: boolean }) {
         </View>
       </Pressable>
       <CompactTextField label="Project" value={b.s.header.projectName} onChange={b.setProjectName} placeholder="Project name" testID="compact-hdr-project" />
-      {!phone ? <>
-        <CompactTextField label="Phone" value={b.s.header.phone} onChange={b.setPhone} placeholder="+91 ·········" testID="compact-hdr-phone" />
-        <CompactTextField label="Reference" value={b.s.header.referenceSource} onChange={b.setReferenceSource} placeholder="Walk-in · Architect" testID="compact-hdr-ref" />
-        <Pressable testID="compact-hdr-referrer" onPress={() => b.setReferrerSwitcherOpen(true)} style={[styles.compactField, styles.compactFieldWide]}>
-          <Text style={styles.fieldLabel}>Referred by</Text>
-          <View style={styles.customerValueRow}>
-            <Text style={styles.fieldValue} numberOfLines={1}>{b.s.header.referrerName || "None"}</Text>
-            <Feather name="chevron-down" size={12} color={colors.onSurfaceMuted} />
-          </View>
-        </Pressable>
-      </> : null}
+      <CompactTextField label="Address" value={b.s.header.address} onChange={b.setAddress} placeholder="Site / delivery address" testID="compact-hdr-address" wide />
+      <CompactTextField label="Phone" value={b.s.header.phone} onChange={b.setPhone} placeholder="+91 ·········" testID="compact-hdr-phone" />
+      <CompactTextField label="Reference" value={b.s.header.referenceSource} onChange={b.setReferenceSource} placeholder="Walk-in · Architect" testID="compact-hdr-ref" />
+      <View testID="compact-hdr-referrer" style={[styles.compactField, styles.compactFieldWide]}>
+        <Text style={styles.fieldLabel}>Referred by</Text>
+        <View style={styles.customerValueRow}>
+          <Text style={styles.fieldValue} numberOfLines={1}>{b.s.header.referrerName || "None"}</Text>
+          <Feather name="chevron-down" size={12} color={colors.onSurfaceMuted} />
+        </View>
+      </View>
     </View>
   );
 }
 
 function CompactTextField({
-  label, value, onChange, placeholder, testID,
+  label, value, onChange, placeholder, testID, wide = false,
 }: {
-  label: string; value: string; onChange: (value: string) => void; placeholder: string; testID: string;
+  label: string; value: string; onChange: (value: string) => void; placeholder: string; testID: string; wide?: boolean;
 }) {
   return (
-    <View style={styles.compactField}>
+    <View style={[styles.compactField, wide && styles.compactFieldWide]}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
         value={value}

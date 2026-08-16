@@ -415,4 +415,5 @@ def test_workspace_large_history_avoids_per_item_queries(monkeypatch):
     assert purchase_orders.last_pipeline is not None
     assert purchase_orders.last_pipeline[0]["$match"]["floor_id"] == {"$in": ["first-floor"]}
     assert purchase_orders.last_pipeline[1] == {"$unwind": "$items"}
-    assert purchase_orders.last_pipeline[2]["$project"]["items"] == 1
+    assert purchase_orders.last_pipeline[2] == {"$match": {"items.cancelled": {"$ne": True}}}
+    assert purchase_orders.last_pipeline[3]["$project"]["items"] == 1

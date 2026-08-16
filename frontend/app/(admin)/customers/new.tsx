@@ -17,6 +17,7 @@ import {
   Button, Chip, PageHeader, TextField,
 } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
+import { ReferrerField } from "@/src/components/customer/ReferrerField";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 type Tier = "retail" | "trade" | "vip";
@@ -34,6 +35,7 @@ export default function NewCustomer() {
   const [pincode, setPincode] = useState("");
   const [gstin, setGstin] = useState("");
   const [tier, setTier] = useState<Tier>("retail");
+  const [referrer, setReferrer] = useState<{ id: string; name: string; type: "architect" | "interior_designer" } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const save = async () => {
@@ -55,6 +57,7 @@ export default function NewCustomer() {
         pincode: pincode.trim() || null,
         gstin: gstin.trim() || null,
         tier,
+        referrer_id: referrer?.id || null,
       };
       const created = await api.post<{ id: string }>("/customers", payload);
       toast.success("Customer added");
@@ -87,6 +90,7 @@ export default function NewCustomer() {
             autoFocus
             testID="new-customer-name"
           />
+          <ReferrerField value={referrer} onChange={setReferrer} />
           <TextField
             label="Company"
             placeholder="Business name (optional)"
