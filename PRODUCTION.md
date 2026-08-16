@@ -84,16 +84,25 @@ intentional; do not remove it.
 
 ---
 
-## 5. Deployment steps (Emergent)
+## 5. Deployment steps (Railway)
 
 1. Confirm `backend/.env` / `frontend/.env` are **not** committed (check `.gitignore`).
-2. Use Emergent's deployment secrets UI to set every variable from §2.
-3. Use the **Emergent publish button** (top-right) for builds/app-store submission —
-   do not set up a separate EAS account or CLI.
-4. After deploy, hit `GET /api/health/system` (see §8) and confirm `healthy: true`
-   before considering the release live.
-5. Run one login as staff (owner) and one as a portal-enabled customer to confirm both
-   auth domains work end-to-end against production data.
+2. In Railway, connect the `main` branch of `yashvardhansinh2510-max/forge2.0` to the
+   backend service and set its root directory to `backend`. Set the Config-as-Code path
+   to `/backend/railway.json`; it selects the Dockerfile builder, deployment readiness
+   probe, and restart policy.
+3. Set every backend variable in §2 as a Railway service variable. Set
+   `ENVIRONMENT=production`, `FORGE_ALLOW_DEMO_SEED=false`, and leave `PORT` managed by
+   Railway. Never copy the local `.env` file into Railway.
+4. Deploy and wait for Railway to receive HTTP 200 from `/api/health/ready`; this is the
+   deployment health probe. Do not use `/api/health` as the Railway probe because it
+   deliberately reports unsafe demo credentials as degraded.
+5. After deploy, authenticate as an owner and as a portal-enabled customer, then use an
+   authenticated admin session to confirm `GET /api/health/system` reports `healthy: true`.
+6. The Expo web client is deployed separately from the API. Its production build must use
+   `EXPO_PUBLIC_BACKEND_URL` set to the Railway HTTPS domain. Native store submission
+   requires the separate App Store / Play Console, privacy, and listing setup; Railway
+   does not publish native binaries.
 
 ---
 
