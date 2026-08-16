@@ -6,9 +6,8 @@ import { browserStorage } from "@/src/utils/storage/browser.web";
 const SELECTED_FLOOR_KEY = "forge.active-floor";
 const configuredBase = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 const BASE = !__DEV__ && (!configuredBase || configuredBase.startsWith("http://localhost"))
-  ? "https://buildcon-backend-production.up.railway.app"
+  ? ""
   : configuredBase;
-const TOKEN_KEY = "forge.jwt";
 const TOKEN_KIND_KEY = "forge.jwt.kind";
 const REQUEST_TIMEOUT_MS = 30_000;
 const inflightGets = new Map<string, Promise<unknown>>();
@@ -24,20 +23,24 @@ export class ApiError extends Error {
 type RequestOptions = { floorId?: string; signal?: AbortSignal; cacheMs?: number };
 
 export async function setToken(token: string, kind: TokenKind) {
-  tokenCache = token;
+  // The Sites worker turns a successful web login into an HttpOnly cookie
+  // session. Never persist the bearer token returned by the API in browser
+  // storage: any future XSS would otherwise be able to exfiltrate it.
+  void token;
+  tokenCache = null;
   tokenKindCache = kind;
-  await browserStorage.secureSet(TOKEN_KEY, token);
   await browserStorage.setItem(TOKEN_KIND_KEY, kind);
 }
 export async function clearToken() {
   tokenCache = null;
   tokenKindCache = null;
   responseCache.clear();
-  await browserStorage.secureRemove(TOKEN_KEY);
   await browserStorage.removeItem(TOKEN_KIND_KEY);
 }
 export async function getToken(): Promise<string | null> {
-  if (tokenCache === undefined) tokenCache = (await browserStorage.secureGet<string>(TOKEN_KEY, "")) || null;
+  // Web authentication is cookie-backed. Native keeps the Bearer-token
+  // implementation in client.ts / SecureStore.
+  if (tokenCache === undefined) tokenCache = null;
   return tokenCache ?? null;
 }
 export async function getTokenKind(): Promise<TokenKind | null> {
@@ -49,6 +52,10 @@ export function setRequestFloorId(floorId: string) {
   floorCache = floorId;
 }
 export function clearApiResponseCache() { responseCache.clear(); }
+export function csrfHeaders(): Record<string, string> {
+  const csrf = document.cookie.split("; ").find((part) => part.startsWith("forge_csrf="))?.split("=")[1];
+  return csrf ? { "X-CSRF-Token": decodeURIComponent(csrf) } : {};
+}
 async function getRequestFloorId() {
   if (floorCache === undefined) floorCache = (await browserStorage.getItem<string>(SELECTED_FLOOR_KEY, "")) || "";
   return floorCache;
@@ -57,6 +64,9 @@ async function request<T>(method: string, path: string, body?: unknown, opts?: R
   const token = await getToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
+  if (!/^(GET|HEAD|OPTIONS)$/i.test(method)) {
+    Object.assign(headers, csrfHeaders());
+  }
   const floorId = opts?.floorId ?? await getRequestFloorId();
   if (floorId) headers["X-Floor-Id"] = floorId;
   const controller = new AbortController();
@@ -69,7 +79,7 @@ async function request<T>(method: string, path: string, body?: unknown, opts?: R
   }
   try {
     const response = await fetch(`${BASE}/api${path}`, {
-      method, headers, body: body ? JSON.stringify(body) : undefined, signal: controller.signal,
+      method, headers, body: body ? JSON.stringify(body) : undefined, signal: controller.signal, credentials: "same-origin",
     });
     const text = await response.text();
     let data: unknown = null;

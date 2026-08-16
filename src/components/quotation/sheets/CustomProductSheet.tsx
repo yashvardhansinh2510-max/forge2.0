@@ -6,7 +6,8 @@
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
@@ -17,6 +18,8 @@ import type { Product } from "../helpers/types";
 export function CustomProductSheet() {
   const b = useBuilder();
   const open = b.customProductSheetOpen;
+  const { width } = useWindowDimensions();
+  const isPhone = width < 600;
 
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
@@ -82,19 +85,21 @@ export function CustomProductSheet() {
 
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={() => b.setCustomProductSheetOpen(false)}>
-      <Pressable style={styles.backdrop} onPress={() => b.setCustomProductSheetOpen(false)}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Pressable style={[styles.backdrop, isPhone && styles.phoneBackdrop]} onPress={() => b.setCustomProductSheetOpen(false)}>
+        <Pressable style={[styles.sheet, isPhone && styles.phoneSheet]} onPress={(e) => e.stopPropagation()} accessibilityViewIsModal>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.keyboard}>
+          <SafeAreaView edges={["bottom"]} style={styles.safeArea}>
           <View style={styles.head}>
             <View style={{ flex: 1 }}>
               <Text style={styles.title}>Custom product</Text>
               <Text style={styles.subtitle}>Add a one-off item — optionally save it to the catalog.</Text>
             </View>
-            <Pressable onPress={() => b.setCustomProductSheetOpen(false)} style={styles.close} hitSlop={6}>
+            <Pressable onPress={() => b.setCustomProductSheetOpen(false)} style={styles.close} accessibilityRole="button" accessibilityLabel="Close custom product sheet">
               <Feather name="x" size={16} color={colors.onSurface} />
             </Pressable>
           </View>
 
-          <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: 12 }}>
+          <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: 12 }} keyboardShouldPersistTaps="handled">
             <Field label="Product name *">
               <TextInput value={name} onChangeText={setName} placeholder="e.g. Custom stone-cladding sink" style={styles.input} testID="cp-name" />
             </Field>
@@ -102,7 +107,7 @@ export function CustomProductSheet() {
               <TextInput value={sku} onChangeText={setSku} placeholder="e.g. CUSTOM-STONE-SINK" style={styles.input} autoCapitalize="characters" />
             </Field>
 
-            <View style={styles.grid}>
+            <View style={[styles.grid, isPhone && styles.phoneGrid]}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Brand *</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 2 }}>
@@ -168,14 +173,16 @@ export function CustomProductSheet() {
           </ScrollView>
 
           <View style={styles.footer}>
-            <Pressable onPress={() => b.setCustomProductSheetOpen(false)} style={styles.secondary}>
+            <Pressable onPress={() => b.setCustomProductSheetOpen(false)} style={styles.secondary} accessibilityRole="button">
               <Text style={styles.secondaryLabel}>Cancel</Text>
             </Pressable>
-            <Pressable onPress={commit} style={[styles.primary, busy && { opacity: 0.6 }]} disabled={busy} testID="cp-commit">
+            <Pressable onPress={commit} style={[styles.primary, busy && { opacity: 0.6 }]} disabled={busy} testID="cp-commit" accessibilityRole="button">
               <Feather name="plus" size={13} color={colors.onBrand} />
               <Text style={styles.primaryLabel}>{saveToCatalog ? "Add & keep" : "Add inline"}</Text>
             </Pressable>
           </View>
+          </SafeAreaView>
+          </KeyboardAvoidingView>
         </Pressable>
       </Pressable>
     </Modal>
@@ -193,12 +200,16 @@ function Field({ label, children, flex }: { label: string; children: React.React
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(9,9,11,0.55)", alignItems: "center", justifyContent: "center", padding: 24 },
+  phoneBackdrop: { padding: 0, justifyContent: "flex-end" },
   sheet: { width: "100%", maxWidth: 640, maxHeight: "92%", backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, overflow: "hidden", ...shadow.strong },
+  phoneSheet: { maxWidth: undefined, maxHeight: "96%", borderBottomLeftRadius: 0, borderBottomRightRadius: 0 },
+  keyboard: { maxHeight: "100%" },
+  safeArea: { maxHeight: "100%" },
 
   head: { flexDirection: "row", padding: spacing.lg, alignItems: "flex-start", gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   title: { fontSize: 18, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.2 },
   subtitle: { fontSize: 12, color: colors.onSurfaceMuted, marginTop: 2 },
-  close: { width: 30, height: 30, borderRadius: radius.md, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  close: { width: 44, height: 44, borderRadius: radius.md, alignItems: "center", justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
 
   label: { fontSize: 11, fontWeight: "700", color: colors.onSurfaceMuted, letterSpacing: 1.1, textTransform: "uppercase", marginBottom: 4 },
   input: {
@@ -207,8 +218,9 @@ const styles = StyleSheet.create({
   },
 
   grid: { flexDirection: "row", gap: 10 },
+  phoneGrid: { flexDirection: "column" },
 
-  pill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
+  pill: { minHeight: 44, justifyContent: "center", paddingHorizontal: 12, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.surfaceTertiary },
   pillActive: { backgroundColor: colors.brand },
   pillLabel: { fontSize: 11, fontWeight: "600", color: colors.onSurfaceSecondary },
   pillLabelActive: { color: colors.onBrand },

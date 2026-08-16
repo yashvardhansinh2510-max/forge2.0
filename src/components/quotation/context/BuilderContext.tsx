@@ -21,6 +21,7 @@ import { toast } from "@/src/components/Toast";
 import { useHistory, useUndoRedoShortcuts } from "@/src/hooks/useHistory";
 import type { HistoryApi } from "@/src/hooks/useHistory";
 import { playAddProductSound } from "@/src/services/soundService";
+import { catalogReferences, CATALOG_PAGE_SIZE, fetchCatalogPage } from "@/src/services/catalogService";
 import { openApiFile } from "@/src/utils/downloadFile";
 
 import { computeTotals, effectivePct } from "../helpers/pricing";
@@ -134,6 +135,7 @@ export type BuilderApi = {
   // Mutations — customers/lines
   setCustomer: (id: string) => void;
   createCustomer: (data: { name: string; phone?: string; project?: string; address?: string }) => Promise<string | null>;
+  importCustomerFromGround: (sourceCustomerId: string) => Promise<boolean>;
   customerSwitcherOpen: boolean; setCustomerSwitcherOpen: (v: boolean) => void;
   setReferrer: (type: "architect" | "interior_designer", id: string, name: string) => void;
   clearReferrer: () => void;
@@ -220,7 +222,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   const [productLoadingMore, setProductLoadingMore] = useState(false);
   const [recent, setRecent] = useState<Product[]>([]);
   const [frequent, setFrequent] = useState<Product[]>([]);
-  const [pickerTab, setPickerTab] = useState<PickerTab>("search");
+  const [pickerTab, setPickerTabState] = useState<PickerTab>("search");
   const [q, setQ] = useState("");
   const searchRef = useRef<TextInput | null>(null);
 
@@ -293,25 +295,20 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     setReferenceError(null);
     (async () => {
       try {
-        const request = { floorId: "first-floor", signal: controller.signal };
-        const [cs, cats, brs, rec, freq, recentQ, refs] = await Promise.all([
+        const request = { floorId: "first-floor", signal: controller.signal, cacheMs: 60_000 };
+        // These three datasets are needed to render and edit the quotation.
+        // Everything else is fetched only when its corresponding panel is used,
+        // keeping the first mobile screen from competing with seven requests.
+        const [cs, cats, brs] = await Promise.all([
           api.get<Customer[]>("/customers", request),
-          api.get<Category[]>("/categories", request),
-          api.get<Brand[]>("/brands", request),
-          api.get<Product[]>("/products/recent", request),
-          api.get<Product[]>("/products/frequent", request),
-          api.get<RecentQuotation[]>("/quotations/recent?limit=10", request),
-          api.get<Referrer[]>("/referrers", request),
+          catalogReferences.categories<Category[]>(null, request),
+          catalogReferences.brands<Brand[]>(request),
         ]);
         if (!current) return;
         setCustomers(cs);
         setCategories(cats);
         setBrands(brs);
         setCategoriesForRail(cats);
-        setRecent(rec);
-        setFrequent(freq);
-        setRecentQuotations(recentQ);
-        setReferrers(refs);
         if (cs[0] && !history.state.customerId) {
           history.replace({ ...history.state, customerId: cs[0].id });
         }
@@ -347,6 +344,51 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [referenceRetry]);
 
+  // Product shortcuts are useful but non-essential. Fetch them on first use
+  // rather than making every builder launch pay for both endpoints.
+  useEffect(() => {
+    if (pickerTab === "search") return;
+    const controller = new AbortController();
+    const endpoint = pickerTab === "recent" ? "/products/recent" : "/products/frequent";
+    api.get<Product[]>(endpoint, { floorId: "first-floor", signal: controller.signal, cacheMs: 60_000 })
+      .then((items) => {
+        if (pickerTab === "recent") setRecent(items);
+        else setFrequent(items);
+      })
+      .catch((error: any) => {
+        if (error?.name !== "AbortError") console.warn(`Failed to load ${pickerTab} products`, error);
+      });
+    return () => controller.abort();
+  }, [pickerTab]);
+
+  // The recent-quotation rail is intentionally deferred until the first frame
+  // has painted. It remains available immediately afterwards, without
+  // delaying the builder's primary controls on a slow mobile connection.
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      api.get<RecentQuotation[]>("/quotations/recent?limit=10", {
+        floorId: "first-floor", signal: controller.signal, cacheMs: 30_000,
+      }).then(setRecentQuotations).catch((error: any) => {
+        if (error?.name !== "AbortError") console.warn("Failed to load recent quotations", error);
+      });
+    }, 250);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [referenceRetry]);
+
+  // Referrers are only needed when their sheet opens, so defer their list
+  // until that user intent instead of including it in builder bootstrap.
+  useEffect(() => {
+    if (!referrerSwitcherOpen) return;
+    const controller = new AbortController();
+    api.get<Referrer[]>("/referrers", { floorId: "first-floor", signal: controller.signal, cacheMs: 5 * 60_000 })
+      .then(setReferrers)
+      .catch((error: any) => {
+        if (error?.name !== "AbortError") console.warn("Failed to load referrers", error);
+      });
+    return () => controller.abort();
+  }, [referrerSwitcherOpen]);
+
   // ---------- Re-fetch categories when brand changes ----------
   useEffect(() => {
     if (!selectedBrandId) {
@@ -357,10 +399,9 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     let current = true;
     (async () => {
       try {
-        const cats = await api.get<Category[]>(
-          `/categories?brand_id=${selectedBrandId}`,
-          { floorId: "first-floor", signal: controller.signal },
-        );
+        const cats = await catalogReferences.categories<Category[]>(selectedBrandId, {
+          floorId: "first-floor", signal: controller.signal,
+        });
         if (current) setCategoriesForRail(cats);
       } catch (e: any) {
         if (current && e?.name !== "AbortError") {
@@ -381,6 +422,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   const setSelectedCategoryId = useCallback((id: string | null) => {
     setSelectedCategoryIdState(id);
   }, []);
+  const setPickerTab = useCallback((tab: PickerTab) => setPickerTabState(tab), []);
 
   const toggleFavourite = useCallback((id: string) => {
     setFavouriteIds((cur) => {
@@ -393,8 +435,8 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
   }, []);
 
   // ---------- Product explorer fetch (page 1 on filter/search/sort change) ----------
-  const PRODUCT_PAGE_SIZE = 60;
   const productRequestGeneration = useRef(0);
+  const loadMoreController = useRef<AbortController | null>(null);
   useEffect(() => {
     const generation = ++productRequestGeneration.current;
     const controller = new AbortController();
@@ -405,15 +447,9 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       // upstream (network, backend) genuinely stalls. 12s is generous.
       const safety = setTimeout(() => { if (!cancelled) setProductLoading(false); }, 12000);
       try {
-        const params = new URLSearchParams();
-        params.set("limit", String(PRODUCT_PAGE_SIZE));
-        params.set("skip", "0");
-        params.set("request_generation", String(generation));
-        params.set("sort", sortKey);
-        if (q) params.set("q", q);
-        if (selectedBrandId) params.set("brand_id", selectedBrandId);
-        if (selectedCategoryId) params.set("category_id", selectedCategoryId);
-        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`, { floorId: "first-floor", signal: controller.signal });
+        const res = await fetchCatalogPage<Product>({
+          q, brandId: selectedBrandId, categoryId: selectedCategoryId, sort: sortKey,
+        }, 0, CATALOG_PAGE_SIZE, { floorId: "first-floor", signal: controller.signal });
         if (cancelled || generation !== productRequestGeneration.current) return;
         const items = res.items || [];
         setProducts(items);
@@ -427,8 +463,13 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         clearTimeout(safety);
         if (!cancelled) setProductLoading(false);
       }
-    }, 180);
-    return () => { cancelled = true; controller.abort(); clearTimeout(t); };
+    }, q.trim() ? 300 : 0);
+    return () => {
+      cancelled = true;
+      controller.abort();
+      loadMoreController.current?.abort();
+      clearTimeout(t);
+    };
   }, [q, selectedBrandId, selectedCategoryId, sortKey]);
 
   // ---------- Infinite scroll — fetch the next page and append ----------
@@ -438,16 +479,16 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     loadingMoreRef.current = true;
     setProductLoadingMore(true);
     const skipAt = products.length;
+    const generation = productRequestGeneration.current;
+    const controller = new AbortController();
+    loadMoreController.current?.abort();
+    loadMoreController.current = controller;
     (async () => {
       try {
-        const params = new URLSearchParams();
-        params.set("limit", String(PRODUCT_PAGE_SIZE));
-        params.set("skip", String(skipAt));
-        params.set("sort", sortKey);
-        if (q) params.set("q", q);
-        if (selectedBrandId) params.set("brand_id", selectedBrandId);
-        if (selectedCategoryId) params.set("category_id", selectedCategoryId);
-        const res = await api.get<{ items: Product[]; total: number }>(`/products?${params.toString()}`, { floorId: "first-floor" });
+        const res = await fetchCatalogPage<Product>({
+          q, brandId: selectedBrandId, categoryId: selectedCategoryId, sort: sortKey,
+        }, skipAt, CATALOG_PAGE_SIZE, { floorId: "first-floor", signal: controller.signal });
+        if (controller.signal.aborted || generation !== productRequestGeneration.current) return;
         const items = res.items || [];
         setProducts((cur) => {
           const seen = new Set(cur.map((p) => p.id));
@@ -456,10 +497,13 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         setProductTotal(res.total || 0);
         setProductHasMore(skipAt + items.length < (res.total || 0));
       } catch (e) {
-        console.warn("Load more products failed", e);
+        if ((e as any)?.name !== "AbortError") console.warn("Load more products failed", e);
       } finally {
-        loadingMoreRef.current = false;
-        setProductLoadingMore(false);
+        if (loadMoreController.current === controller) {
+          loadMoreController.current = null;
+          loadingMoreRef.current = false;
+          setProductLoadingMore(false);
+        }
       }
     })();
   }, [productLoading, productHasMore, products.length, q, selectedBrandId, selectedCategoryId, sortKey]);
@@ -699,6 +743,31 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       return null;
     }
   }, [setCustomer]);
+
+  const importCustomerFromGround = useCallback(async (sourceCustomerId: string) => {
+    try {
+      const result = await api.post<{ customer: Customer; defaults?: { phone?: string; project_name?: string; notes?: string } }>(
+        "/customers/import-from-floor", { source_customer_id: sourceCustomerId, target_floor_id: "first-floor" },
+      );
+      setCustomers((current) => current.some((customer) => customer.id === result.customer.id)
+        ? current : [result.customer, ...current]);
+      history.apply((current) => ({
+        ...current,
+        customerId: result.customer.id,
+        notes: result.defaults?.notes || current.notes,
+        header: {
+          ...current.header,
+          phone: result.defaults?.phone || current.header.phone,
+          projectName: result.defaults?.project_name || current.header.projectName,
+        },
+      }));
+      toast.success(result.defaults?.project_name ? `Customer and ${result.defaults.project_name} details applied` : "Customer details applied");
+      return true;
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not import Ground Floor customer");
+      return false;
+    }
+  }, [history]);
 
   const setReferrer = useCallback((type: "architect" | "interior_designer", id: string, name: string) => {
     history.apply((cur) => ({ ...cur, header: { ...cur.header, referrerType: type, referrerId: id, referrerName: name } }));
@@ -1054,7 +1123,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     totals, usedCategoryIds, flatRows,
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
     workflowBusy, generateOfficialQuotation, placeOrder,
-    setCustomer, createCustomer, customerSwitcherOpen, setCustomerSwitcherOpen,
+    setCustomer, createCustomer, importCustomerFromGround, customerSwitcherOpen, setCustomerSwitcherOpen,
     setReferrer, clearReferrer, createReferrer, referrerSwitcherOpen, setReferrerSwitcherOpen,
     addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,
     addRoom, renameRoom, duplicateRoom, deleteRoom, toggleCollapse, setActiveRoom, onRoomDragEnd, onLinesDragEnd,
@@ -1082,7 +1151,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     totals, usedCategoryIds, flatRows,
     quotationId, quotationNumber, saveState, savedAt, saveLabel, persist, finalize,
     workflowBusy, generateOfficialQuotation, placeOrder,
-    setCustomer, createCustomer, customerSwitcherOpen, setCustomerSwitcherOpen,
+    setCustomer, createCustomer, importCustomerFromGround, customerSwitcherOpen, setCustomerSwitcherOpen,
     setReferrer, clearReferrer, createReferrer, referrerSwitcherOpen, setReferrerSwitcherOpen,
     addFromProduct, updateLine, removeLine, duplicateLine, moveLineToNextRoom,
     addRoom, renameRoom, duplicateRoom, deleteRoom, toggleCollapse, setActiveRoom, onRoomDragEnd, onLinesDragEnd,

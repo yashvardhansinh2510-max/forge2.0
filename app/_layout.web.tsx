@@ -5,6 +5,7 @@ import { View } from "react-native";
 import { AuthProvider, useAuth } from "@/src/state/auth";
 import { colors } from "@/src/theme/tokens";
 import { ToastHost } from "@/src/components/Toast";
+import { initSentry } from "@/src/lib/monitoring";
 
 /**
  * Browser-only root shell.
@@ -55,6 +56,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 }
 
 export default function RootLayout() {
+  useEffect(() => { initSentry(); }, []);
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <AuthProvider>

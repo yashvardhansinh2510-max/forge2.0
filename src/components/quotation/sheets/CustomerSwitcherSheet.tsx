@@ -3,13 +3,14 @@
 // item / room / discount already in the builder; only customer_id (and its
 // denormalised name snapshot) changes.
 import { Feather } from "@expo/vector-icons";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { BottomSheet } from "@/src/components/BottomSheet";
 import { Button } from "@/src/components/ui";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
+import { api } from "@/src/api/client";
 
 import { useBuilder } from "../context/BuilderContext";
 
@@ -22,10 +23,20 @@ export function CustomerSwitcherSheet() {
   const [project, setProject] = useState("");
   const [address, setAddress] = useState("");
   const [saving, setSaving] = useState(false);
+  const [groundSources, setGroundSources] = useState<{ customer: { id: string; name: string; company?: string | null; phone?: string | null }; latest_quotation?: { number?: string; project_name?: string | null } | null }[]>([]);
+  const [showGroundSources, setShowGroundSources] = useState(false);
+  const [loadingGround, setLoadingGround] = useState(false);
+
+  useEffect(() => {
+    if (!showGroundSources || groundSources.length || loadingGround) return;
+    setLoadingGround(true);
+    api.get<typeof groundSources>("/customers/import-sources/ground-floor")
+      .then(setGroundSources).catch(() => setGroundSources([])).finally(() => setLoadingGround(false));
+  }, [showGroundSources, groundSources.length, loadingGround]);
 
   const close = () => {
     b.setCustomerSwitcherOpen(false);
-    setCreating(false);
+    setCreating(false); setShowGroundSources(false);
     setQ(""); setName(""); setPhone(""); setProject(""); setAddress("");
   };
 
@@ -43,6 +54,11 @@ export function CustomerSwitcherSheet() {
   const pick = (id: string) => {
     b.setCustomer(id);
     close();
+  };
+
+  const importGroundCustomer = async (id: string) => {
+    const applied = await b.importCustomerFromGround(id);
+    if (applied) close();
   };
 
   const save = async () => {
@@ -144,6 +160,26 @@ export function CustomerSwitcherSheet() {
             <Text style={styles.createLabel}>Create new customer</Text>
           </Pressable>
 
+          <Pressable testID="open-ground-floor-customers" onPress={() => setShowGroundSources((open) => !open)} style={styles.importRow}>
+            <Feather name="copy" size={14} color={ds.brass} />
+            <View style={{ flex: 1 }}><Text style={styles.createLabel}>Use Ground Floor customer details</Text><Text style={type.caption}>Copies contact and latest project details, not tile products.</Text></View>
+            <Feather name={showGroundSources ? "chevron-up" : "chevron-down"} size={16} color={colors.onSurfaceMuted} />
+          </Pressable>
+
+          {showGroundSources ? (
+            <View style={styles.groundList}>
+              {loadingGround ? <Text style={type.caption}>Loading Ground Floor customers…</Text> : groundSources.length === 0 ? <Text style={type.caption}>No Ground Floor customer profiles available.</Text> : groundSources.map((source) => (
+                <Pressable key={source.customer.id} onPress={() => importGroundCustomer(source.customer.id)} style={styles.custRow}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.custName} numberOfLines={1}>{source.customer.company || source.customer.name}</Text>
+                    <Text style={type.caption} numberOfLines={1}>{[source.latest_quotation?.project_name, source.latest_quotation?.number, source.customer.phone].filter(Boolean).join(" · ") || "Contact details"}</Text>
+                  </View>
+                  <Feather name="arrow-down-left" size={16} color={ds.brass} />
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+
           {filtered.length === 0 ? (
             <Text style={[type.caption, { padding: 12, textAlign: "center" }]}>No customers match “{q}”.</Text>
           ) : filtered.map((c) => {
@@ -190,6 +226,8 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   createLabel: { fontSize: 13, fontWeight: "700", color: ds.brass },
+  importRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 10, borderRadius: radius.md, borderWidth: 1, borderColor: ds.brassLine, backgroundColor: colors.surface },
+  groundList: { gap: 4, padding: 6, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   custRow: {
     flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 8,
     borderRadius: radius.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,

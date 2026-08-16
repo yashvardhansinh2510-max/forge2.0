@@ -1,7 +1,30 @@
+// Browser variant: native drag gestures are not available in the web shell.
+// Keep room selection and creation stable without loading draggable-flatlist.
 import { Feather } from "@expo/vector-icons";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+
 import { colors } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
+
 import { useBuilder } from "../context/BuilderContext";
-export function RoomChipRow() { const b = useBuilder(); return <View style={styles.wrap}><ScrollView horizontal style={{ flex: 1, minWidth: 0 }} contentContainerStyle={{ gap: 6, paddingVertical: 2 }} showsHorizontalScrollIndicator={false}>{b.s.rooms.map((room) => { const active = b.s.activeRoom === room; return <Pressable key={room} onPress={() => b.setActiveRoom(room)} testID={`room-${room}`} style={[styles.tab, active && styles.tabActive]}><Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.onBrand : colors.onSurfaceSecondary }}>{room}</Text></Pressable>; })}</ScrollView><Pressable onPress={() => { b.setRoomInput(""); b.setRoomSheet({ kind: "add" }); }} testID="add-room-btn" style={[styles.tab, { borderStyle: "dashed", paddingHorizontal: 10 }]}><Feather name="plus" size={13} color={colors.onSurfaceMuted} /></Pressable></View>; }
-const styles = StyleSheet.create({ wrap: { flexDirection: "row", alignItems: "center", gap: 6 }, tab: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary }, tabActive: { backgroundColor: ds.brassTint, borderColor: ds.brassLine } });
+
+export function RoomChipRow() {
+  const b = useBuilder();
+  return (
+    <View style={styles.wrap}>
+      <ScrollView horizontal style={{ flex: 1, minWidth: 0 }} contentContainerStyle={{ gap: 6, paddingVertical: 2 }} showsHorizontalScrollIndicator={false}>
+        {b.s.rooms.map((room) => {
+          const active = b.s.activeRoom === room;
+          return <Pressable key={room} onPress={() => b.setActiveRoom(room)} testID={`room-${room}`} style={[styles.tab, active && styles.tabActive]}><Text style={{ fontSize: 12, fontWeight: "600", color: active ? colors.onBrand : colors.onSurfaceSecondary }}>{room}</Text></Pressable>;
+        })}
+      </ScrollView>
+      <Pressable onPress={() => { b.setRoomInput(""); b.setRoomSheet({ kind: "add" }); }} testID="add-room-btn" style={[styles.tab, { borderStyle: "dashed", paddingHorizontal: 10 }]}><Feather name="plus" size={13} color={colors.onSurfaceMuted} /></Pressable>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { flexDirection: "row", alignItems: "center", gap: 6 },
+  tab: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+  tabActive: { backgroundColor: ds.brassTint, borderColor: ds.brassLine },
+});

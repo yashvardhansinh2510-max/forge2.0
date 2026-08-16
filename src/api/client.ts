@@ -71,6 +71,8 @@ export function clearApiResponseCache() {
   responseCache.clear();
 }
 
+export function csrfHeaders(): Record<string, string> { return {}; }
+
 async function getRequestFloorId() {
   if (floorCache !== undefined) return floorCache || "";
   floorCache = (await storage.getItem<string>(SELECTED_FLOOR_KEY, "")) || "";

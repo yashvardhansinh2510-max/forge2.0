@@ -9,9 +9,9 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Linking, Modal, Platform, Pressable, RefreshControl, ScrollView,
+  Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, SectionList,
   StyleSheet, Text, TextInput, useWindowDimensions, View,
   KeyboardAvoidingView,
 } from "react-native";
@@ -232,6 +232,7 @@ export default function FollowupsScreen() {
   const { selectedFloorId } = useFloorAccess();
   const router = useRouter();
   const { isPhone, isDesktop } = useBp();
+  const { height: windowHeight } = useWindowDimensions();
   const pagePad = isPhone ? spacing.md : spacing.xl;
 
   const [loading, setLoading] = useState(true);
@@ -512,8 +513,12 @@ export default function FollowupsScreen() {
   const sections = useMemo(() => {
     const map: Record<string, Followup[]> = {};
     for (const f of filtered) (map[f.bucket] ||= []).push(f);
-    return SECTION_ORDER.filter((b) => map[b]?.length).map((b) => ({ bucket: b, items: map[b] }));
+    return SECTION_ORDER.filter((b) => map[b]?.length).map((b) => ({ bucket: b, data: map[b] }));
   }, [filtered]);
+  const visibleSections = useMemo(
+    () => sections.map((section) => ({ ...section, itemCount: section.data.length, data: collapsed.has(section.bucket) ? [] : section.data })),
+    [collapsed, sections],
+  );
 
   const priorityCounts = useMemo(() => {
     const c: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -548,6 +553,9 @@ export default function FollowupsScreen() {
     if (n.has(b)) n.delete(b); else n.add(b);
     return n;
   });
+  const openRelatedDocument = useCallback((f: Followup) => {
+    router.push(`/(admin)/tiles/${f.rule_type === "selection_waiting" ? "selection" : "quotation"}?id=${f.quotation_id}` as any);
+  }, [router]);
 
   const ownerLabel = ownerFilter === "all" ? "Owner: All" : ownerFilter === "mine" ? "Owner: Mine" : `Owner: ${assignees.find((a) => a.id === ownerFilter)?.full_name || "—"}`;
   const activeFilterCount = [priorityFilter !== "all", categoryFilter !== "all", tierFilter !== "all", ownerFilter !== "all"].filter(Boolean).length;
@@ -674,6 +682,10 @@ export default function FollowupsScreen() {
   }, [rawItems, selectedId, contact, completeFollowup, snoozeFollowup]);
 
   const activeTileStyle = { borderColor: colors.brand, backgroundColor: colors.brandTint };
+  // A bounded native scroll surface lets SectionList window its rows. Keeping
+  // the surrounding page scrollable preserves the existing dashboard layout,
+  // while large follow-up queues no longer mount every card at once.
+  const inboxListHeight = Math.max(isPhone ? 460 : 520, windowHeight - (isPhone ? 180 : 250));
 
   // ═══════════════════════════════════════════════════════════════════════
   return (
@@ -859,34 +871,55 @@ export default function FollowupsScreen() {
                 />
               </Card>
             ) : (
-              sections.map((sec) => (
-                <InboxSection
-                  key={sec.bucket}
-                  bucket={sec.bucket}
-                  items={sec.items}
-                  collapsed={collapsed.has(sec.bucket)}
-                  onToggle={() => toggleSection(sec.bucket)}
-                  selectedId={selectedId}
-                  assignees={assignees}
-                  rankMap={rankMap}
-                  selectedIds={selectedIds}
-                  onToggleSelect={toggleSelect}
-                  onSelect={selectCard}
-                  onCall={(f) => contact(f, "call")}
-                  onWhatsApp={(f) => contact(f, "whatsapp")}
-                  onEmail={(f) => contact(f, "email")}
-                  onComplete={completeFollowup}
-                  onSnooze={snoozeFollowup}
-                  onCustomSnooze={setCustomSnoozeFor}
-                  onPushDays={pushDue}
-                  onAssign={assignFollowup}
-                  onNote={setNoteFor}
-                  onDismiss={dismissFollowup}
-                  canDelete={!!staff && MANAGER_ROLES.includes(staff.role)}
-                  onDelete={setDeleteTarget}
-                  onOpenDoc={(f) => router.push(`/(admin)/tiles/${f.rule_type === "selection_waiting" ? "selection" : "quotation"}?id=${f.quotation_id}` as any)}
-                />
-              ))
+              <SectionList
+                sections={visibleSections}
+                keyExtractor={(item) => item.id}
+                style={{ height: inboxListHeight }}
+                contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.sm }}
+                initialNumToRender={8}
+                maxToRenderPerBatch={6}
+                windowSize={7}
+                removeClippedSubviews={Platform.OS !== "web"}
+                nestedScrollEnabled
+                stickySectionHeadersEnabled={false}
+                renderSectionHeader={({ section }) => {
+                  const meta = BUCKET_META[section.bucket];
+                  const isCollapsed = collapsed.has(section.bucket);
+                  return (
+                    <Pressable onPress={() => toggleSection(section.bucket)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 4, backgroundColor: colors.surface }}>
+                      <Feather name={meta.icon} size={14} color={colors.onSurfaceSecondary} />
+                      <Text style={type.overline}>{meta.label}</Text>
+                      <Badge label={String(section.itemCount)} tone="neutral" size="sm" />
+                      <View style={{ flex: 1 }} />
+                      <Feather name={isCollapsed ? "chevron-down" : "chevron-up"} size={16} color={colors.onSurfaceMuted} />
+                    </Pressable>
+                  );
+                }}
+                renderItem={({ item: f }) => (
+                  <MemoFollowupCard
+                    f={f}
+                    active={f.id === selectedId}
+                    assignees={assignees}
+                    rank={rankMap.get(f.id)}
+                    checked={selectedIds.has(f.id)}
+                    onToggleSelect={toggleSelect}
+                    onPress={selectCard}
+                    onCall={contact}
+                    onWhatsApp={contact}
+                    onEmail={contact}
+                    onComplete={completeFollowup}
+                    onSnooze={snoozeFollowup}
+                    onCustomSnooze={setCustomSnoozeFor}
+                    onPushDays={pushDue}
+                    onAssign={assignFollowup}
+                    onNote={setNoteFor}
+                    onDismiss={dismissFollowup}
+                    canDelete={!!staff && MANAGER_ROLES.includes(staff.role)}
+                    onDelete={setDeleteTarget}
+                    onOpenDoc={openRelatedDocument}
+                  />
+                )}
+              />
             )}
           </View>
 
@@ -1185,65 +1218,6 @@ function InsightRow({ icon, label, value }: { icon: FeatherName; label: string; 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// InboxSection — collapsible bucket group
-// ─────────────────────────────────────────────────────────────────────────────
-function InboxSection({
-  bucket, items, collapsed, onToggle, selectedId, assignees, rankMap, selectedIds, onToggleSelect,
-  onSelect, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, canDelete, onDelete, onOpenDoc,
-}: {
-  bucket: Bucket; items: Followup[]; collapsed: boolean; onToggle: () => void; selectedId: string | null;
-  assignees: Assignee[]; rankMap: Map<string, number>; selectedIds: Set<string>; onToggleSelect: (id: string) => void;
-  onSelect: (f: Followup) => void;
-  onCall: (f: Followup) => void; onWhatsApp: (f: Followup) => void; onEmail: (f: Followup) => void;
-  onComplete: (f: Followup) => void; onSnooze: (f: Followup, preset: "15m" | "1h" | "tomorrow" | "next_week") => void;
-  onCustomSnooze: (f: Followup) => void; onPushDays: (f: Followup, days: number) => void;
-  onAssign: (f: Followup, userId: string) => void;
-  onNote: (f: Followup) => void; onDismiss: (f: Followup) => void; canDelete: boolean; onDelete: (f: Followup) => void; onOpenDoc: (f: Followup) => void;
-}) {
-  const meta = BUCKET_META[bucket];
-  return (
-    <View style={{ gap: spacing.sm }}>
-      <Pressable onPress={onToggle} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 4 }}>
-        <Feather name={meta.icon} size={14} color={colors.onSurfaceSecondary} />
-        <Text style={type.overline}>{meta.label}</Text>
-        <Badge label={String(items.length)} tone="neutral" size="sm" />
-        <View style={{ flex: 1 }} />
-        <Feather name={collapsed ? "chevron-down" : "chevron-up"} size={16} color={colors.onSurfaceMuted} />
-      </Pressable>
-      {!collapsed ? (
-        <View style={{ gap: spacing.sm }}>
-          {items.map((f) => (
-            <FollowupCard
-              key={f.id}
-              f={f}
-              active={f.id === selectedId}
-              assignees={assignees}
-              rank={rankMap.get(f.id)}
-              checked={selectedIds.has(f.id)}
-              onToggleSelect={() => onToggleSelect(f.id)}
-              onPress={() => onSelect(f)}
-              onCall={() => onCall(f)}
-              onWhatsApp={() => onWhatsApp(f)}
-              onEmail={() => onEmail(f)}
-              onComplete={() => onComplete(f)}
-              onSnooze={(p) => onSnooze(f, p)}
-              onCustomSnooze={() => onCustomSnooze(f)}
-              onPushDays={(days) => onPushDays(f, days)}
-              onAssign={(uid) => onAssign(f, uid)}
-              onNote={() => onNote(f)}
-              onDismiss={() => onDismiss(f)}
-              canDelete={canDelete}
-              onDelete={() => onDelete(f)}
-              onOpenDoc={(f.rule_type === "selection_waiting" || f.rule_type === "quotation_tiles_waiting") && f.quotation_id ? () => onOpenDoc(f) : undefined}
-            />
-          ))}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // ScoreBadge — the AI Priority Score. Explainable, deterministic.
 // ─────────────────────────────────────────────────────────────────────────────
 function ScoreBadge({ score, level }: { score: number; level: PriorityLevel }) {
@@ -1340,20 +1314,23 @@ function FollowupCard({
   f, active, assignees, rank, checked, onToggleSelect,
   onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, canDelete, onDelete, onOpenDoc,
 }: {
-  f: Followup; active: boolean; assignees: Assignee[]; rank?: number; checked: boolean; onToggleSelect: () => void;
-  onPress: () => void; onCall: () => void; onWhatsApp: () => void; onEmail: () => void;
-  onComplete: () => void; onSnooze: (p: "15m" | "1h" | "tomorrow" | "next_week") => void;
-  onCustomSnooze: () => void; onPushDays: (days: number) => void;
-  onAssign: (userId: string) => void; onNote: () => void; onDismiss: () => void; canDelete: boolean; onDelete: () => void; onOpenDoc?: () => void;
+  f: Followup; active: boolean; assignees: Assignee[]; rank?: number; checked: boolean; onToggleSelect: (id: string) => void;
+  onPress: (f: Followup) => void; onCall: (f: Followup, channel: Channel) => void; onWhatsApp: (f: Followup, channel: Channel) => void; onEmail: (f: Followup, channel: Channel) => void;
+  onComplete: (f: Followup) => void; onSnooze: (f: Followup, preset: "15m" | "1h" | "tomorrow" | "next_week") => void;
+  onCustomSnooze: (f: Followup) => void; onPushDays: (f: Followup, days: number) => void;
+  onAssign: (f: Followup, userId: string) => void; onNote: (f: Followup) => void; onDismiss: (f: Followup) => void; canDelete: boolean; onDelete: (f: Followup) => void; onOpenDoc?: (f: Followup) => void;
 }) {
   const level = f.manual_priority_override || f.priority_level;
   const tone = PRIORITY_TONE[level];
   const isResolved = f.status === "done" || f.status === "dismissed";
   const overdueDue = f.bucket === "overdue";
+  const canOpenDoc = !!onOpenDoc
+    && (f.rule_type === "selection_waiting" || f.rule_type === "quotation_tiles_waiting")
+    && !!f.quotation_id;
   const swipeRef = useRef<Swipeable>(null);
 
   const content = (
-    <HoverCard onPress={onPress} padding={spacing.md} testID={`followup-${f.id}`} style={{
+    <HoverCard onPress={() => onPress(f)} padding={spacing.md} testID={`followup-${f.id}`} style={{
       borderColor: active ? colors.brand : colors.border,
       backgroundColor: active ? colors.brandTint : colors.surfaceSecondary,
       borderLeftWidth: 4,
@@ -1364,7 +1341,7 @@ function FollowupCard({
         {/* Header row */}
         <View style={{ flexDirection: "row", alignItems: "flex-start", gap: spacing.sm }}>
           {!isResolved ? (
-            <Pressable onPress={onToggleSelect} hitSlop={8} style={{ paddingTop: 2 }} accessibilityLabel="Select">
+            <Pressable onPress={() => onToggleSelect(f.id)} hitSlop={8} style={{ paddingTop: 2 }} accessibilityLabel="Select">
               <Feather name={checked ? "check-square" : "square"} size={18} color={checked ? colors.brand : colors.onSurfaceMuted} />
             </Pressable>
           ) : null}
@@ -1438,48 +1415,48 @@ function FollowupCard({
             rest (Email, custom snooze, note, dismiss) live in the overflow. */}
         {!isResolved ? (
           <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
-            <IconButton icon="phone" onPress={onCall} size={34} tone="brandLight" accessibilityLabel="Call" testID={`call-${f.id}`} />
-            <IconButton icon="message-circle" onPress={onWhatsApp} size={34} tone="surface" accessibilityLabel="WhatsApp" testID={`wa-${f.id}`} />
-            {onOpenDoc ? (
+            <IconButton icon="phone" onPress={() => onCall(f, "call")} size={34} tone="brandLight" accessibilityLabel="Call" testID={`call-${f.id}`} />
+            <IconButton icon="message-circle" onPress={() => onWhatsApp(f, "whatsapp")} size={34} tone="surface" accessibilityLabel="WhatsApp" testID={`wa-${f.id}`} />
+            {canOpenDoc ? (
               <Button
                 label={f.rule_type === "selection_waiting" ? "Open Selection" : "Open Quotation"}
-                icon="external-link" variant="secondary" size="sm" onPress={onOpenDoc}
+                icon="external-link" variant="secondary" size="sm" onPress={() => onOpenDoc!(f)}
                 testID={`open-doc-${f.id}`}
               />
             ) : null}
             <IconMenuButton
               icon="clock" accessibilityLabel="Snooze" testID={`snooze-${f.id}`}
               items={[
-                { label: "Snooze 15 min", icon: "clock", onPress: () => onSnooze("15m") },
-                { label: "Snooze 1 hour", icon: "clock", onPress: () => onSnooze("1h") },
-                { label: "Snooze till tomorrow", icon: "sunrise", onPress: () => onSnooze("tomorrow") },
-                { label: "Snooze next week", icon: "calendar", onPress: () => onSnooze("next_week") },
-                { label: "Custom snooze…", icon: "edit-2", onPress: onCustomSnooze },
+                { label: "Snooze 15 min", icon: "clock", onPress: () => onSnooze(f, "15m") },
+                { label: "Snooze 1 hour", icon: "clock", onPress: () => onSnooze(f, "1h") },
+                { label: "Snooze till tomorrow", icon: "sunrise", onPress: () => onSnooze(f, "tomorrow") },
+                { label: "Snooze next week", icon: "calendar", onPress: () => onSnooze(f, "next_week") },
+                { label: "Custom snooze…", icon: "edit-2", onPress: () => onCustomSnooze(f) },
               ]}
             />
             <IconMenuButton
               icon="fast-forward" accessibilityLabel="Push follow-up date" testID={`push-${f.id}`}
               items={[
-                { label: "Push +1 day", icon: "chevron-right", onPress: () => onPushDays(1) },
-                { label: "Push +2 days", icon: "chevron-right", onPress: () => onPushDays(2) },
-                { label: "Push +3 days", icon: "chevron-right", onPress: () => onPushDays(3) },
-                { label: "Push +7 days", icon: "chevron-right", onPress: () => onPushDays(7) },
+                { label: "Push +1 day", icon: "chevron-right", onPress: () => onPushDays(f, 1) },
+                { label: "Push +2 days", icon: "chevron-right", onPress: () => onPushDays(f, 2) },
+                { label: "Push +3 days", icon: "chevron-right", onPress: () => onPushDays(f, 3) },
+                { label: "Push +7 days", icon: "chevron-right", onPress: () => onPushDays(f, 7) },
               ]}
             />
             <IconMenuButton
               icon="user-plus" accessibilityLabel="Assign" testID={`assign-${f.id}`}
-              items={assignees.map((a) => ({ label: `Assign to ${a.full_name}`, icon: "user" as FeatherName, onPress: () => onAssign(a.id) }))}
+              items={assignees.map((a) => ({ label: `Assign to ${a.full_name}`, icon: "user" as FeatherName, onPress: () => onAssign(f, a.id) }))}
             />
-            <IconButton icon="check" onPress={onComplete} size={34} tone="surface" accessibilityLabel="Mark complete" testID={`complete-${f.id}`} />
+            <IconButton icon="check" onPress={() => onComplete(f)} size={34} tone="surface" accessibilityLabel="Mark complete" testID={`complete-${f.id}`} />
             <Dropdown
               label="More" icon="more-horizontal" variant="secondary"
               items={[
-                { label: "Email", icon: "mail", onPress: onEmail },
-                { label: "Add note", icon: "edit-3", onPress: onNote },
-                { label: "Dismiss", icon: "x-circle", tone: "danger" as const, onPress: onDismiss },
+                { label: "Email", icon: "mail", onPress: () => onEmail(f, "email") },
+                { label: "Add note", icon: "edit-3", onPress: () => onNote(f) },
+                { label: "Dismiss", icon: "x-circle", tone: "danger" as const, onPress: () => onDismiss(f) },
               ]}
             />
-            {canDelete ? <IconButton icon="trash-2" onPress={onDelete} size={34} tone="danger" accessibilityLabel="Delete follow-up" testID={`delete-followup-${f.id}`} /> : null}
+            {canDelete ? <IconButton icon="trash-2" onPress={() => onDelete(f)} size={34} tone="danger" accessibilityLabel="Delete follow-up" testID={`delete-followup-${f.id}`} /> : null}
           </View>
         ) : null}
       </View>
@@ -1508,16 +1485,20 @@ function FollowupCard({
       )}
       onSwipeableOpen={(direction) => {
         swipeRef.current?.close();
-        if (direction === "left") onComplete();
-        else onSnooze("1h");
+        if (direction === "left") onComplete(f);
+        else onSnooze(f, "1h");
       }}
     >
-      <Pressable onLongPress={() => assignees[0] && onAssign(assignees[0].id)} delayLongPress={450}>
+      <Pressable onLongPress={() => assignees[0] && onAssign(f, assignees[0].id)} delayLongPress={450}>
         {content}
       </Pressable>
     </Swipeable>
   );
 }
+
+// The virtualized list receives stable data and action handlers; memoization
+// keeps visible cards from re-rendering when unrelated workspace state changes.
+const MemoFollowupCard = memo(FollowupCard);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ContextPanel — full customer context (desktop right column / mobile sheet)
