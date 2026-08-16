@@ -308,7 +308,7 @@ async def insights(user: UserPublic = Depends(get_current_user)):
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get("/export")
 async def export_followups(
-    format: str = Query("xlsx", regex="^(xlsx|csv)$"),
+    format: str = Query("xlsx", pattern="^(xlsx|csv)$"),
     bucket: Optional[str] = None,
     priority: Optional[str] = None,
     category: Optional[str] = None,

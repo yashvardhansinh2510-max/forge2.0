@@ -7,8 +7,11 @@ import ast
 from pathlib import Path
 
 
+PAYMENT_ROUTES = Path(__file__).resolve().parents[2] / "routes" / "payment_routes.py"
+
+
 def test_create_payment_calls_cache_bump_after_the_transaction_commits():
-    source = Path("routes/payment_routes.py").read_text()
+    source = PAYMENT_ROUTES.read_text()
     tree = ast.parse(source)
     func = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "create_payment")
     calls = [ast.dump(n) for n in ast.walk(func) if isinstance(n, ast.Call)]
@@ -22,7 +25,7 @@ def test_the_bump_call_is_not_nested_inside_the_transaction_try_block():
     """A bump for a transaction that then rolls back would be worse than a
     stale read — it must sit after the try/except at function indentation,
     the same rule Stage B's Task 8 (Phase 1) enforced for domain_outbox.py."""
-    source = Path("routes/payment_routes.py").read_text()
+    source = PAYMENT_ROUTES.read_text()
     tree = ast.parse(source)
     func = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "create_payment")
     bump_call = next(

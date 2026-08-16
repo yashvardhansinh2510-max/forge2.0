@@ -611,7 +611,7 @@ async def customer_workspace(
 
 @router.get("/items")
 async def list_items(
-    view: str = Query("stock", regex="^(today|stock|customers|dispatch_record)$"),
+    view: str = Query("stock", pattern="^(today|stock|customers|dispatch_record)$"),
     brand: Optional[str] = None,
     customer: Optional[str] = None,
     stage: Optional[str] = None,
@@ -638,7 +638,7 @@ async def list_items(
 
 @router.get("/items/page")
 async def list_items_page(
-    view: str = Query("stock", regex="^(today|stock|customers|dispatch_record)$"),
+    view: str = Query("stock", pattern="^(today|stock|customers|dispatch_record)$"),
     brand: Optional[str] = None,
     customer: Optional[str] = None,
     stage: Optional[str] = None,
@@ -2339,7 +2339,7 @@ async def order_detail(po_id: str, user: UserPublic = Depends(get_current_user))
 # =============================================================================
 @router.get("/export.xlsx")
 async def export_xlsx(
-    view: str = Query("stock", regex="^(today|stock|customers|dispatch_record)$"),
+    view: str = Query("stock", pattern="^(today|stock|customers|dispatch_record)$"),
     brand: Optional[str] = None,
     customer: Optional[str] = None,
     stage: Optional[str] = None,
