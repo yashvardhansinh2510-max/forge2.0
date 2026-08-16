@@ -25,9 +25,10 @@ USER forge
 
 EXPOSE 8000
 
-# /api/health returns 503 when Mongo is unreachable, so this doubles as a
-# readiness signal for the orchestrator.
+# /api/health also surfaces security warnings (such as a default demo
+# password) as degraded.  Probe the dedicated readiness endpoint instead so
+# an operational warning cannot trigger a deployment restart loop.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+    CMD curl -fsS http://127.0.0.1:8000/api/health/ready || exit 1
 
 CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

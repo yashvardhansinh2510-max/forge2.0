@@ -102,6 +102,24 @@ async def health():
     return {"status": "ok"}
 
 
+@api.get("/health/ready", include_in_schema=False)
+async def readiness():
+    """Infrastructure readiness for the deployment orchestrator.
+
+    ``/health`` intentionally reports a non-2xx status for a detected default
+    demo password so that monitoring alerts on that security condition.  It is
+    not a process-readiness failure, however: using it for Docker's health
+    check caused Railway to continuously mark an otherwise working API
+    unhealthy.  Keep the warning on ``/health`` and make the container probe
+    depend only on the datastore it needs to serve traffic.
+    """
+    try:
+        await db.command("ping")
+    except Exception:  # noqa: BLE001
+        return JSONResponse(status_code=503, content={"status": "error", "detail": "database unavailable"})
+    return {"status": "ok"}
+
+
 # Feature routers
 api.include_router(auth_router)
 api.include_router(dashboard_router)

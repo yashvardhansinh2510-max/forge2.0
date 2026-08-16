@@ -50,6 +50,14 @@ def test_health_degraded_when_demo_account_still_on_default_password(monkeypatch
     assert b"owner@forge.app" not in result.body
 
 
+def test_readiness_stays_ok_when_health_only_has_a_security_warning(monkeypatch):
+    """The deployment probe must not restart a working API over this warning."""
+    monkeypatch.setattr(server, "db", _FakeDb())
+
+    result = asyncio.run(server.readiness())
+    assert result == {"status": "ok"}
+
+
 def test_health_demo_check_is_ttl_cached(monkeypatch):
     monkeypatch.setattr(server, "db", _FakeDb())
     calls = {"count": 0}
