@@ -29,7 +29,11 @@ export const config = { api: { bodyParser: false } };
 
 export default async function handler(req, res) {
   writeSecurityHeaders(res);
-  const path = Array.isArray(req.query.path) ? req.query.path.join('/') : req.query.path;
+  const queryPath = Array.isArray(req.query.path) ? req.query.path.join('/') : req.query.path;
+  // Explicit Vercel routing can invoke this function without populating the
+  // catch-all query param; derive the path from the original request as a
+  // reliable fallback.
+  const path = queryPath || req.url.split('?')[0].replace(/^\/api\/?/, '');
   if (!path) return res.status(404).json({ detail: 'Not Found' });
 
   const session = cookie(req, 'forge_session');
