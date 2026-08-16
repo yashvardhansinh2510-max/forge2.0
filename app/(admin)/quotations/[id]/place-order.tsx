@@ -11,12 +11,13 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Button, Card } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { api } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 type PreviewItem = {
   line_id: string;
@@ -52,6 +53,8 @@ type Supplier = { id: string; name: string; brand_id?: string | null; brand_name
 export default function PlaceOrderReview() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { isPhone } = useBp();
+  const insets = useSafeAreaInsets();
 
   const [preview, setPreview] = useState<Preview | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -62,26 +65,28 @@ export default function PlaceOrderReview() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const [p, s] = await Promise.all([
-          api.get<Preview>(`/quotations/${id}/place-order/preview`),
-          api.get<Supplier[]>("/suppliers"),
-        ]);
-        setPreview(p);
-        setSuppliers(s);
-        // pre-fill defaults
-        const defaults: Record<string, string> = {};
-        for (const b of p.brands) {
-          if (b.default_supplier && b.brand_id) defaults[b.brand_id] = b.default_supplier.id;
-        }
-        setSupplierByBrand(defaults);
-      } catch (e: any) {
-        setError(e?.detail || "Failed to load preview");
+  const loadPreview = useCallback(async () => {
+    setError(null);
+    try {
+      const [p, s] = await Promise.all([
+        api.get<Preview>(`/quotations/${id}/place-order/preview`),
+        api.get<Supplier[]>("/suppliers"),
+      ]);
+      setPreview(p);
+      setSuppliers(s);
+      const defaults: Record<string, string> = {};
+      for (const b of p.brands) {
+        if (b.default_supplier && b.brand_id) defaults[b.brand_id] = b.default_supplier.id;
       }
-    })();
+      setSupplierByBrand(defaults);
+    } catch (e: any) {
+      setError(e?.detail || "Failed to load preview");
+    }
   }, [id]);
+
+  useEffect(() => {
+    void loadPreview();
+  }, [loadPreview]);
 
   const supplierOptionsFor = useCallback(
     (brand_id: string | null): Supplier[] => {
@@ -121,6 +126,7 @@ export default function PlaceOrderReview() {
         <View style={{ padding: spacing.xxl, alignItems: "center", gap: spacing.md }}>
           <Feather name="alert-triangle" size={30} color={colors.warning} />
           <Text style={type.titleMd}>{error}</Text>
+          <Button label="Try again" onPress={() => void loadPreview()} />
           <Button label="Back to quotation" onPress={() => router.back()} />
         </View>
       </SafeAreaView>
@@ -150,7 +156,7 @@ export default function PlaceOrderReview() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 24}
       >
-        <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={{ padding: isPhone ? spacing.lg : spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl + insets.bottom }} keyboardShouldPersistTaps="handled">
         {/* Header summary */}
         <View>
           <Text style={type.displayLg}>{preview.customer_name}</Text>
@@ -209,14 +215,16 @@ export default function PlaceOrderReview() {
 
               <View style={styles.itemsBox}>
                 {b.items.slice(0, 6).map((it) => (
-                  <View key={it.line_id} style={styles.itemRow}>
-                    <Text style={[type.mono, { fontSize: 11, width: 90, color: colors.onSurfaceMuted }]}>{it.sku}</Text>
-                    <View style={{ flex: 1 }}>
+                  <View key={it.line_id} style={[styles.itemRow, isPhone && styles.itemRowPhone]}>
+                    <View style={styles.itemIdentity}>
+                      <Text style={[type.mono, styles.itemSku]} numberOfLines={1}>{it.sku}</Text>
                       <Text style={{ fontSize: 12, fontWeight: "500" }} numberOfLines={1}>{it.name}</Text>
                       {it.room ? <Text style={type.caption}>{it.room}</Text> : null}
                     </View>
-                    <Text style={[type.mono, { fontSize: 11, width: 50, textAlign: "right" }]}>{it.qty} nos</Text>
-                    <Text style={[type.mono, { fontSize: 12, width: 80, textAlign: "right", fontWeight: "600" }]} numberOfLines={1}>{money(it.unit_cost * it.qty)}</Text>
+                    <View style={styles.itemAmounts}>
+                      <Text style={[type.mono, styles.itemQty]}>{it.qty} nos</Text>
+                      <Text style={[type.mono, styles.itemAmount]} numberOfLines={1}>{money(it.unit_cost * it.qty)}</Text>
+                    </View>
                   </View>
                 ))}
                 {b.items.length > 6 ? (
@@ -268,21 +276,17 @@ export default function PlaceOrderReview() {
         })}
 
         {/* Confirm bar */}
-        <View style={styles.confirmBar}>
+        <View style={[styles.confirmBar, isPhone && styles.confirmBarPhone]}>
           <View style={{ flex: 1 }}>
             <Text style={type.caption}>Total order value</Text>
             <Text style={{ fontSize: 20, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] }} numberOfLines={1}>
               {money(preview.total_value)}
             </Text>
           </View>
-          <Button label="Cancel" variant="ghost" onPress={() => router.back()} />
-          <Button
-            label={`Generate ${preview.brands.length} PO${preview.brands.length !== 1 ? "s" : ""}`}
-            icon="check"
-            onPress={confirm}
-            loading={busy}
-            testID="confirm-place-order"
-          />
+          <View style={[styles.confirmActions, isPhone && styles.confirmActionsPhone]}>
+            <Button label="Cancel" variant="ghost" onPress={() => router.back()} />
+            <Button label={`Generate ${preview.brands.length} PO${preview.brands.length !== 1 ? "s" : ""}`} icon="check" onPress={confirm} loading={busy} testID="confirm-place-order" />
+          </View>
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
@@ -312,6 +316,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8, paddingVertical: 6, borderRadius: radius.sm,
     backgroundColor: colors.surfaceSecondary,
   },
+  itemRowPhone: { alignItems: "flex-start" },
+  itemIdentity: { flex: 1, minWidth: 0, gap: 2 },
+  itemSku: { fontSize: 11, color: colors.onSurfaceMuted },
+  itemAmounts: { alignItems: "flex-end", gap: 2, minWidth: 88 },
+  itemQty: { fontSize: 11, textAlign: "right" },
+  itemAmount: { fontSize: 12, textAlign: "right", fontWeight: "600" },
   supplierChip: {
     flexDirection: "row", alignItems: "center", gap: 6,
     paddingHorizontal: 12, height: 34, borderRadius: 999,
@@ -323,4 +333,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  confirmBarPhone: { alignItems: "stretch" },
+  confirmActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  confirmActionsPhone: { flexWrap: "wrap", justifyContent: "flex-end" },
 });
