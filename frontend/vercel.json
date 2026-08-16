@@ -2,7 +2,7 @@
   "buildCommand": "yarn build",
   "outputDirectory": "dist/client",
   "routes": [
-    { "handle": "filesystem" },
+    { "src": "/api/(.*)", "dest": "/api/[...path].js" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
