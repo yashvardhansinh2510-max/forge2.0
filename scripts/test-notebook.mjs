@@ -36,4 +36,13 @@ assert.equal(row.notes, "N");
 assert.equal(formatRupees(125000), "₹1,25,000");
 assert.equal(formatIndianDate("2026-08-06"), "06/08/2026");
 
-console.log("notebook model: 11 assertions passed");
+const notebookRoot = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/(admin)/notebook/[floor].tsx", import.meta.url), "utf8"));
+const quotationFollowUp = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/(admin)/notebook/[floor]/quotation-follow-up.tsx", import.meta.url), "utf8"));
+const legacyView = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/(admin)/notebook/[floor]/[view].tsx", import.meta.url), "utf8"));
+assert.match(notebookRoot, /WalkInsScreen/);
+assert.match(notebookRoot, /enableQuotationTransfer/);
+assert.match(quotationFollowUp, /quotationFollowup/);
+assert.match(quotationFollowUp, /title=.*Quotation Follow-up/s);
+assert.match(legacyView, /quotation-follow-up/);
+
+console.log("notebook model: canonical route assertions passed");

@@ -50,8 +50,10 @@ const PRIMARY: NavItem[] = [
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
   { href: "/(admin)/payments-list", label: "Payment List", icon: "list", match: "payments-list" },
   { href: "/(admin)/followups", label: "Follow-ups", icon: "phone-call", match: "followups" },
-  { href: "/(admin)/notebook/kitchen/followups", label: "Kitchen Floor", icon: "book-open", match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
-  { href: "/(admin)/notebook/furniture/followups", label: "Furniture Floor", icon: "book-open", match: "furniture", floors: [FURNITURE_FLOOR_ID] },
+  { href: "/(admin)/notebook/kitchen", label: "Kitchen Walk-ins", icon: "user-plus", match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
+  { href: "/(admin)/notebook/kitchen/quotation-follow-up", label: "Quotation Follow-up", icon: "file-text", match: "quotation-follow-up", floors: [KITCHEN_FLOOR_ID] },
+  { href: "/(admin)/notebook/furniture", label: "Furniture Walk-ins", icon: "user-plus", match: "furniture", floors: [FURNITURE_FLOOR_ID] },
+  { href: "/(admin)/notebook/furniture/quotation-follow-up", label: "Quotation Follow-up", icon: "file-text", match: "quotation-follow-up", floors: [FURNITURE_FLOOR_ID] },
 ];
 
 const SECONDARY: NavItem[] = [
@@ -60,6 +62,18 @@ const SECONDARY: NavItem[] = [
   { href: "/(admin)/team", label: "Team", icon: "user-check", match: "team", roles: ["owner", "admin", "manager"] },
   { href: "/(admin)/settings", label: "Settings", icon: "settings", match: "settings" },
 ];
+
+function isNavActive(item: NavItem, segments: string[]): boolean {
+  // The root notebook route is Walk-ins. It must not remain highlighted when
+  // its sibling Quotation Follow-up route is active.
+  if (item.href.endsWith("/notebook/kitchen")) {
+    return segments.includes("kitchen") && !segments.includes("quotation-follow-up");
+  }
+  if (item.href.endsWith("/notebook/furniture")) {
+    return segments.includes("furniture") && !segments.includes("quotation-follow-up");
+  }
+  return segments.includes(item.match);
+}
 
 const roleLabel: Record<string, string> = {
   owner: "Owner", admin: "Admin", manager: "Manager", sales: "Sales",
@@ -247,7 +261,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   const hasAccess = useModuleAccess();
   const tilesNav = useTilesNav();
   const palette = usePalette();
-  const isActive = (m: string) => segments.includes(m);
+  const isActive = (item: NavItem) => isNavActive(item, segments);
 
   return (
     <SafeAreaView edges={["top", "left", "bottom"]} style={styles.sidebar}>
@@ -274,7 +288,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: space.x3, gap: 1, alignItems: collapsed ? "center" : "stretch" }} showsVerticalScrollIndicator={false}>
         {visible(PRIMARY).map((n) => (
-          <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} compact={collapsed} />
+          <SideItem key={n.href} item={n} active={isActive(n)} onPress={() => router.push(n.href as any)} compact={collapsed} />
         ))}
         {hasAccess("quotations") && tilesNav.items.map((n) => (
           <SideItem
@@ -287,7 +301,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         ))}
         <View style={{ height: space.x5 }} />
         {visible(SECONDARY).map((n) => (
-          <SideItem key={n.href} item={n} active={isActive(n.match)} onPress={() => router.push(n.href as any)} compact={collapsed} />
+          <SideItem key={n.href} item={n} active={isActive(n)} onPress={() => router.push(n.href as any)} compact={collapsed} />
         ))}
       </ScrollView>
 
@@ -327,10 +341,10 @@ function Rail() {
   const hasAccess = useModuleAccess();
   const palette = usePalette();
   const tilesNav = useTilesNav();
-  const isActive = (m: string) => segments.includes(m);
+  const isActive = (item: NavItem) => isNavActive(item, segments);
 
   const RailBtn = ({ item }: { item: NavItem }) => {
-    const on = isActive(item.match);
+    const on = isActive(item);
     return (
       <Pressable
         testID={`nav-${item.match}`}
@@ -415,8 +429,10 @@ const MORE_ITEMS: NavItem[] = [
   { href: "/(admin)/purchases", label: "Purchases", icon: "shopping-cart", match: "purchases", floors: [SANITARY_FLOOR_ID] },
   { href: "/(admin)/payments", label: "Payments", icon: "credit-card", match: "payments" },
   { href: "/(admin)/payments-list", label: "Payment List", icon: "list", match: "payments-list" },
-  { href: "/(admin)/notebook/kitchen/followups", label: "Kitchen Floor", icon: "book-open", match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
-  { href: "/(admin)/notebook/furniture/followups", label: "Furniture Floor", icon: "book-open", match: "furniture", floors: [FURNITURE_FLOOR_ID] },
+  { href: "/(admin)/notebook/kitchen", label: "Kitchen Walk-ins", icon: "user-plus", match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
+  { href: "/(admin)/notebook/kitchen/quotation-follow-up", label: "Quotation Follow-up", icon: "file-text", match: "quotation-follow-up", floors: [KITCHEN_FLOOR_ID] },
+  { href: "/(admin)/notebook/furniture", label: "Furniture Walk-ins", icon: "user-plus", match: "furniture", floors: [FURNITURE_FLOOR_ID] },
+  { href: "/(admin)/notebook/furniture/quotation-follow-up", label: "Quotation Follow-up", icon: "file-text", match: "quotation-follow-up", floors: [FURNITURE_FLOOR_ID] },
   { href: "/(admin)/notifications", label: "Notifications", icon: "bell", match: "notifications" },
   { href: "/(admin)/sales-data", label: "Sales Data", icon: "trending-up", match: "sales-data" },
   { href: "/(admin)/team", label: "Team", icon: "user-check", match: "team", roles: ["owner", "admin", "manager"] },
@@ -432,9 +448,9 @@ function PhoneBar() {
   const palette = usePalette();
   const tilesNav = useTilesNav();
   const [moreOpen, setMoreOpen] = useState(false);
-  const isActive = (m: string) => segments.includes(m);
+  const isActive = (item: NavItem) => isNavActive(item, segments);
   const visibleMore = visible(MORE_ITEMS);
-  const moreActive = visibleMore.some((m) => isActive(m.match));
+  const moreActive = visibleMore.some(isActive);
   // The left tab slot is Quotes on Sanitary Bathroom. On Ground Floor that
   // destination doesn't exist, so the slot takes that unit's equivalent
   // (Quotation Tiles) rather than collapsing and leaving a hole in the bar.
@@ -468,7 +484,7 @@ function PhoneBar() {
     : null;
 
   const Tab = ({ item }: { item: NavItem }) => {
-    const on = isActive(item.match);
+    const on = isActive(item);
     return (
       <Pressable
         testID={`bottom-nav-${item.match}`}

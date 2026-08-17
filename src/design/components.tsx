@@ -510,8 +510,8 @@ export function Sheet({
         </View>
       ) : null}
       <ScrollView
-        style={{ flexGrow: 0 }}
-        contentContainerStyle={{ paddingHorizontal: space.x6, paddingBottom: footer ? space.x3 : space.x6, paddingTop: title ? 0 : space.x6 }}
+        style={{ flexGrow: 0, flexShrink: 1 }}
+        contentContainerStyle={{ paddingHorizontal: space.x6, paddingBottom: footer ? space.x3 : space.x6 + (isPhone ? insets.bottom : 0), paddingTop: title ? 0 : space.x6 }}
         keyboardShouldPersistTaps="handled"
       >
         {children}

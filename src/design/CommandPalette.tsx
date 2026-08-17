@@ -39,8 +39,10 @@ const NAV: { label: string; icon: FeatherName; href: string; kw?: string }[] = [
   { label: "Notifications", icon: "bell", href: "/(admin)/notifications", kw: "alerts" },
   { label: "Team", icon: "user-check", href: "/(admin)/team", kw: "staff roles" },
   { label: "Settings", icon: "settings", href: "/(admin)/settings", kw: "preferences" },
-  { label: "Kitchen Floor", icon: "book-open", href: "/(admin)/notebook/kitchen/followups", kw: "notebook follow ups" },
-  { label: "Furniture Floor", icon: "book-open", href: "/(admin)/notebook/furniture/followups", kw: "notebook follow ups" },
+  { label: "Kitchen Walk-ins", icon: "user-plus", href: "/(admin)/notebook/kitchen", kw: "notebook walk ins" },
+  { label: "Kitchen Quotation Follow-up", icon: "file-text", href: "/(admin)/notebook/kitchen/quotation-follow-up", kw: "notebook quotation follow up" },
+  { label: "Furniture Walk-ins", icon: "user-plus", href: "/(admin)/notebook/furniture", kw: "notebook walk ins" },
+  { label: "Furniture Quotation Follow-up", icon: "file-text", href: "/(admin)/notebook/furniture/quotation-follow-up", kw: "notebook quotation follow up" },
 ];
 
 export function PaletteProvider({ children }: { children: React.ReactNode }) {
@@ -134,7 +136,7 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
     ] as Item[]).filter((a) => match(a.title + " " + a.keywords));
 
     const nav: Item[] = NAV
-      .filter((n) => !notebookOnly || (selectedFloorId === KITCHEN_FLOOR_ID ? n.href.includes("/notebook/kitchen/") : n.href.includes("/notebook/furniture/")))
+      .filter((n) => !notebookOnly || (selectedFloorId === KITCHEN_FLOOR_ID ? n.href.includes("/notebook/kitchen") : n.href.includes("/notebook/furniture")))
       .filter((n) => match(n.label + " " + (n.kw ?? "")))
       .map((n) => ({
         key: `n-${n.href}`, section: "Go to", icon: n.icon, title: n.label, run: () => go(n.href),
