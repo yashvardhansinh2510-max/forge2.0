@@ -56,16 +56,15 @@ export function supabaseSizedImageUrl(uri: string, requestedWidth: number): stri
   const width = requestedWidth <= 320 ? 320 : 640;
   const rendered = uri.replace(SUPABASE_PUBLIC_OBJECT, "/storage/v1/render/image/public/");
   const separator = rendered.includes("?") ? "&" : "?";
-  return `${rendered}${separator}width=${width}&resize=contain&quality=82`;
+  return `${rendered}${separator}width=${width}&resize=fill&quality=82`;
 }
 
 export function ProductImage({
   source,
   style,
-  // Product frames are landscape, but their contents must remain upright.
-  // `contain` preserves the source aspect ratio without the old runtime
-  // portrait rotation that made basins and tile samples appear sideways.
-  contentFit = "contain",
+  // Product media is deliberately stretched into the landscape frame. This
+  // keeps portrait supplier sources from rendering as vertical subjects.
+  contentFit = "fill",
   frameInset = spacing.s4,
   testID,
   accessibilityLabel = "Product image",

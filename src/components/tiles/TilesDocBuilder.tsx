@@ -73,7 +73,7 @@ function TileImageCell({ uri }: { uri: string }) {
   return (
     <ProductImage
       source={uri}
-      contentFit="contain"
+      contentFit="fill"
       frameInset={2}
       borderRadius={0}
       disableSkeleton
@@ -1369,7 +1369,7 @@ function MobileRowCard({
     <View style={mobileStyles.rowCard} testID={`mobile-row-${index}`}>
       <Pressable onPress={onOpenPicker} style={mobileStyles.productImage} testID={`mobile-thumb-${index}`} accessibilityLabel={row.productId ? "Change product image" : "Select product image"}>
           {row.image ? (
-            <ProductImage source={row.image} contentFit="contain" frameInset={spacing.s4} borderRadius={radius.md} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
+            <ProductImage source={row.image} contentFit="fill" frameInset={spacing.s4} borderRadius={radius.md} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
           ) : (
             <Feather name="image" size={18} color={colors.onSurfaceMuted} />
           )}

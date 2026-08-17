@@ -166,7 +166,7 @@ export function TilesProductPicker({
 function TileCatalogCard({ product, compact, onPress }: { product: Product; compact: boolean; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, compact && styles.phoneCard, pressed && styles.cardPressed]} testID={`tiles-picker-card-${product.id}`} accessibilityRole="button" accessibilityLabel={`Add ${product.name}`}>
-      <ProductImage source={productImageList(product)} style={[styles.image, ...(compact ? [styles.phoneImage] : [])]} fallbackLabel={product.sku} disableSkeleton contentFit="contain" />
+      <ProductImage source={productImageList(product)} style={[styles.image, ...(compact ? [styles.phoneImage] : [])]} fallbackLabel={product.sku} disableSkeleton contentFit="fill" />
       <View style={styles.cardBody}>
         <Text style={styles.brand} numberOfLines={1}>{product.brand_name || "Tile"}</Text>
         <Text style={styles.name} numberOfLines={2}>{product.name}</Text>
