@@ -134,7 +134,7 @@ export default function Catalog() {
       try {
         const [bs, cs] = await Promise.all([
           catalogReferences.brands<Brand[]>({ floorId: selectedFloorId || undefined }),
-          catalogReferences.categories<Category[]>({ floorId: selectedFloorId || undefined }),
+          catalogReferences.categories<Category[]>(undefined, { floorId: selectedFloorId || undefined }),
         ]);
         setBrands(bs); setCategories(cs);
         setLoadError(null);
