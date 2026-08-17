@@ -1,8 +1,7 @@
-"""Canonical, no-crop landscape treatment for product photography."""
+"""Canonical stretched landscape treatment for product photography."""
 from __future__ import annotations
 
 from io import BytesIO
-import math
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -16,11 +15,12 @@ class ProductImageNormalizationError(ValueError):
 
 
 def normalize_product_image(data: bytes, mime: str) -> tuple[bytes, str]:
-    """Return an upright 16:10 raster with the full source centered on white.
+    """Return an upright 16:10 raster by stretching the source into the frame.
 
-    This deliberately expands the canvas instead of rotating or cropping the
-    product. GIF input is flattened to its first frame as PNG: product media
-    needs a stable printable image, not an animation.
+    The product-image contract is visual: portrait sources must not remain
+    portrait inside a landscape canvas. We therefore resize both axes to the
+    canonical 16:10 dimensions (non-uniformly when necessary), rather than
+    padding with white space. GIF input is flattened to its first frame as PNG.
     """
     normalized_mime = "image/jpeg" if mime == "image/jpg" else mime
     if normalized_mime not in NORMALIZABLE_IMAGE_MIMES:
@@ -36,15 +36,9 @@ def normalize_product_image(data: bytes, mime: str) -> tuple[bytes, str]:
     source_width, source_height = image.size
     if source_width <= 0 or source_height <= 0:
         raise ProductImageNormalizationError("The uploaded image has invalid dimensions")
-    if source_width / source_height >= PRODUCT_IMAGE_ASPECT_RATIO:
-        canvas_width = source_width
-        canvas_height = max(1, math.ceil(source_width / PRODUCT_IMAGE_ASPECT_RATIO))
-    else:
-        canvas_width = max(1, math.ceil(source_height * PRODUCT_IMAGE_ASPECT_RATIO))
-        canvas_height = source_height
-
-    canvas = Image.new("RGB", (canvas_width, canvas_height), "white")
-    canvas.paste(image, ((canvas_width - source_width) // 2, (canvas_height - source_height) // 2))
+    canvas_width = max(16, int(round(max(source_width, source_height * PRODUCT_IMAGE_ASPECT_RATIO))))
+    canvas_height = max(10, int(round(canvas_width / PRODUCT_IMAGE_ASPECT_RATIO)))
+    canvas = image.resize((canvas_width, canvas_height), Image.Resampling.LANCZOS)
     out = BytesIO()
     if normalized_mime == "image/webp":
         canvas.save(out, format="WEBP", quality=90, method=6)

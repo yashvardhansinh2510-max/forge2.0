@@ -24,12 +24,12 @@ def _size(data: bytes) -> tuple[int, int]:
         return image.size
 
 
-def test_portrait_image_is_centered_on_exact_landscape_canvas():
+def test_portrait_image_is_stretched_into_exact_landscape_canvas():
     data, mime = normalize_product_image(_image_bytes((60, 120)), "image/png")
     assert mime == "image/png"
     assert _size(data) == (192, 120)
     with Image.open(BytesIO(data)) as image:
-        assert image.getpixel((0, 0)) == (255, 255, 255)
+        assert image.getpixel((0, 0)) == (255, 0, 0)
         assert image.getpixel((96, 60)) == (255, 0, 0)
 
 

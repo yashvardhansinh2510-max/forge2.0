@@ -85,7 +85,7 @@ export function Thumb({ image, size = 40 }: { image?: string | null; size?: numb
     <ProductImage
       source={image}
       fallbackLabel="SKU"
-      contentFit="contain"
+      contentFit="fill"
       disableSkeleton
       borderRadius={8}
       style={{ width: size, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO }}
