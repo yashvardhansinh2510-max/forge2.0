@@ -4,7 +4,7 @@
 import { browserStorage } from "@/src/utils/storage/browser.web";
 
 const SELECTED_FLOOR_KEY = "forge.active-floor";
-const configuredBase = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+const configuredBase = (process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/+$/, "");
 // Sites' worker is the web authentication boundary: it turns a successful
 // login into an HttpOnly session cookie and forwards that cookie to Railway
 // as a Bearer token.  A production browser must therefore always call the
