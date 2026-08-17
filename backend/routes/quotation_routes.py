@@ -51,6 +51,42 @@ async def _next_number() -> str:
 TILES_DOC_TYPES = ("tiles_selection", "tiles_quotation")
 
 
+async def _canonicalize_item_images(items) -> list[dict]:
+    """Resolve line-item images from current product media, never snapshots.
+
+    Quotation rows intentionally retain an image snapshot for audit/history, but
+    that snapshot can point at a portrait URL from before media normalization.
+    Every live read/write and PDF render must prefer the current product media;
+    if a product has no current media, clear the stale snapshot rather than
+    reintroducing an old portrait asset.
+    """
+    raw_items = [item.dict() if isinstance(item, QuotationLineItem) else dict(item) for item in (items or [])]
+    product_ids = {str(item.get("product_id")) for item in raw_items if item.get("product_id")}
+    if not product_ids:
+        return raw_items
+    media_rows = await db.product_media.find(
+        {"product_id": {"$in": list(product_ids)}, "public_url": {"$nin": [None, ""]}},
+        {"_id": 0, "product_id": 1, "public_url": 1, "is_primary": 1,
+         "role": 1, "sort_order": 1, "source_type": 1},
+    ).to_list(max(len(product_ids) * 8, 100))
+    priority = {"manufacturer": 0, "supplier": 1, "internal": 2}
+    grouped: dict[str, list[dict]] = {}
+    for row in media_rows:
+        grouped.setdefault(str(row.get("product_id")), []).append(row)
+    for rows in grouped.values():
+        rows.sort(key=lambda row: (
+            0 if row.get("is_primary") else 1,
+            0 if row.get("role") == "hero" else 1,
+            priority.get(row.get("source_type"), 3),
+            int(row.get("sort_order", 100) or 100),
+        ))
+    return [
+        {**item, "image": (grouped.get(str(item.get("product_id")), [{}])[0].get("public_url")
+                            if grouped.get(str(item.get("product_id"))) else None)}
+        for item in raw_items
+    ]
+
+
 def _require_tiles_quotation_address(doc_type: str, address: str | None) -> None:
     """Reject tile quotations that cannot print a complete customer header."""
     if doc_type == "tiles_quotation" and not str(address or "").strip():
@@ -227,6 +263,11 @@ async def create_quotation(
     # Fill category_id on items so category discounts can resolve later, and
     # collect each item's own product floor_id (see `_floor_id_for_new_quotation`).
     items = _normalize_tile_items(body.items or [], body.doc_type)
+    # Client image URLs are only a convenience for the picker. Persist the
+    # current canonical media URL so newly-created quotations cannot capture a
+    # stale/portrait snapshot.
+    canonical_items = await _canonicalize_item_images(items)
+    items = _normalize_tile_items([QuotationLineItem(**item) for item in canonical_items], body.doc_type)
     item_floor_ids: set[str] = set()
     for it in items:
         p = await db.products.find_one({"id": it.product_id}, {"_id": 0, "category_id": 1, "floor_id": 1})
@@ -307,6 +348,7 @@ async def create_quotation(
 @router.get("/{quotation_id}", response_model=Quotation)
 async def get_quotation(quotation_id: str, user: UserPublic = Depends(get_current_user)):
     doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
+    doc = {**doc, "items": await _canonicalize_item_images(doc.get("items", []))}
     return Quotation(**doc)
 
 
@@ -383,7 +425,10 @@ async def update_quotation(
                 p = await db.products.find_one({"id": it.product_id}, {"_id": 0, "category_id": 1})
                 if p:
                     it.category_id = p.get("category_id")
-        update["items"] = [i.dict() for i in _normalize_tile_items(items_typed, doc.get("doc_type", "standard"))]
+        canonical_items = await _canonicalize_item_images(items_typed)
+        update["items"] = [i.dict() for i in _normalize_tile_items(
+            [QuotationLineItem(**item) for item in canonical_items], doc.get("doc_type", "standard")
+        )]
         await _track_product_usage(user.id, [it.product_id for it in items_typed])
 
     if body.rooms is not None:
@@ -795,6 +840,11 @@ def _enriched_items_for_pdf(doc: dict) -> list[dict]:
     return [{**raw, "offer_rate": raw.get("offer_rate") if raw.get("offer_rate") is not None else (raw.get("rate_sqft") if raw.get("rate_sqft") is not None else raw.get("unit_price")), "discount_pct": round(row["pct"], 2)} for raw, row in zip(raws, rows, strict=True)]
 
 
+async def _pdf_items(doc: dict) -> list[dict]:
+    """Return discount-enriched rows with current media URLs."""
+    return _enriched_items_for_pdf({**doc, "items": await _canonicalize_item_images(doc.get("items", []))})
+
+
 # --- PDF branding (Settings > Company + Settings > PDF, merged) -----------
 async def _pdf_branding() -> dict:
     """Merge Settings > Company + Settings > PDF into the flat dict
@@ -829,14 +879,15 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     doc_type = doc.get("doc_type") or "standard"
     _require_tiles_quotation_address(doc_type, doc.get("address_snapshot"))
     branding = await _pdf_branding()
+    pdf_items = await _pdf_items(doc)
     if doc_type == "tiles_selection":
-        pdf_bytes = await _render_pdf(build_tiles_selection_pdf, {**doc, "items": _enriched_items_for_pdf(doc)}, customer, branding)
+        pdf_bytes = await _render_pdf(build_tiles_selection_pdf, {**doc, "items": pdf_items}, customer, branding)
         filename = tiles_pdf_filename(doc)
     elif doc_type == "tiles_quotation":
-        pdf_bytes = await _render_pdf(build_tiles_quotation_pdf, {**doc, "items": _enriched_items_for_pdf(doc)}, customer, branding)
+        pdf_bytes = await _render_pdf(build_tiles_quotation_pdf, {**doc, "items": pdf_items}, customer, branding)
         filename = tiles_pdf_filename(doc)
     else:
-        pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
+        pdf_doc = {**doc, "items": pdf_items}
         pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, customer, branding)
         filename = f'{doc["number"]}.pdf'
     revision = len(doc.get("revisions") or [])
@@ -873,7 +924,7 @@ async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_curre
     doc = await db.quotations.find_one({"id": quotation_id, "customer_id": cust.id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
-    pdf_doc = {**doc, "items": _enriched_items_for_pdf(doc)}
+    pdf_doc = {**doc, "items": await _pdf_items(doc)}
     pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{doc["number"]}.pdf"'})
 
@@ -903,7 +954,7 @@ async def portal_pdf_revision(
         merged.get("category_discounts", {}) or {},
         room_discs,
     )
-    pdf_doc = {**merged, **totals, "items": _enriched_items_for_pdf(merged)}
+    pdf_doc = {**merged, **totals, "items": await _pdf_items(merged)}
     pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
     filename = f'{doc["number"]}-rev{revision_no}.pdf'
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
@@ -942,7 +993,7 @@ async def portal_pdf_brand(
         room_discs,
     )
     filtered_doc = {**doc, "items": filtered}
-    pdf_doc = {**filtered_doc, **totals, "items": _enriched_items_for_pdf(filtered_doc)}
+    pdf_doc = {**filtered_doc, **totals, "items": await _pdf_items(filtered_doc)}
     pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
     brand_doc = None if is_unassigned else await db.brands.find_one({"id": brand_id}, {"_id": 0, "name": 1})
     brand_label = (brand_doc or {}).get("name") or "Other"
