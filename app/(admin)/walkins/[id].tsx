@@ -50,10 +50,14 @@ export default function WalkInDetail() {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { walkinsApi.listAssignees().then(setAssignees).catch(() => {}); }, []);
 
-  const updateStatus = async (status: string, lostReason?: string) => {
+  const updateStatus = async (status: string) => {
+    if (status === "lost" && !notes.trim()) {
+      toast.error("Add a note before marking this client as lost");
+      return;
+    }
     setBusy(true);
     try {
-      await walkinsApi.update(id, { status: status as any, ...(lostReason ? { lost_reason: lostReason } : {}) });
+      await walkinsApi.update(id, { status: status as any, ...(status === "lost" ? { notes: notes.trim() } : {}) });
       toast.success("Walk-in updated");
       load();
     } catch (e: any) {
@@ -145,7 +149,7 @@ export default function WalkInDetail() {
             <Button label="Mark Converted" size="sm" loading={busy} onPress={() => updateStatus("converted")} testID="walkin-mark-converted" />
           ) : null}
           {w.status !== "converted" && w.status !== "lost" ? (
-            <Button label="Mark Lost" variant="danger" size="sm" loading={busy} onPress={() => updateStatus("lost", "Not interested")} testID="walkin-mark-lost" />
+            <Button label="Mark Lost" variant="danger" size="sm" loading={busy} onPress={() => updateStatus("lost")} testID="walkin-mark-lost" />
           ) : null}
         </View>
 
