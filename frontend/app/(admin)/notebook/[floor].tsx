@@ -8,5 +8,5 @@ import WalkInsScreen from "../walkins";
 export default function FloorWalkIns() {
   const { floor } = useLocalSearchParams<{ floor?: string }>();
   const isFurniture = floor === "furniture";
-  return <WalkInsScreen fixedFloorId={isFurniture ? "third-floor" : "second-floor"} title={isFurniture ? "Furniture Walk-ins" : "Kitchen Walk-ins"} />;
+  return <WalkInsScreen fixedFloorId={isFurniture ? "third-floor" : "second-floor"} title={isFurniture ? "Furniture Walk-ins" : "Kitchen Walk-ins"} enableQuotationTransfer />;
 }

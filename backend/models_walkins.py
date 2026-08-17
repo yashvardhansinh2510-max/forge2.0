@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from models import TimestampedModel
 
@@ -52,6 +52,9 @@ class WalkIn(TimestampedModel):
     floor_id: str                             # "Interested Department" — reuses the existing Floor entity
     interested_products: list[str] = []
     budget: Optional[float] = None
+    # Captured only by the Kitchen/Furniture Quotation Follow-up workspace.
+    # It remains optional so existing walk-ins need no data migration.
+    quotation_price: Optional[float] = Field(default=None, ge=0)
     notes: Optional[str] = None
     manual_priority_override: Optional[Literal["low", "medium", "high", "critical"]] = None
     status: WalkInStatus = "new"
@@ -102,6 +105,7 @@ class WalkInUpdate(BaseModel):
     lost_reason: Optional[str] = None
     alternate_phone: Optional[str] = None
     budget: Optional[float] = None
+    quotation_price: Optional[float] = Field(default=None, ge=0)
     interested_products: Optional[list[str]] = None
     reference_contact: Optional[str] = None
     architect: Optional[str] = None

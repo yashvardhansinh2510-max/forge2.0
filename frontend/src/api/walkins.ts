@@ -20,6 +20,7 @@ export type WalkIn = {
   salesperson_id: string | null; salesperson_name: string | null; source: string;
   reference_contact: string | null; architect: string | null; builder: string | null;
   floor_id: string; interested_products: string[]; budget: number | null; notes: string | null;
+  quotation_price: number | null;
   manual_priority_override: "low" | "medium" | "high" | "critical" | null;
   status: WalkInStatus; next_followup_at: string | null; lost_reason: string | null;
   selection_quotation_id: string | null; converted_at: string | null;
@@ -70,6 +71,7 @@ export const walkinsApi = {
     manual_priority_override: "low" | "medium" | "high" | "critical";
     next_followup_at: string; lost_reason: string; alternate_phone: string;
     budget: number; interested_products: string[];
+    quotation_price: number | null;
     reference_contact: string; architect: string; builder: string;
   }>, options?: { floorId?: string }) => api.patch<WalkIn>(`/walkins/${id}`, body, options),
 

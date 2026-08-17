@@ -128,35 +128,51 @@ export default function Catalog() {
   const [series, setSeries] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("families");
 
-  // Load brands + categories once
+  // A Catalog response is scoped by the selected floor. Never issue an
+  // unscoped reference request during floor hydration, and reset all derived
+  // selections before the next floor's catalog becomes visible.
   useEffect(() => {
+    setBrands([]); setCategories([]); setHierarchyTree([]);
+    setBrandId(null); setCat(null); setSubcat(null); setSeries(null);
+    setCategoriesForBrand(null); setBrandCounts({});
+    setProducts(null); setFamilies(null); setTotal(null); setHasMore(false);
+    if (!selectedFloorId) return;
+    let active = true;
     (async () => {
       try {
         const [bs, cs] = await Promise.all([
-          catalogReferences.brands<Brand[]>({ floorId: selectedFloorId || undefined }),
-          catalogReferences.categories<Category[]>(undefined, { floorId: selectedFloorId || undefined }),
+          catalogReferences.brands<Brand[]>({ floorId: selectedFloorId }),
+          catalogReferences.categories<Category[]>(undefined, { floorId: selectedFloorId }),
         ]);
+        if (!active) return;
         setBrands(bs); setCategories(cs);
         setLoadError(null);
       } catch {
+        if (!active) return;
         setBrands([]); setCategories([]);
         setLoadError("Catalog filters could not be loaded. Refresh and sign in again if this persists.");
       }
     })();
+    return () => { active = false; };
   }, [selectedFloorId]);
 
   // Hierarchy is invariant across filter changes. Load and parse it once; the
   // filter-derived rail options below are computed from this stable snapshot.
   useEffect(() => {
+    if (!selectedFloorId) return;
+    let active = true;
     (async () => {
       try {
-        const res = await catalogReferences.hierarchy<{ tree: any[] }>({ floorId: selectedFloorId || undefined });
+        const res = await catalogReferences.hierarchy<{ tree: any[] }>({ floorId: selectedFloorId });
+        if (!active) return;
         setHierarchyTree(res.tree);
       } catch {
+        if (!active) return;
         setHierarchyTree([]);
         setLoadError("Catalog data could not be loaded. Refresh and sign in again if this persists.");
       }
     })();
+    return () => { active = false; };
   }, [selectedFloorId]);
 
   // Hierarchy → derive brand counts, brand-scoped categories, subcategory & series options
@@ -195,6 +211,7 @@ export default function Catalog() {
   // A filter/search/mode change replaces the current query result with page 1.
   // Subsequent pages are appended exclusively by `loadMore`, never simulated.
   const load = useCallback(async () => {
+    if (!selectedFloorId) return;
     const requestId = ++requestIdRef.current;
     loadingMoreRef.current = false;
     setLoadingMore(false);
@@ -203,14 +220,14 @@ export default function Catalog() {
       if (mode === "families") {
         const res = await fetchCatalogPage<Family>({
           mode: "families", q, brandId, categoryId: cat, subcategory: subcat, series,
-        }, 0, PAGE_SIZE, { floorId: selectedFloorId || undefined });
+        }, 0, PAGE_SIZE, { floorId: selectedFloorId });
         if (requestId !== requestIdRef.current) return;
         const items = res.items || [];
         setFamilies(items); setTotal(res.total); setHasMore(items.length < res.total);
       } else {
         const res = await fetchCatalogPage<Product>({
           mode: "products", q, brandId, categoryId: cat, subcategory: subcat, series, sort: "popular",
-        }, 0, PAGE_SIZE, { floorId: selectedFloorId || undefined });
+        }, 0, PAGE_SIZE, { floorId: selectedFloorId });
         if (requestId !== requestIdRef.current) return;
         const items = res.items || [];
         setProducts(items); setTotal(res.total); setHasMore(items.length < res.total);

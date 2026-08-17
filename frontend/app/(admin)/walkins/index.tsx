@@ -29,7 +29,9 @@ async function openUrl(url: string) {
   }
 }
 
-export default function WalkInsScreen({ fixedFloorId, title = "Walk-ins" }: { fixedFloorId?: string; title?: string } = {}) {
+export default function WalkInsScreen({
+  fixedFloorId, title = "Walk-ins", quotationFollowup = false, enableQuotationTransfer = false,
+}: { fixedFloorId?: string; title?: string; quotationFollowup?: boolean; enableQuotationTransfer?: boolean } = {}) {
   const router = useRouter();
   const { floors } = useFloorAccess();
   const [dashboard, setDashboard] = useState<WalkInsDashboard | null>(null);
@@ -44,7 +46,7 @@ export default function WalkInsScreen({ fixedFloorId, title = "Walk-ins" }: { fi
     try {
       const [dash, list] = await Promise.all([
         walkinsApi.dashboard(fixedFloorId ? { floorId: fixedFloorId } : undefined),
-        walkinsApi.list({ status: status || undefined, floor_id: floorId || undefined, search: search || undefined }, fixedFloorId ? { floorId: fixedFloorId } : undefined),
+        walkinsApi.list({ status: quotationFollowup ? "converted" : status || undefined, floor_id: floorId || undefined, search: search || undefined }, fixedFloorId ? { floorId: fixedFloorId } : undefined),
       ]);
       setDashboard(dash);
       setItems(list);
@@ -53,7 +55,7 @@ export default function WalkInsScreen({ fixedFloorId, title = "Walk-ins" }: { fi
     } finally {
       setLoading(false);
     }
-  }, [fixedFloorId, status, floorId, search]);
+  }, [fixedFloorId, quotationFollowup, status, floorId, search]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -79,11 +81,30 @@ export default function WalkInsScreen({ fixedFloorId, title = "Walk-ins" }: { fi
       toast.error(e?.detail || "Could not update status");
     }
   };
+  const saveQuotationPrice = async (w: WalkIn, quotationPrice: number | null) => {
+    try {
+      await walkinsApi.update(w.id, { quotation_price: quotationPrice }, fixedFloorId ? { floorId: fixedFloorId } : undefined);
+      setItems((current) => current.map((item) => item.id === w.id ? { ...item, quotation_price: quotationPrice } : item));
+      toast.success("Price saved");
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not save price");
+      throw e;
+    }
+  };
+  const transferToQuotationFollowup = async (w: WalkIn) => {
+    try {
+      await walkinsApi.update(w.id, { status: "converted" }, fixedFloorId ? { floorId: fixedFloorId } : undefined);
+      setItems((current) => current.filter((item) => item.id !== w.id));
+      toast.success("Transferred to Quotation Follow-up");
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not transfer customer");
+    }
+  };
 
   return (
     <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
       <PageHeader
-        title={title} overline="CRM"
+        title={title} overline={quotationFollowup ? "QUOTATION FOLLOW-UP" : "CRM"}
         subtitle="Every customer journey starts here"
         actions={<Button label="Log Walk-in" icon="user-plus" onPress={() => router.push((fixedFloorId ? `/(admin)/walkins/new?floor_id=${fixedFloorId}` : "/(admin)/walkins/new") as any)} testID="walkin-new-btn" />}
       />
@@ -105,7 +126,7 @@ export default function WalkInsScreen({ fixedFloorId, title = "Walk-ins" }: { fi
           style={{ marginBottom: spacing.md }}
         />
         <View style={{ flexDirection: "row", gap: spacing.xs, flexWrap: "wrap", marginBottom: spacing.sm }}>
-          {STATUS_FILTERS.map((s) => (
+          {!quotationFollowup && STATUS_FILTERS.map((s) => (
             <Chip key={s.value} label={s.label} active={status === s.value} onPress={() => setStatus(s.value)} />
           ))}
         </View>
@@ -128,6 +149,9 @@ export default function WalkInsScreen({ fixedFloorId, title = "Walk-ins" }: { fi
               onCall={() => callCustomer(w)}
               onWhatsApp={() => whatsAppCustomer(w)}
               onScheduleSelection={() => scheduleSelection(w)}
+              quotationFollowup={quotationFollowup}
+              onSaveQuotationPrice={quotationFollowup ? (price) => saveQuotationPrice(w, price) : undefined}
+              onTransferToQuotation={enableQuotationTransfer ? () => { void transferToQuotationFollowup(w); } : undefined}
             />
           ))
         )}

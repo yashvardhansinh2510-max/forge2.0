@@ -1,8 +1,10 @@
 // Walk-in card — Phase 4 (2026-07-30). Same visual language as
 // components/tiles cards: Card + IconButton + Button.
-import { Pressable, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Pressable, Text, TextInput, View } from "react-native";
 
 import type { WalkIn } from "@/src/api/walkins";
+import { toast } from "@/src/components/Toast";
 import { Button, Card, IconButton } from "@/src/components/ui";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
@@ -27,12 +29,31 @@ function daysWaiting(visitedAt: string): number {
 }
 
 export function WalkInCard({
-  w, onPress, onCall, onWhatsApp, onScheduleSelection,
+  w, onPress, onCall, onWhatsApp, onScheduleSelection, quotationFollowup = false, onSaveQuotationPrice, onTransferToQuotation,
 }: {
   w: WalkIn; onPress: () => void; onCall: () => void; onWhatsApp: () => void; onScheduleSelection?: () => void;
+  quotationFollowup?: boolean;
+  onSaveQuotationPrice?: (price: number | null) => Promise<void>;
+  onTransferToQuotation?: () => void;
 }) {
   const tone = STATUS_TONE[w.status];
   const days = daysWaiting(w.visited_at);
+  const [price, setPrice] = useState(w.quotation_price?.toString() || "");
+  const [savingPrice, setSavingPrice] = useState(false);
+
+  useEffect(() => { setPrice(w.quotation_price?.toString() || ""); }, [w.quotation_price]);
+
+  const savePrice = async () => {
+    const trimmed = price.trim();
+    const value = trimmed ? Number(trimmed) : null;
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      toast.error("Enter a valid non-negative price");
+      return;
+    }
+    if (!onSaveQuotationPrice) return;
+    setSavingPrice(true);
+    try { await onSaveQuotationPrice(value); } finally { setSavingPrice(false); }
+  };
   return (
     <Pressable onPress={onPress} testID={`walkin-card-${w.id}`}>
       <Card variant="outlined" style={{ marginBottom: spacing.sm, gap: spacing.xs }}>
@@ -52,11 +73,28 @@ export function WalkInCard({
           <Text style={type.caption}>{w.salesperson_name || "Unassigned"} · Waiting {days}d</Text>
           {w.budget ? <Text style={type.captionStrong}>Budget ₹{w.budget.toLocaleString("en-IN")}</Text> : null}
         </View>
+        {quotationFollowup ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, marginTop: spacing.xs }}>
+            <Text style={[type.captionStrong, { minWidth: 42 }]}>Price ₹</Text>
+            <TextInput
+              value={price}
+              onChangeText={setPrice}
+              placeholder="Enter price"
+              keyboardType="decimal-pad"
+              accessibilityLabel={`Quotation price for ${w.customer_name}`}
+              style={{ flex: 1, minHeight: 38, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, paddingHorizontal: spacing.sm, color: colors.onSurface }}
+            />
+            <Button label="Save" variant="secondary" size="sm" loading={savingPrice} onPress={() => { void savePrice(); }} testID={`walkin-price-save-${w.id}`} />
+          </View>
+        ) : null}
         <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs, flexWrap: "wrap" }}>
           <IconButton icon="phone" onPress={onCall} size={34} tone="brandLight" accessibilityLabel="Call" testID={`walkin-call-${w.id}`} />
           <IconButton icon="message-circle" onPress={onWhatsApp} size={34} tone="surface" accessibilityLabel="WhatsApp" testID={`walkin-wa-${w.id}`} />
           {onScheduleSelection && w.status !== "lost" && w.status !== "converted" && w.status !== "quotation_created" ? (
             <Button label="Schedule Selection" icon="calendar" variant="secondary" size="sm" onPress={onScheduleSelection} testID={`walkin-schedule-${w.id}`} />
+          ) : null}
+          {onTransferToQuotation && w.status !== "lost" && w.status !== "converted" ? (
+            <Button label="Transfer to Quotation Follow-up" icon="arrow-right" size="sm" onPress={onTransferToQuotation} testID={`walkin-transfer-quotation-${w.id}`} />
           ) : null}
         </View>
       </Card>
