@@ -36,7 +36,11 @@ _DATA_URL_RE = re.compile(r"^data:([^;]+);base64,(.+)$", re.DOTALL)
 
 def _is_landscape_media(doc: dict) -> bool:
     width, height = doc.get("width"), doc.get("height")
-    return bool(width and height and abs((float(width) / float(height)) - PRODUCT_IMAGE_ASPECT_RATIO) < 0.001 and doc.get("mime") != "image/gif")
+    # The mandatory visual contract is horizontal orientation. New uploads
+    # are additionally padded to 16:10 by the normalizer; historical codec
+    # rounding may make their stored pixel ratio slightly off 16:10, but they
+    # remain valid landscape assets and must not be re-encoded forever.
+    return bool(width and height and width > height and doc.get("mime") != "image/gif")
 
 
 async def _legacy_bytes(ref: str) -> tuple[bytes | None, str | None]:
@@ -112,20 +116,63 @@ async def _backfill_legacy_product(product: dict, *, dry_run: bool, report: dict
         report["migrated_legacy"] += 1
 
 
-async def run(*, dry_run: bool) -> dict:
+async def _run_bounded(
+    records: list[dict], worker, *, workers: int, report: dict, kind: str,
+) -> None:
+    """Process independent storage records concurrently with bounded pressure.
+
+    A successful update writes horizontal normalized dimensions to Mongo, so
+    re-running this job naturally resumes after a deploy, interruption, or
+    one failed object. Nothing relies on an in-memory checkpoint.
+    """
+    gate = asyncio.Semaphore(workers)
+
+    async def process(record: dict) -> None:
+        async with gate:
+            try:
+                await worker(record)
+            except Exception as exc:  # complete the rest and retain a repair list
+                report["failed"].append({f"{kind}_id": record.get("id"), "reason": str(exc)})
+
+    tasks = [asyncio.create_task(process(record)) for record in records]
+    for index, task in enumerate(asyncio.as_completed(tasks), 1):
+        await task
+        if index % 100 == 0 or index == len(records):
+            log.info("%s progress: %d/%d", kind, index, len(records))
+
+
+async def run(*, dry_run: bool, workers: int = 8) -> dict:
+    if workers < 1:
+        raise ValueError("workers must be at least 1")
     report = {"started_at": datetime.now(timezone.utc).isoformat(), "dry_run": dry_run, "replaced": 0,
               "would_replace": 0, "already_landscape": 0, "skipped_non_image": 0, "migrated_legacy": 0,
-              "would_migrate_legacy": 0, "legacy_already_migrated": 0, "legacy_failed": [], "failed": [], "retained_originals": []}
-    async for doc in db.product_media.find({}, {"_id": 0}):
-        try:
-            await _backfill_media_doc(doc, dry_run=dry_run, report=report)
-        except Exception as exc:  # keep other products moving and report the exact failed record
-            report["failed"].append({"media_id": doc.get("id"), "reason": str(exc)})
-    async for product in db.products.find({"images": {"$ne": []}}, {"_id": 0}):
-        try:
-            await _backfill_legacy_product(product, dry_run=dry_run, report=report)
-        except Exception as exc:
-            report["failed"].append({"product_id": product.get("id"), "reason": str(exc)})
+              "would_migrate_legacy": 0, "legacy_already_migrated": 0, "legacy_failed": [], "failed": [],
+              "retained_originals": [], "workers": workers, "scanned_media": 0, "candidate_media": 0,
+              "scanned_legacy_products": 0}
+    media_docs = await db.product_media.find({}, {"_id": 0}).to_list(50_000)
+    report["scanned_media"] = len(media_docs)
+    candidates: list[dict] = []
+    for doc in media_docs:
+        if doc.get("mime") not in NORMALIZABLE_IMAGE_MIMES:
+            report["skipped_non_image"] += 1
+        elif _is_landscape_media(doc):
+            report["already_landscape"] += 1
+        else:
+            candidates.append(doc)
+    report["candidate_media"] = len(candidates)
+    await _run_bounded(
+        candidates,
+        lambda doc: _backfill_media_doc(doc, dry_run=dry_run, report=report),
+        workers=workers, report=report, kind="media",
+    )
+
+    legacy_products = await db.products.find({"images": {"$ne": []}}, {"_id": 0}).to_list(50_000)
+    report["scanned_legacy_products"] = len(legacy_products)
+    await _run_bounded(
+        legacy_products,
+        lambda product: _backfill_legacy_product(product, dry_run=dry_run, report=report),
+        workers=workers, report=report, kind="product",
+    )
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     return report
 
@@ -133,8 +180,9 @@ async def run(*, dry_run: bool) -> dict:
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--workers", type=int, default=8, help="Bounded concurrent storage operations (default: 8)")
     args = parser.parse_args()
-    report = await run(dry_run=args.dry_run)
+    report = await run(dry_run=args.dry_run, workers=args.workers)
     print(json.dumps(report, indent=2, default=str))
 
 
