@@ -96,6 +96,8 @@ def test_build_chalan_pdf_extracts_complete_contract_and_wraps_long_text():
 
     assert isinstance(pdf_bytes, bytes)
     assert pdf_bytes.startswith(b"%PDF-")
+    first_page = PdfReader(BytesIO(pdf_bytes)).pages[0]
+    assert float(first_page.mediabox.width) > float(first_page.mediabox.height)
     for expected in (
         "CHALAN",
         "CHALAN NO.",

@@ -12,7 +12,7 @@ from typing import Iterable
 
 import httpx
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
@@ -34,6 +34,10 @@ WHITE = colors.white
 PDF_DIR = Path(__file__).resolve().parent
 LOGO_PATH = PDF_DIR / "buildcon_logo.png"
 LOGO_RATIO = 1414 / 412  # native W/H of buildcon_logo.png — size by one edge only
+# A single page contract for every customer-facing quotation artifact.  Keep
+# this shared instead of allowing individual generators to silently fall back
+# to portrait A4.
+LANDSCAPE_A4 = landscape(A4)
 
 # Shared across every quotation-family PDF (generic + tiles Selection/Quotation).
 BRAND_PARTNERS = [
@@ -60,7 +64,7 @@ def brand_partners_table(base_cell_style: ParagraphStyle, col_width_mm: float = 
 # with blank filler rows. `_max_item_rows_per_page` derives the true capacity
 # from real geometry so it automatically adapts if row height/typography
 # ever changes, instead of a hardcoded magic number.
-PAGE_H_MM = 297.0  # A4 portrait
+PAGE_H_MM = 210.0  # A4 landscape
 TOP_MARGIN_MM = 13.0
 BOTTOM_MARGIN_MM = 22.0
 AREA_HEADER_BLOCK_MM = 21.0     # brand/area title block + rule + spacers above the table
@@ -204,7 +208,7 @@ def _img(
 def _draw_footer(cv, doc, branding: dict | None = None) -> None:
     b = branding or {}
     cv.saveState()
-    page_width, _ = A4
+    page_width, _ = LANDSCAPE_A4
     cv.setStrokeColor(LINE)
     cv.setLineWidth(0.45)
     cv.line(0, 15 * mm, page_width, 15 * mm)
@@ -233,7 +237,7 @@ def _draw_room_watermark(cv, doc, branding: dict | None = None) -> None:
     cv.saveState()
     if hasattr(cv, "setFillAlpha"):
         cv.setFillAlpha(0.10)
-    cv.translate(A4[0] / 2, A4[1] / 2 - 8 * mm)
+    cv.translate(LANDSCAPE_A4[0] / 2, LANDSCAPE_A4[1] / 2 - 8 * mm)
     cv.rotate(26)
     watermark_w = 87 * mm
     watermark_h = watermark_w / LOGO_RATIO
@@ -309,7 +313,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     prefetch_product_images(quotation.get("items") or [])
     buf = BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4, leftMargin=15 * mm, rightMargin=15 * mm,
+        buf, pagesize=LANDSCAPE_A4, leftMargin=15 * mm, rightMargin=15 * mm,
         topMargin=13 * mm, bottomMargin=22 * mm, title=quotation.get("number", "Quotation"),
         author=b.get("footer_company_name") or "Buildcon House",
     )

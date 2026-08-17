@@ -3,6 +3,7 @@
 from io import BytesIO
 
 from PIL import Image as PILImage
+from pypdf import PdfReader
 
 import pdf_generator
 import pdf_tiles
@@ -110,6 +111,24 @@ def test_standard_selection_and_tiles_quotation_pdfs_use_16_by_10_cells_and_keep
     ]
     assert all(width / height == pdf_generator.PRODUCT_IMAGE_ASPECT_RATIO for width, height in requested_boxes)
     assert all(height > width for width, height in rendered_sizes)
+
+
+def test_every_quotation_pdf_is_landscape_a4(monkeypatch):
+    monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
+    item = {
+        "image": "https://example.test/portrait.png", "sku": "LANDSCAPE-1",
+        "name": "Portrait Source", "room": "Living", "qty": 1,
+        "unit_price": 1000, "rate_sqft": 100, "rate_box": 1000,
+        "offer_rate": 100, "net_amount": 1000, "quantity_unit": "Box",
+    }
+    quotation = {"customer_name": "Landscape Contract", "items": [item], "subtotal": 1000, "grand_total": 1000}
+    for pdf in (
+        pdf_generator.build_quotation_pdf(quotation, {"name": "Landscape Contract"}),
+        pdf_tiles.build_tiles_selection_pdf(quotation, {"name": "Landscape Contract"}),
+        pdf_tiles.build_tiles_quotation_pdf(quotation, {"name": "Landscape Contract"}),
+    ):
+        page = PdfReader(BytesIO(pdf)).pages[0]
+        assert float(page.mediabox.width) > float(page.mediabox.height)
 
 
 def test_product_images_are_prefetched_concurrently(monkeypatch):

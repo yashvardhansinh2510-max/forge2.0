@@ -23,7 +23,6 @@ from io import BytesIO
 from pathlib import Path
 
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
@@ -34,7 +33,7 @@ from reportlab.platypus import (
 
 from pdf_generator import (
     LOGO_PATH, LOGO_RATIO, _draw_footer, _draw_room_watermark, _escape, _img, _money,
-    PRODUCT_IMAGE_ASPECT_RATIO, brand_partners_table, prefetch_product_images,
+    LANDSCAPE_A4, PRODUCT_IMAGE_ASPECT_RATIO, brand_partners_table, prefetch_product_images,
 )
 
 INK = colors.HexColor("#111111")
@@ -307,7 +306,7 @@ def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | 
     prefetch_product_images(quotation.get("items") or [])
     buf = BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4, leftMargin=8 * mm, rightMargin=8 * mm,
+        buf, pagesize=LANDSCAPE_A4, leftMargin=8 * mm, rightMargin=8 * mm,
         topMargin=10 * mm, bottomMargin=16 * mm,
         title=f"Selection — {quotation.get('customer_name') or ''}",
         author=b.get("footer_company_name") or "Buildcon House",
@@ -392,7 +391,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
     prefetch_product_images(quotation.get("items") or [])
     buf = BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4, leftMargin=8 * mm, rightMargin=8 * mm,
+        buf, pagesize=LANDSCAPE_A4, leftMargin=8 * mm, rightMargin=8 * mm,
         topMargin=10 * mm, bottomMargin=16 * mm,
         title=f"Quotation — {quotation.get('customer_name') or ''}",
         author=b.get("footer_company_name") or "Buildcon House",

@@ -11,12 +11,11 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Flowable, HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from pdf_generator import LOGO_PATH, _escape  # noqa: F401 — LOGO_PATH kept for parity with pdf_tiles imports
+from pdf_generator import LANDSCAPE_A4, LOGO_PATH, _escape  # noqa: F401 — LOGO_PATH kept for parity with pdf_tiles imports
 from pdf_tiles import DEFAULT_ADDRESS, DEFAULT_EMAIL, DEFAULT_MOBILE, _logo_flowable
 
 INK = colors.HexColor("#111111")
@@ -77,7 +76,7 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
     b = branding or {}
     buf = BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4, leftMargin=12 * mm, rightMargin=12 * mm,
+        buf, pagesize=LANDSCAPE_A4, leftMargin=12 * mm, rightMargin=12 * mm,
         topMargin=10 * mm, bottomMargin=12 * mm,
         title=f"Chalan {chalan.get('number', '')}",
         author=b.get("footer_company_name") or "Buildcon House",
@@ -276,7 +275,7 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
     fully-formed, never-edited chalan dict (see models_tile_orders.TileChalan)."""
     branding = branding or {}
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=14 * mm, bottomMargin=14 * mm, leftMargin=16 * mm, rightMargin=16 * mm)
+    doc = SimpleDocTemplate(buffer, pagesize=LANDSCAPE_A4, topMargin=14 * mm, bottomMargin=14 * mm, leftMargin=16 * mm, rightMargin=16 * mm)
     styles = getSampleStyleSheet()
     body = ParagraphStyle("tcBody", parent=styles["Normal"], fontSize=9, leading=13)
     heading = ParagraphStyle("tcHeading", parent=styles["Normal"], fontSize=11, leading=14, fontName="Helvetica-Bold")

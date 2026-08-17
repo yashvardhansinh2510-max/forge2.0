@@ -246,14 +246,15 @@ async def export_orders(
         for row in rows: sheet.append(row)
         blob = BytesIO(); book.save(blob); blob.seek(0)
         return StreamingResponse(blob, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{filename}.xlsx"'})
-    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.pagesizes import A4, landscape
     from reportlab.pdfgen.canvas import Canvas
-    blob = BytesIO(); pdf = Canvas(blob, pagesize=A4); pdf.setTitle("BuildCon House Executive Sales")
-    pdf.setFont("Helvetica-Bold", 14); pdf.drawString(40, 805, "BuildCon House — Confirmed Orders")
-    pdf.setFont("Helvetica", 9); y = 780
+    page_width, page_height = landscape(A4)
+    blob = BytesIO(); pdf = Canvas(blob, pagesize=(page_width, page_height)); pdf.setTitle("BuildCon House Executive Sales")
+    pdf.setFont("Helvetica-Bold", 14); pdf.drawString(40, page_height - 38, "BuildCon House — Confirmed Orders")
+    pdf.setFont("Helvetica", 9); y = page_height - 63
     for row in rows[:500]:
         pdf.drawString(40, y, f"{row[0]}  |  {row[3]}  |  ₹{row[5]:,.2f}")
         y -= 14
-        if y < 40: pdf.showPage(); y = 800; pdf.setFont("Helvetica", 9)
+        if y < 40: pdf.showPage(); y = page_height - 40; pdf.setFont("Helvetica", 9)
     pdf.save(); blob.seek(0)
     return StreamingResponse(blob, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}.pdf"'})

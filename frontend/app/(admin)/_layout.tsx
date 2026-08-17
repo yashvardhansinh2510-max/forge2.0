@@ -447,6 +447,7 @@ function PhoneBar() {
   const hasAccess = useModuleAccess();
   const palette = usePalette();
   const tilesNav = useTilesNav();
+  const { selectedFloorId } = useFloorAccess();
   const [moreOpen, setMoreOpen] = useState(false);
   const isActive = (item: NavItem) => isNavActive(item, segments);
   const visibleMore = visible(MORE_ITEMS);
@@ -455,7 +456,14 @@ function PhoneBar() {
   // destination doesn't exist, so the slot takes that unit's equivalent
   // (Quotation Tiles) rather than collapsing and leaving a hole in the bar.
   const visiblePhoneTabs = visible(PHONE_TABS);
-  const phoneTabs = visiblePhoneTabs.length < PHONE_TABS.length && tilesNav.items.length
+  const contextualNotebookTab = selectedFloorId === KITCHEN_FLOOR_ID
+    ? { href: "/(admin)/notebook/kitchen", label: "Kitchen", icon: "user-plus" as FeatherName, match: "kitchen", floors: [KITCHEN_FLOOR_ID] }
+    : selectedFloorId === FURNITURE_FLOOR_ID
+    ? { href: "/(admin)/notebook/furniture", label: "Furniture", icon: "user-plus" as FeatherName, match: "furniture", floors: [FURNITURE_FLOOR_ID] }
+    : null;
+  const phoneTabs = contextualNotebookTab
+    ? [...visiblePhoneTabs.filter((item) => item.match !== "quotations"), contextualNotebookTab]
+    : visiblePhoneTabs.length < PHONE_TABS.length && tilesNav.items.length
     ? [...visiblePhoneTabs, { ...tilesNav.items[0], label: "Tiles" }]
     : visiblePhoneTabs;
   // The FAB is not a NavItem and isn't run through visible(), so it needs its
@@ -474,7 +482,6 @@ function PhoneBar() {
   // completed landed in the Sanitary Quotation Builder, which itself flips
   // the active floor. A positive match on each concrete floor id leaves the
   // unresolved "" state inert (no branch matches, FAB hides).
-  const { selectedFloorId } = useFloorAccess();
   const fabAction = !hasAccess("quotations")
     ? null
     : selectedFloorId === SANITARY_FLOOR_ID

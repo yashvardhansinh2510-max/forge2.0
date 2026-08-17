@@ -40,6 +40,7 @@ from media_storage.factory import public_bucket  # noqa: E402
 from services.media_service import (  # noqa: E402
     _detect_dims_and_quality, make_storage_key,
 )
+from services.product_image_normalizer import normalize_product_image  # noqa: E402
 from models import ProductMedia  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s :: %(message)s")
@@ -115,6 +116,10 @@ async def migrate_product(prod: dict, *, dry_run: bool, report: dict) -> None:
             continue
 
         mime = mime or "image/png"
+        # This legacy migration bypasses upload_and_register, so it must apply
+        # the same canonical no-crop landscape transformation itself. Without
+        # this, re-running it could reintroduce portrait media for a brand.
+        data, mime = normalize_product_image(data, mime)
         sha1 = hashlib.sha1(data).hexdigest()
 
         # Idempotency: existing product_media doc for same sha1+scope?
@@ -128,11 +133,10 @@ async def migrate_product(prod: dict, *, dry_run: bool, report: dict) -> None:
             continue
 
         w, h, quality = _detect_dims_and_quality(data, mime)
-        # If the original import already scored the image, respect it (never fabricate).
+        # Preserve a supplied quality rating, but dimensions must describe the
+        # normalized bytes that will actually be stored and printed.
         if i < len(metas) and isinstance(metas[i], dict) and metas[i].get("quality"):
             quality = metas[i]["quality"]
-            w = w or metas[i].get("width")
-            h = h or metas[i].get("height")
 
         role = "hero" if i == 0 else "gallery"
         key = make_storage_key(

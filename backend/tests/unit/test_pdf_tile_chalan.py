@@ -4,6 +4,10 @@ function runs and produces non-trivial PDF bytes with the right filename
 convention, matching the existing test_pdf_chalan.py's level of rigor."""
 from __future__ import annotations
 
+from io import BytesIO
+
+from pypdf import PdfReader
+
 from pdf_chalan import build_tile_chalan_pdf, tile_chalan_pdf_filename
 
 
@@ -31,3 +35,5 @@ def test_build_tile_chalan_pdf_produces_bytes():
     assert isinstance(pdf_bytes, bytes)
     assert pdf_bytes[:4] == b"%PDF"
     assert len(pdf_bytes) > 500
+    page = PdfReader(BytesIO(pdf_bytes)).pages[0]
+    assert float(page.mediabox.width) > float(page.mediabox.height)

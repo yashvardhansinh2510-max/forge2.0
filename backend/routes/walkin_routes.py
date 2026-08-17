@@ -301,6 +301,14 @@ async def update_walkin(walkin_id: str, body: WalkInUpdate, user: UserPublic = D
     if not doc:
         raise HTTPException(status_code=404, detail="Walk-in not found")
     patch = body.dict(exclude_unset=True)
+    if patch.get("status") == "lost":
+        resulting_notes = patch.get("notes", doc.get("notes"))
+        if not str(resulting_notes or "").strip():
+            raise HTTPException(status_code=422, detail="A note is required before marking this client as lost")
+        # Keep the note available in the legacy lost_reason field for existing
+        # reports and audit consumers, while notes remains the user-facing
+        # source of truth.
+        patch["lost_reason"] = str(patch.get("lost_reason") or resulting_notes).strip()
     patch["updated_at"] = now_iso()
     if patch.get("status") == "converted":
         patch["converted_at"] = now_iso()
