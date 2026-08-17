@@ -15,10 +15,12 @@ import logging
 import re
 import sys
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
@@ -43,6 +45,22 @@ def _is_landscape_media(doc: dict) -> bool:
     return bool(width and height and width > height and doc.get("mime") != "image/gif")
 
 
+def _stored_bytes_are_landscape(data: bytes) -> bool:
+    """Verify the actual uploaded raster, not just its cached metadata.
+
+    An EXIF orientation tag is deliberately not accepted: the canonical asset
+    must be physically upright so browser, PDF, and catalog renderers agree.
+    """
+    try:
+        with Image.open(BytesIO(data)) as opened:
+            raw_size = opened.size
+            upright = ImageOps.exif_transpose(opened)
+            upright.load()
+            return upright.width > upright.height and upright.size == raw_size
+    except (UnidentifiedImageError, OSError, ValueError):
+        return False
+
+
 async def _legacy_bytes(ref: str) -> tuple[bytes | None, str | None]:
     if ref.startswith("data:"):
         match = _DATA_URL_RE.match(ref)
@@ -60,15 +78,24 @@ async def _legacy_bytes(ref: str) -> tuple[bytes | None, str | None]:
     return None, None
 
 
-async def _backfill_media_doc(doc: dict, *, dry_run: bool, report: dict) -> None:
+async def _backfill_media_doc(doc: dict, *, dry_run: bool, verify_storage: bool, report: dict) -> None:
     if doc.get("mime") not in NORMALIZABLE_IMAGE_MIMES:
         report["skipped_non_image"] += 1
         return
-    if _is_landscape_media(doc):
+    if _is_landscape_media(doc) and not verify_storage:
         report["already_landscape"] += 1
         return
     storage = get_media_storage()
     raw = await storage.download(bucket=doc["bucket"], key=doc["storage_key"])
+    if _stored_bytes_are_landscape(raw):
+        report["verified_storage"] += 1
+        if not _is_landscape_media(doc) and not dry_run:
+            width, height, quality = _detect_dims_and_quality(raw, doc["mime"])
+            await db.product_media.update_one({"id": doc["id"]}, {"$set": {
+                "width": width, "height": height, "quality": quality, "size_bytes": len(raw),
+            }})
+            report["metadata_corrected"] += 1
+        return
     data, mime = normalize_product_image(raw, doc["mime"])
     sha1 = hashlib.sha1(data).hexdigest()
     width, height, quality = _detect_dims_and_quality(data, mime)
@@ -141,28 +168,29 @@ async def _run_bounded(
             log.info("%s progress: %d/%d", kind, index, len(records))
 
 
-async def run(*, dry_run: bool, workers: int = 8) -> dict:
+async def run(*, dry_run: bool, workers: int = 8, verify_storage: bool = False) -> dict:
     if workers < 1:
         raise ValueError("workers must be at least 1")
     report = {"started_at": datetime.now(timezone.utc).isoformat(), "dry_run": dry_run, "replaced": 0,
               "would_replace": 0, "already_landscape": 0, "skipped_non_image": 0, "migrated_legacy": 0,
               "would_migrate_legacy": 0, "legacy_already_migrated": 0, "legacy_failed": [], "failed": [],
               "retained_originals": [], "workers": workers, "scanned_media": 0, "candidate_media": 0,
-              "scanned_legacy_products": 0}
+              "scanned_legacy_products": 0, "verify_storage": verify_storage, "verified_storage": 0,
+              "metadata_corrected": 0}
     media_docs = await db.product_media.find({}, {"_id": 0}).to_list(50_000)
     report["scanned_media"] = len(media_docs)
     candidates: list[dict] = []
     for doc in media_docs:
         if doc.get("mime") not in NORMALIZABLE_IMAGE_MIMES:
             report["skipped_non_image"] += 1
-        elif _is_landscape_media(doc):
-            report["already_landscape"] += 1
-        else:
+        elif verify_storage or not _is_landscape_media(doc):
             candidates.append(doc)
+        else:
+            report["already_landscape"] += 1
     report["candidate_media"] = len(candidates)
     await _run_bounded(
         candidates,
-        lambda doc: _backfill_media_doc(doc, dry_run=dry_run, report=report),
+        lambda doc: _backfill_media_doc(doc, dry_run=dry_run, verify_storage=verify_storage, report=report),
         workers=workers, report=report, kind="media",
     )
 
@@ -181,8 +209,9 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--workers", type=int, default=8, help="Bounded concurrent storage operations (default: 8)")
+    parser.add_argument("--verify-storage", action="store_true", help="Decode every stored image before accepting its landscape metadata")
     args = parser.parse_args()
-    report = await run(dry_run=args.dry_run, workers=args.workers)
+    report = await run(dry_run=args.dry_run, workers=args.workers, verify_storage=args.verify_storage)
     print(json.dumps(report, indent=2, default=str))
 
 
