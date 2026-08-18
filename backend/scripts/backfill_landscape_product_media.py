@@ -1,4 +1,4 @@
-"""Backfill product imagery to the canonical 16:10 stretched landscape format.
+"""Backfill product imagery to the canonical 16:10 no-crop landscape format.
 
 Run ``python -m scripts.backfill_landscape_product_media --dry-run`` first.
 The script is idempotent and intentionally retains replaced storage objects;
@@ -78,16 +78,16 @@ async def _legacy_bytes(ref: str) -> tuple[bytes | None, str | None]:
     return None, None
 
 
-async def _backfill_media_doc(doc: dict, *, dry_run: bool, verify_storage: bool, force_stretch: bool, report: dict) -> None:
+async def _backfill_media_doc(doc: dict, *, dry_run: bool, verify_storage: bool, report: dict) -> None:
     if doc.get("mime") not in NORMALIZABLE_IMAGE_MIMES:
         report["skipped_non_image"] += 1
         return
-    if _is_landscape_media(doc) and not verify_storage and not force_stretch:
+    if _is_landscape_media(doc) and not verify_storage:
         report["already_landscape"] += 1
         return
     storage = get_media_storage()
     raw = await storage.download(bucket=doc["bucket"], key=doc["storage_key"])
-    if _stored_bytes_are_landscape(raw) and not force_stretch:
+    if _stored_bytes_are_landscape(raw):
         report["verified_storage"] += 1
         if not _is_landscape_media(doc) and not dry_run:
             width, height, quality = _detect_dims_and_quality(raw, doc["mime"])
@@ -168,7 +168,7 @@ async def _run_bounded(
             log.info("%s progress: %d/%d", kind, index, len(records))
 
 
-async def run(*, dry_run: bool, workers: int = 8, verify_storage: bool = False, force_stretch: bool = False) -> dict:
+async def run(*, dry_run: bool, workers: int = 8, verify_storage: bool = False) -> dict:
     if workers < 1:
         raise ValueError("workers must be at least 1")
     report = {"started_at": datetime.now(timezone.utc).isoformat(), "dry_run": dry_run, "replaced": 0,
@@ -176,21 +176,21 @@ async def run(*, dry_run: bool, workers: int = 8, verify_storage: bool = False, 
               "would_migrate_legacy": 0, "legacy_already_migrated": 0, "legacy_failed": [], "failed": [],
               "retained_originals": [], "workers": workers, "scanned_media": 0, "candidate_media": 0,
               "scanned_legacy_products": 0, "verify_storage": verify_storage, "verified_storage": 0,
-              "metadata_corrected": 0, "force_stretch": force_stretch}
+              "metadata_corrected": 0}
     media_docs = await db.product_media.find({}, {"_id": 0}).to_list(50_000)
     report["scanned_media"] = len(media_docs)
     candidates: list[dict] = []
     for doc in media_docs:
         if doc.get("mime") not in NORMALIZABLE_IMAGE_MIMES:
             report["skipped_non_image"] += 1
-        elif force_stretch or verify_storage or not _is_landscape_media(doc):
+        elif verify_storage or not _is_landscape_media(doc):
             candidates.append(doc)
         else:
             report["already_landscape"] += 1
     report["candidate_media"] = len(candidates)
     await _run_bounded(
         candidates,
-        lambda doc: _backfill_media_doc(doc, dry_run=dry_run, verify_storage=verify_storage, force_stretch=force_stretch, report=report),
+        lambda doc: _backfill_media_doc(doc, dry_run=dry_run, verify_storage=verify_storage, report=report),
         workers=workers, report=report, kind="media",
     )
 
@@ -210,9 +210,8 @@ async def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--workers", type=int, default=8, help="Bounded concurrent storage operations (default: 8)")
     parser.add_argument("--verify-storage", action="store_true", help="Decode every stored image before accepting its landscape metadata")
-    parser.add_argument("--force-stretch", action="store_true", help="Re-encode every stored image by stretching it into the 16:10 landscape frame")
     args = parser.parse_args()
-    report = await run(dry_run=args.dry_run, workers=args.workers, verify_storage=args.verify_storage, force_stretch=args.force_stretch)
+    report = await run(dry_run=args.dry_run, workers=args.workers, verify_storage=args.verify_storage)
     print(json.dumps(report, indent=2, default=str))
 
 

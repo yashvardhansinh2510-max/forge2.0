@@ -133,7 +133,7 @@ export function ProductImageManagerBody({
         <View style={styles.previewWrap}>
           <Text style={type.overline}>Preview</Text>
           <View style={styles.previewImage}>
-            <ProductImage source={pending.uri} style={{ width: "100%", height: "100%" }} contentFit="fill" fallbackLabel="" borderRadius={0} />
+            <ProductImage source={pending.uri} style={{ width: "100%", height: "100%" }} contentFit="contain" fallbackLabel="" borderRadius={0} />
           </View>
           <Text style={[type.caption, { textAlign: "center" }]}>
             {pending.replaceId
@@ -168,7 +168,7 @@ export function ProductImageManagerBody({
                 <View key={m.id} style={[styles.tile, { width: cols === 2 ? "47%" : "31%" }]} testID={`media-tile-${m.id}`}>
                   <View style={styles.thumbWrap}>
                     {m.public_url ? (
-                      <ProductImage source={m.public_url} style={{ width: "100%", height: "100%" }} contentFit="fill" fallbackLabel="" borderRadius={0} disableSkeleton />
+                      <ProductImage source={m.public_url} style={{ width: "100%", height: "100%" }} contentFit="contain" fallbackLabel="" borderRadius={0} disableSkeleton />
                     ) : (
                       <Feather name="image" size={22} color={colors.onSurfaceMuted} />
                     )}
