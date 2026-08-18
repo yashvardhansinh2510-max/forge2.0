@@ -295,22 +295,6 @@ def _apply_media(product: dict, snapshot: CatalogSnapshot) -> None:
     if not hero_url and gallery:
         hero_url = gallery[0]["url"]
 
-    # Supplier-file duplicate-image guard: some suppliers embed the exact
-    # same photo (byte-identical, same sha1) for two different colour/finish
-    # siblings — e.g. Vitra's "White" and "Matt White" columns. Showing that
-    # identical photo on both is exactly as misleading to the user as
-    # borrowing another variant's image (the symptom is the same: switching
-    # the variant doesn't visibly change anything), so treat every sibling
-    # EXCEPT the deterministic (lowest SKU) owner as having no image of its
-    # own rather than silently duplicating.
-    if hero_url and product.get("family_key") and product.get("floor_id") != _TILE_FLOOR_ID:
-        hero_sha1 = next((m.sha1 for m in rows if m.public_url == hero_url), None)
-        if hero_sha1:
-            canonical_sku = _canonical_sku_for_sha1(snapshot, product["family_key"], hero_sha1)
-            if canonical_sku is not None and canonical_sku != product.get("sku"):
-                hero_url = None
-                gallery = [g for g in gallery if g.get("id") not in {m.id for m in rows if m.sha1 == hero_sha1}]
-
     if not gallery and product.get("images"):
         legacy = product.get("images") or []
         gallery = [
@@ -339,19 +323,9 @@ def _apply_media(product: dict, snapshot: CatalogSnapshot) -> None:
 
 def _primary_product_image(snapshot: CatalogSnapshot, product_id: str, family_key: Optional[str] = None) -> Optional[str]:
     product = snapshot.product_by_id.get(product_id) or {}
-    is_tile_floor = product.get("floor_id") == _TILE_FLOOR_ID
     for row in snapshot.media_rows_by_product.get(product_id, ()):
         if not row.get("public_url"):
             continue
-        # Same supplier-file duplicate-image guard as `_apply_media`: don't
-        # show a swatch thumbnail that's byte-identical to another sibling's
-        # photo unless this SKU is the deterministic canonical owner. Skipped
-        # for tiles (see `_TILE_FLOOR_ID`) — legitimate shared photos there.
-        sha1 = row.get("sha1")
-        if family_key and sha1 and not is_tile_floor:
-            canonical_sku = _canonical_sku_for_sha1(snapshot, family_key, sha1)
-            if canonical_sku is not None and canonical_sku != product.get("sku"):
-                continue
         return row["public_url"]
     return None
 

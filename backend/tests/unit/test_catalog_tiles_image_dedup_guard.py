@@ -88,11 +88,10 @@ def test_ground_floor_tile_variants_are_hydrated_with_their_own_image():
     assert variant["image"] == "https://cdn.example/p-matt.jpg"
 
 
-def test_first_floor_sanitaryware_duplicate_photo_guard_still_applies():
-    """The ORIGINAL bug fix (Vitra/Geberit/Grohe colour-variant cross-
-    contamination) must still hold for first-floor products: two colour
-    siblings sharing an identical photo is still a real supplier mistake
-    there, so the non-canonical SKU must still lose the borrowed image."""
+def test_first_floor_sanitaryware_duplicate_supplier_photo_is_still_rendered():
+    """A variant's own media record must render even when its supplier file
+    is byte-identical to a sibling. Suppressing it produces a false missing
+    image and the ProductImage fallback icon."""
     fam = "vitra:csw:memoria"
     p_white = _product("p-white", "SKU-A-WHITE", fam, "first-floor", None)
     p_matt_white = _product("p-mattwhite", "SKU-B-MATTWHITE", fam, "first-floor", None)
@@ -102,11 +101,11 @@ def test_first_floor_sanitaryware_duplicate_photo_guard_still_applies():
     ]
     snapshot = _build_snapshot([p_white, p_matt_white], media, [], [], [])
 
-    out_white = hydrate_product(p_white, snapshot)      # lower SKU -> canonical
+    out_white = hydrate_product(p_white, snapshot)
     out_matt_white = hydrate_product(p_matt_white, snapshot)
 
     assert out_white["hero_image_url"] == "https://cdn.example/p-white.jpg"
-    assert out_matt_white["hero_image_url"] is None
+    assert out_matt_white["hero_image_url"] == "https://cdn.example/p-mattwhite.jpg"
 
 
 def test_product_gallery_exposes_media_family_identity_to_renderers():
