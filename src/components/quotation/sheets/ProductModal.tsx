@@ -368,7 +368,7 @@ export function ProductModal() {
         <ProductImage
           source={activeImage ? [activeImage] : []}
           style={styles.zoomImage}
-          contentFit="fill"
+          contentFit="contain"
           fallbackLabel={product.sku}
         />
       </Pressable>
