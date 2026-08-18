@@ -640,6 +640,7 @@ async def list_family_groups(
             "id": product["id"], "sku": product["sku"],
             "variant_label": product.get("variant_label"), "colour": product.get("colour"),
             "finish": product.get("finish"), "finish_code": product.get("finish_code"),
+            "size": product.get("size") or product.get("dimensions"),
             "price": product.get("price"), "mrp": product.get("mrp"),
             "image": (product.get("images") or [None])[0],
             "image_quality": product.get("image_quality"),

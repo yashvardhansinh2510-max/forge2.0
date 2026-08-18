@@ -15,6 +15,7 @@ class _FakeSnapshot:
             "id": "p1", "sku": "SKU-1", "name": "Tile A", "family_key": "fam-1",
             "family_name": "Tile A Family", "brand_id": "b1", "category_id": "c1",
             "price": 100, "mrp": 120, "images": [], "floor_id": "ground-floor",
+            "size": "600x1200", "finish": "Matt",
         },
     ]
     media_rows_by_product = {}
@@ -33,3 +34,6 @@ def test_family_groups_include_floor_id(monkeypatch):
     ))
 
     assert result["items"][0]["floor_id"] == "ground-floor"
+    assert result["items"][0]["variants"][0]["sku"] == "SKU-1"
+    assert result["items"][0]["variants"][0]["size"] == "600x1200"
+    assert result["items"][0]["variants"][0]["finish"] == "Matt"

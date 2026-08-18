@@ -4,7 +4,7 @@ from PIL import Image
 
 import services.media_service as media_service
 from media_storage.base import StoredObject
-from services.product_image_normalizer import PRODUCT_IMAGE_ASPECT_RATIO, normalize_product_image
+from services.product_image_normalizer import normalize_product_image
 
 
 def _image_bytes(size: tuple[int, int], *, fmt: str = "PNG", exif_orientation: int | None = None) -> bytes:
@@ -24,35 +24,32 @@ def _size(data: bytes) -> tuple[int, int]:
         return image.size
 
 
-def test_portrait_image_is_centered_on_exact_landscape_canvas():
-    data, mime = normalize_product_image(_image_bytes((60, 120)), "image/png")
+def test_portrait_image_preserves_source_dimensions_and_bytes():
+    source = _image_bytes((60, 120))
+    data, mime = normalize_product_image(source, "image/png")
     assert mime == "image/png"
-    assert _size(data) == (192, 120)
-    with Image.open(BytesIO(data)) as image:
-        assert image.getpixel((0, 0)) == (255, 255, 255)
-        assert image.getpixel((96, 60)) == (255, 0, 0)
+    assert data == source
+    data, mime = normalize_product_image(_image_bytes((60, 120)), "image/png")
+    assert _size(data) == (60, 120)
 
 
-def test_square_and_landscape_sources_become_16_by_10_without_crop():
+def test_square_and_landscape_sources_preserve_their_aspect_ratios():
     square, _ = normalize_product_image(_image_bytes((100, 100)), "image/png")
     landscape, _ = normalize_product_image(_image_bytes((320, 200)), "image/png")
-    assert _size(square) == (160, 100)
+    assert _size(square) == (100, 100)
     assert _size(landscape) == (320, 200)
-    for data in (square, landscape):
-        width, height = _size(data)
-        assert width / height == PRODUCT_IMAGE_ASPECT_RATIO
 
 
 def test_exif_orientation_is_applied_before_landscape_padding():
     data, mime = normalize_product_image(_image_bytes((60, 120), fmt="JPEG", exif_orientation=6), "image/jpeg")
     assert mime == "image/jpeg"
-    assert _size(data) == (120, 75)
+    assert _size(data) == (120, 60)
 
 
-def test_gif_is_flattened_to_a_printable_landscape_png():
+def test_gif_bytes_are_not_reencoded():
     data, mime = normalize_product_image(_image_bytes((50, 100), fmt="GIF"), "image/gif")
-    assert mime == "image/png"
-    assert _size(data) == (160, 100)
+    assert mime == "image/gif"
+    assert _size(data) == (50, 100)
 
 
 def test_non_image_media_is_not_modified():
@@ -92,6 +89,6 @@ def test_media_service_stores_normalized_bytes_and_dimensions(monkeypatch):
         floor_id="first-floor", source_type="manufacturer", role="gallery",
     ))
 
-    assert _size(uploaded["data"]) == (160, 100)
+    assert _size(uploaded["data"]) == (50, 100)
     assert uploaded["content_type"] == "image/png"
-    assert (result.width, result.height) == (160, 100)
+    assert (result.width, result.height) == (50, 100)
