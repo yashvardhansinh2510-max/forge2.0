@@ -49,6 +49,9 @@ assert.deepEqual(productImageList({
 const productImageSource = readFileSync(new URL("../src/components/ProductImage.tsx", import.meta.url), "utf8");
 assert.match(productImageSource, /storage\/v1\/render\/image\/public/);
 assert.match(productImageSource, /contentFit = "contain"/);
+assert.match(productImageSource, /resize=contain/);
+assert.doesNotMatch(productImageSource, /resize=fill/);
+assert.doesNotMatch(productImageSource, /contentFit = "fill"/);
 assert.doesNotMatch(productImageSource, /rotate: "90deg"/);
 
 const builderSource = readFileSync(new URL("../src/components/quotation/context/BuilderContext.tsx", import.meta.url), "utf8");

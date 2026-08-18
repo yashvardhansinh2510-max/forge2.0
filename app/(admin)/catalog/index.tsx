@@ -37,7 +37,7 @@ type Family = {
   floor_id?: string | null;
   variants: {
     id: string; sku: string; variant_label?: string | null; colour?: string | null;
-    finish?: string | null; finish_code?: string | null; price: number; mrp: number;
+    finish?: string | null; finish_code?: string | null; size?: string | null; price: number; mrp: number;
     image?: string | null; image_quality?: string | null;
   }[];
 };
@@ -588,6 +588,8 @@ function ActiveChip({ label, onClose }: { label: string; onClose: () => void }) 
 
 // ---------- Family card ----------
 function FamilyCard({ family: f, brandName, onPress }: { family: Family; brandName: string; onPress: () => void }) {
+  const representative = f.variants[0];
+  const isTile = f.floor_id === "ground-floor";
   return (
     <Pressable
       testID={`family-${f.family_key}`}
@@ -618,6 +620,11 @@ function FamilyCard({ family: f, brandName, onPress }: { family: Family; brandNa
           ) : null}
         </View>
         <Text numberOfLines={2} style={styles.title}>{f.family_name}</Text>
+        {isTile && representative ? (
+          <Text style={type.caption} numberOfLines={2}>
+            {[representative.sku, representative.size, representative.finish].filter(Boolean).join(" · ")}
+          </Text>
+        ) : null}
 
         {/* swatch row — reserved height always, so family cards with and
             without multiple variants sit at identical row heights (same
