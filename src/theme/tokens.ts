@@ -1,0 +1,420 @@
+// BuildCon House · Design System V1 tokens.
+// Blue-forward primary + premium neutral graphite/porcelain foundation.
+// Inspired by Linear, Stripe, Notion, Arc — never a Tailwind template.
+// Everything downstream (primitives, screens) references these tokens; no hardcoded hex.
+
+import { Platform } from "react-native";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Palette (raw)
+// ─────────────────────────────────────────────────────────────────────────────
+// ⚠️ SHOWROOM REMAP — the "blue" and "gray" keys are retained for backwards
+// compatibility, but their VALUES now belong to the Showroom language
+// (src/design/tokens.ts): warm neutrals, ink action, muted statuses.
+// New code must import from @/src/design/tokens instead of this file.
+const palette = {
+  // Brass is the only accent and every primary CTA uses it.
+  blue50:  "#F1EAE0",
+  blue100: "#E6D8C2",
+  blue200: "#D9CCB8",
+  blue500: "#8C7351",
+  blue600: "#8C7351",   // primary action — brushed brass
+  blue700: "#6E5A3F",   // hover
+  blue900: "#6E5A3F",
+
+  // Warm architectural neutrals
+  gray0:   "#FFFFFF",   // cards
+  gray15:  "#F7F5F1",   // page background — warm gallery
+  gray25:  "#F2EFEA",   // hover fill / subtle surface
+  gray50:  "#F0EDE7",
+  gray75:  "#EBE7E0",
+  gray100: "#E8E4DD",   // default hairline
+  gray150: "#D8D3C9",
+  gray200: "#C8C2B6",
+  gray400: "#9B958A",
+  gray500: "#8B8579",
+  gray600: "#6B665D",
+  gray700: "#57534B",
+  gray800: "#2E2B25",
+  gray900: "#1D1B16",
+
+  // Semantic families — muted, architectural
+  green50:  "#EAF1EC",
+  green100: "#D6E5DB",
+  green600: "#3E7C55",
+  green700: "#356A49",
+
+  amber50:  "#F6EEDF",
+  amber100: "#EFE0C4",
+  amber600: "#A2691F",
+  amber700: "#8F5A1C",
+
+  red50:  "#F7ECE9",
+  red100: "#F0DAD4",
+  red600: "#AE4A3D",
+  // Phase 4 · Batch 1 (Production UI Consistency & UX Audit): was "#9A3E34"
+  // — a slightly different red than src/design/tokens.ts's `pal.risk`
+  // ("#AE4A3D"), so the "danger" color rendered two different shades
+  // depending on which design system drew it (Button danger variant vs.
+  // Showroom's danger button, status badges, etc). Unified to one value —
+  // single source of truth for every danger/error/rejected/overdue surface.
+  red700: "#AE4A3D",
+
+  sky50:  "#EEF0F1",
+  sky100: "#DEE2E4",
+  sky600: "#4F6B77",
+  sky700: "#425963",
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Semantic color roles — the ONLY thing screens should reference.
+// ─────────────────────────────────────────────────────────────────────────────
+export const colors = {
+  // Surfaces (page → card → nested) — LOCKED to spec
+  surface: palette.gray15,             // #FAFBFC — page background
+  surfaceSecondary: palette.gray0,     // #FFFFFF — cards, sheets, elevated
+  surfaceTertiary: palette.gray25,     // hover fill on white cards
+  surfaceInverse: palette.gray900,     // dark heroes, inverse chips
+  surfaceRaised: palette.gray0,        // synonym for elevated card
+  surfaceSubtle: palette.gray15,       // table zebra / muted panel
+
+  // Text
+  onSurface: palette.gray900,          // primary text
+  onSurfaceSecondary: palette.gray700, // secondary text
+  onSurfaceMuted: palette.gray500,     // captions, hints
+  onSurfaceSubtle: palette.gray400,    // placeholders, disabled
+  onSurfaceInverse: palette.gray0,     // text on dark
+
+  // Brand — BuildCon House brass (single accent)
+  brand: palette.blue600,
+  brandHover: palette.blue700,
+  brandTint: palette.blue50,
+  brandTintStrong: palette.blue100,
+  brandBorder: palette.blue200,
+  onBrand: palette.gray0,
+  brandSecondary: palette.gray900,     // neutral secondary CTA
+
+  // Borders & dividers — LOCKED to #E5E7EB
+  border: palette.gray100,             // #E5E7EB — default hairline
+  borderStrong: palette.gray150,       // hovered/emphasized
+  borderMuted: "rgba(15, 23, 42, 0.06)",
+  divider: palette.gray100,
+
+  // Focus & selection — brass guidance (Showroom)
+  focusRing: "rgba(140, 115, 81, 0.42)",
+  selection: "#F1EAE0",
+
+  // Overlays & scrims
+  overlay: "rgba(26, 23, 18, 0.44)",
+  overlaySoft: "rgba(26, 23, 18, 0.16)",
+
+  // Semantic — foreground and matching background wash
+  success: palette.green700,
+  successFg: palette.green700,
+  successBg: palette.green50,
+  successBorder: palette.green100,
+
+  warning: palette.amber700,
+  warningFg: palette.amber700,
+  warningBg: palette.amber50,
+  warningBorder: palette.amber100,
+
+  error: palette.red700,
+  errorFg: palette.red700,
+  errorBg: palette.red50,
+  errorBorder: palette.red100,
+
+  info: palette.sky700,
+  infoFg: palette.sky700,
+  infoBg: palette.sky50,
+  infoBorder: palette.sky100,
+
+  // Aliases (backwards compat — some screens still reference these names)
+  brandTertiary: palette.gray100,
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spacing — canonical 4pt grid.
+// Approved scale: 4 · 8 · 12 · 16 · 20 · 24 · 32 · 40 · 48
+// Nothing off-grid is allowed. Legacy alphabetic names kept for backwards-compat.
+// ─────────────────────────────────────────────────────────────────────────────
+export const spacing = {
+  // Canonical numeric scale — prefer these in new code
+  s4: 4,
+  s8: 8,
+  s12: 12,
+  s16: 16,
+  s20: 20,
+  s24: 24,
+  s32: 32,
+  s40: 40,
+  s48: 48,
+
+  // Legacy alphabetic aliases (retained for existing screens; do not use in new code)
+  xxs: 2,     // deprecated — will be removed
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  xxl: 32,
+  xxxl: 48,
+  huge: 64,   // deprecated — use s48 or compose
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Radii — geometric, product-consistent.
+// ─────────────────────────────────────────────────────────────────────────────
+export const radius = {
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  pill: 999,
+} as const;
+
+// Shared landscape frame for all product imagery.
+export const PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Elevation — LOCKED to 4 subtle levels + none. Very subtle only. No garish shadows.
+//   low      = e1  resting card (barely visible, 1px offset)
+//   medium   = e2  sticky toolbar / floating pill
+//   high     = e3  sheets, modals
+//   overlay  = e4  popovers, dropdowns lifted above sheets
+// Every card in the app uses ONE of these.
+// ─────────────────────────────────────────────────────────────────────────────
+export const elevation = {
+  none: {
+    shadowColor: "transparent",
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
+  },
+  // e1 — resting card (very subtle, Linear/Stripe style)
+  low: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  // e2 — sticky toolbars, floating pills
+  medium: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  // e3 — sheets, modals
+  high: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.10,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
+  },
+  // e4 — popovers, dropdowns lifted above sheets
+  overlay: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.14,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+  // Legacy alias — treat as e1
+  hairline: {
+    shadowColor: "#0B1220",
+    shadowOpacity: 0.03,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+} as const;
+
+// Legacy alias — some existing screens reference `shadow.soft` etc.
+export const shadow = {
+  hair: elevation.hairline,
+  soft: elevation.low,
+  lifted: elevation.medium,
+  strong: elevation.high,
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Motion — LOCKED to the V2 spec.
+//   press      → button press feedback                        (80ms)
+//   hover      → chip toggles, card hover fills, link hover    (120ms)
+//   modal      → modal enter/exit                              (180ms)
+//   drawer     → sheet enter/exit                              (220ms)
+//   page       → route transitions                             (220ms)
+//   base/fast/slow/instant kept as aliases for existing screens.
+//   spring / springSoft → interactive drag/reorder (physics)
+// Card-hover: scale 1.01 only. No other size transforms allowed.
+// Every drawer, dialog, dropdown, hover, button, and page transition MUST pick one.
+// ─────────────────────────────────────────────────────────────────────────────
+export const motion = {
+  press:   { duration: 80,  easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  hover:   { duration: 120, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  modal:   { duration: 180, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  drawer:  { duration: 220, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  page:    { duration: 220, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  // Card hover scale
+  cardHoverScale: 1.01,
+  // Legacy aliases
+  instant: { duration: 80,  easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  fast:    { duration: 120, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  base:    { duration: 220, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  slow:    { duration: 320, easing: "cubic-bezier(0.2, 0.0, 0.0, 1.0)" },
+  spring:  { damping: 22, stiffness: 260, mass: 0.9 },
+  springSoft: { damping: 18, stiffness: 160, mass: 0.9 },
+  easeStandard: "cubic-bezier(0.2, 0.0, 0.0, 1.0)",
+  easeEmphasized: "cubic-bezier(0.05, 0.7, 0.1, 1.0)",
+  easeDecel: "cubic-bezier(0.0, 0.0, 0.2, 1.0)",
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Font families — Inter loaded via expo-font (weight-specific families).
+// Fallback to system when custom files fail to load.
+// ─────────────────────────────────────────────────────────────────────────────
+const systemSans = Platform.select({ ios: "System", android: "sans-serif", default: "System" });
+const systemMono = Platform.select({ ios: "Menlo", android: "monospace", default: "Menlo" });
+
+export const font = {
+  regular:  Platform.OS === "web" ? "system-ui" : "Inter-Regular",
+  medium:   Platform.OS === "web" ? "system-ui" : "Inter-Medium",
+  semibold: Platform.OS === "web" ? "system-ui" : "Inter-SemiBold",
+  bold:     Platform.OS === "web" ? "system-ui" : "Inter-Bold",
+  sans:     Platform.OS === "web" ? "system-ui" : "Inter-Regular", // default alias
+  mono:     systemMono as string,
+  systemSans: systemSans as string,
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Typography scale — hierarchy through weight & size, not decoration.
+// Every style pre-composes fontFamily so screens never re-declare it.
+// ─────────────────────────────────────────────────────────────────────────────
+export const type = {
+  // Display — hero moments, splash, empty-state headlines
+  displayXl: { fontFamily: font.bold, fontSize: 40, lineHeight: 48, letterSpacing: -0.8, color: colors.onSurface, fontWeight: "700" as const },
+  displayLg: { fontFamily: font.bold, fontSize: 32, lineHeight: 40, letterSpacing: -0.6, color: colors.onSurface, fontWeight: "700" as const },
+  displayMd: { fontFamily: font.bold, fontSize: 24, lineHeight: 32, letterSpacing: -0.4, color: colors.onSurface, fontWeight: "700" as const },
+
+  // Titles — page headings, card headers
+  titleLg: { fontFamily: font.semibold, fontSize: 20, lineHeight: 28, letterSpacing: -0.2, color: colors.onSurface, fontWeight: "600" as const },
+  titleMd: { fontFamily: font.semibold, fontSize: 17, lineHeight: 24, letterSpacing: -0.1, color: colors.onSurface, fontWeight: "600" as const },
+  titleSm: { fontFamily: font.semibold, fontSize: 15, lineHeight: 22, color: colors.onSurface, fontWeight: "600" as const },
+
+  // Body
+  bodyLg: { fontFamily: font.regular, fontSize: 16, lineHeight: 24, color: colors.onSurface, fontWeight: "400" as const },
+  body:   { fontFamily: font.regular, fontSize: 14, lineHeight: 20, color: colors.onSurface, fontWeight: "400" as const },
+  bodyStrong: { fontFamily: font.medium, fontSize: 14, lineHeight: 20, color: colors.onSurface, fontWeight: "500" as const },
+  bodyMuted: { fontFamily: font.regular, fontSize: 14, lineHeight: 20, color: colors.onSurfaceMuted, fontWeight: "400" as const },
+  bodySm: { fontFamily: font.regular, fontSize: 13, lineHeight: 18, color: colors.onSurface, fontWeight: "400" as const },
+
+  // Meta
+  caption: { fontFamily: font.regular, fontSize: 12, lineHeight: 16, color: colors.onSurfaceMuted, fontWeight: "400" as const },
+  captionStrong: { fontFamily: font.medium, fontSize: 12, lineHeight: 16, color: colors.onSurfaceSecondary, fontWeight: "500" as const },
+  overline: { fontFamily: font.semibold, fontSize: 10, lineHeight: 14, color: colors.onSurfaceMuted, letterSpacing: 1.2, textTransform: "uppercase" as const, fontWeight: "600" as const },
+  label: { fontFamily: font.medium, fontSize: 12, lineHeight: 16, color: colors.onSurfaceSecondary, fontWeight: "500" as const },
+
+  // Numeric (tabular)
+  mono:    { fontFamily: font.mono, fontSize: 13, lineHeight: 18, color: colors.onSurface, fontVariant: ["tabular-nums"] as any },
+  monoLg:  { fontFamily: font.mono, fontSize: 18, lineHeight: 24, color: colors.onSurface, fontWeight: "600" as const, fontVariant: ["tabular-nums"] as any },
+  numeric: { fontFamily: font.semibold, fontSize: 16, lineHeight: 22, color: colors.onSurface, fontWeight: "600" as const, fontVariant: ["tabular-nums"] as any },
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layout tokens
+// ─────────────────────────────────────────────────────────────────────────────
+export const layout = {
+  hitSlop: { top: 8, bottom: 8, left: 8, right: 8 },
+  tapTarget: 44,
+  screenPadding: { phone: spacing.lg, tablet: spacing.xl },
+  maxContentWidth: 1280,
+  tabBarHeight: 60,
+  headerHeight: 56,
+  // Card language — every card in the app uses ONE of these interior padding values.
+  cardPadding: { compact: spacing.md, base: spacing.lg, spacious: spacing.xl },
+  // Sheet language — same header/footer chrome everywhere.
+  sheet: {
+    drawerWidth: 460,       // right-anchored on desktop
+    drawerWidthWide: 560,   // for detail drawers
+    headerHeight: 56,
+    footerHeight: 68,
+    padding: spacing.xl,
+    modalMaxWidth: 520,
+  },
+  // Table language — every table shares row height & header height.
+  table: {
+    headerHeight: 44,
+    rowHeight: 56,
+    rowHeightCompact: 44,
+    cellPaddingX: spacing.lg,
+  },
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Icon scale — one weight, one line-thickness (Feather). Six approved sizes.
+// Use `icon.<name>` everywhere. Never pass a raw number to <Feather size={...} />.
+// ─────────────────────────────────────────────────────────────────────────────
+export const icon = {
+  xs: 12,   // dense inline (badge inner icon)
+  sm: 14,   // captions, list-row hint
+  md: 16,   // body-inline, button 40px
+  lg: 18,   // button 44px, sub-titles
+  xl: 20,   // page-level actions
+  hero: 28, // empty-state, hero cards
+  display: 40, // large hero moments
+} as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+export const money = (v: number, currency = "₹") =>
+  `${currency}${Number(v || 0).toLocaleString("en-IN", { maximumFractionDigits: 2, minimumFractionDigits: 2 })}`;
+
+export const moneyShort = (v: number, currency = "₹") => {
+  const n = Number(v || 0);
+  if (Math.abs(n) >= 10000000) return `${currency}${(n / 10000000).toFixed(2)} Cr`;
+  if (Math.abs(n) >= 100000) return `${currency}${(n / 100000).toFixed(2)} L`;
+  if (Math.abs(n) >= 1000) return `${currency}${(n / 1000).toFixed(1)}K`;
+  return `${currency}${n.toLocaleString("en-IN")}`;
+};
+
+export const roleLabels: Record<string, string> = {
+  owner: "Owner", admin: "Admin", manager: "Manager", sales: "Sales",
+  purchase: "Purchase", warehouse: "Warehouse", accounts: "Accounts", worker: "Worker",
+};
+
+// Status meta — used across quotations, orders, payments.
+export const statusMeta: Record<string, { label: string; bg: string; fg: string; border?: string }> = {
+  draft:            { label: "Draft",           bg: palette.gray75,   fg: palette.gray700,  border: palette.gray100 },
+  pending_approval: { label: "Pending Approval", bg: palette.amber50,  fg: palette.amber700, border: palette.amber100 },
+  approved:         { label: "Approved",        bg: palette.green50,  fg: palette.green700, border: palette.green100 },
+  rejected:         { label: "Rejected",        bg: palette.red50,    fg: palette.red700,   border: palette.red100 },
+  sent:             { label: "Sent",            bg: palette.blue50,   fg: palette.blue700,  border: palette.blue100 },
+  won:              { label: "Won",             bg: palette.green50,  fg: palette.green700, border: palette.green100 },
+  lost:             { label: "Lost",            bg: palette.red50,    fg: palette.red700,   border: palette.red100 },
+  expired:          { label: "Expired",         bg: palette.gray75,   fg: palette.gray500,  border: palette.gray100 },
+  ordered:          { label: "Confirmed",       bg: palette.blue50,   fg: palette.blue700,  border: palette.blue100 },
+  in_transit:       { label: "In Transit",      bg: palette.sky50,    fg: palette.sky700,   border: palette.sky100 },
+  delivered:        { label: "Delivered",       bg: palette.green50,  fg: palette.green700, border: palette.green100 },
+  paid:             { label: "Paid",            bg: palette.green50,  fg: palette.green700, border: palette.green100 },
+  partial:          { label: "Partial",         bg: palette.amber50,  fg: palette.amber700, border: palette.amber100 },
+  due:              { label: "Due",             bg: palette.red50,    fg: palette.red700,   border: palette.red100 },
+  overdue:          { label: "Overdue",         bg: palette.red50,    fg: palette.red700,   border: palette.red100 },
+};
+
+// Brand identity
+export const brand = {
+  name: "BuildCon House",
+  short: "BuildCon",
+  tagline: "Let you live better",
+  monogram: "BC",
+} as const;
+
+// Backwards-compat: some files still import `palette` internals; expose read-only.
+export const _palette = palette;
