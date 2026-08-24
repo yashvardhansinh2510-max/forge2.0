@@ -96,7 +96,7 @@ export function DiscountSheet() {
                 style={styles.catRow}
               >
                 <Text style={{ flex: 1, fontSize: 13, fontWeight: "600" }}>{b.categoryById[cid] || "—"}</Text>
-                <Text style={{ fontFamily: "System", fontVariant: ["tabular-nums"], fontSize: 13 }}>
+                <Text style={[type.numeric, { fontSize: 13, lineHeight: 18 }]}>
                   {b.s.categoryDiscounts[cid] != null ? `${b.s.categoryDiscounts[cid]}%` : "Add discount"}
                 </Text>
                 <Feather name={b.s.categoryDiscounts[cid] != null ? "edit-2" : "plus"} size={14} color={colors.brand} />
@@ -118,7 +118,7 @@ export function DiscountSheet() {
                   style={styles.catRow}
                 >
                   <Text style={{ flex: 1, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>{room}</Text>
-                  <Text style={{ fontFamily: "System", fontVariant: ["tabular-nums"], fontSize: 13 }}>
+                  <Text style={[type.numeric, { fontSize: 13, lineHeight: 18 }]}>
                     {rd ? (rd.type === "percent" ? `${rd.value}%` : `₹${rd.value.toLocaleString("en-IN")}`) : "Add discount"}
                   </Text>
                   <Feather name={rd ? "edit-2" : "plus"} size={14} color={colors.brand} />

@@ -134,7 +134,7 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
         {showCompactFilters ? (
           <>
             <ScrollView
-              horizontal showsHorizontalScrollIndicator={false}
+              horizontal showsHorizontalScrollIndicator
               contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
               testID="mobile-brand-selector"
             >
@@ -159,7 +159,7 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
             </ScrollView>
             {b.categoriesForRail.length > 0 ? (
               <ScrollView
-                horizontal showsHorizontalScrollIndicator={false}
+                horizontal showsHorizontalScrollIndicator
                 contentContainerStyle={{ gap: 6, paddingVertical: 2 }}
                 testID="mobile-category-selector"
               >
@@ -189,7 +189,7 @@ export function ProductExplorer({ showCompactFilters = true }: { showCompactFilt
         {showCompactFilters ? (
           <ScrollView
             horizontal
-            showsHorizontalScrollIndicator={false}
+            showsHorizontalScrollIndicator
             contentContainerStyle={styles.mobileSortContent}
             testID="mobile-sort-selector"
           >

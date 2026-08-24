@@ -99,5 +99,5 @@ const styles = StyleSheet.create({
   },
   thumb: { width: 64, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: 8, backgroundColor: colors.surfaceTertiary },
   name: { fontSize: 13, fontWeight: "600", color: colors.onSurface },
-  price: { fontFamily: "System", fontSize: 13, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"], flexShrink: 0 },
+  price: { ...type.numeric, fontSize: 13, lineHeight: 18, color: colors.onSurface, flexShrink: 0 },
 });

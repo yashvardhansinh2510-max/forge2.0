@@ -48,7 +48,7 @@ export function SwapSheet() {
                   <Text style={{ fontSize: 13, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>{p.name}</Text>
                   <Text style={type.caption}>{p.sku}{variantDescriptor(p) ? ` · ${variantDescriptor(p)}` : ""}</Text>
                 </View>
-                <Text style={{ fontFamily: "System", fontVariant: ["tabular-nums"], fontSize: 13, fontWeight: "600" }}>{money(p.price)}</Text>
+                <Text style={[type.numeric, { fontSize: 13, lineHeight: 18 }]}>{money(p.price)}</Text>
                 <Feather name="corner-down-right" size={14} color={colors.brand} />
               </Pressable>
               <VariantSwatchStrip

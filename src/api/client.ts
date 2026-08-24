@@ -5,17 +5,18 @@ const SELECTED_FLOOR_KEY = "forge.active-floor";
 
 // Empty string ⇒ same-origin fetch. Kubernetes ingress routes `/api/*` to backend.
 const configuredBase = (process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/+$/, "");
-const BASE = !__DEV__ && (!configuredBase || configuredBase.startsWith("http://localhost"))
-  ? "https://buildcon-backend-production.up.railway.app"
-  : configuredBase;
+const BASE = configuredBase;
 
 // APP_STORE_PLAY_STORE_AUDIT.md Blocker #4: a release build whose
 // EXPO_PUBLIC_BACKEND_URL is plain http:// boots to a fully network-dead
 // app — iOS App Transport Security silently blocks every request, Android
 // blocks cleartext by default on API 28+. That used to fail silently
 // (every screen just looks broken); this makes it impossible to miss.
-// Same-origin (`BASE === ""`) is a legitimate production setup (ingress
-// terminates HTTPS in front of both the app and `/api/*`) and is not flagged.
+// Native and static production builds must name their HTTPS API explicitly;
+// this prevents a deployment from silently reaching a stale hard-coded host.
+if (!__DEV__ && !BASE) {
+  throw new Error("EXPO_PUBLIC_BACKEND_URL is required in a production build.");
+}
 if (!__DEV__ && BASE && !BASE.startsWith("https://")) {
   throw new Error(
     `EXPO_PUBLIC_BACKEND_URL must be https:// in a production build (got "${BASE}"). ` +

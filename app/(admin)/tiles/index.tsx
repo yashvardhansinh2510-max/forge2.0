@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { FlatList, LayoutChangeEvent, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { Button, EmptyState } from "@/src/components/ui";
+import { Button, EmptyState, SegmentedControl } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
@@ -21,19 +21,24 @@ type TilesDoc = {
 export default function QuotationTilesList() {
   useRequireFloorAccess("ground-floor");
   const router = useRouter();
-  const [docs, setDocs] = useState<TilesDoc[] | null>(null);
+  const [documents, setDocuments] = useState<Record<TilesDoc["doc_type"], TilesDoc[]> | null>(null);
+  const [documentType, setDocumentType] = useState<TilesDoc["doc_type"]>("tiles_quotation");
   const [width, setWidth] = useState(0);
-  const compact = width > 0 && width < 560;
+  // The tablet shell reserves a 64px navigation rail. At a 768px viewport the
+  // page itself is only about 704px wide, which is not enough for this title
+  // and both labelled actions on one line. Stack the actions before they can
+  // squeeze the title out of the header.
+  const compact = width > 0 && width < 900;
 
   const load = useCallback(async () => {
     const [selections, quotations] = await Promise.all([
       api.get<TilesDoc[]>("/quotations?doc_type=tiles_selection", { floorId: "ground-floor" }),
       api.get<TilesDoc[]>("/quotations?doc_type=tiles_quotation", { floorId: "ground-floor" }),
     ]);
-    const merged = [...selections, ...quotations].sort(
+    const newestFirst = (docs: TilesDoc[]) => [...docs].sort(
       (a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""),
     );
-    setDocs(merged);
+    setDocuments({ tiles_selection: newestFirst(selections), tiles_quotation: newestFirst(quotations) });
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -42,6 +47,8 @@ export default function QuotationTilesList() {
     const route = doc.doc_type === "tiles_selection" ? "selection" : "quotation";
     router.push(`/(admin)/tiles/${route}?id=${doc.id}` as any);
   };
+  const docs = documents?.[documentType] ?? null;
+  const label = documentType === "tiles_selection" ? "selections" : "quotations";
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -71,8 +78,21 @@ export default function QuotationTilesList() {
         </View>
       </View>
 
+      <View style={styles.filterBar}>
+        <SegmentedControl
+          value={documentType}
+          onChange={setDocumentType}
+          fullWidth
+          testID="tiles-document-filter"
+          options={[
+            { value: "tiles_quotation", label: "Quotation", icon: "file-text" },
+            { value: "tiles_selection", label: "Selection", icon: "grid" },
+          ]}
+        />
+      </View>
+
       {docs === null ? null : docs.length === 0 ? (
-        <EmptyState icon="layers" title="No selections or quotations yet" subtitle="Create one to get started." />
+        <EmptyState icon="layers" title={`No ${label} yet`} subtitle={`Create a new ${label.slice(0, -1)} to get started.`} />
       ) : (
         <FlatList
           data={docs}
@@ -106,6 +126,7 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "flex-end", flexShrink: 1 },
   headerActionsCompact: { flexDirection: "column", alignItems: "stretch", width: "100%" },
   compactAction: { alignSelf: "stretch" },
+  filterBar: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   row: {
     flexDirection: "row", alignItems: "center", gap: 10,
     padding: spacing.md, borderRadius: radius.md,

@@ -506,6 +506,10 @@ export function SegmentedControl<T extends string>({
   fullWidth?: boolean;
 }) {
   const h = size === "sm" ? 44 : 44;
+  // Full-width segmented controls are commonly used as the primary mobile
+  // workspace switcher. Let each segment actually share the available width
+  // instead of retaining a desktop-style minimum that clips longer labels.
+  const compactFullWidth = !!fullWidth;
   return (
     <View testID={testID} style={{
       flexDirection: "row",
@@ -524,7 +528,8 @@ export function SegmentedControl<T extends string>({
             onPress={() => onChange(o.value)}
             style={{
               flex: 1, borderRadius: radius.sm + 2,
-              paddingHorizontal: 12, minWidth: 60, minHeight: 44,
+              paddingHorizontal: compactFullWidth ? 6 : 12,
+              minWidth: compactFullWidth ? 0 : 60,
               alignItems: "center", justifyContent: "center",
               flexDirection: "row", gap: 6,
               backgroundColor: on ? colors.surfaceSecondary : "transparent",
@@ -535,6 +540,7 @@ export function SegmentedControl<T extends string>({
             <Text
               numberOfLines={1}
               style={{
+                flexShrink: 1,
                 fontSize: size === "sm" ? 12 : 13,
                 fontFamily: type.titleMd.fontFamily,
                 fontWeight: on ? "600" : "500",
@@ -1258,7 +1264,7 @@ export function PageHeader({
           </Text>
           {subtitle ? <Text numberOfLines={2} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
         </View>
-        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center", flexShrink: 1, justifyContent: isDesktop ? "flex-end" : "flex-start", width: isDesktop ? undefined : "100%" }}>{actions}</View> : null}
+        {actions ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center", flexShrink: 0, justifyContent: isDesktop ? "flex-end" : "flex-start", width: isPhone ? "100%" : undefined }}>{actions}</View> : null}
       </View>
     </View>
   );

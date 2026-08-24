@@ -104,7 +104,7 @@ export default function QuotationsList() {
         />
         <ScrollView
           horizontal
-          showsHorizontalScrollIndicator={false}
+          showsHorizontalScrollIndicator={isPhone}
           contentContainerStyle={{ gap: 8, paddingRight: spacing.lg }}
         >
           {FILTERS.map((f) => (

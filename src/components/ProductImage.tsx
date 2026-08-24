@@ -43,6 +43,17 @@ export type ProductImageProps = {
   borderRadius?: number;
   // Optional label to display in the fallback state (usually SKU).
   fallbackLabel?: string | null;
+  // Mirror the source pixels for document previews without changing the
+  // surrounding frame, placeholder, or accessibility affordance.
+  mirror?: boolean;
+  // Force portrait source media into a landscape presentation. This is used
+  // by quotation tile cells, whose horizontal product strip is intentional.
+  forceLandscape?: boolean;
+  // Lets document cells render media with no shaded image-card background.
+  frameBackground?: string;
+  // Explicit document rotation for a product whose declared dimensions are
+  // portrait (for example 1200 × 2400), including older padded assets.
+  rotation?: "0deg" | "90deg" | "270deg";
 };
 
 const CACHE_POLICY = "memory-disk" as const;
@@ -71,6 +82,10 @@ export function ProductImage({
   disableSkeleton = false,
   borderRadius,
   fallbackLabel,
+  mirror = false,
+  forceLandscape = false,
+  frameBackground = colors.surfaceTertiary,
+  rotation = "0deg",
 }: ProductImageProps) {
   const [frameWidth, setFrameWidth] = useState(0);
   // Normalise `source` into an ordered list of candidates. Empty / null entries
@@ -100,6 +115,7 @@ export function ProductImage({
   const [idx, setIdx] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(sanitizedCandidates.length === 0);
+  const [portraitSource, setPortraitSource] = useState(false);
   const candidateKey = sanitizedCandidates.join("|");
 
   // Reset when the candidate list changes (e.g. product swap).
@@ -107,6 +123,7 @@ export function ProductImage({
     setIdx(0);
     setLoaded(false);
     setFailed(sanitizedCandidates.length === 0);
+    setPortraitSource(false);
   }, [candidateKey, sanitizedCandidates.length]);
 
   const current = sanitizedCandidates[idx];
@@ -114,7 +131,7 @@ export function ProductImage({
 
   return (
     <View
-      style={[styles.wrap, { borderRadius: finalRadius }, style as any]}
+      style={[styles.wrap, { borderRadius: finalRadius, backgroundColor: frameBackground }, style as any]}
       testID={testID}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="image"
@@ -124,7 +141,7 @@ export function ProductImage({
       }}
     >
       <View
-        style={[styles.inner, { margin: Math.max(0, frameInset), borderRadius: Math.max(0, finalRadius - frameInset) }]}
+        style={[styles.inner, { margin: Math.max(0, frameInset), borderRadius: Math.max(0, finalRadius - frameInset), backgroundColor: frameBackground }]}
       >
         {failed || !current ? (
           <FallbackGlyph label={fallbackLabel} />
@@ -136,15 +153,29 @@ export function ProductImage({
               style={[
                 StyleSheet.absoluteFill,
                 { borderRadius: Math.max(0, finalRadius - frameInset) },
+                (mirror || rotation !== "0deg" || (forceLandscape && portraitSource)) && {
+                  transform: [
+                    ...(rotation !== "0deg" ? [{ rotate: rotation }] : forceLandscape && portraitSource ? [{ rotate: "90deg" }] : []),
+                    ...(mirror ? [{ scaleX: -1 }] : []),
+                  ],
+                },
               ]}
-              contentFit={contentFit}
+              contentFit={forceLandscape ? "cover" : contentFit}
               cachePolicy={CACHE_POLICY}
               placeholder={{ blurhash: BLURHASH }}
               // Large virtualized lists become visibly sluggish when every
               // recycled thumbnail runs a transition animation.
               transition={0}
               recyclingKey={current}
-              onLoad={() => setLoaded(true)}
+              onLoad={(event: any) => {
+                // expo-image exposes the resolved dimensions as `source` on
+                // native and under `nativeEvent.source` in the web runtime.
+                // Read both so portrait catalog files are reliably rotated
+                // into the quotation's horizontal tile strip everywhere.
+                const source = event?.source || event?.nativeEvent?.source || event?.nativeEvent;
+                setPortraitSource(Boolean(source?.height && source?.width && source.height > source.width));
+                setLoaded(true);
+              }}
               onError={() => {
                 // Advance to next candidate, or give up.
                 if (idx + 1 < sanitizedCandidates.length) {

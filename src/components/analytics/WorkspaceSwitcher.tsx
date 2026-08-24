@@ -15,7 +15,6 @@ type Member = {
 };
 type Group = { key: string; label: string; members: Member[] };
 
-const COMING_SOON_ROUTE = "/(admin)/sales-data/coming-soon";
 
 /**
  * Navigation grouped by the question the owner is asking, not by engineering
@@ -38,33 +37,29 @@ export const WORKSPACE_GROUPS: Group[] = [
     { label: "Today's Priorities", route: "/(admin)/sales-data/today", implemented: true },
   ] },
   { key: "money", label: "Money", members: [
-    { label: "Revenue", route: "/(admin)/sales-data/sales", implemented: false },
-    { label: "Collections", route: "/(admin)/sales-data/collections", implemented: false },
-    { label: "Forecasting", route: "/(admin)/sales-data/forecasting", implemented: false },
+    { label: "Revenue", route: "/(admin)/sales-data/sales", implemented: true },
+    { label: "Collections", route: "/(admin)/sales-data/collections", implemented: true },
+    { label: "Forecasting", route: "/(admin)/sales-data/forecasting", implemented: true },
   ] },
   { key: "customers", label: "Customers", members: [
-    { label: "Customers", route: "/(admin)/sales-data/customers", implemented: false },
-    { label: "Architects", route: "/(admin)/sales-data/referrals/architects", implemented: false },
-    { label: "Interior Designers", route: "/(admin)/sales-data/referrals/interior-designers", implemented: false },
-    { label: "Relationships", route: "/(admin)/sales-data/relationships", implemented: false },
+    { label: "Customers", route: "/(admin)/sales-data/customers", implemented: true },
+    { label: "Architects", route: "/(admin)/sales-data/referrals/architects", implemented: true },
+    { label: "Interior Designers", route: "/(admin)/sales-data/referrals/interior-designers", implemented: true },
+    { label: "Relationships", route: "/(admin)/sales-data/relationships", implemented: true },
   ] },
   { key: "products", label: "Products", members: [
-    { label: "Products", route: "/(admin)/sales-data/products", implemented: false },
-    { label: "Brands", route: "/(admin)/sales-data/brands", implemented: false },
-    { label: "Suppliers", route: "/(admin)/sales-data/suppliers", implemented: false },
+    { label: "Products", route: "/(admin)/sales-data/products", implemented: true },
+    { label: "Brands", route: "/(admin)/sales-data/brands", implemented: true },
+    { label: "Suppliers", route: "/(admin)/sales-data/suppliers", implemented: true },
   ] },
   { key: "operations", label: "Operations", members: [
-    { label: "Operations", route: "/(admin)/sales-data/operations", implemented: false },
+    { label: "Operations", route: "/(admin)/sales-data/operations", implemented: true },
   ] },
 ];
 
 /** Where a member actually navigates. An unbuilt workspace goes to the
  *  placeholder carrying its own name, never to an unmatched route. */
-export function destinationFor(member: Member): string {
-  return member.implemented
-    ? member.route
-    : `${COMING_SOON_ROUTE}?workspace=${encodeURIComponent(member.label)}`;
-}
+export function destinationFor(member: Member): string { return member.route; }
 
 export function WorkspaceSwitcher() {
   const router = useRouter();
