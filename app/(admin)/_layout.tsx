@@ -667,7 +667,7 @@ export default function AdminLayout() {
         }}>
           {isTablet ? <Rail /> : <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />}
         </View>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
           <Slot />
         </View>
       </View>

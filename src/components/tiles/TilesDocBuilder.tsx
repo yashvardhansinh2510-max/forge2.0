@@ -1077,9 +1077,10 @@ const priceStyles = StyleSheet.create({
 
 const paperStyles = StyleSheet.create({
   paper: {
-    // Keep a readable landscape document width. The enclosing horizontal
-    // scroller owns overflow instead of compressing product detail cells.
-    width: "100%", minWidth: PAPER_W, alignSelf: "stretch",
+    // The preview uses the available editor width. Forcing an A4-like minimum
+    // here made desktop overflow horizontally and captured scrolling in the
+    // nested scroll view.
+    width: "100%", alignSelf: "stretch",
     backgroundColor: "#fff", paddingHorizontal: 30, paddingVertical: 26,
     borderRadius: 2,
     ...(Platform.OS === "web" ? { boxShadow: "0 10px 34px rgba(20,20,20,0.16)" } as any : {}),
@@ -1789,10 +1790,8 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
           <ActivityIndicator color={colors.brand} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingVertical: spacing.lg, paddingBottom: 80 }} showsHorizontalScrollIndicator={false} nestedScrollEnabled>
-          <ScrollView horizontal contentContainerStyle={{ flexGrow: 1, minWidth: "100%", paddingHorizontal: spacing.lg, paddingRight: 64 }} showsHorizontalScrollIndicator nestedScrollEnabled>
-            {isSelection ? <SelectionPaper {...doc} /> : <QuotationPaper {...doc} />}
-          </ScrollView>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, paddingBottom: 80 }}>
+          {isSelection ? <SelectionPaper {...doc} /> : <QuotationPaper {...doc} />}
         </ScrollView>
       )}
     </SafeAreaView>
