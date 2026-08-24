@@ -42,7 +42,9 @@ GREEN = colors.HexColor("#1D7A3C")
 GRID = colors.HexColor("#8A8A8A")
 HEADER_GREY = colors.HexColor("#C8C8C8")
 ZEBRA = colors.HexColor("#F0F0F0")
-PAGE_W_MM = 194.0  # A4 width minus 8mm left/right margins — every colWidths list below sums to this
+# Landscape A4 width (297 mm) minus 8 mm left/right margins. The Tiles Pro
+# form must use the same wide frame on its summary and detail pages.
+PAGE_W_MM = 281.0
 
 # ---------------------------------------------------------------------------
 # Optional unicode fonts — needed only for the ₹ / ☺ / ☎ glyphs the reference
@@ -202,7 +204,7 @@ def _header_block(main_title: str, subtitle: str, styles: dict) -> Table:
     masthead and the page 2+ "PRODUCT DETAILS" section header."""
     table = Table(
         [["", _logo_flowable(46), [Paragraph(main_title, styles["titleMain"]), Paragraph(subtitle, styles["titleSub"])]]],
-        colWidths=[10 * mm, 90 * mm, 94 * mm],
+        colWidths=[10 * mm, 135 * mm, 136 * mm],
     )
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -286,7 +288,7 @@ def _brand_terms_signature_block(styles: dict, branding: dict) -> list:
             Paragraph("I/We have reviewed and agree to the terms and conditions mentioned in this quotation.", styles["sigNote"]),
             Paragraph("CUSTOMER SIGNATURE &amp; DATE", styles["sigLabel"]),
         ]],
-        colWidths=[124 * mm, 70 * mm], rowHeights=[9 * mm],
+        colWidths=[180 * mm, 101 * mm], rowHeights=[9 * mm],
     )
     signature.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.6, GRID),
@@ -306,7 +308,7 @@ def _price_summary_table(total_boxes: float, subtotal: float, transportation_fee
         [Paragraph("TRANSPORTATION", styles["sumLabel"]), Paragraph(_rupee(transportation_fee), styles["sumValue"])],
         [Paragraph("TOTAL QUOTE (Rs.)", styles["sumRed"]), Paragraph(_rupee(total_quote), styles["sumRed"])],
     ]
-    table = Table(rows, colWidths=[130 * mm, 64 * mm], rowHeights=[5.5 * mm] * 4, hAlign="CENTER")
+    table = Table(rows, colWidths=[188 * mm, 93 * mm], rowHeights=[5.5 * mm] * 4, hAlign="CENTER")
     table.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.6, GRID),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
@@ -509,7 +511,9 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
     table = Table(
         rows,
         colWidths=_QUO_COLS,
-        rowHeights=[9 * mm] + [33 * mm] * len(items) + [8 * mm],
+        # 28.75 mm image + 8 mm of cell padding must fit inside every row.
+        # The former 33 mm height let image content bleed into the next row.
+        rowHeights=[9 * mm] + [37 * mm] * len(items) + [8 * mm],
         repeatRows=1,
     )
     table.setStyle(TableStyle(style_cmds))

@@ -1077,10 +1077,9 @@ const priceStyles = StyleSheet.create({
 
 const paperStyles = StyleSheet.create({
   paper: {
-    // Use the whole available desktop workspace. Every table row derives from
-    // the same flex ratios, so full width expands all columns together rather
-    // than leaving a fixed-width document stranded in the viewport.
-    width: "100%", alignSelf: "stretch",
+    // Keep a readable landscape document width. The enclosing horizontal
+    // scroller owns overflow instead of compressing product detail cells.
+    width: "100%", minWidth: PAPER_W, alignSelf: "stretch",
     backgroundColor: "#fff", paddingHorizontal: 30, paddingVertical: 26,
     borderRadius: 2,
     ...(Platform.OS === "web" ? { boxShadow: "0 10px 34px rgba(20,20,20,0.16)" } as any : {}),
@@ -1099,7 +1098,8 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
   const flex = (index: number) => ({ flex: SEL_COLS[index] });
   const itemCount = doc.rows.filter((r) => r.productId).length;
   return (
-    <View style={paperStyles.paper}>
+    <View style={{ gap: spacing.lg }}>
+      <View style={paperStyles.paper}>
       <SectionHeader title="PRODUCT SELECTION" subtitle="Tiles & Sanitaryware Solutions" />
       <View style={paperStyles.ruleThick} />
       <MetaGrid doc={doc} />
@@ -1108,7 +1108,9 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
         per your selection, for your review and confirmation.
       </Text>
       <TermsAndSignatureBlock />
+      </View>
 
+      <View style={paperStyles.paper}>
       <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
       <View style={paperStyles.ruleThick} />
       <View style={selStyles.table}>
@@ -1155,6 +1157,7 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
           </View>
         ))}
       </View>
+      </View>
 
       <TilesProductPicker
         open={pickerRow !== null}
@@ -1182,7 +1185,7 @@ const selStyles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 // SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
 // RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — mirrors pdf_tiles.py's _QUO_COLS.
-const QUO_COLS = [9, 26, 16, 32, 16, 18, 16, 16, 14, 13, 18];
+const QUO_COLS = [9, 28, 15, 50, 15, 15, 14, 14, 14, 12, 18];
 
 function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
@@ -1200,7 +1203,8 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
     "RATE/\nSQ.FT", "OFFER\nRATE", "RATE/\nBOX", "TOTAL\nBOX", "PCS/\nBOX", "TOTAL\n(Rs.)",
   ];
   return (
-    <View style={paperStyles.paper}>
+    <View style={{ gap: spacing.lg }}>
+      <View style={paperStyles.paper}>
       <SectionHeader title="PRODUCT QUOTATION" subtitle="Tiles & Sanitaryware Solutions" />
       <View style={paperStyles.ruleThick} />
       <MetaGrid doc={doc} />
@@ -1210,7 +1214,9 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
       </Text>
       <PriceSummary totals={totals} doc={doc} />
       <TermsAndSignatureBlock />
+      </View>
 
+      <View style={paperStyles.paper}>
       <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
       <View style={paperStyles.ruleThick} />
       <View style={quoStyles.table}>
@@ -1293,6 +1299,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
             <Text style={[quoStyles.cellText, { fontWeight: "700" }]}>{money(totals.subtotal)}</Text>
           </View>
         </View>
+      </View>
       </View>
 
       <TilesProductPicker
@@ -1782,10 +1789,10 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
           <ActivityIndicator color={colors.brand} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingVertical: spacing.lg, paddingBottom: 80 }} horizontal={false} showsHorizontalScrollIndicator={false}>
-          <View style={{ width: "100%", paddingHorizontal: spacing.lg }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingVertical: spacing.lg, paddingBottom: 80 }} showsHorizontalScrollIndicator={false} nestedScrollEnabled>
+          <ScrollView horizontal contentContainerStyle={{ flexGrow: 1, minWidth: "100%", paddingHorizontal: spacing.lg, paddingRight: 64 }} showsHorizontalScrollIndicator nestedScrollEnabled>
             {isSelection ? <SelectionPaper {...doc} /> : <QuotationPaper {...doc} />}
-          </View>
+          </ScrollView>
         </ScrollView>
       )}
     </SafeAreaView>

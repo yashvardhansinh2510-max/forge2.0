@@ -333,9 +333,9 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         "label": ParagraphStyle("label", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=6.8, leading=8, textColor=INK),
         "body": ParagraphStyle("body", parent=base["Normal"], fontName="Helvetica", fontSize=8.4, leading=11.5, textColor=INK),
         "small": ParagraphStyle("small", parent=base["Normal"], fontName="Helvetica", fontSize=6.7, leading=8, textColor=INK),
-        "tiny": ParagraphStyle("tiny", parent=base["Normal"], fontName="Helvetica", fontSize=7.2, leading=8.8, textColor=INK),
+        "tiny": ParagraphStyle("tiny", parent=base["Normal"], fontName="Helvetica", fontSize=7.2, leading=8.8, textColor=INK, alignment=1),
         "section": ParagraphStyle("section", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=10, leading=12, textColor=INK),
-        "cell": ParagraphStyle("cell", parent=base["Normal"], fontName="Helvetica", fontSize=7.4, leading=9, textColor=INK),
+        "cell": ParagraphStyle("cell", parent=base["Normal"], fontName="Helvetica", fontSize=7.4, leading=9, textColor=INK, alignment=1),
         "cellRight": ParagraphStyle("cellRight", parent=base["Normal"], fontName="Helvetica", fontSize=7.4, leading=9, textColor=INK, alignment=2),
         "cellCenter": ParagraphStyle("cellCenter", parent=base["Normal"], fontName="Helvetica", fontSize=7.4, leading=9, textColor=INK, alignment=1),
         "tableHead": ParagraphStyle("tableHead", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=7.4, leading=8.6, textColor=INK, alignment=1),
@@ -539,7 +539,9 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             total_row[total_label_col] = Paragraph("<b>TOTAL</b>", styles["cellCenter"])
             total_row[last_col] = Paragraph(f"<b>{_money(block_net)}</b>", styles["cellCenter"])
             rows.append(total_row)
-            row_heights = [ITEM_HEADER_ROW_MM * mm] + [ITEM_ROW_MM * mm] * n_data_rows + [ITEM_TOTAL_ROW_MM * mm]
+            # Measure wrapped descriptions rather than forcing 21 mm rows;
+            # fixed rows allowed long product text to paint into the next row.
+            row_heights = [ITEM_HEADER_ROW_MM * mm] + [None] * n_data_rows + [ITEM_TOTAL_ROW_MM * mm]
             numeric_col_start = 4  # MRP/RATE column onward — center-aligned per the print spec
             item_style_cmds = [
                 ("GRID", (0, 0), (-1, -1), 0.3, GRID), ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
