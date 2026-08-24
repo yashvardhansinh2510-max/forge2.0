@@ -69,17 +69,33 @@ const ZEBRA = "#F0F0F0";
 const GRID = "#8A8A8A";
 const SERIF = Platform.select({ ios: "Times New Roman", android: "serif", default: "Georgia, 'Times New Roman', serif" }) as string;
 
-function TileImageCell({ uri }: { uri: string }) {
+function tileNeedsLandscapeRotation(size: string | null | undefined): boolean {
+  const match = String(size || "").match(/(\d+(?:\.\d+)?)\s*[x×X]\s*(\d+(?:\.\d+)?)/);
+  return Boolean(match && Number(match[1]) < Number(match[2]));
+}
+
+function TileImageCell({ uri, size }: { uri: string; size?: string | null }) {
+  const [cellWidth, setCellWidth] = useState(0);
+  // A numeric size is intentional: percentage sizing in an RN-web table cell
+  // can shrink to the source bitmap's intrinsic square. This guarantees every
+  // quotation/selection tile is a visible 16:10 landscape strip.
+  const imageWidth = cellWidth > 0 ? Math.max(72, Math.min(cellWidth - 16, 180)) : 144;
   return (
-    <ProductImage
-      source={uri}
-      contentFit="contain"
-      frameInset={2}
-      borderRadius={0}
-      disableSkeleton
-      style={{ width: "100%", aspectRatio: TILE_IMAGE_ASPECT_RATIO }}
-      accessibilityLabel="Quotation product image"
-    />
+    <View style={{ width: "100%", alignItems: "center", justifyContent: "center" }} onLayout={(event) => setCellWidth(event.nativeEvent.layout.width)}>
+      <ProductImage
+        source={uri}
+        contentFit="cover"
+        frameInset={0}
+        borderRadius={0}
+        disableSkeleton
+        mirror
+        forceLandscape
+        rotation={tileNeedsLandscapeRotation(size) ? "90deg" : "0deg"}
+        frameBackground="#FFFFFF"
+        style={{ width: imageWidth, height: imageWidth / TILE_IMAGE_ASPECT_RATIO }}
+        accessibilityLabel="Quotation product image"
+      />
+    </View>
   );
 }
 
@@ -191,9 +207,9 @@ function resolvedLineTotal(row: TileRow): number {
 
   const quantity = num(row.totalBox) || 1;
   const rateBox = derivedTileBoxRate(row) ?? num(row.rateBox);
-  const pcs = num(row.pcsBox);
-  const unitRate = row.quantityUnit === "Pieces" && pcs > 0 ? rateBox / pcs : rateBox;
-  return quantity * unitRate;
+  // Box/Piece is an operational quantity label, not a pricing mode. Toggling
+  // it must never silently divide the quoted rate by pieces-per-box.
+  return quantity * rateBox;
 }
 
 function lineTotalInputValue(row: TileRow): string {
@@ -399,15 +415,15 @@ function useTilesDoc(docType: TilesDocType) {
       .map((row, index) => {
         const qty = num(row.totalBox) || 1;
         const manualTotal = num(row.total);
-        const pcs = num(row.pcsBox);
         const derivedRateBox = derivedTileBoxRate(row);
         const baseRateBox = derivedRateBox ?? num(row.rateBox);
         const rateBox = row.totalEdited && manualTotal > 0 && qty > 0
-          ? Math.round((manualTotal / qty) * (row.quantityUnit === "Pieces" && pcs > 0 ? pcs : 1) * 100) / 100
+          ? Math.round(manualTotal / qty * 100) / 100
           : baseRateBox;
-        const unitPrice = row.quantityUnit === "Pieces" && pcs > 0
-          ? Math.round(rateBox / pcs * 100) / 100
-          : rateBox;
+        // Quantity unit changes workflow/fulfilment metadata only. Persist the
+        // same quoted price for Box and Piece so backend recalculation cannot
+        // change the quotation after a unit toggle.
+        const unitPrice = rateBox;
         const item: any = {
           product_id: row.productId, sku: row.sku, name: row.name.trim(),
           image: row.image, category_id: row.categoryId,
@@ -1061,9 +1077,10 @@ const priceStyles = StyleSheet.create({
 
 const paperStyles = StyleSheet.create({
   paper: {
-    // Fill all available desktop/tablet space; on narrower tablets the
-    // enclosing horizontal scroller preserves the readable document width.
-    width: "100%", minWidth: PAPER_W, alignSelf: "stretch",
+    // The preview must use the available editor width. Forcing an A4-like
+    // minimum here made desktop overflow horizontally and captured scrolling
+    // in the nested scroll view.
+    width: "100%", alignSelf: "stretch",
     backgroundColor: "#fff", paddingHorizontal: 30, paddingVertical: 26,
     borderRadius: 2,
     ...(Platform.OS === "web" ? { boxShadow: "0 10px 34px rgba(20,20,20,0.16)" } as any : {}),
@@ -1082,7 +1099,8 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
   const flex = (index: number) => ({ flex: SEL_COLS[index] });
   const itemCount = doc.rows.filter((r) => r.productId).length;
   return (
-    <View style={paperStyles.paper}>
+    <View style={{ gap: spacing.lg }}>
+      <View style={paperStyles.paper}>
       <SectionHeader title="PRODUCT SELECTION" subtitle="Tiles & Sanitaryware Solutions" />
       <View style={paperStyles.ruleThick} />
       <MetaGrid doc={doc} />
@@ -1091,7 +1109,9 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
         per your selection, for your review and confirmation.
       </Text>
       <TermsAndSignatureBlock />
+      </View>
 
+      <View style={paperStyles.paper}>
       <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
       <View style={paperStyles.ruleThick} />
       <View style={selStyles.table}>
@@ -1109,7 +1129,7 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
           <View key={row.key} style={[selStyles.tr, { minHeight: 92 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
             <View style={[selStyles.td, flex(0)]}><Text style={selStyles.cellText}>{index + 1}</Text></View>
             <View style={[selStyles.td, flex(1), { padding: 2 }]}>
-              {row.image ? <TileImageCell uri={row.image} /> : null}
+              {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
             </View>
             <View style={[selStyles.td, flex(2)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
@@ -1138,6 +1158,7 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
           </View>
         ))}
       </View>
+      </View>
 
       <TilesProductPicker
         open={pickerRow !== null}
@@ -1150,10 +1171,10 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
 }
 
 const selStyles = StyleSheet.create({
-  table: { marginTop: 14, borderWidth: 1.4, borderColor: "#111" },
-  tr: { flexDirection: "row", borderTopWidth: 1, borderColor: "#111", alignItems: "stretch" },
+  table: { marginTop: 14, borderWidth: 1.5, borderColor: "#111" },
+  tr: { position: "relative", flexDirection: "row", borderTopWidth: 1.25, borderColor: "#111", alignItems: "stretch" },
   td: {
-    borderRightWidth: 1, borderColor: "#111",
+    borderRightWidth: 1.25, borderColor: "#111",
     alignItems: "center", justifyContent: "center", paddingHorizontal: 4, paddingVertical: 5,
   },
   th: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center" },
@@ -1165,7 +1186,7 @@ const selStyles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 // SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
 // RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — mirrors pdf_tiles.py's _QUO_COLS.
-const QUO_COLS = [9, 26, 16, 32, 16, 18, 16, 16, 14, 13, 18];
+const QUO_COLS = [9, 28, 15, 50, 15, 15, 14, 14, 14, 12, 18];
 
 function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
@@ -1183,7 +1204,8 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
     "RATE/\nSQ.FT", "OFFER\nRATE", "RATE/\nBOX", "TOTAL\nBOX", "PCS/\nBOX", "TOTAL\n(Rs.)",
   ];
   return (
-    <View style={paperStyles.paper}>
+    <View style={{ gap: spacing.lg }}>
+      <View style={paperStyles.paper}>
       <SectionHeader title="PRODUCT QUOTATION" subtitle="Tiles & Sanitaryware Solutions" />
       <View style={paperStyles.ruleThick} />
       <MetaGrid doc={doc} />
@@ -1193,7 +1215,9 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
       </Text>
       <PriceSummary totals={totals} doc={doc} />
       <TermsAndSignatureBlock />
+      </View>
 
+      <View style={paperStyles.paper}>
       <SectionHeader title="PRODUCT DETAILS" subtitle={itemCount ? `Items 1–${itemCount}` : "No items yet"} />
       <View style={paperStyles.ruleThick} />
       <View style={quoStyles.table}>
@@ -1208,7 +1232,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
           <View key={row.key} style={[quoStyles.tr, { minHeight: 96 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
             <View style={[quoStyles.td, flex(0)]}><Text style={quoStyles.cellText}>{index + 1}</Text></View>
             <View style={[quoStyles.td, flex(1), { padding: 2 }]}>
-              {row.image ? <TileImageCell uri={row.image} /> : null}
+              {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
             </View>
             <View style={[quoStyles.td, flex(2)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
@@ -1277,6 +1301,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
           </View>
         </View>
       </View>
+      </View>
 
       <TilesProductPicker
         open={pickerRow !== null}
@@ -1289,10 +1314,12 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
 }
 
 const quoStyles = StyleSheet.create({
-  table: { marginTop: 14, borderWidth: 1.4, borderColor: "#111" },
-  tr: { flexDirection: "row", borderTopWidth: 1, borderColor: "#111", alignItems: "stretch", backgroundColor: "#fff" },
+  table: { marginTop: 14, borderWidth: 1.5, borderColor: "#111" },
+  // Product entries are deliberately horizontal rows: the same flex column
+  // proportions are used by the header, each product and the total row.
+  tr: { position: "relative", flexDirection: "row", borderTopWidth: 1.25, borderColor: "#111", alignItems: "stretch", backgroundColor: "#fff" },
   td: {
-    borderRightWidth: 1, borderColor: "#111",
+    borderRightWidth: 1.25, borderColor: "#111",
     alignItems: "center", justifyContent: "center", paddingHorizontal: 6, paddingVertical: 8,
     minWidth: 0, overflow: "hidden",
   },
@@ -1763,14 +1790,8 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
           <ActivityIndicator color={colors.brand} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingVertical: spacing.lg, paddingBottom: 80 }}>
-          <ScrollView
-            horizontal
-            contentContainerStyle={{ flexGrow: 1, minWidth: "100%", paddingHorizontal: spacing.lg, paddingRight: 64 }}
-            showsHorizontalScrollIndicator
-          >
-            {isSelection ? <SelectionPaper {...doc} /> : <QuotationPaper {...doc} />}
-          </ScrollView>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, paddingHorizontal: spacing.lg, paddingVertical: spacing.lg, paddingBottom: 80 }}>
+          {isSelection ? <SelectionPaper {...doc} /> : <QuotationPaper {...doc} />}
         </ScrollView>
       )}
     </SafeAreaView>
