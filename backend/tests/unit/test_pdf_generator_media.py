@@ -61,8 +61,8 @@ def test_pdf_img_uses_a_horizontal_canvas_for_portrait_source(monkeypatch):
 
     image = pdf_generator._img("https://example.test/product.png")
 
-    assert image.drawWidth == 23.0 * pdf_generator.mm
-    assert image.drawHeight == 14.375 * pdf_generator.mm
+    assert image.drawHeight == (pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM - 2.5) * pdf_generator.mm
+    assert image.drawWidth == (pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM - 2.5) * (16 / 10) * pdf_generator.mm
     assert image.hAlign == "CENTER"
 
 
