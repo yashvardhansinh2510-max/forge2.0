@@ -52,13 +52,13 @@ TILES_DOC_TYPES = ("tiles_selection", "tiles_quotation")
 
 
 async def _canonicalize_item_images(items) -> list[dict]:
-    """Resolve line-item images from current product media, never snapshots.
+    """Resolve line-item images from current product media with snapshot fallback.
 
     Quotation rows intentionally retain an image snapshot for audit/history, but
-    that snapshot can point at a portrait URL from before media normalization.
-    Every live read/write and PDF render must prefer the current product media;
-    if a product has no current media, clear the stale snapshot rather than
-    reintroducing an old portrait asset.
+    that snapshot can be the only image left after a catalog product or its
+    media is removed. Every live read/write and PDF render prefers current
+    product media, while retaining a valid snapshot as a fallback. The PDF
+    image pipeline normalizes old portrait assets before placing them.
     """
     raw_items = [item.dict() if isinstance(item, QuotationLineItem) else dict(item) for item in (items or [])]
     product_ids = {str(item.get("product_id")) for item in raw_items if item.get("product_id")}
@@ -81,8 +81,11 @@ async def _canonicalize_item_images(items) -> list[dict]:
             int(row.get("sort_order", 100) or 100),
         ))
     return [
-        {**item, "image": (grouped.get(str(item.get("product_id")), [{}])[0].get("public_url")
-                            if grouped.get(str(item.get("product_id"))) else None)}
+        {**item, "image": (
+            grouped.get(str(item.get("product_id")), [{}])[0].get("public_url")
+            if grouped.get(str(item.get("product_id")))
+            else item.get("image")
+        )}
         for item in raw_items
     ]
 
