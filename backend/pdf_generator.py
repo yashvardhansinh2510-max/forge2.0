@@ -39,7 +39,7 @@ LOGO_RATIO = 1414 / 412  # native W/H of buildcon_logo.png — size by one edge 
 # to portrait A4.
 LANDSCAPE_A4 = landscape(A4)
 
-# Shared across every quotation-family PDF (generic + tiles Selection/Quotation).
+# Original page-1 partner layout from the supplied quotation template.
 BRAND_PARTNERS = [
     [("GROHE", "Pure Freude an Wasser"), ("hansgrohe", "Life is Waterful"), ("AXOR", "Form Follows Perfection"), ("VitrA", "Design Meets Life"), ("NEXION", "The Surface Experience"), ("QUTONE", "Let's Build Together")],
     [("DIMORE", "Reflection of Your Style"), ("Oyster", "Indulge in Luxury"), ("GEBERIT", "Engineered for Hygiene"), ("MCM ITTIMI", "Innovation into Inspiration"), ("VERANTES LIVING", "Kitchens &amp; Wardrobes"), ("IMPORTED<br/>FURNITURE", "Crafted Beyond Borders")],
@@ -47,7 +47,7 @@ BRAND_PARTNERS = [
 
 
 def brand_partners_table(base_cell_style: ParagraphStyle, col_width_mm: float = 28.3, grid_color=None) -> Table:
-    """The 2x6 'OUR BRAND PARTNERS' grid shared by every quotation-family PDF."""
+    """The original 2x6 partner grid used on quotation page 1."""
     partner_style = ParagraphStyle("partner", parent=base_cell_style, fontSize=6.6, leading=8, alignment=1)
     rows = [[Paragraph(f"<b>{name}</b><br/><font size='5.4'><i>{tagline}</i></font>", partner_style) for name, tagline in row] for row in BRAND_PARTNERS]
     table = Table(rows, colWidths=[col_width_mm * mm] * 6, rowHeights=[12 * mm, 12 * mm])
@@ -107,25 +107,24 @@ def _remote_image_bytes(url: str) -> bytes | None:
         return None
 
 
-def _prepare_image_bytes(data: bytes) -> bytes:
-    """Apply EXIF orientation while keeping the photographed product upright.
+def _prepare_image_bytes(data: bytes, *, force_landscape: bool = False) -> bytes:
+    """Apply the persisted 16:10 product-image contract to PDF inputs too.
 
-    This feeds every quotation-family PDF: the standard quotation plus tile
-    selection and tile quotation. The *cell* is landscape; portrait source
-    content is contained inside it and is never rotated merely to fill space.
+    Old quotation snapshots can still reference pre-canonical assets, so PDF
+    rendering defensively repeats the lossless-or-padding normalization. This
+    keeps them horizontal and centered without stretching or cropping.
     """
-    from PIL import Image as PILImage, ImageOps
+    from PIL import Image as PILImage
+    from services.product_image_normalizer import normalize_product_image
 
     try:
         img = PILImage.open(BytesIO(data))
         fmt = img.format or "PNG"
-        normalized = ImageOps.exif_transpose(img)
-        normalized.load()
-        if fmt.upper() in ("JPEG", "JPG") and normalized.mode in ("RGBA", "P"):
-            normalized = normalized.convert("RGB")
-        out = BytesIO()
-        normalized.save(out, format=fmt)
-        return out.getvalue()
+        mime = {"JPEG": "image/jpeg", "JPG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp", "GIF": "image/gif"}.get(fmt.upper())
+        if not mime:
+            return data
+        normalized, _ = normalize_product_image(data, mime, force_landscape=force_landscape)
+        return normalized
     except Exception:
         return data
 
@@ -178,6 +177,7 @@ def _img(
     url: str | None,
     width_mm: float = STANDARD_PRODUCT_IMAGE_WIDTH_MM,
     height_mm: float = STANDARD_PRODUCT_IMAGE_HEIGHT_MM,
+    force_landscape: bool = False,
 ) -> Flowable:
     """Render the supplied product image inside the official narrow image cell.
 
@@ -189,7 +189,7 @@ def _img(
         data = _remote_image_bytes(str(url))
         if data:
             try:
-                prepared = _prepare_image_bytes(data)
+                prepared = _prepare_image_bytes(data, force_landscape=force_landscape)
                 reader = ImageReader(BytesIO(prepared))
                 source_width, source_height = reader.getSize()
                 _, _, image_width, image_height = contain_box(
@@ -243,6 +243,14 @@ def _draw_room_watermark(cv, doc, branding: dict | None = None) -> None:
     watermark_h = watermark_w / LOGO_RATIO
     cv.drawImage(str(LOGO_PATH), -watermark_w / 2, -watermark_h / 2, width=watermark_w, height=watermark_h, mask="auto")
     cv.restoreState()
+
+
+def _draw_quotation_page_chrome(cv, doc, branding: dict | None = None) -> None:
+    """Shared footer/watermark chrome for the summary and area pages."""
+    if doc.page == 1:
+        _draw_footer(cv, doc, branding)
+    else:
+        _draw_room_watermark(cv, doc, branding)
 
 
 def _brand_header(right_title: str, styles: dict, style_key: str = "titleRight") -> Table:
@@ -424,9 +432,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     summary = Table(summary_rows, colWidths=summary_col_widths, rowHeights=summary_row_heights, repeatRows=1)
     summary.setStyle(TableStyle(summary_style_cmds))
     story.extend([summary, Spacer(1, 3 * mm), Paragraph("OUR BRAND PARTNERS", styles["section"]), Spacer(1, 1 * mm)])
-
-    partner_table = brand_partners_table(styles["cell"])
-    story.extend([partner_table, Spacer(1, 2 * mm), Paragraph("TERMS &amp; CONDITIONS", styles["section"]), Spacer(1, 0.6 * mm)])
+    story.extend([brand_partners_table(styles["cell"]), Spacer(1, 2 * mm), Paragraph("TERMS &amp; CONDITIONS", styles["section"]), Spacer(1, 0.6 * mm)])
 
     terms = [
         "1. All rates are as per current MRP.",
@@ -551,7 +557,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
 
     doc.build(
         story,
-        onFirstPage=functools.partial(_draw_footer, branding=b),
-        onLaterPages=functools.partial(_draw_room_watermark, branding=b),
+        onFirstPage=functools.partial(_draw_quotation_page_chrome, branding=b),
+        onLaterPages=functools.partial(_draw_quotation_page_chrome, branding=b),
     )
     return buf.getvalue()

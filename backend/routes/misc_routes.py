@@ -204,6 +204,17 @@ async def health_system(_: UserPublic = Depends(require_min_role("admin"))):
     return result
 
 
+@router.get("/ops/outbox")
+async def outbox_status(_: UserPublic = Depends(require_min_role("admin"))):
+    """Operational visibility for durable events without exposing payloads."""
+    pipeline = [
+        {"$group": {"_id": "$status", "count": {"$sum": 1}, "oldest": {"$min": "$created_at"}}},
+        {"$project": {"_id": 0, "status": "$_id", "count": 1, "oldest": 1}},
+    ]
+    rows = await db.event_outbox.aggregate(pipeline).to_list(20)
+    return {"statuses": rows, "healthy": not any(row["status"] == "dead_letter" for row in rows)}
+
+
 @router.get("/notifications")
 async def list_notifications(user: UserPublic = Depends(get_current_user)):
     # Own-notifications only was never enough on its own: an owner/manager

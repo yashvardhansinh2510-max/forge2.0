@@ -4,6 +4,7 @@ from io import BytesIO
 
 from pypdf import PdfReader
 
+import pdf_tiles
 from pdf_tiles import build_tiles_quotation_pdf
 
 
@@ -64,3 +65,31 @@ def test_tiles_pdf_renders_piece_as_the_quantity_unit():
 
     assert "1 Pieces" in text
     assert "PIECE 900.00" in text
+
+
+def test_tiles_quotation_keeps_the_cover_on_page_one_and_starts_details_on_page_two():
+    quotation = {
+        "customer_name": "Two Page Contract",
+        "doc_date": "22-08-2026",
+        "items": [{
+            "qty": 1,
+            "unit_price": 6277.5,
+            "rate_sqft": 135,
+            "offer_rate": 135,
+            "rate_box": 6277.5,
+            "quantity_unit": "Box",
+            "name": "Aemilia Grigio Dove (1200X1800)",
+            "room": "Bathroom",
+            "size": "1200X1800",
+        }],
+        "subtotal": 6277.5,
+        "grand_total": 6277.5,
+    }
+
+    pages = PdfReader(BytesIO(build_tiles_quotation_pdf(quotation, {"name": "Two Page Contract"}))).pages
+
+    assert len(pages) == 2
+    assert "CUSTOMER SIGNATURE" in (pages[0].extract_text() or "")
+    assert "PRODUCT DETAILS" in (pages[1].extract_text() or "")
+    assert sum(width / pdf_tiles.mm for width in pdf_tiles._QUO_COLS) == 281
+    assert pdf_tiles.QUOTATION_PRODUCT_IMAGE_WIDTH_MM == 46

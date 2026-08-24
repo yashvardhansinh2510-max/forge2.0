@@ -37,6 +37,7 @@ const tierTone: Record<string, "success" | "info" | "neutral"> = {
 };
 
 type TierFilter = "all" | "vip" | "trade" | "retail";
+const CUSTOMER_RENDER_BATCH = 40;
 
 export default function Customers() {
   const router = useRouter();
@@ -46,6 +47,7 @@ export default function Customers() {
   const [items, setItems] = useState<Customer[] | null>(null);
   const [q, setQ] = useState("");
   const [tier, setTier] = useState<TierFilter>("all");
+  const [visibleCount, setVisibleCount] = useState(CUSTOMER_RENDER_BATCH);
   const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -81,6 +83,12 @@ export default function Customers() {
     const needle = q.toLowerCase();
     return `${c.name} ${c.company || ""} ${c.email} ${c.city || ""}`.toLowerCase().includes(needle);
   }), [items, q, tier]);
+
+  // Keep the mobile scroll surface light even when the legacy list endpoint
+  // returns hundreds of accounts. Search/filter changes always begin at the
+  // most relevant results, while the operator can reveal the rest explicitly.
+  useEffect(() => { setVisibleCount(CUSTOMER_RENDER_BATCH); }, [q, tier]);
+  const visibleCustomers = filtered.slice(0, visibleCount);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -203,7 +211,7 @@ export default function Customers() {
           />
         ) : (
           <View style={{ gap: spacing.sm }}>
-            {filtered.map((c) => (
+            {visibleCustomers.map((c) => (
               <Pressable
                 key={c.id}
                 testID={`customer-${c.id}`}
@@ -259,6 +267,15 @@ export default function Customers() {
                 </View>
               </Pressable>
             ))}
+            {visibleCustomers.length < filtered.length ? (
+              <Button
+                label={`Show more (${filtered.length - visibleCustomers.length} remaining)`}
+                variant="secondary"
+                size="md"
+                onPress={() => setVisibleCount((count) => count + CUSTOMER_RENDER_BATCH)}
+                testID="customers-show-more"
+              />
+            ) : null}
           </View>
         )}
       </ScrollView>

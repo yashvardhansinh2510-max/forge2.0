@@ -174,8 +174,13 @@ function FloorSwitcher({ compact = false }: { compact?: boolean }) {
   }));
   const currentLabel = selected ? floorDisplayLabel(selected) : "Select floor";
   return (
-    <Menu align={compact ? "right" : "left"} items={items}>
-      <View testID="floor-switcher" style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, height: 40, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: layout.hairline, borderColor: color.line }}>
+    <Menu
+      align={compact ? "right" : "left"}
+      items={items}
+      triggerLabel={`Switch workspace. Current workspace: ${currentLabel}`}
+      triggerTestID="floor-switcher"
+    >
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10, height: 40, borderRadius: radius.md, backgroundColor: color.surface, borderWidth: layout.hairline, borderColor: color.line }}>
         <Feather name="layers" size={15} color={color.brass} />
         {!compact ? <Text numberOfLines={1} style={{ flex: 1, fontFamily: font.medium, fontSize: 12.5, color: color.ink }}>{currentLabel}</Text> : null}
         <Feather name="chevron-down" size={14} color={color.inkSoft} />
@@ -204,18 +209,24 @@ function isRouteCompatibleWithFloor(segments: string[], floorId: string) {
 // switches the active floor to Ground floor before navigating.
 const TILES_ITEMS: NavItem[] = [
   { href: "/(admin)/tiles", label: "Quotation Tiles", icon: "layers", match: "tiles" },
-  { href: "/(admin)/tiles/orders", label: "Tile Orders", icon: "truck", match: "orders" },
+  // Tile Orders' read endpoints require the backend's `sales` level. Keep
+  // the selection workflow visible to a Worker, but do not link them to a
+  // screen that can only respond with a 403 / "Insufficient role".
+  { href: "/(admin)/tiles/orders", label: "Tile Orders", icon: "truck", match: "orders", roles: ["owner", "admin", "manager", "accounts", "purchase", "sales"] },
 ];
 
 function useTilesNav() {
   const router = useRouter();
+  const { staff } = useAuth();
   const { access, selectedFloorId, selectFloor } = useFloorAccess();
   const groundAccessible = Boolean(access && (access.all_floors || access.floor_ids.includes(TILES_FLOOR_ID)));
   // Ground Floor's Tiles module is not merely *reachable* from Ground
   // Floor — it must be invisible from every other business unit. Showing
   // these while "The Sanitary Bathroom" is the active floor is what put
   // Tile Orders and Quotation Tiles in Sanitary's navigation.
-  const items = groundAccessible && selectedFloorId === TILES_FLOOR_ID ? TILES_ITEMS : [];
+  const items = groundAccessible && selectedFloorId === TILES_FLOOR_ID
+    ? TILES_ITEMS.filter((item) => !item.roles || Boolean(staff && item.roles.includes(staff.role)))
+    : [];
   const open = (item: NavItem) => {
     if (selectedFloorId !== TILES_FLOOR_ID) {
       // Selection is published synchronously; the destination can mount under

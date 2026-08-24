@@ -31,8 +31,12 @@ from __future__ import annotations
 
 import importlib
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 logger = logging.getLogger("forge.migrations")
 
@@ -57,24 +61,72 @@ async def pending_migrations(db) -> list[str]:
     return [name for name, _ in _discover() if name not in applied]
 
 
-async def run_migrations(db, *, dry_run: bool = False) -> list[str]:
+async def _acquire_lease(db, owner: str, *, seconds: int = 300) -> bool:
+    """Acquire the single global migration lease.
+
+    Startup migrations are writes and therefore must never be run by two
+    rolling-deployment replicas at once.  A short, renewable-by-restart lease
+    is sufficient because migrations are intentionally small and idempotent;
+    a crashed process becomes eligible after expiry.
+    """
+    now = datetime.now(timezone.utc)
+    expires_at = now.timestamp() + seconds
+    try:
+        lease = await db.schema_migration_locks.find_one_and_update(
+            {
+                "_id": "global",
+                "$or": [
+                    {"expires_at_epoch": {"$lte": now.timestamp()}},
+                    {"owner": owner},
+                ],
+            },
+            {
+                "$set": {
+                    "owner": owner,
+                    "expires_at_epoch": expires_at,
+                    "updated_at": now.isoformat(),
+                }
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+    except DuplicateKeyError:
+        # An unexpired lease caused the upsert race to lose.  The holder owns
+        # the migration window, so this replica must fail readiness instead of
+        # attempting writes concurrently.
+        return False
+    return bool(lease and lease.get("owner") == owner)
+
+
+async def _release_lease(db, owner: str) -> None:
+    await db.schema_migration_locks.delete_one({"_id": "global", "owner": owner})
+
+
+async def run_migrations(db, *, dry_run: bool = False, use_lease: bool = True) -> list[str]:
     """Applies every not-yet-recorded migration in order. Returns the list of
     migration names that were (or, in dry-run, would be) applied."""
     await ensure_migrations_index(db)
-    applied = {d["name"] async for d in db.schema_migrations.find({}, {"name": 1, "_id": 0})}
-    ran: list[str] = []
-    for name, module_path in _discover():
-        if name in applied:
-            continue
-        if dry_run:
+    owner = str(uuid.uuid4())
+    if use_lease and not dry_run and not await _acquire_lease(db, owner):
+        raise RuntimeError("Another Forge replica is applying migrations; retry startup shortly.")
+    try:
+        applied = {d["name"] async for d in db.schema_migrations.find({}, {"name": 1, "_id": 0})}
+        ran: list[str] = []
+        for name, module_path in _discover():
+            if name in applied:
+                continue
+            if dry_run:
+                ran.append(name)
+                continue
+            module = importlib.import_module(module_path)
+            if not hasattr(module, "up"):
+                raise RuntimeError(f"Migration {name} has no async up(db) function.")
+            logger.info("Applying migration %s ...", name)
+            await module.up(db)
+            await db.schema_migrations.insert_one({"name": name, "applied_at": datetime.now(timezone.utc).isoformat()})
+            logger.info("Applied %s.", name)
             ran.append(name)
-            continue
-        module = importlib.import_module(module_path)
-        if not hasattr(module, "up"):
-            raise RuntimeError(f"Migration {name} has no async up(db) function.")
-        logger.info("Applying migration %s ...", name)
-        await module.up(db)
-        await db.schema_migrations.insert_one({"name": name, "applied_at": datetime.now(timezone.utc).isoformat()})
-        logger.info("Applied %s.", name)
-        ran.append(name)
-    return ran
+        return ran
+    finally:
+        if use_lease and not dry_run:
+            await _release_lease(db, owner)

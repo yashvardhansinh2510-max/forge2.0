@@ -19,6 +19,7 @@ const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "selection_scheduled", label: "Selection Scheduled" }, { value: "converted", label: "Converted" },
   { value: "lost", label: "Lost" },
 ];
+const WALKIN_RENDER_BATCH = 40;
 
 async function openUrl(url: string) {
   if (Platform.OS === "web") {
@@ -38,6 +39,7 @@ export default function WalkInsScreen({
   const [items, setItems] = useState<WalkIn[]>([]);
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
+  const [visibleCount, setVisibleCount] = useState(WALKIN_RENDER_BATCH);
   const [floorId, setFloorId] = useState(fixedFloorId || "");
   const [loading, setLoading] = useState(true);
 
@@ -58,6 +60,7 @@ export default function WalkInsScreen({
   }, [fixedFloorId, quotationFollowup, status, floorId, search]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setVisibleCount(WALKIN_RENDER_BATCH); }, [status, search, floorId, quotationFollowup]);
 
   const callCustomer = (w: WalkIn) => {
     if (!w.customer_phone) { toast.error("No phone number on file"); return; }
@@ -142,7 +145,8 @@ export default function WalkInsScreen({
         {!loading && items.length === 0 ? (
           <EmptyState icon="user-plus" title="No walk-ins yet" subtitle="Log your first walk-in to start the pipeline." />
         ) : (
-          items.map((w) => (
+          <>
+          {items.slice(0, visibleCount).map((w) => (
             <WalkInCard
               key={w.id} w={w}
               onPress={() => router.push(`/(admin)/walkins/${w.id}` as any)}
@@ -153,7 +157,16 @@ export default function WalkInsScreen({
               onSaveQuotationPrice={quotationFollowup ? (price) => saveQuotationPrice(w, price) : undefined}
               onTransferToQuotation={enableQuotationTransfer ? () => { void transferToQuotationFollowup(w); } : undefined}
             />
-          ))
+          ))}
+          {items.length > visibleCount ? (
+            <Button
+              label={`Show more (${items.length - visibleCount} remaining)`}
+              variant="secondary"
+              onPress={() => setVisibleCount((count) => count + WALKIN_RENDER_BATCH)}
+              testID="walkins-show-more"
+            />
+          ) : null}
+          </>
         )}
       </ScrollView>
     </SafeAreaView>

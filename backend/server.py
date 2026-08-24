@@ -14,8 +14,9 @@ from middleware import SecurityHeadersMiddleware
 from bootstrap import _check_demo_accounts, run_bootstrap
 from settings import settings
 from services.monitoring import init_monitoring
+from media_storage import get_media_storage
 
-from db import db  # noqa: E402
+from db import client, db  # noqa: E402
 from routes.auth_routes import router as auth_router  # noqa: E402
 from routes.dashboard_routes import router as dashboard_router  # noqa: E402
 from routes.catalog_routes import router as catalog_router  # noqa: E402
@@ -41,6 +42,7 @@ from routes.executive_overview_routes import router as executive_overview_router
 from routes.sales_performance_routes import router as sales_performance_router  # noqa: E402
 from routes.referral_analytics_routes import router as referral_analytics_router  # noqa: E402
 from routes.sales_breakdown_routes import router as sales_breakdown_router  # noqa: E402
+from routes.sales_workspace_routes import router as sales_workspace_router  # noqa: E402
 from routes.tile_orders import router as tile_orders_router  # noqa: E402
 from routes.walkin_routes import router as walkin_router  # noqa: E402
 from seed import resync_catalog_if_needed, seed_if_empty  # noqa: E402
@@ -115,6 +117,8 @@ async def readiness():
     """
     try:
         await db.command("ping")
+        from media_storage.supabase_driver import supabase_ready
+        await supabase_ready()
     except Exception:  # noqa: BLE001
         return JSONResponse(status_code=503, content={"status": "error", "detail": "database unavailable"})
     return {"status": "ok"}
@@ -146,6 +150,7 @@ api.include_router(executive_overview_router)
 api.include_router(sales_performance_router)
 api.include_router(referral_analytics_router)
 api.include_router(sales_breakdown_router)
+api.include_router(sales_workspace_router)
 api.include_router(tile_orders_router)
 api.include_router(walkin_router)
 
@@ -195,7 +200,13 @@ app.add_middleware(
 async def _startup():
     # Validate external infrastructure before any seed/reconciliation writes.
     # Uvicorn does not report the application ready until this preflight passes.
-    await run_bootstrap()
+    # The first pass gates external dependencies but permits index gaps that a
+    # pending migration is about to create.  The post-migration pass enforces
+    # the complete index contract before any ordinary application writes.
+    preflight = await run_bootstrap(enforce_indexes=False)
+    # No migration, seed, cache refresh, or reconciliation write may occur
+    # until both persistence dependencies are proven healthy.
+    preflight.require_healthy()
 
     applied = await run_migrations(db)
     if applied:
@@ -240,4 +251,13 @@ async def _shutdown():
     worker = getattr(app.state, "outbox_worker", None)
     if worker:
         worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+    storage = get_media_storage()
+    close_storage = getattr(storage, "close", None)
+    if close_storage:
+        await close_storage()
+    client.close()
     logger.info("Forge API shutting down.")

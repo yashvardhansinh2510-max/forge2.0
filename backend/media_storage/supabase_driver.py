@@ -19,6 +19,25 @@ from .base import MediaStorage, StoredObject, StorageError
 logger = logging.getLogger("forge.media_storage.supabase")
 
 
+async def supabase_ready(timeout: float = 5.0) -> None:
+    """Prove the configured storage API and both required buckets are usable."""
+    headers = {
+        "apikey": settings.supabase_service_role_key,
+        "Authorization": f"Bearer {settings.supabase_service_role_key}",
+    }
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.get(f"{settings.supabase_url}/storage/v1/bucket", headers=headers)
+    if response.status_code >= 300:
+        raise StorageError(f"Supabase readiness failed [{response.status_code}]")
+    payload = response.json()
+    buckets = payload if isinstance(payload, list) else payload.get("data", [])
+    present = {str(row.get("id") or row.get("name")) for row in buckets if isinstance(row, dict)}
+    required = {settings.supabase_public_bucket, settings.supabase_private_bucket}
+    missing = required - present
+    if missing:
+        raise StorageError("Supabase required bucket(s) missing: " + ", ".join(sorted(missing)))
+
+
 class SupabaseStorageDriver(MediaStorage):
     def __init__(
         self,
@@ -32,6 +51,12 @@ class SupabaseStorageDriver(MediaStorage):
         self.service_role_key = service_role_key or settings.supabase_service_role_key
         self.anon_key = anon_key or settings.supabase_anon_key
         self.timeout = timeout
+        self._client: httpx.AsyncClient | None = None
+
+    async def close(self) -> None:
+        if self._client:
+            await self._client.aclose()
+            self._client = None
 
     # ---- internal helpers ------------------------------------------------
 
@@ -51,8 +76,9 @@ class SupabaseStorageDriver(MediaStorage):
         return f"{self.url}/storage/v1/object/{bucket}/{'/'.join(parts)}"
 
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            return await client.request(method, url, **kwargs)
+        if self._client is None:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return await self._client.request(method, url, **kwargs)
 
     # ---- writes ----------------------------------------------------------
 

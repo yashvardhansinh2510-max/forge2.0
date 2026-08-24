@@ -38,11 +38,13 @@ _DATA_URL_RE = re.compile(r"^data:([^;]+);base64,(.+)$", re.DOTALL)
 
 def _is_landscape_media(doc: dict) -> bool:
     width, height = doc.get("width"), doc.get("height")
-    # The mandatory visual contract is horizontal orientation. New uploads
-    # are additionally padded to 16:10 by the normalizer; historical codec
-    # rounding may make their stored pixel ratio slightly off 16:10, but they
-    # remain valid landscape assets and must not be re-encoded forever.
-    return bool(width and height and width > height and doc.get("mime") != "image/gif")
+    # New images are exactly 16:10. Permit a tiny rounding tolerance for old
+    # lossless encoder metadata, but do not treat an arbitrary wide image as
+    # canonical just because it happens to be horizontal.
+    return bool(
+        width and height and doc.get("mime") != "image/gif"
+        and abs((width / height) - PRODUCT_IMAGE_ASPECT_RATIO) < 0.01
+    )
 
 
 def _stored_bytes_are_landscape(data: bytes) -> bool:
@@ -56,7 +58,10 @@ def _stored_bytes_are_landscape(data: bytes) -> bool:
             raw_size = opened.size
             upright = ImageOps.exif_transpose(opened)
             upright.load()
-            return upright.width > upright.height and upright.size == raw_size
+            return (
+                upright.size == raw_size
+                and abs((upright.width / upright.height) - PRODUCT_IMAGE_ASPECT_RATIO) < 0.01
+            )
     except (UnidentifiedImageError, OSError, ValueError):
         return False
 

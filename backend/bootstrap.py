@@ -80,12 +80,6 @@ REQUIRED_INDEXES: dict[str, list[tuple[tuple[str, Any], ...]]] = {
     "brands": [(("id", 1),), (("floor_id", 1), ("slug", 1))],
     "categories": [(("id", 1),), (("floor_id", 1), ("slug", 1))],
     # Data Integrity Audit (Phase 2, 2026-08) — duplicate-prevention indexes.
-    # `products` (sku, brand_id) unique index is deliberately NOT listed here
-    # yet: a real pre-existing same-brand duplicate SKU was found live and
-    # must be resolved by a human decision before that constraint can be
-    # applied catalog-wide; adding it to this required list before it exists
-    # would block every future startup. See ensure_indexes.py for the
-    # already-attempted (and currently skipped) creation of that one index.
     "users": [(("email", 1),)],
     "quotations": [(("number", 1),)],
     "purchase_orders": [(("number", 1),)],
@@ -96,6 +90,18 @@ REQUIRED_INDEXES: dict[str, list[tuple[tuple[str, Any], ...]]] = {
     "payments": [(("quotation_id", 1),)],
     "suppliers": [(("id", 1),)],
     "activity_events": [(("entity_type", 1), ("entity_id", 1), ("created_at", -1))],
+}
+
+# A key signature alone cannot prove a uniqueness constraint: Mongo exposes
+# both unique and non-unique indexes with the same key pattern.  These are the
+# constraints the application relies on for business identity and idempotency.
+REQUIRED_UNIQUE_INDEXES: dict[str, list[tuple[tuple[str, Any], ...]]] = {
+    "products": [(("floor_id", 1), ("brand_id", 1), ("sku", 1))],
+    "brands": [(("floor_id", 1), ("slug", 1))],
+    "categories": [(("floor_id", 1), ("slug", 1))],
+    "users": [(("email", 1),)],
+    "quotations": [(("number", 1),)],
+    "purchase_orders": [(("number", 1),)],
 }
 
 
@@ -183,10 +189,28 @@ async def _check_mongo(cfg: Settings, report: BootstrapReport) -> None:
             if absent:
                 missing_indexes[collection] = [[list(part) for part in sig] for sig in absent]
         report.checks["mongo"]["missing_indexes"] = missing_indexes
-        if missing_indexes:
+        if missing_indexes and report.checks.get("enforce_indexes", True):
             report.errors.append(
                 "MongoDB required indexes are missing; review bootstrap output before adding them: "
                 + ", ".join(sorted(missing_indexes))
+            )
+
+        missing_unique: dict[str, list[list[list[Any]]]] = {}
+        for collection, expected in REQUIRED_UNIQUE_INDEXES.items():
+            current = await database[collection].index_information()
+            signatures = {
+                _index_signature(spec)
+                for spec in current.values()
+                if spec.get("unique") is True
+            }
+            absent = [sig for sig in expected if sig not in signatures]
+            if absent:
+                missing_unique[collection] = [[list(part) for part in sig] for sig in absent]
+        report.checks["mongo"]["missing_unique_indexes"] = missing_unique
+        if missing_unique and report.checks.get("enforce_indexes", True):
+            report.errors.append(
+                "MongoDB required unique indexes are missing or non-unique: "
+                + ", ".join(sorted(missing_unique))
             )
 
         # Security (BACKEND_AUDIT_2026-07-17.md Critical #1): report, never crash.
@@ -249,8 +273,9 @@ async def run_bootstrap(
     cfg: Settings = settings,
     *,
     health_url: str | None = None,
+    enforce_indexes: bool = True,
 ) -> BootstrapReport:
-    report = BootstrapReport(checks={"configuration": cfg.readiness_flags()})
+    report = BootstrapReport(checks={"configuration": cfg.readiness_flags(), "enforce_indexes": enforce_indexes})
     await asyncio.gather(_check_mongo(cfg, report), _check_supabase(cfg, report))
     if health_url:
         await _check_health(health_url, report)

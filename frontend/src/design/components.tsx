@@ -579,8 +579,8 @@ export function Dialog({
 export type MenuItem = { label: string; icon?: FeatherName; tone?: "ink" | "risk"; onPress: () => void };
 
 export function Menu({
-  items, children, align = "right",
-}: { items: MenuItem[]; children: React.ReactNode; align?: "left" | "right" }) {
+  items, children, align = "right", triggerLabel, triggerTestID,
+}: { items: MenuItem[]; children: React.ReactNode; align?: "left" | "right"; triggerLabel?: string; triggerTestID?: string }) {
   const ref = useRef<View>(null);
   const [pos, setPos] = useState<{ x: number; y: number; w: number } | null>(null);
   const { width: winW, height: winH } = useWindowDimensions();
@@ -600,7 +600,15 @@ export function Menu({
 
   return (
     <>
-      <Pressable ref={ref as any} onPress={openMenu} hitSlop={layout.hitSlop} style={webCursor as any}>
+      <Pressable
+        ref={ref as any}
+        testID={triggerTestID}
+        accessibilityRole="button"
+        accessibilityLabel={triggerLabel}
+        onPress={openMenu}
+        hitSlop={layout.hitSlop}
+        style={webCursor as any}
+      >
         {children}
       </Pressable>
       <Modal visible={!!pos} transparent animationType="none" onRequestClose={() => setPos(null)}>

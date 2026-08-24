@@ -12,6 +12,11 @@ const configuredBase = (process.env.EXPO_PUBLIC_BACKEND_URL || "").replace(/\/+$
 // worker, so login intentionally discarded the returned token yet subsequent
 // requests went straight to Railway unauthenticated.
 const BASE = __DEV__ ? configuredBase : "";
+// A direct Railway URL is used by local Expo development. In that mode there
+// is no same-origin Sites worker to turn the login response into a cookie, so
+// retain the bearer token for authenticated API requests. Production web
+// builds continue to use the HttpOnly worker session.
+const usesDirectDevApi = __DEV__ && Boolean(BASE);
 const TOKEN_KIND_KEY = "forge.jwt.kind";
 const REQUEST_TIMEOUT_MS = 30_000;
 const inflightGets = new Map<string, Promise<unknown>>();
@@ -30,20 +35,24 @@ export async function setToken(token: string, kind: TokenKind) {
   // The Sites worker turns a successful web login into an HttpOnly cookie
   // session. Never persist the bearer token returned by the API in browser
   // storage: any future XSS would otherwise be able to exfiltrate it.
-  void token;
-  tokenCache = null;
+  tokenCache = usesDirectDevApi ? token : null;
   tokenKindCache = kind;
+  if (usesDirectDevApi) await browserStorage.secureSet("forge.jwt", token);
   await browserStorage.setItem(TOKEN_KIND_KEY, kind);
 }
 export async function clearToken() {
   tokenCache = null;
   tokenKindCache = null;
   responseCache.clear();
+  if (usesDirectDevApi) await browserStorage.secureRemove("forge.jwt");
   await browserStorage.removeItem(TOKEN_KIND_KEY);
 }
 export async function getToken(): Promise<string | null> {
-  // Web authentication is cookie-backed. Native keeps the Bearer-token
-  // implementation in client.ts / SecureStore.
+  if (usesDirectDevApi) {
+    if (tokenCache === undefined) tokenCache = (await browserStorage.secureGet<string>("forge.jwt", "")) || null;
+    return tokenCache;
+  }
+  // Production web authentication is cookie-backed.
   if (tokenCache === undefined) tokenCache = null;
   return tokenCache ?? null;
 }

@@ -743,7 +743,7 @@ export default function FollowupsScreen() {
         <MissionHero mission={mission} loading={loading} onJumpTop={() => topPriorityOpen && selectCard(topPriorityOpen)} compact={isPhone} />
 
         {/* KPI strip */}
-        <ScrollView horizontal={isPhone} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingRight: isPhone ? spacing.md : 0 }} style={isPhone ? { marginHorizontal: -pagePad, paddingHorizontal: pagePad } : undefined}>
+        <ScrollView horizontal={isPhone} showsHorizontalScrollIndicator={isPhone} contentContainerStyle={{ gap: spacing.md, paddingRight: isPhone ? spacing.md : 0 }} style={isPhone ? { marginHorizontal: -pagePad, paddingHorizontal: pagePad } : undefined}>
           <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: isPhone ? "nowrap" : "wrap" }}>
           <StatTile label="Today's Tasks" value={stats ? stats.today_tasks : "—"} icon="sun" tone="brand"
             sub={stats?.today_critical ? `${stats.today_critical} critical` : "On track"}
@@ -1369,7 +1369,7 @@ function FollowupCard({
         {f.value > 0 ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 3 }}>
             <Feather name="trending-up" size={11} color={colors.onSurfaceSecondary} />
-            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurface }}>{moneyShort(f.value)}</Text>
+            <Text style={[type.numeric, { fontSize: 12, lineHeight: 16, color: colors.onSurface }]}>{moneyShort(f.value)}</Text>
             <Text style={type.caption}>at stake</Text>
           </View>
         ) : null}
@@ -1378,7 +1378,7 @@ function FollowupCard({
         <View style={{ gap: 2 }}>
           <Text style={type.bodySm} numberOfLines={2}>{f.reason}</Text>
           {f.reason_factors?.length ? (
-            <Text style={type.caption} numberOfLines={1}>{f.reason_factors.join(" · ")}</Text>
+            <Text style={type.caption} numberOfLines={2}>{f.reason_factors.join(" · ")}</Text>
           ) : null}
         </View>
 

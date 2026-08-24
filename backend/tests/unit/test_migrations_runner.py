@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 
-from migrations.runner import run_migrations
+from migrations.runner import _acquire_lease, _release_lease, run_migrations
 
 
 class _FakeCursor:
@@ -55,9 +55,25 @@ class _GenericFakeCollection:
         return _noop
 
 
+class _FakeLeaseCollection:
+    def __init__(self):
+        self.doc: dict | None = None
+
+    async def find_one_and_update(self, query, update, **_kwargs):
+        if self.doc and self.doc.get("owner") != query["$or"][1]["owner"]:
+            return None
+        self.doc = {"_id": "global", **update["$set"]}
+        return self.doc
+
+    async def delete_one(self, query):
+        if self.doc and self.doc.get("owner") == query.get("owner"):
+            self.doc = None
+
+
 class _FakeDb:
     def __init__(self):
         self.schema_migrations = _FakeMigrationsCollection()
+        self.schema_migration_locks = _FakeLeaseCollection()
 
     def __getattr__(self, _name):
         # Only reached for attributes NOT already set in __init__ (i.e. any
@@ -71,12 +87,12 @@ def test_run_migrations_discovers_and_applies_real_migrations_in_order():
     needing a real Mongo connection."""
     fake_db = _FakeDb()
 
-    ran_first = asyncio.run(run_migrations(fake_db))
+    ran_first = asyncio.run(run_migrations(fake_db, use_lease=False))
     assert ran_first == sorted(ran_first)  # applied in filename order
     assert "0001_baseline" in ran_first
     assert len(ran_first) >= 3  # 0001, 0002, 0003 at minimum
 
-    ran_second = asyncio.run(run_migrations(fake_db))
+    ran_second = asyncio.run(run_migrations(fake_db, use_lease=False))
     assert ran_second == []  # nothing pending — already recorded as applied
 
 
@@ -88,5 +104,14 @@ def test_run_migrations_dry_run_reports_without_recording():
     assert fake_db.schema_migrations.docs == []  # dry run must not write anything
 
     # A real (non-dry) run afterwards still sees everything as pending.
-    ran = asyncio.run(run_migrations(fake_db))
+    ran = asyncio.run(run_migrations(fake_db, use_lease=False))
     assert ran == pending
+
+
+def test_migration_lease_excludes_another_replica_and_releases():
+    fake_db = _FakeDb()
+
+    assert asyncio.run(_acquire_lease(fake_db, "replica-a"))
+    assert not asyncio.run(_acquire_lease(fake_db, "replica-b"))
+    asyncio.run(_release_lease(fake_db, "replica-a"))
+    assert asyncio.run(_acquire_lease(fake_db, "replica-b"))

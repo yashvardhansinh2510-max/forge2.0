@@ -144,6 +144,7 @@ export default function PaymentsScreen() {
   const [historyRows, setHistoryRows] = useState<HistoryRow[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyQ, setHistoryQ] = useState("");
   const [historyUnit, setHistoryUnit] = useState<string>("all");
   const [historyMode, setHistoryMode] = useState<string>("all");
@@ -253,36 +254,44 @@ export default function PaymentsScreen() {
     return qs;
   }, [historyQ, historyUnit, historyMode, historyDateFrom, historyDateTo, historySort]);
 
-  const loadHistory = useCallback(async (page: number = historyPage) => {
+  const loadHistory = useCallback(async (page: number) => {
     setHistoryLoading(true);
+    setHistoryError(null);
     try {
       const qs = historyParams();
       qs.set("skip", String(page * HISTORY_PAGE_SIZE));
       qs.set("limit", String(HISTORY_PAGE_SIZE));
       const res = await api.get<{ total: number; items: HistoryRow[] }>(`/payments/history?${qs.toString()}`);
-      setHistoryRows(res.items);
-      setHistoryTotal(res.total);
+      // A partial or legacy response must still leave the operator with a
+      // clear, recoverable state instead of a blank ledger surface.
+      setHistoryRows(Array.isArray(res?.items) ? res.items : []);
+      setHistoryTotal(Number.isFinite(res?.total) ? res.total : 0);
     } catch (e: any) {
-      toast.error(e?.detail || "Could not load payment history");
+      const message = e?.detail || "Could not load payment history";
+      setHistoryRows([]);
+      setHistoryTotal(0);
+      setHistoryError(message);
+      toast.error(message);
     } finally {
       setHistoryLoading(false);
     }
-  }, [historyParams, historyPage]);
+  }, [historyParams]);
 
-  // Reset to page 0 whenever a filter changes, then (re)load — debounced only
-  // on free-text search so filter chips feel instant.
+  // Reset to page 0 whenever a filter changes, then load exactly once.
+  // Previously switching to the ledger triggered both of these effects at
+  // once, making a slow request look like an empty (or stuck) list on mobile.
   useEffect(() => {
     if (tab !== "history") return;
     setHistoryPage(0);
     const t = setTimeout(() => loadHistory(0), historyQ ? 260 : 0);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, historyQ, historyUnit, historyMode, historyDateFrom, historyDateTo, historySort]);
+  }, [tab, historyQ, historyUnit, historyMode, historyDateFrom, historyDateTo, historySort, loadHistory]);
 
   useEffect(() => {
-    if (tab === "history") loadHistory(historyPage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyPage]);
+    // Page zero is loaded by the filter/tab effect above. Pagination is the
+    // only source of non-zero pages, so it gets one dedicated request.
+    if (tab === "history" && historyPage > 0) void loadHistory(historyPage);
+  }, [tab, historyPage, loadHistory]);
 
   const exportHistory = async (fmt: "csv" | "xlsx") => {
     try {
@@ -539,6 +548,8 @@ export default function PaymentsScreen() {
           rows={historyRows}
           total={historyTotal}
           loading={historyLoading}
+          error={historyError}
+          onRetry={() => void loadHistory(historyPage)}
           page={historyPage}
           pageSize={HISTORY_PAGE_SIZE}
           onPageChange={setHistoryPage}
@@ -615,7 +626,7 @@ function DateInput({ value, onChange, placeholder, testID }: {
 }
 
 function PaymentHistoryTab(props: {
-  rows: HistoryRow[]; total: number; loading: boolean;
+  rows: HistoryRow[]; total: number; loading: boolean; error: string | null; onRetry: () => void;
   page: number; pageSize: number; onPageChange: (p: number) => void;
   q: string; onQChange: (v: string) => void;
   unit: string; onUnitChange: (v: string) => void; floors: FloorOpt[];
@@ -627,7 +638,7 @@ function PaymentHistoryTab(props: {
   onOpenOrder: (quotationId: string) => void;
 }) {
   const {
-    rows, total, loading, page, pageSize, onPageChange,
+    rows, total, loading, error, onRetry, page, pageSize, onPageChange,
     q, onQChange, unit, onUnitChange, floors,
     mode, onModeChange, dateFrom, onDateFromChange, dateTo, onDateToChange,
     sort, onSortChange, onOpenCustomer, onOpenOrder,
@@ -727,9 +738,14 @@ function PaymentHistoryTab(props: {
         <View style={{ gap: spacing.sm }}>
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} w="100%" h={56} radius={radius.md} />)}
         </View>
+      ) : error ? (
+        <EmptyState icon="alert-triangle" title="Couldn't load payment history"
+          subtitle={error} action={<Button label="Try again" variant="secondary" onPress={onRetry} />} />
       ) : rows.length === 0 ? (
-        <EmptyState icon="file-text" title="No payments match these filters"
-          subtitle="Try widening the date range or clearing a filter." />
+        <EmptyState icon="file-text" title={q || unit !== "all" || mode !== "all" || dateFrom || dateTo ? "No payments match these filters" : "No completed payments yet"}
+          subtitle={q || unit !== "all" || mode !== "all" || dateFrom || dateTo
+            ? "Try widening the date range or clearing a filter."
+            : "Completed payments will appear here after they are recorded."} />
       ) : (
         <>
           <DataTable

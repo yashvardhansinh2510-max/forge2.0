@@ -41,11 +41,10 @@ def normalize_tile_line_item(item: QuotationLineItem) -> QuotationLineItem:
     if rate_box is None:
         rate_box = item.unit_price
     item.rate_box = round(max(0.0, float(rate_box)), 2)
-    try:
-        pcs = float(str(item.pcs_per_box or "").replace(",", ""))
-    except ValueError:
-        pcs = 0
-    item.unit_price = round(item.rate_box / pcs, 2) if item.quantity_unit == "Pieces" and pcs > 0 else item.rate_box
+    # The quantity unit records how the material is fulfilled. It must not
+    # mutate the agreed quotation rate: a Box → Piece toggle previously
+    # divided the price by pcs_per_box and changed the saved quotation total.
+    item.unit_price = item.rate_box
     return item
 
 

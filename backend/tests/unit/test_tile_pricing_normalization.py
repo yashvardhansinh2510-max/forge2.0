@@ -37,3 +37,11 @@ def test_missing_box_coverage_does_not_invent_a_conversion():
 
     assert line.unit_price == 999
     assert line.offer_rate == 360
+
+
+def test_quantity_unit_toggle_never_changes_the_quoted_price():
+    box = normalize_tile_line_item(_line(rate_sqft=100, box_sqft=10, pcs_per_box="5", quantity_unit="Box"))
+    piece = normalize_tile_line_item(_line(rate_sqft=100, box_sqft=10, pcs_per_box="5", quantity_unit="Pieces"))
+
+    assert box.rate_box == piece.rate_box == 1000
+    assert box.unit_price == piece.unit_price == 1000

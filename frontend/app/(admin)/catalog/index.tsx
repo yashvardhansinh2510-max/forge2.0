@@ -365,30 +365,35 @@ export default function Catalog() {
       </View>
 
       {!isPhone ? <>
-      <ScrollView
-        horizontal showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ gap: 8, paddingRight: gridPadding, paddingVertical: 2 }}
-        style={{ marginHorizontal: -gridPadding, paddingHorizontal: gridPadding }}
-      >
-        <BrandPill
-          label="All brands"
-          count={brands.reduce((sum, b) => sum + (brandCounts[b.id] || 0), 0)}
-          active={!brandId}
-          onPress={() => { setBrandId(null); setCat(null); setSubcat(null); setSeries(null); }}
-          testID="brand-pill-all"
-        />
-        {brands.map((b) => (
+      <View style={styles.horizontalStrip}>
+        <ScrollView
+          horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ gap: 8, paddingRight: gridPadding + 28, paddingVertical: 2 }}
+          style={{ marginHorizontal: -gridPadding, paddingHorizontal: gridPadding }}
+        >
           <BrandPill
-            key={b.id}
-            label={b.name}
-            logo={supplierLogoFor(b.name)}
-            count={brandCounts[b.id]}
-            active={brandId === b.id}
-            onPress={() => { setBrandId(brandId === b.id ? null : b.id); setCat(null); setSubcat(null); setSeries(null); }}
-            testID={`brand-pill-${b.id}`}
+            label="All brands"
+            count={brands.reduce((sum, b) => sum + (brandCounts[b.id] || 0), 0)}
+            active={!brandId}
+            onPress={() => { setBrandId(null); setCat(null); setSubcat(null); setSeries(null); }}
+            testID="brand-pill-all"
           />
-        ))}
-      </ScrollView>
+          {brands.map((b) => (
+            <BrandPill
+              key={b.id}
+              label={b.name}
+              logo={supplierLogoFor(b.name)}
+              count={brandCounts[b.id]}
+              active={brandId === b.id}
+              onPress={() => { setBrandId(brandId === b.id ? null : b.id); setCat(null); setSubcat(null); setSeries(null); }}
+              testID={`brand-pill-${b.id}`}
+            />
+          ))}
+        </ScrollView>
+        <View pointerEvents="none" style={styles.stripOverflowCue}>
+          <Feather name="chevron-right" size={16} color={colors.onSurfaceMuted} />
+        </View>
+      </View>
 
       <ScrollView
         horizontal showsHorizontalScrollIndicator={false}
@@ -416,7 +421,7 @@ export default function Catalog() {
       ) : null}
 
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <View style={{ flex: 1, flexShrink: 1 }}>
+        <View style={(subcat || series) ? { flex: 1, flexShrink: 1 } : undefined}>
           {(subcat || series) ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingRight: 8 }}>
               {subcat ? <ActiveChip label={subcat} onClose={() => { setSubcat(null); setSeries(null); }} /> : null}
@@ -786,6 +791,12 @@ function FilterSection({ title, children }: { title: string; children: React.Rea
 
 const styles = StyleSheet.create({
   skeletonGrid: { flexDirection: "row", flexWrap: "wrap" },
+  horizontalStrip: { position: "relative" },
+  stripOverflowCue: {
+    position: "absolute", top: 0, right: -2, bottom: 0, width: 30,
+    alignItems: "flex-end", justifyContent: "center",
+    backgroundColor: colors.surface,
+  },
   searchWrap: {
     flex: 1, flexDirection: "row", alignItems: "center", gap: 10,
     borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,

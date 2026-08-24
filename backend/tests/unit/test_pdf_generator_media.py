@@ -35,22 +35,33 @@ def test_contain_box_centers_a_horizontal_product_image():
     assert y == 6
 
 
-def test_pdf_image_bytes_keep_portrait_sources_upright():
+def test_pdf_image_bytes_rotate_portrait_sources_to_horizontal_product_media():
     source = _png_bytes(60, 120)
 
     assert callable(getattr(pdf_generator, "_prepare_image_bytes", None))
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (60, 120)
+        assert image.size == (96, 60)
 
 
-def test_pdf_img_uses_contain_fit_without_rotating_portrait_source(monkeypatch):
+def test_pdf_image_bytes_force_rotates_an_old_landscape_padded_asset():
+    # An older asset can already be landscape at the file boundary while its
+    # actual product remains portrait. The tile size rule must still rotate it.
+    source = _png_bytes(192, 120)
+
+    prepared = pdf_generator._prepare_image_bytes(source, force_landscape=True)
+
+    with PILImage.open(BytesIO(prepared)) as image:
+        assert image.size[0] > image.size[1]
+
+
+def test_pdf_img_uses_a_horizontal_canvas_for_portrait_source(monkeypatch):
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
 
     image = pdf_generator._img("https://example.test/product.png")
 
-    assert image.drawWidth == 7.1875 * pdf_generator.mm
+    assert image.drawWidth == 23.0 * pdf_generator.mm
     assert image.drawHeight == 14.375 * pdf_generator.mm
     assert image.hAlign == "CENTER"
 
@@ -61,7 +72,7 @@ def test_exif_orientation_six_is_honored_once():
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (120, 60)
+        assert image.size == (96, 60)
 
 
 def test_exif_orientation_eight_is_honored_once():
@@ -70,11 +81,11 @@ def test_exif_orientation_eight_is_honored_once():
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (120, 60)
+        assert image.size == (96, 60)
 
 
-def test_standard_selection_and_tiles_quotation_pdfs_use_16_by_10_cells_and_keep_products_upright(monkeypatch):
-    """All variants use landscape target cells while preserving portrait content."""
+def test_standard_selection_and_tiles_quotation_pdfs_use_horizontal_product_images(monkeypatch):
+    """Every PDF variant receives a 16:10 horizontal image, centered in its cell."""
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
     original_img = pdf_generator._img
     rendered_sizes: list[tuple[float, float]] = []
@@ -110,7 +121,7 @@ def test_standard_selection_and_tiles_quotation_pdfs_use_16_by_10_cells_and_keep
         (pdf_tiles.QUOTATION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.QUOTATION_PRODUCT_IMAGE_HEIGHT_MM),
     ]
     assert all(width / height == pdf_generator.PRODUCT_IMAGE_ASPECT_RATIO for width, height in requested_boxes)
-    assert all(height > width for width, height in rendered_sizes)
+    assert all(width > height for width, height in rendered_sizes)
 
 
 def test_every_quotation_pdf_is_landscape_a4(monkeypatch):

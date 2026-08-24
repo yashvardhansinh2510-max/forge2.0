@@ -230,7 +230,10 @@ export function FilterBar<T extends string>({
       {label ? <Text style={type.overline}>{label}</Text> : null}
       <ScrollView
         horizontal
-        showsHorizontalScrollIndicator={false}
+        // Filter choices may legitimately extend beyond a phone width. Keep
+        // the native indicator visible so that clipped chips read as a
+        // scrollable control, not missing options.
+        showsHorizontalScrollIndicator
         contentContainerStyle={{ gap: spacing.sm, paddingRight: spacing.lg }}
       >
         {options.map((o) => {

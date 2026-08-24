@@ -129,14 +129,11 @@ async def ensure_all() -> None:
     # — these unique indexes convert that "no duplicates today" into
     # "duplicates are now structurally impossible", closing the exact class
     # of bug that caused real data loss twice before.
-    # `products_sku_brand_unique`: a real live same-brand duplicate (SKU
-    # "26456000", two distinct Hansgrohe products) was found by this exact
-    # index during the Phase 2 Data Integrity Audit (2026-08) and must be
-    # resolved by a human decision (which product record is correct) before
-    # this constraint applies catalog-wide — `_safe_create_index` logs and
-    # continues instead of crashing until that's resolved.
+    # SKU identity is deliberately scoped by floor as well as brand.  A tile
+    # and sanitary supplier may legitimately reuse the same SKU.
     await _safe_create_index(
-        db.products, [("sku", 1), ("brand_id", 1)], unique=True, name="products_sku_brand_unique",
+        db.products, [("floor_id", 1), ("brand_id", 1), ("sku", 1)],
+        unique=True, name="products_floor_brand_sku_unique",
     )
 
     await _safe_create_index(db.users, "email", unique=True, name="users_email_unique")
