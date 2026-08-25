@@ -1,0 +1,41 @@
+{
+  "summary": "Focused frontend retest for Tile Orders Dispatch List completed on live preview (owner login, mobile viewport). Duplicate React key regression is not reproducible after fix. Dispatch List loads live API data, four tabs remain intact, and row actions are working.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/app/(admin)/tiles/orders/index.tsx",
+    "/app/frontend/scripts/verify-tile-orders-contract.mjs",
+    "/app/test_reports/iteration_19_ui_smoke/initial_load_mobile.jpeg",
+    "/app/test_reports/iteration_19_ui/dispatch_list_state.jpeg",
+    "/app/test_reports/iteration_19_ui_rerun/dispatch_list_final.jpeg",
+    "/app/test_reports/iteration_19_ui_probe/view_dispatch_first_row.jpeg",
+    "/root/.emergent/automation_output/20260731_112948/console_20260731_112948.log",
+    "/root/.emergent/automation_output/20260731_113026/console_20260731_113026.log"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "dispatchRowKey(row, index) and indexed action testIDs are present in frontend/app/(admin)/tiles/orders/index.tsx, matching the required anti-collision fix path.",
+    "No duplicate-key console warning ('Encountered two children with the same key') observed while rendering a Dispatch List with 19 rows and repeated tile line scenarios.",
+    "Live Dispatch List contract remains intact: four tabs present and /api/tile-orders/dispatches is called from UI (captured GET requests)."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_19.json"
+  ],
+  "success_rate": {
+    "backend": "NA",
+    "frontend": "100%"
+  },
+  "seed_data_creation": "No new seed data created in this focused retest.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use owner credentials from /app/memory/test_credentials.md. Focused scope was Dispatch List regression only (no Sales Data testing).",
+  "rca_of_issue": "Regression verification outcome: previous collision key `${dispatch_id}-${chalan_id}-${tile_name}` is no longer used for row rendering. Current row key includes index via dispatchRowKey(row, index), removing duplicate-key collision for repeated product lines under the same dispatch/chalan in the tested dataset."
+}

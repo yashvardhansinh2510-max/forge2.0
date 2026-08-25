@@ -1,0 +1,25 @@
+{
+  "updated": [
+    {
+      "sku": "154.050.00.1",
+      "product_id": "5457dd90-a133-4b6c-b819-a9e5e3d26b54",
+      "old_name": "*Article No.",
+      "new_name": "Geberit CleanPoint Shower Floor Drain \u2014 Screed Height 90\u2013220mm",
+      "matched": 1,
+      "modified": 1
+    },
+    {
+      "sku": "154.053.00.1",
+      "product_id": "955c528a-9f67-490e-bb33-ec47f38a337d",
+      "old_name": "*Article No.",
+      "new_name": "Geberit CleanPoint Cross-Floor Shower Drain",
+      "matched": 1,
+      "modified": 1
+    }
+  ],
+  "not_found": [],
+  "unchanged_untouched_fields_verified": true,
+  "integrity_before_ok": true,
+  "integrity_after_ok": true,
+  "products_count_unchanged": true
+}

@@ -1,0 +1,62 @@
+{
+  "summary": "Frontend-only final retest completed (desktop + phone). Rapid post-login dashboard -> Tile Orders navigation still reproduces aborted dashboard GET requests; aborted followups reconcile POST was not observed; no browser console error logs were observed. Tile Orders route still loads and shows operations tabs plus compact customer grid on both desktop and phone.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Immediate post-login and rapid repeat dashboard -> Tile Orders navigation (desktop)",
+        "issue": "Aborted dashboard bootstrap GETs still observed: /api/followups/mission, /api/followups?limit=12, /api/dashboard/stats, /api/payments/stats.",
+        "affected_testIDs": [
+          "nav-dashboard",
+          "nav-orders"
+        ]
+      },
+      {
+        "flow": "Immediate post-login and rapid repeat dashboard -> Tile Orders navigation (phone)",
+        "issue": "Aborted dashboard bootstrap GETs still observed: /api/followups/mission, /api/followups?limit=12, /api/dashboard/stats, /api/payments/stats.",
+        "affected_testIDs": [
+          "bottom-nav-dashboard",
+          "bottom-nav-more"
+        ]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_22_ui_desktop_rerun/final_tile_orders.jpeg",
+    "/app/test_reports/iteration_22_ui_phone/mobile_rapid_tile_orders.jpeg",
+    "/app/test_reports/iteration_22_ui_desktop_settle/tile_orders_settled_desktop.jpeg",
+    "/app/test_reports/iteration_22_ui_phone_settle/tile_orders_settled.jpeg",
+    "/root/.emergent/automation_output/20260731_120130/console_20260731_120130.log",
+    "/root/.emergent/automation_output/20260731_120152/console_20260731_120152.log",
+    "/root/.emergent/automation_output/20260731_120228/console_20260731_120228.log",
+    "/root/.emergent/automation_output/20260731_120245/console_20260731_120245.log",
+    "/root/.emergent/automation_output/20260731_120309/console_20260731_120309.log"
+  ],
+  "action_items": [
+    "Rework dashboard bootstrap cancellation to eliminate aborted dashboard GET noise during immediate route exits (current 350ms delay + timer cleanup is insufficient in live flow).",
+    "Gate dashboard bootstrap with route-focus/active-screen guard and/or add AbortController-aware request handling so intentional route change does not surface aborted request failures.",
+    "Re-run this exact desktop+phone rapid navigation scenario after fix and verify zero aborted dashboard GETs and zero aborted /api/followups/reconcile."
+  ],
+  "critical_code_review_comments": [
+    "dashboard.tsx delays initial load via setTimeout(350) and clears timer on unmount, but once timer fires load() starts multiple GETs without explicit cancellation semantics; rapid route change still yields browser-level net::ERR_ABORTED for dashboard reads.",
+    "No auto reconcile mutation regression observed: /api/followups/reconcile abort count remained 0 across tested rapid navigation runs."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_22.json"
+  ],
+  "success_rate": {
+    "backend": "N/A (frontend-only scope)",
+    "frontend": "75%"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Credentials used from /app/memory/test_credentials.md (owner@forge.app). Critical failure reproduced in 3 rapid-nav desktop runs and 1 rapid-nav phone run: dashboard GET aborts persist. Tile Orders tabs + customer grid still load after settling (rows present on both desktop and phone).",
+  "rca_of_issue": "Reproduction: login -> immediately navigate dashboard to Tile Orders, then rapidly bounce dashboard <-> Tile Orders. Observed consistent net::ERR_ABORTED on dashboard bootstrap GETs (followups mission/list, dashboard stats, payments stats), while reconcile POST aborts remained zero and console error count remained zero. Likely root cause: timer cleanup only prevents not-yet-started bootstrap; once timer fires, in-flight dashboard reads can still be interrupted by navigation and appear as aborted failures."
+}

@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 3 backend regression for two P1 catalog-pipeline fixes (WDP image decoding + certifier cross-family SKU logic). Wrote 13 focused tests in /app/backend/tests/test_catalog_pipeline_fixes.py; all pass, and the pre-existing 43-test regression suite (test_forge_backend.py + test_quotation_v2.py) still passes for a clean 56/56. Verified: (1) backend service RUNNING and /api/health returns 200; (2) POST /api/auth/login with owner@forge.app / Forge@2026 returns a proper 3-segment JWT; (3) Fix A — a synthetic xlsx zip containing one PNG + one WDP media file yields TWO images via extract_images_from_xlsx, both as data:image/png;base64,... URLs with a valid PNG magic header (89 50 4E 47 0D 0A 1A 0A) once base64-decoded; the latent absolute-Target fix (workbook.xml.rels Target='/xl/worksheets/sheet1.xml') also verified to still return both images (no more xl/xl/... resolution); (4) Fix B — certifier scenarios both hold exactly as spec: two rows with SKU 115.001 + identical family_key give duplicates_sku=1, cross_family_skus=0, second row status='rejected', production_ready=False; two rows with SKU 115.882.KJ.1 across different family_keys plus two clean rows give duplicates_sku=0, cross_family_skus=1, neither cross-family row rejected, overall_score=100.0 >= 95, production_ready=True; (5) CertificationReport.to_public() includes the new 'cross_family_skus' int key AND every legacy key (extraction_accuracy, sku_accuracy, price_accuracy, category_accuracy, variant_accuracy, image_accuracy, duplicate_score, missing_data_score, total_products, products_ready, products_needing_review, families_detected, duplicates_sku, duplicates_family, missing_images, missing_mrp, missing_categories, variant_conflicts, category_conflicts, warnings, overall_score, production_ready) is still present — no schema regression; (6) run_pipeline('Vitra', 'vitra_test.xlsx', tiny_xlsx) executes end-to-end in-process and the returned 'certification' dict surfaces 'cross_family_skus'; (7) route-level smoke: POST /api/catalog/imports/from-url returns 401/403 unauthenticated, 400 for unsupported brand, 400 for malformed url; POST /api/catalog/imports/{id}/approve returns 404 for a bogus id (auth passes, lookup runs); GET /api/catalog/imports/config/brands returns 200 with Vitra + Geberit present. imagecodecs==2026.3.6 is installed and jpegxr_decode/png_encode are importable. No mocks used. No frontend testing performed per spec.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_catalog_pipeline_fixes.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "image_extractor.py:56-71 shells out to `convert` (ImageMagick) for EMF handling with a hardcoded 8s timeout. This dependency isn't declared anywhere in requirements/system_setup, so on hosts without ImageMagick every EMF frame is silently dropped (same failure mode as pre-fix WDP). Consider a fallback to `imagecodecs.emf_decode` or, at minimum, an INFO log on first `FileNotFoundError`.",
+    "certifier.py:64-83 uses `group[0]` as the canonical row for the family comparison. Order depends on adapter iteration, which for Vitra/Geberit adapters is spreadsheet order — should be stable, but if a future adapter yields rows in a hash-based order, the same SKU pair could flip between true-dupe and cross-family classification across runs. Consider sorting group by (family_key, row_id) before picking canonical, or comparing all pairs against each other rather than against the first row.",
+    "certifier.py:141-146 gates products_ready on `r.status != 'rejected'`, but cross-family rows never get rejected — good — however the `r.issues` array now contains the 'will merge onto the canonical product on import' note. If any downstream UI filters rows by `len(issues) == 0` to decide 'no attention needed', that filter needs updating; otherwise all Vitra flush-plate cross-family rows will appear as 'needs review' in the Review screen despite being production-ready."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_catalog_pipeline_fixes.py"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 new + 43/43 regression = 56/56)",
+    "frontend": "not tested (backend-only iteration)"
+  },
+  "seed_data_creation": "None. All xlsx fixtures built in-memory inside the test file; no DB writes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Base URL env is EXPO_PUBLIC_BACKEND_URL. Owner login: owner@forge.app / Forge@2026. To exercise the WDP path without a real Vitra file, use imagecodecs.jpegxr_encode(np.zeros((H,W,3),uint8)) → put into xl/media/*.wdp inside a hand-rolled xlsx zip; the extractor walks workbook.xml → sheet rels → drawing rels → media. Certifier report now has a `cross_family_skus` int (asdict via to_public()); keep that in mind when writing UI assertions. Route paths: POST /api/catalog/imports/from-url  and POST /api/catalog/imports/{id}/approve; brands whitelist is Hansgrohe/Axor/Grohe/Vitra/Geberit.",
+  "rca_of_issue": "No new bugs found. Both fixes behave as specified. imagecodecs 2026.3.6 is present in the runtime venv and re-encodes decoded WDP arrays to PNG (verified via base64-decode + magic-byte assertion on real xlsx zips). Certifier splits SKU dupes correctly using `family_key` equality vs group[0], with sku_accuracy and production_ready gated on `duplicates_sku` only — cross_family_skus is informational and surfaces via warnings + per-row issues note without triggering rejection."
+}

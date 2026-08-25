@@ -1,0 +1,65 @@
+{
+  "summary": "Backend and frontend testing completed for Tile Orders UX Restoration on live preview. Backend tile-order workflow regressions passed fully (release -> godown -> dispatch -> chalan/pdf -> movement register). Frontend desktop/tablet/mobile checks passed for dense grids, navigation, release/customer/dispatch/material tabs, and core live action flows; one recurring network abort was captured in browser logs outside Tile Orders core actions.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Customer detail operations table",
+        "issue": "Columns labeled DISPATCHED and DELIVERED currently render the same field value (boxes_dispatched), so they are visually indistinguishable in UI.",
+        "testID": "tile-customer-workflow-rail",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Post-login global dashboard background sync",
+        "issue": "Browser automation repeatedly captured request failure: POST /api/followups/reconcile -> net::ERR_ABORTED during navigation. Tile Orders APIs continued to work, but this is still a visible network error in logs.",
+        "affected_testIDs": [
+          "nav-orders",
+          "bottom-nav-more"
+        ]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tile_orders_restore_workflow_regression.py",
+    "/app/backend/tests/test_tile_orders_dispatch_workflow.py",
+    "/app/test_reports/pytest/pytest_tile_orders_restore_workflow_iteration20.xml",
+    "/app/test_reports/pytest/pytest_tile_orders_dispatch_iteration20.xml",
+    "/app/test_reports/iteration_20_ui_mobile_rerun/brand_release_page.jpeg",
+    "/app/test_reports/iteration_20_ui_mobile_rerun/customer_workspace.jpeg",
+    "/app/test_reports/iteration_20_ui_mobile_modal_repro/",
+    "/app/test_reports/iteration_20_ui_mobile_mutation/customer_after_actions.jpeg",
+    "/app/test_reports/iteration_20_ui_desktop/customer_dashboard.jpeg",
+    "/app/test_reports/iteration_20_ui_desktop_probe/dispatch_after_wait.jpeg",
+    "/app/test_reports/iteration_20_ui_tablet/tile_orders_tablet.jpeg",
+    "/root/.emergent/automation_output/20260731_115259/console_20260731_115259.log",
+    "/root/.emergent/automation_output/20260731_115343/console_20260731_115343.log"
+  ],
+  "action_items": [
+    "Investigate and suppress/handle aborted POST /api/followups/reconcile request during route changes so production console/network logs stay clean.",
+    "If business expects distinct lifecycle values, map DELIVERED column to a dedicated delivered counter/event source instead of mirroring dispatched." 
+  ],
+  "critical_code_review_comments": [
+    "frontend/app/(admin)/tiles/orders/[id].tsx currently renders both DISPATCHED and DELIVERED from item.boxes_dispatched.",
+    "Tile Orders core API bindings and route contracts remain intact: frontend/src/api/tileOrders.ts aligns with backend/routes/tile_orders.py for release/godown/dispatch/movements/dispatch-list endpoints.",
+    "Workflow rail is present on dashboard, brand release page, and customer detail page as required."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_20.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "92%"
+  },
+  "seed_data_creation": "Regression tests created isolated TEST_ quotations/orders through live API flows (including TEST_restore_<uuid> and TEST_pytest_order_created_regression) for persistence and workflow verification.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use owner credentials from /app/memory/test_credentials.md. Mutating mobile UI run successfully executed Move to Godown and Dispatch from Godown on Task19 MultiSupplier Test before timing out on a post-action navigation wait; verify same flow with longer wait and confirm movement register row appears immediately in UI.",
+  "rca_of_issue": "RCA 1 (network abort): POST /api/followups/reconcile is triggered in background after login and can be aborted when user navigates rapidly (login -> Tile Orders), producing requestfailed logs without breaking Tile Orders flow. RCA 2 (delivered column): UI data mapping in customer table duplicates dispatched into delivered, so separate delivered state is not currently represented visually."
+}

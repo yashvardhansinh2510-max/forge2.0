@@ -1,0 +1,71 @@
+{
+  "summary": "Frontend-only final lifecycle retest completed (desktop + phone). Immediate post-login dashboard -> Tile Orders rapid navigation still produces browser-visible net::ERR_ABORTED on dashboard bootstrap GETs. No aborted /api/followups/reconcile POST observed, and no browser console error logs observed. Tile Orders tabs load, but desktop content state did not consistently settle to a visible customer grid in rapid-cycle runs.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Tile Orders customer tab content",
+        "issue": "After rapid navigation cycles, desktop Tile Orders view showed prolonged loading/empty state in capture; compact customer grid rows were not confirmed visible in that run.",
+        "testID": "tile-orders-tab-customer",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Desktop immediate post-login dashboard <-> Tile Orders rapid navigation",
+        "issue": "Aborted dashboard bootstrap GET requests still observed in network (net::ERR_ABORTED): /api/followups/mission, /api/followups?limit=12, /api/dashboard/stats, /api/payments/stats, /api/quotations/recent?limit=5, /api/purchases/shortages?status=awaiting_reorder.",
+        "affected_testIDs": [
+          "nav-dashboard",
+          "nav-orders"
+        ]
+      },
+      {
+        "flow": "Phone immediate post-login dashboard <-> Tile Orders rapid navigation",
+        "issue": "Aborted dashboard bootstrap GET requests still observed in network (net::ERR_ABORTED): /api/followups/mission, /api/followups?limit=12, /api/dashboard/stats, /api/payments/stats.",
+        "affected_testIDs": [
+          "bottom-nav-dashboard",
+          "bottom-nav-more"
+        ]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_24_ui_desktop/desktop_initial.jpeg",
+    "/app/test_reports/iteration_24_ui_desktop/final_tile_orders_desktop.jpeg",
+    "/app/test_reports/iteration_24_ui_phone/mobile_initial.jpeg",
+    "/app/test_reports/iteration_24_ui_phone/final_tile_orders_phone.jpeg",
+    "/app/test_reports/iteration_24_ui_phone_rerun/mobile_initial.jpeg",
+    "/app/test_reports/iteration_24_ui_phone_rerun/final_tile_orders_phone.jpeg",
+    "/app/test_reports/iteration_24_ui_desktop_settle/failure_state.jpeg",
+    "/root/.emergent/automation_output/20260731_121321/console_20260731_121321.log",
+    "/root/.emergent/automation_output/20260731_121358/console_20260731_121358.log",
+    "/root/.emergent/automation_output/20260731_121425/console_20260731_121425.log",
+    "/root/.emergent/automation_output/20260731_121533/console_20260731_121533.log"
+  ],
+  "action_items": [
+    "Eliminate browser-visible dashboard bootstrap GET aborts during immediate dashboard -> Tile Orders route changes.",
+    "Validate route lifecycle behavior together with floor-switch navigation path (Tile Orders navigation may trigger a full-page transition when current floor is not ground-floor, which can abort in-flight dashboard reads).",
+    "Re-test desktop and phone rapid navigation after fix and confirm: zero aborted dashboard GETs, zero aborted /api/followups/reconcile POSTs, zero console errors."
+  ],
+  "critical_code_review_comments": [
+    "dashboard.tsx correctly uses a focus-version stale-response guard with delayed load and no explicit AbortController cancellation in this file, but network aborts are still reproducible in rapid navigation traces.",
+    "(admin)/_layout.tsx useTilesNav.open() performs window.location.assign(...) when active floor is not ground-floor before opening Tile Orders; this full-page transition can terminate in-flight dashboard requests and surface net::ERR_ABORTED in browser tooling."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_24.json"
+  ],
+  "success_rate": {
+    "backend": "N/A (frontend-only scope)",
+    "frontend": "60%"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Credentials read from /app/memory/test_credentials.md (owner@forge.app). Rapid navigation reproduces aborted dashboard GETs on both desktop and phone. No aborted /api/followups/reconcile POST and no console error logs were observed. One phone run had a strict-selector assertion issue and was rerun with corrected selector.",
+  "rca_of_issue": "Reproduction: login -> rapidly alternate dashboard and Tile Orders. Result: net::ERR_ABORTED on dashboard bootstrap GET endpoints. Likely contributing factor: lifecycle timing plus route/floor transition behavior; specifically, Tile Orders navigation path can trigger a full browser navigation when floor correction to ground-floor occurs, terminating in-flight dashboard requests."
+}

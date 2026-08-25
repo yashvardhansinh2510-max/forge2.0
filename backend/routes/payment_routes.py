@@ -1,0 +1,743 @@
+"""Payments module — customer collection tracker for confirmed sales orders.
+
+An "order" in this module is a Quotation whose status is `ordered` or `won`
+(i.e. a confirmed sale). Each order accrues Payment records against it; the
+outstanding balance is derived as `grand_total - sum(payments)`.
+
+There are NO taxes anywhere in Forge — the quotation's grand_total is the
+final price the customer pays, and payments accumulate against it directly.
+"""
+from __future__ import annotations
+import asyncio
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+from urllib.parse import quote_plus
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
+
+from auth import (
+    TILES_FLOOR_ID, accessible_floor_ids, floor_for_write, floor_inherit, floor_query,
+    get_current_user, get_floor_scoped_or_404, require_min_role,
+)
+from db import client, db
+from models import Payment, PaymentCreate, UserPublic
+from services.activity_log import log_event
+from services.analytics import cache
+from services.export import export_response
+from services.followup_engine import reconcile_followups
+from services.notifications import notify
+from settings import settings
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/payments", tags=["payments"])
+
+
+# The set of quotation statuses we treat as "collectable orders".
+ORDER_STATUSES = ("ordered", "won")
+
+
+def _payment_scope_query(user: UserPublic, base: dict | None = None) -> dict:
+    """Include Ground Floor tile orders for users authorized to see them.
+
+    Payments is shared by the sanitary and tiles modules, while ``floor_query``
+    follows the user's ambient floor header. That header can remain on First
+    Floor while a manager is reviewing Ground Floor tiles, so payment screens
+    must include the fixed tiles floor explicitly.
+    """
+    queries = [floor_query(user, base)]
+    allowed = accessible_floor_ids(user)
+    if user.role in ("owner", "manager") or (allowed and TILES_FLOOR_ID in allowed):
+        queries.append({"$and": [{"floor_id": TILES_FLOOR_ID}, base or {}]})
+    return queries[0] if len(queries) == 1 else {"$or": queries}
+
+MODE_LABELS = {
+    "cash": "Cash",
+    "upi": "UPI",
+    "bank": "Bank Transfer",
+    "cheque": "Cheque",
+    "card": "Credit Card",
+}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+async def _paid_by_quotation(quotation_ids: list[str]) -> dict[str, float]:
+    """Sum completed payment amounts per quotation."""
+    if not quotation_ids:
+        return {}
+    pipeline = [
+        {"$match": {"quotation_id": {"$in": quotation_ids}, "status": "completed"}},
+        {"$group": {"_id": "$quotation_id", "total": {"$sum": "$amount"}}},
+    ]
+    rows = await db.payments.aggregate(pipeline).to_list(len(quotation_ids) + 5)
+    return {r["_id"]: float(r.get("total", 0)) for r in rows}
+
+
+async def _mrp_for_quotation(quotation: dict) -> float:
+    """Return the sum of qty × product.mrp for the quotation's line items.
+    Falls back to unit_price when the product record is missing."""
+    items = quotation.get("items", [])
+    if not items:
+        return 0.0
+    product_ids = list({i.get("product_id") for i in items if i.get("product_id")})
+    products = await db.products.find(
+        {"id": {"$in": product_ids}}, {"_id": 0, "id": 1, "mrp": 1}
+    ).to_list(len(product_ids) + 5) if product_ids else []
+    mrp_by_id = {p["id"]: float(p.get("mrp") or 0) for p in products}
+    total = 0.0
+    for it in items:
+        pid = it.get("product_id")
+        qty = float(it.get("qty") or 0)
+        mrp = mrp_by_id.get(pid) or float(it.get("unit_price") or 0)
+        total += qty * mrp
+    return round(total, 2)
+
+
+def _payment_status(paid: float, grand: float) -> str:
+    """Derived status for the order card: paid | partial | due."""
+    if grand <= 0:
+        return "due"
+    if paid + 1e-6 >= grand:
+        return "paid"
+    if paid > 0:
+        return "partial"
+    return "due"
+
+
+def _fully_paid_order_ids(orders: list[dict], paid_by_order: dict[str, float]) -> list[str]:
+    """Return non-zero orders whose completed payments cover the total."""
+    return [
+        order["id"] for order in orders
+        if float(order.get("grand_total") or 0) > 0
+        and paid_by_order.get(order["id"], 0.0) + 1e-6 >= float(order.get("grand_total") or 0)
+    ]
+
+
+def _short_amount(amount: float) -> str:
+    """Compact Indian rupee display used in the sidebar badge: ₹10.9L / ₹8.5L."""
+    if amount >= 1_00_00_000:
+        return f"₹{amount / 1_00_00_000:.1f}Cr"
+    if amount >= 1_00_000:
+        return f"₹{amount / 1_00_000:.1f}L"
+    if amount >= 1_000:
+        return f"₹{amount / 1_000:.1f}k"
+    return f"₹{int(amount)}"
+
+
+def _iso_month(iso_ts: str) -> str:
+    return (iso_ts or "")[:7]  # "2026-08"
+
+
+# ---------------------------------------------------------------------------
+# Stats (KPI cards at the top of the page)
+# ---------------------------------------------------------------------------
+@router.get("/stats")
+async def payment_stats(user: UserPublic = Depends(get_current_user)):
+    """Four KPIs: Total Outstanding · Collected This Month · Active Orders · Fully Paid."""
+    orders = await db.quotations.find(
+        _payment_scope_query(user, {"status": {"$in": list(ORDER_STATUSES)}}),
+        {"_id": 0, "id": 1, "grand_total": 1},
+    ).to_list(2000)
+    ids = [o["id"] for o in orders]
+    paid_map = await _paid_by_quotation(ids)
+
+    total_outstanding = 0.0
+    active_orders = 0
+    fully_paid = 0
+    for o in orders:
+        grand = float(o.get("grand_total") or 0)
+        paid = paid_map.get(o["id"], 0.0)
+        status = _payment_status(paid, grand)
+        if status == "paid":
+            fully_paid += 1
+        else:
+            active_orders += 1
+            total_outstanding += max(0.0, grand - paid)
+
+    # Collected this month
+    this_month = _iso_month(datetime.now(timezone.utc).isoformat())
+    pipeline = [
+        {"$match": _payment_scope_query(user, {"status": "completed"})},
+        {"$group": {"_id": {"$substr": [{"$ifNull": ["$paid_at", "$created_at"]}, 0, 7]}, "total": {"$sum": "$amount"}}},
+    ]
+    rows = await db.payments.aggregate(pipeline).to_list(60)
+    collected_this_month = 0.0
+    for r in rows:
+        if r["_id"] == this_month:
+            collected_this_month = float(r.get("total", 0))
+            break
+
+    return {
+        "total_outstanding": round(total_outstanding, 2),
+        "collected_this_month": round(collected_this_month, 2),
+        "active_orders": active_orders,
+        "fully_paid": fully_paid,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Orders list (left column)
+# ---------------------------------------------------------------------------
+@router.get("/orders")
+async def list_orders(
+    q: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, description="paid | partial | due | all"),
+    limit: int = Query(200, ge=1, le=1000),
+    user: UserPublic = Depends(get_current_user),
+):
+    """Collectable orders sorted by outstanding-first."""
+    query: dict = {"status": {"$in": list(ORDER_STATUSES)}}
+    if q:
+        term = {"$regex": q, "$options": "i"}
+        query["$or"] = [
+            {"number": term}, {"customer_name": term},
+        ]
+
+    docs = await db.quotations.find(
+        _payment_scope_query(user, query), {"_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
+                "grand_total": 1, "status": 1, "updated_at": 1, "created_at": 1, "notes": 1},
+    ).sort("updated_at", -1).to_list(limit * 2)
+
+    ids = [d["id"] for d in docs]
+    paid_map = await _paid_by_quotation(ids)
+
+    out = []
+    for d in docs:
+        grand = float(d.get("grand_total") or 0)
+        paid = paid_map.get(d["id"], 0.0)
+        outstanding = max(0.0, grand - paid)
+        pay_status = _payment_status(paid, grand)
+        pct = 0 if grand <= 0 else min(100, int(round(paid / grand * 100)))
+        out.append({
+            "id": d["id"],
+            "number": d.get("number"),
+            "customer_id": d.get("customer_id"),
+            "customer_name": d.get("customer_name"),
+            "grand_total": grand,
+            "paid": round(paid, 2),
+            "outstanding": round(outstanding, 2),
+            "percent_collected": pct,
+            "payment_status": pay_status,       # paid | partial | due
+            "confirmed_at": d.get("updated_at") or d.get("created_at"),
+            "outstanding_short": _short_amount(outstanding) if outstanding > 0 else None,
+        })
+
+    if status_filter and status_filter != "all":
+        out = [o for o in out if o["payment_status"] == status_filter]
+
+    # Sort: outstanding desc, then most recently confirmed
+    out.sort(key=lambda o: (-o["outstanding"], -(o.get("confirmed_at") or "").__hash__()))
+    return out[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Order detail (right column)
+# ---------------------------------------------------------------------------
+@router.get("/orders/{order_id}")
+async def order_detail(order_id: str, user: UserPublic = Depends(get_current_user)):
+    doc = await db.quotations.find_one(_payment_scope_query(user, {"id": order_id}), {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if doc.get("status") not in ORDER_STATUSES:
+        raise HTTPException(status_code=400, detail="Quotation is not a confirmed order yet")
+
+    paid_map = await _paid_by_quotation([order_id])
+    paid = paid_map.get(order_id, 0.0)
+    grand = float(doc.get("grand_total") or 0)
+    mrp = await _mrp_for_quotation(doc)
+    outstanding = max(0.0, grand - paid)
+
+    customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
+
+    payments = await db.payments.find(
+        {"quotation_id": order_id}, {"_id": 0},
+    ).sort("paid_at", -1).to_list(500)
+    # Ensure legacy payments (without paid_at) still sort sensibly
+    payments.sort(key=lambda p: (p.get("paid_at") or p.get("created_at") or ""), reverse=True)
+
+    return {
+        "id": doc["id"],
+        "number": doc.get("number"),
+        "status": doc.get("status"),
+        "customer": {
+            "id": customer.get("id"),
+            "name": customer.get("name"),
+            "company": customer.get("company"),
+            "phone": customer.get("phone"),
+            "email": customer.get("email"),
+            "city": customer.get("city"),
+            "address": customer.get("address"),
+        },
+        "customer_name": doc.get("customer_name"),
+        "confirmed_at": doc.get("updated_at") or doc.get("created_at"),
+        "notes": doc.get("notes"),
+        "project_name": None,
+        "mrp": round(mrp, 2),
+        "discounted_rate": round(grand, 2),
+        "grand_total": round(grand, 2),
+        "paid": round(paid, 2),
+        "outstanding": round(outstanding, 2),
+        "percent_collected": 0 if grand <= 0 else min(100, int(round(paid / grand * 100))),
+        "payment_status": _payment_status(paid, grand),
+        "payments": payments,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Record a payment
+# ---------------------------------------------------------------------------
+@router.post("", response_model=Payment)
+async def create_payment(
+    body: PaymentCreate,
+    idempotency_header: Optional[str] = Header(None, alias="Idempotency-Key"),
+    user: UserPublic = Depends(require_min_role("accounts")),
+):
+    idempotency_key = (idempotency_header or body.idempotency_key or "").strip() or None
+    if idempotency_key:
+        existing = await db.payments.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+        if existing:
+            return existing
+    quot = await db.quotations.find_one(_payment_scope_query(user, {"id": body.quotation_id}), {"_id": 0})
+    if not quot:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if quot.get("status") not in ORDER_STATUSES:
+        raise HTTPException(status_code=400, detail="Quotation is not a confirmed order yet")
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than zero")
+
+    now = datetime.now(timezone.utc).isoformat()
+    paid_at = body.paid_at or now
+    payment = Payment(
+        quotation_id=body.quotation_id,
+        quotation_number=quot.get("number"),
+        customer_id=quot["customer_id"],
+        customer_name=quot.get("customer_name"),
+        amount=round(float(body.amount), 2),
+        mode=body.mode,
+        status="completed",
+        reference=body.reference,
+        note=body.note,
+        paid_at=paid_at,
+        recorded_by=user.id,
+        recorded_by_name=user.full_name,
+        idempotency_key=idempotency_key,
+        # Payments inherit the quotation's floor. The caller's ambient floor
+        # header may still point at First Floor while collecting a Ground Floor
+        # tiles order, and payment records must remain joinable to that order.
+        floor_id=quot.get("floor_id") or floor_for_write(user),
+    )
+    async def _check_and_insert(session=None):
+        """Balance check + insert, optionally inside a transaction session."""
+        if idempotency_key:
+            existing = await db.payments.find_one({"idempotency_key": idempotency_key}, {"_id": 0}, session=session)
+            if existing:
+                return existing
+        quot_now = await db.quotations.find_one({"id": body.quotation_id}, {"_id": 0, "grand_total": 1, "number": 1}, session=session)
+        grand = float((quot_now or {}).get("grand_total") or 0)
+        paid_rows = await db.payments.aggregate([
+            {"$match": {"quotation_id": body.quotation_id, "status": "completed"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+        ], session=session).to_list(1)
+        already_paid = float(paid_rows[0].get("total") or 0) if paid_rows else 0.0
+        outstanding_before = round(grand - already_paid, 2)
+        if round(float(body.amount), 2) > outstanding_before + 0.01:
+            raise HTTPException(status_code=400, detail=(
+                f"Payment of ₹{body.amount:,.2f} exceeds the outstanding balance of "
+                f"₹{max(outstanding_before, 0):,.2f} on {quot.get('number')}"
+            ))
+        payment_doc = payment.dict()
+        if not idempotency_key:
+            # Omit the field entirely rather than leaving an explicit None —
+            # payments.payment_idempotency_key is a unique *sparse* index,
+            # which only skips documents missing the key, not documents
+            # where it's present-but-null. Leaving it in would make the
+            # SECOND EVER payment recorded without an Idempotency-Key crash
+            # with a DuplicateKeyError (same root cause as the OrderPlaced
+            # automation bug fixed in services/domain_outbox.py).
+            payment_doc.pop("idempotency_key", None)
+        await db.payments.insert_one(payment_doc, session=session)
+        return None
+
+    # Atlas transactions serialize the balance check with the insert. This
+    # prevents two simultaneous collectors from both spending the same balance.
+    # Standalone Mongo (local dev) has no transactions — fall back to the
+    # unserialized check there, still protected by the idempotency unique index.
+    try:
+        try:
+            async with await client.start_session() as session:
+                async with session.start_transaction():
+                    replay = await _check_and_insert(session=session)
+                    if replay is not None:
+                        return replay
+        except HTTPException:
+            raise
+        except Exception as exc:
+            message = str(exc)
+            txn_unsupported = (
+                "Transaction numbers" in message
+                or "replica set" in message
+                or "IllegalOperation" in message
+            )
+            if not txn_unsupported:
+                raise
+            if settings.environment == "production":
+                raise HTTPException(
+                    status_code=503,
+                    detail="Payment recording requires a MongoDB replica set in production",
+                )
+            replay = await _check_and_insert(session=None)
+            if replay is not None:
+                return replay
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # A unique-key race is safe to replay; return the committed payment.
+        if idempotency_key:
+            existing = await db.payments.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+            if existing:
+                return existing
+        raise HTTPException(status_code=503, detail="Payment could not be committed safely") from exc
+
+    # If this settled the balance, we auto-flip the quotation to "won" ONLY if
+    # it was already an ordered/won-tracked order; otherwise we leave it as-is.
+    paid_map = await _paid_by_quotation([body.quotation_id])
+    total_paid = paid_map.get(body.quotation_id, 0.0)
+    grand = float(quot.get("grand_total") or 0)
+    fully_paid = total_paid + 1e-6 >= grand
+
+    await log_event(
+        event_type="payment.recorded",
+        entity_type="payment",
+        entity_id=payment.id,
+        actor=user,
+        customer_id=quot["customer_id"],
+        quotation_id=body.quotation_id,
+        summary=(
+            f"{MODE_LABELS.get(body.mode, body.mode).title()} · "
+            f"₹{payment.amount:,.0f} received on {quot.get('number')}"
+        ),
+        payload={
+            "amount": payment.amount,
+            "mode": body.mode,
+            "reference": body.reference,
+            "fully_paid": fully_paid,
+        },
+    )
+    try:
+        await cache.bump("payments")
+    except Exception:
+        logger.exception("cache bump failed for payments after payment %s", payment.id)
+    # A payment landing is exactly when payment_overdue/payment_partial
+    # reminders should refresh or auto-close — event-triggered, not a cron job.
+    asyncio.create_task(reconcile_followups())
+    asyncio.create_task(notify(
+        quot.get("created_by"),
+        f"Payment received · {quot.get('number')}",
+        body=f"₹{payment.amount:,.0f} ({MODE_LABELS.get(body.mode, body.mode).title()}) from {quot.get('customer_name')}"
+        + (" — fully paid" if fully_paid else f" — ₹{max(grand - total_paid, 0):,.0f} outstanding"),
+        kind="success",
+        link=f"/quotations/{body.quotation_id}",
+        floor_id=floor_inherit(quot),
+    ))
+    return payment
+
+
+# Backwards-compat: keep GET /api/payments returning the raw list (used elsewhere).
+# `skip`/`limit` are additive and opt-in — omitting them preserves the exact
+# prior behavior (first 500, newest first). `X-Has-More` lets a future caller
+# detect truncation without a breaking response-shape change; see
+# PRODUCTION_FIXES_2026-07-16.md item 8 (pagination hardening).
+@router.get("")
+async def list_payments(
+    response: Response,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=2000),
+    user: UserPublic = Depends(get_current_user),
+):
+    docs = await db.payments.find(_payment_scope_query(user), {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit + 1).to_list(limit + 1)
+    response.headers["X-Has-More"] = "true" if len(docs) > limit else "false"
+    return docs[:limit]
+
+
+@router.get("/list")
+async def completed_payment_list(
+    response: Response,
+    q: Optional[str] = Query(None, description="Search customer, invoice number, or reference"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    business_unit: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None),
+    sort: str = Query("date_desc", pattern="^(date_desc|date_asc|amount_desc|amount_asc)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    user: UserPublic = Depends(get_current_user),
+):
+    """Return payment rows only for orders that are fully paid (100%)."""
+    order_query = _payment_scope_query(user, {"status": {"$in": list(ORDER_STATUSES)}})
+    orders = await db.quotations.find(order_query, {"_id": 0, "id": 1, "grand_total": 1}).to_list(5000)
+    paid_by_order = await _paid_by_quotation([order["id"] for order in orders])
+    fully_paid_ids = _fully_paid_order_ids(orders, paid_by_order)
+    floor_ids = _resolve_history_floor_ids(user, business_unit)
+    query = _history_filter(floor_ids, q, date_from, date_to, None, mode, "completed")
+    query["quotation_id"] = {"$in": fully_paid_ids}
+    total = await db.payments.count_documents(query)
+    docs = await db.payments.find(query, {"_id": 0}).sort(_SORT_MAP[sort]).skip(skip).limit(limit).to_list(limit)
+    response.headers["X-Total-Count"] = str(total)
+    return {"total": total, "items": await _enrich_history_rows(docs)}
+
+
+# ---------------------------------------------------------------------------
+# Payment History — permanent reconciliation ledger.
+#
+# Zero new storage: every row here IS an existing `payments` document
+# (created exclusively by create_payment() above, the single write path for
+# this collection). This is a read/derive layer only — it joins in the
+# quotation's invoice number + grand_total and the customer's name, then
+# computes a running outstanding-before/after balance per quotation from the
+# SAME payment rows (not a second ledger), so it always reconciles exactly
+# with what /payments and /payments/orders already show.
+#
+# Floor scope follows the Sales Data precedent (routes/sales_data_routes.py
+# `_resolve_floor_ids`), NOT the single-active-floor `floor_query()` used
+# everywhere else — this is deliberately a cross-business-unit reconciliation
+# view (it has its own Business Unit column + filter), the same carve-out
+# auth.py's `_resolve_floor_scope` docstring documents for Sales Data.
+# ---------------------------------------------------------------------------
+def _resolve_history_floor_ids(user: UserPublic, business_unit: Optional[str]) -> Optional[list[str]]:
+    """None means "no floor restriction" (every floor the caller can see).
+    An explicit business_unit narrows to exactly that floor, after checking
+    the caller is actually allowed onto it."""
+    if business_unit and business_unit != "all":
+        allowed = accessible_floor_ids(user)
+        if allowed is not None and business_unit not in allowed:
+            raise HTTPException(status_code=403, detail="You do not have access to this business unit")
+        return [business_unit]
+    return accessible_floor_ids(user)  # None (unrestricted) for owner/manager, else their assigned floors
+
+
+async def _floor_names() -> dict[str, str]:
+    rows = await db.floors.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(50)
+    return {r["id"]: r["name"] for r in rows}
+
+
+def _history_filter(
+    floor_ids: Optional[list[str]], q: Optional[str], date_from: Optional[str], date_to: Optional[str],
+    customer_id: Optional[str], mode: Optional[str], status: Optional[str],
+) -> dict:
+    query: dict = {}
+    if floor_ids is not None:
+        query["floor_id"] = {"$in": floor_ids}
+    if customer_id:
+        query["customer_id"] = customer_id
+    if mode:
+        query["mode"] = mode
+    if status:
+        query["status"] = status
+    date_range: dict = {}
+    if date_from:
+        date_range["$gte"] = date_from
+    if date_to:
+        date_range["$lte"] = date_to if len(date_to) > 10 else f"{date_to}T23:59:59.999"
+    if date_range:
+        # paid_at is optional on older rows; created_at is always present and
+        # indexed, so filtering on it keeps this fast and gap-free.
+        query["created_at"] = date_range
+    if q:
+        rx = {"$regex": q.strip(), "$options": "i"}
+        or_clause = [{"customer_name": rx}, {"quotation_number": rx}, {"reference": rx}, {"note": rx}]
+        query["$and"] = query.get("$and", []) + [{"$or": or_clause}]
+    return query
+
+
+_SORT_MAP = {
+    "date_desc": [("created_at", -1)],
+    "date_asc": [("created_at", 1)],
+    "amount_desc": [("amount", -1)],
+    "amount_asc": [("amount", 1)],
+}
+
+
+async def _enrich_history_rows(docs: list[dict]) -> list[dict]:
+    """Attach invoice number, business unit label, and outstanding
+    before/after — all derived, nothing stored twice."""
+    qids = list({d["quotation_id"] for d in docs if d.get("quotation_id")})
+    quotations = await db.quotations.find(
+        {"id": {"$in": qids}}, {"_id": 0, "id": 1, "number": 1, "doc_number": 1, "grand_total": 1},
+    ).to_list(len(qids) + 5) if qids else []
+    quot_by_id = {qq["id"]: qq for qq in quotations}
+
+    # Running balance needs EVERY completed payment on each touched
+    # quotation (not just the ones matching this page's filters), otherwise
+    # a search/date filter would silently produce a wrong running balance.
+    all_pmts = await db.payments.find(
+        {"quotation_id": {"$in": qids}, "status": "completed"},
+        {"_id": 0, "id": 1, "quotation_id": 1, "amount": 1, "paid_at": 1, "created_at": 1},
+    ).to_list(5000) if qids else []
+    by_qid: dict[str, list[dict]] = {}
+    for p in all_pmts:
+        by_qid.setdefault(p["quotation_id"], []).append(p)
+    outstanding_by_payment_id: dict[str, tuple[float, float]] = {}
+    for qid, pmts in by_qid.items():
+        pmts.sort(key=lambda p: (p.get("paid_at") or p.get("created_at") or "", p.get("id") or ""))
+        grand = float((quot_by_id.get(qid) or {}).get("grand_total") or 0)
+        running = 0.0
+        for p in pmts:
+            before = round(grand - running, 2)
+            running += float(p.get("amount") or 0)
+            after = round(grand - running, 2)
+            outstanding_by_payment_id[p["id"]] = (before, after)
+
+    floor_names = await _floor_names()
+    out = []
+    for d in docs:
+        qq = quot_by_id.get(d.get("quotation_id"), {})
+        before_after = outstanding_by_payment_id.get(d["id"])
+        out.append({
+            **d,
+            "paid_at": d.get("paid_at") or d.get("created_at"),
+            "invoice_number": qq.get("doc_number") or qq.get("number") or d.get("quotation_number"),
+            "business_unit": floor_names.get(d.get("floor_id"), d.get("floor_id")),
+            "outstanding_before": before_after[0] if before_after else None,
+            "outstanding_after": before_after[1] if before_after else None,
+        })
+    return out
+
+
+@router.get("/history")
+async def payment_history(
+    response: Response,
+    q: Optional[str] = Query(None, description="Search customer, invoice number, or reference"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None),
+    business_unit: Optional[str] = Query(None, description="Floor id, or omit/'all' for every accessible unit"),
+    mode: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    sort: str = Query("date_desc", pattern="^(date_desc|date_asc|amount_desc|amount_asc)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    user: UserPublic = Depends(get_current_user),
+):
+    floor_ids = _resolve_history_floor_ids(user, business_unit)
+    query = _history_filter(floor_ids, q, date_from, date_to, customer_id, mode, status)
+    total = await db.payments.count_documents(query)
+    docs = await db.payments.find(query, {"_id": 0}).sort(_SORT_MAP[sort]).skip(skip).limit(limit).to_list(limit)
+    response.headers["X-Total-Count"] = str(total)
+    return {"total": total, "items": await _enrich_history_rows(docs)}
+
+
+_HISTORY_COLUMNS = [
+    ("customer_name", "Customer"),
+    ("invoice_number", "Invoice / Order"),
+    ("business_unit", "Business Unit"),
+    ("paid_at", "Payment Date"),
+    ("amount", "Payment Amount"),
+    ("mode", "Payment Method"),
+    ("reference", "Transaction Reference"),
+    ("recorded_by_name", "Collected By"),
+    ("outstanding_before", "Outstanding Before"),
+    ("outstanding_after", "Outstanding After"),
+    ("status", "Status"),
+    ("note", "Notes"),
+]
+
+
+@router.get("/history/export")
+async def export_payment_history(
+    q: Optional[str] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None),
+    business_unit: Optional[str] = Query(None),
+    mode: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    sort: str = Query("date_desc", pattern="^(date_desc|date_asc|amount_desc|amount_asc)$"),
+    fmt: str = Query("xlsx", pattern="^(csv|xlsx)$"),
+    user: UserPublic = Depends(get_current_user),
+):
+    floor_ids = _resolve_history_floor_ids(user, business_unit)
+    query = _history_filter(floor_ids, q, date_from, date_to, customer_id, mode, status)
+    docs = await db.payments.find(query, {"_id": 0}).sort(_SORT_MAP[sort]).limit(5000).to_list(5000)
+    rows = await _enrich_history_rows(docs)
+    for r in rows:
+        r["mode"] = MODE_LABELS.get(r.get("mode"), r.get("mode"))
+    return export_response(rows, _HISTORY_COLUMNS, "payment_history", fmt)
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp reminder builder
+# ---------------------------------------------------------------------------
+def _format_amount(v: float) -> str:
+    """Indian-style comma formatting: 12,34,567."""
+    s = f"{int(round(v))}"
+    if len(s) <= 3:
+        return s
+    last3, rest = s[-3:], s[:-3]
+    parts = []
+    while len(rest) > 2:
+        parts.append(rest[-2:])
+        rest = rest[:-2]
+    if rest:
+        parts.append(rest)
+    return ",".join(reversed(parts)) + "," + last3
+
+
+def _clean_phone(phone: Optional[str]) -> Optional[str]:
+    """Strip everything but digits; if it starts with 0 or has no country code assume India (+91)."""
+    if not phone:
+        return None
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if not digits:
+        return None
+    if len(digits) == 10:                     # 98200 12345 → +91
+        return "91" + digits
+    if digits.startswith("0") and len(digits) == 11:
+        return "91" + digits[1:]
+    return digits
+
+
+@router.get("/orders/{order_id}/whatsapp-reminder")
+async def whatsapp_reminder(order_id: str, user: UserPublic = Depends(get_current_user)):
+    """Build a wa.me link + message body for a payment reminder."""
+    doc = await get_floor_scoped_or_404(db.quotations, order_id, user, not_found="Order not found", projection={"_id": 0})
+    customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0}) or {}
+    paid_map = await _paid_by_quotation([order_id])
+    paid = paid_map.get(order_id, 0.0)
+    grand = float(doc.get("grand_total") or 0)
+    outstanding = max(0.0, grand - paid)
+
+    phone = _clean_phone(customer.get("phone"))
+    name = (customer.get("name") or doc.get("customer_name") or "there").split()[0]
+    number = doc.get("number") or ""
+
+    lines = [
+        f"Hi {name},",
+        "",
+        f"This is a gentle reminder for your order *{number}*.",
+        "",
+        f"• Order total: ₹{_format_amount(grand)}",
+        f"• Already received: ₹{_format_amount(paid)}",
+        f"• Outstanding balance: *₹{_format_amount(outstanding)}*",
+        "",
+        "Kindly complete the pending payment at your earliest convenience. Please share the reference (UTR / cheque no.) once done so we can update our records.",
+        "",
+        "Thank you for your business!",
+        "— Forge",
+    ]
+    message = "\n".join(lines)
+
+    return {
+        "customer_name": customer.get("name") or doc.get("customer_name"),
+        "phone": phone,
+        "phone_display": customer.get("phone"),
+        "message": message,
+        "outstanding": round(outstanding, 2),
+        "wa_url": (
+            f"https://wa.me/{phone}?text={quote_plus(message)}"
+            if phone else
+            f"https://wa.me/?text={quote_plus(message)}"
+        ),
+    }

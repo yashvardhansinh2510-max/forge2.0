@@ -1,0 +1,36 @@
+{
+  "per_brand": [
+    {
+      "brand": "Vitra",
+      "job_id": "6baf4660-b48d-49ee-9ddd-e4546f3ccc15",
+      "runtime_s": 171.7,
+      "imported": 250,
+      "updated": 0,
+      "skipped": 0
+    },
+    {
+      "brand": "Grohe",
+      "job_id": "5900294f-d0ce-44aa-a20c-6f24487297c0",
+      "runtime_s": 695.0,
+      "imported": 864,
+      "updated": 0,
+      "skipped": 0
+    },
+    {
+      "brand": "Geberit",
+      "job_id": "d7c2e9c1-8708-4c02-bc77-fa573205eb97",
+      "runtime_s": 321.5,
+      "imported": 496,
+      "updated": 9,
+      "skipped": 0
+    }
+  ],
+  "totals": {
+    "products": 1610,
+    "families": 1123,
+    "subcategories": 19,
+    "series": 66,
+    "categories": 11,
+    "media": 1611
+  }
+}

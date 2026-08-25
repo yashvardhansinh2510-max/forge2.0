@@ -1,0 +1,407 @@
+"""Orchestrator wiring Extraction → Validation → Certification → Import."""
+from __future__ import annotations
+import logging
+import re
+from datetime import datetime, timezone
+
+from auth import floor_inherit
+from db import db
+from models import Product
+
+from .base import MISSING
+from .certifier import validate
+from .adapters import get_adapter
+
+logger = logging.getLogger("forge.catalog_pipeline")
+
+
+# ---------------------------------------------------------------------------
+# Image blob offload (keeps job doc under MongoDB's 16MB BSON cap)
+# ---------------------------------------------------------------------------
+async def _offload_row_images(rows: list[dict]) -> dict[str, str]:
+    """Move every base64 data-URL out of `rows[].images` into a dedicated
+    `catalog_image_blobs` collection keyed by SHA-1.
+
+    Mutates rows in-place: `images` becomes a list of ``blob:<sha1>`` refs,
+    and each entry in `image_meta` gets an ``id`` field pointing at the blob.
+
+    Returns the map of ``sha1 → data_url`` that was uploaded (so the caller
+    can pipe it straight into ``import_accepted`` without a second DB read).
+    """
+    blob_map: dict[str, str] = {}
+    for r in rows:
+        images = r.get("images") or []
+        metas = r.get("image_meta") or []
+        new_urls: list[str] = []
+        for i, img in enumerate(images):
+            if not img:
+                continue
+            if img.startswith("blob:") or not img.startswith("data:"):
+                new_urls.append(img)
+                continue
+            # Compute or reuse sha1 from meta
+            sha1 = (metas[i].get("sha1") if i < len(metas) and isinstance(metas[i], dict) else None)
+            if not sha1:
+                import hashlib
+                sha1 = hashlib.sha1(img.encode("utf-8")).hexdigest()[:16]
+                if i < len(metas) and isinstance(metas[i], dict):
+                    metas[i]["sha1"] = sha1
+            blob_map[sha1] = img
+            new_urls.append(f"blob:{sha1}")
+        r["images"] = new_urls
+
+    # Bulk-upsert blobs (idempotent — same sha1 always maps to same content)
+    if blob_map:
+        from pymongo import UpdateOne
+        ops = [
+            UpdateOne(
+                {"sha1": sha1},
+                {"$setOnInsert": {"sha1": sha1, "data_url": url,
+                                  "created_at": datetime.now(timezone.utc).isoformat()}},
+                upsert=True,
+            )
+            for sha1, url in blob_map.items()
+        ]
+        # Do in chunks of 100 to bound memory
+        for i in range(0, len(ops), 100):
+            await db.catalog_image_blobs.bulk_write(ops[i:i + 100], ordered=False)
+    return blob_map
+
+
+async def _resolve_blob(ref: str, blob_map: dict[str, str] | None = None) -> str | None:
+    """Resolve a `blob:<sha1>` ref back to its base64 data URL."""
+    if not ref:
+        return None
+    if not ref.startswith("blob:"):
+        return ref
+    sha1 = ref[len("blob:"):]
+    if blob_map and sha1 in blob_map:
+        return blob_map[sha1]
+    doc = await db.catalog_image_blobs.find_one({"sha1": sha1}, {"_id": 0, "data_url": 1})
+    return doc.get("data_url") if doc else None
+
+
+async def run_pipeline(brand: str, filename: str, data: bytes) -> dict:
+    """Extract + validate + certify. Returns everything the UI needs to render Review."""
+    adapter = get_adapter(brand)
+    rows, extraction = adapter.extract(data, filename)
+    validated_rows, cert = validate(rows)
+
+    # Auto-accept high-confidence rows so the reviewer only sees the exceptions
+    for r in validated_rows:
+        if (
+            r.status == "pending"
+            and r.confidence >= 0.85
+            and r.sku != MISSING and r.mrp != MISSING and r.category != MISSING
+        ):
+            r.status = "accepted"
+
+    return {
+        "extraction": extraction.__dict__,
+        "certification": cert.to_public(),
+        "rows": [r.to_public() for r in validated_rows],
+    }
+
+
+async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | None = None, floor_id: str | None = None) -> dict:
+    """Persist all rows in job['rows'] with status == 'accepted' into products.
+
+    Idempotent: existing SKUs are updated (not duplicated). Never deletes anything.
+    Skips rows missing category/mrp/price.
+
+    Image blobs referenced as ``blob:<sha1>`` are resolved from the optional
+    in-memory ``blob_map`` first (avoids a DB round-trip per image), then
+    falls back to the ``catalog_image_blobs`` collection.
+    """
+    supplier = job["supplier_name"]
+    floor_id = floor_id or floor_inherit(job)
+    brand_doc = await db.brands.find_one({"name": supplier, "floor_id": floor_id}, {"_id": 0})
+    if not brand_doc:
+        # Autocreate brand if missing
+        from models import Brand
+        b = Brand(name=supplier, slug=supplier.lower(), country=None, floor_id=floor_id)
+        await db.brands.insert_one(b.dict())
+        brand_doc = b.dict()
+
+    # Per-row brand override: AXOR ships inside Hansgrohe supplier files but is
+    # a genuinely separate premium brand — never merge the two. Any row whose
+    # `collection` is exactly "AXOR" gets imported under the AXOR brand
+    # instead of the job's default supplier brand. Cached by name so we only
+    # hit the DB once per distinct brand within this job.
+    brand_cache: dict[str, dict] = {supplier: brand_doc}
+
+    async def _resolve_brand(row: dict) -> dict:
+        override = str(row.get("collection") or "").strip()
+        # Canonical name "Axor" (matches the brand already seeded in the DB) —
+        # never the raw supplier-file casing, so we never accidentally create
+        # a case-variant duplicate brand doc (e.g. "AXOR" vs "Axor").
+        name = "Axor" if override.upper() == "AXOR" else supplier
+        if name in brand_cache:
+            return brand_cache[name]
+        doc = await db.brands.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}, "floor_id": floor_id}, {"_id": 0})
+        if not doc:
+            from models import Brand
+            b = Brand(name=name, slug=name.lower(), country=None, floor_id=floor_id)
+            await db.brands.insert_one(b.dict())
+            doc = b.dict()
+        brand_cache[name] = doc
+        return doc
+
+    cats = await db.categories.find({"floor_id": floor_id}, {"_id": 0}).to_list(80)
+    cat_by_name = {c["name"].lower(): c for c in cats}
+    from models import Category
+
+    imported = 0
+    updated = 0
+    skipped = 0
+    failed = 0
+    errors: list[dict] = []
+    snapshots: list[dict] = []
+    job_id = job.get("id")
+
+    def _clean(v):
+        return None if v in (None, MISSING) else v
+
+    for r in job.get("rows", []):
+        if r.get("status") != "accepted":
+            continue
+        if r.get("mrp") in (None, MISSING) or r.get("category") in (None, MISSING):
+            skipped += 1
+            continue
+
+        try:
+            cat = cat_by_name.get(str(r.get("category", "")).lower())
+            if not cat:
+                # Auto-create category from the row's supplier-provided label so
+                # per-file categories (BM, Ceramic, Thermostat, kitchen, ...) work
+                # without pre-seeding an allow-list.
+                label = str(r.get("category", "")).strip()
+                if not label:
+                    skipped += 1
+                    continue
+                slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "misc"
+                c = Category(name=label, slug=slug, floor_id=floor_id)
+                await db.categories.insert_one(c.dict())
+                cat = c.dict()
+                cat_by_name[label.lower()] = cat
+
+            mrp = float(r["mrp"])
+            price_val = r.get("dealer_price") if r.get("dealer_price") not in (None, MISSING) else mrp
+            price_val = float(price_val)
+
+            # Hierarchy fields — never fabricate; missing supplier data stays null.
+            subcategory = _clean(r.get("subcategory"))
+            series = _clean(r.get("series"))
+            collection = _clean(r.get("collection"))
+            family_key = _clean(r.get("family_key"))
+            variant_label = _clean(r.get("variant"))
+            finish = _clean(r.get("finish"))
+            finish_code = _clean(r.get("finish_code"))
+            colour = _clean(r.get("colour"))
+            description = _clean(r.get("description"))
+            specs = r.get("specs") or {}
+            image_meta = r.get("image_meta") or []
+            image_quality = _clean(r.get("image_quality")) or "missing"
+
+            # family_name is series + form: "Metropole · Wall Hung WC"
+            family_name = None
+            if series:
+                series_clean = str(series).strip()
+                if description and str(description).strip():
+                    desc_clean = str(description).strip()
+                    # Avoid pathological "SERIES · SERIES · DETAIL" duplication.
+                    if desc_clean.lower().startswith(series_clean.lower()):
+                        family_name = desc_clean
+                    elif series_clean.lower() in desc_clean.lower():
+                        family_name = desc_clean
+                    else:
+                        family_name = f"{series_clean} · {desc_clean}"
+                else:
+                    family_name = series_clean
+            elif description:
+                family_name = str(description).strip()
+
+            # Resolve any blob:<sha1> references back to data URLs
+            raw_images = r.get("images") or []
+            resolved_images: list[str] = []
+            for ref in raw_images:
+                if not ref:
+                    continue
+                if ref.startswith("blob:"):
+                    data_url = await _resolve_blob(ref, blob_map)
+                    if data_url:
+                        resolved_images.append(data_url)
+                else:
+                    resolved_images.append(ref)
+
+            row_brand = await _resolve_brand(r)
+            payload = {
+                "name": str(r.get("name") or "Untitled")[:200],
+                "brand_id": row_brand["id"],
+                "category_id": cat["id"],
+                "subcategory": subcategory,
+                "series": series,
+                "collection": collection,
+                "family_key": family_key,
+                "family_name": family_name,
+                "variant_label": variant_label,
+                "finish_code": finish_code,
+                "colour": colour,
+                "description": None if description is None else str(description),
+                "finish": None if finish is None else str(finish),
+                "material": _clean(r.get("material")),
+                "dimensions": _clean(r.get("dimensions")),
+                "size": _clean(r.get("size")),
+                "warranty": _clean(r.get("warranty")),
+                "mrp": mrp,
+                "price": price_val,
+                # Legacy fields kept empty — media now lives in product_media.
+                "images": [],
+                "image_meta": [],
+                "image_quality": image_quality,
+                "specs": specs if isinstance(specs, dict) else {},
+                "tags": r.get("tags") or [
+                    cat["name"].lower(), supplier.lower(),
+                    (finish or "").lower(),
+                    (series or "").lower(),
+                ],
+                "active": True,
+                "floor_id": floor_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            # Drop any tags that ended up empty strings
+            payload["tags"] = [t for t in payload["tags"] if t]
+
+            sku = r.get("sku") or ""
+            if not sku or sku == MISSING:
+                skipped += 1
+                continue
+
+            # CRITICAL: scope the existing-product lookup by (sku, brand_id).
+            # SKU is only guaranteed unique *within* a manufacturer — different
+            # suppliers can and do reuse the same short numeric article code
+            # (e.g. an 8-digit Hansgrohe/AXOR code coincidentally matching a
+            # Grohe SKU). A global `{"sku": sku}` lookup would silently
+            # overwrite a completely unrelated brand's product. Never again.
+            existing = await db.products.find_one({"sku": sku, "brand_id": row_brand["id"], "floor_id": floor_id}, {"_id": 0})
+            if existing:
+                if job_id:
+                    snapshots.append({
+                        "job_id": job_id, "product_id": existing["id"], "was_new": False,
+                        "previous": existing, "created_at": datetime.now(timezone.utc).isoformat(),
+                    })
+                await db.products.update_one(
+                    {"sku": sku, "brand_id": row_brand["id"], "floor_id": floor_id}, {"$set": payload}
+                )
+                await _upload_supplier_images(
+                    resolved_images, image_meta, image_quality,
+                    product_id=existing["id"], family_key=family_key,
+                    brand_id=row_brand["id"], brand_slug=row_brand.get("slug") or supplier.lower(), floor_id=floor_id,
+                )
+                updated += 1
+                continue
+
+            payload["sku"] = sku
+            p = Product(**payload)
+            if job_id:
+                snapshots.append({
+                    "job_id": job_id, "product_id": p.id, "was_new": True,
+                    "previous": None, "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+            await db.products.insert_one(p.dict())
+            await _upload_supplier_images(
+                resolved_images, image_meta, image_quality,
+                product_id=p.id, family_key=family_key,
+                brand_id=row_brand["id"], brand_slug=row_brand.get("slug") or supplier.lower(), floor_id=floor_id,
+            )
+            imported += 1
+        except Exception as e:  # noqa: BLE001
+            # One malformed row (bad price, bad category) must never abort
+            # the rest of a multi-hundred-row batch — record it and continue.
+            failed += 1
+            errors.append({"row_id": r.get("row_id"), "sku": r.get("sku"), "error": str(e)})
+            logger.warning("catalog import row failed job=%s row=%s: %s", job_id, r.get("row_id"), e)
+
+    if snapshots:
+        for i in range(0, len(snapshots), 200):
+            await db.catalog_import_snapshots.insert_many(snapshots[i:i + 200])
+
+    return {"imported": imported, "updated": updated, "skipped": skipped, "failed": failed, "errors": errors}
+
+
+async def _upload_supplier_images(
+    images: list[str], metas: list[dict], quality: str, *,
+    product_id: str, family_key: str | None, brand_id: str, brand_slug: str, floor_id: str,
+) -> None:
+    """Import base64 supplier images into Supabase via the MediaStorage layer.
+
+    Idempotent — the media_service dedupe layer skips uploads whose SHA-1
+    already exists for this product+source_type.
+    """
+    if not images:
+        return
+    import base64
+    from services.media_service import upload_and_register
+
+    for i, ref in enumerate(images):
+        if not ref:
+            continue
+        if ref.startswith("http"):
+            # Already stored — nothing to do
+            continue
+        if not ref.startswith("data:"):
+            continue
+        try:
+            head, b64 = ref.split(",", 1)
+            mime = head.split(";", 1)[0].removeprefix("data:") or "image/png"
+            data = base64.b64decode(b64)
+        except Exception:  # noqa: BLE001
+            continue
+        role = "hero" if i == 0 else "gallery"
+        try:
+            await upload_and_register(
+                data=data, mime=mime, brand_slug=brand_slug,
+                product_id=product_id, family_key=family_key, brand_id=brand_id,
+                floor_id=floor_id,
+                source_type="supplier", role=role,
+                is_primary=(i == 0), sort_order=i * 10,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("supplier image upload failed for %s idx=%d: %s", product_id, i, e)
+
+
+async def rollback_job(job_id: str) -> dict:
+    """Undo a job's product mutations using the snapshots `import_accepted`
+    recorded before each write: rows it created are removed, rows it updated
+    are restored to their pre-import state. Products referenced by a
+    quotation/PO created *after* the import are still restored/removed —
+    per spec this only touches product documents, never quotations/orders —
+    so a rollback after downstream use can leave a quotation pointing at a
+    product whose price/name just changed underneath it; that is a business
+    trade-off (roll back a live catalog vs. preserve referential history),
+    not something a full delete could avoid either.
+
+    Note: supplier images uploaded to Supabase during the import are
+    intentionally NOT deleted here — undoing storage objects safely (without
+    risking an image another product still references) is out of scope for
+    this pass; a rolled-back product's `product_media` rows remain, orphaned
+    but harmless, until a manual cleanup pass."""
+    snapshots = await db.catalog_import_snapshots.find({"job_id": job_id}, {"_id": 0}).to_list(20000)
+    restored = 0
+    removed = 0
+    for snap in snapshots:
+        pid = snap["product_id"]
+        if snap["was_new"]:
+            res = await db.products.delete_one({"id": pid})
+            removed += res.deleted_count
+        else:
+            prev = snap.get("previous")
+            if prev:
+                prev = dict(prev)
+                prev.pop("_id", None)
+                res = await db.products.replace_one({"id": pid}, prev)
+                restored += res.modified_count
+
+    await db.catalog_imports.update_one({"id": job_id}, {"$set": {"status": "rolled_back"}})
+    await db.catalog_import_snapshots.delete_many({"job_id": job_id})
+    return {"products_removed": removed, "products_restored": restored}

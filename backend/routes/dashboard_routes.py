@@ -1,0 +1,86 @@
+"""Dashboard aggregates. Fast, role-agnostic snapshot for internal home screen."""
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+from fastapi import APIRouter, Depends
+
+from auth import floor_query, floor_scope_ids, get_current_user
+from db import db
+from models import UserPublic
+from services.analytics import cache
+
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+@router.get("/stats")
+async def dashboard_stats(user: UserPublic = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    today_end = (now + timedelta(days=1)).isoformat()
+
+    async def load() -> dict:
+        # One database-side facet replaces downloading (and Python-processing)
+        # every quotation. Each facet returns only the small slice the home
+        # screen needs, so the cost stays bounded as the ERP grows.
+        quotation_pipeline = [
+            {"$match": floor_query(user, {})},
+            {"$facet": {
+                "revenue_month": [
+                    {"$match": {"status": "won", "updated_at": {"$gte": month_start}}},
+                    {"$group": {"_id": None, "value": {"$sum": "$grand_total"}}},
+                ],
+                "pipeline": [
+                    {"$match": {"status": {"$in": ["draft", "pending_approval", "sent"]}}},
+                    {"$group": {
+                        "_id": None,
+                        "value": {"$sum": "$grand_total"},
+                        "pending": {"$sum": {"$cond": [{"$eq": ["$status", "pending_approval"]}, 1, 0]}},
+                    }},
+                ],
+                "quotes_this_month": [
+                    {"$match": {"created_at": {"$gte": month_start}}},
+                    {"$count": "value"},
+                ],
+                "recent": [
+                    {"$sort": {"updated_at": -1}}, {"$limit": 8},
+                    {"$project": {"_id": 0, "id": 1, "number": 1, "customer_name": 1, "status": 1, "grand_total": 1, "updated_at": 1}},
+                ],
+                "top_products": [
+                    {"$unwind": "$items"},
+                    {"$group": {
+                        "_id": "$items.product_id", "name": {"$first": "$items.name"}, "sku": {"$first": "$items.sku"},
+                        "image": {"$first": "$items.image"}, "qty": {"$sum": "$items.qty"},
+                        "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}},
+                    }},
+                    {"$sort": {"revenue": -1}}, {"$limit": 5},
+                    {"$project": {"_id": 0, "product_id": "$_id", "name": 1, "sku": 1, "image": 1, "qty": 1, "revenue": 1}},
+                ],
+            }},
+        ]
+        (quotation_result,), customers, products, followups_due = await asyncio.gather(
+            db.quotations.aggregate(quotation_pipeline).to_list(1),
+            db.customers.count_documents(floor_query(user, {})),
+            db.products.count_documents(floor_query(user, {"active": True})),
+            db.followups.count_documents(floor_query(user, {"status": "open", "due_at": {"$lte": today_end}, "assigned_to": user.id})),
+        )
+        revenue = quotation_result.get("revenue_month", [])
+        pipeline = quotation_result.get("pipeline", [])
+        month_count = quotation_result.get("quotes_this_month", [])
+        pipeline_row = pipeline[0] if pipeline else {}
+        return {
+            "revenue_month": round((revenue[0].get("value", 0) if revenue else 0), 2),
+            "open_pipeline": round(pipeline_row.get("value", 0), 2),
+            "pending_approval": pipeline_row.get("pending", 0),
+            "quotes_this_month": month_count[0].get("value", 0) if month_count else 0,
+            "customers": customers, "products": products, "followups_due": followups_due,
+            "recent_activity": [
+                {"id": q["id"], "kind": "quotation", "title": f"{q['number']} · {q['customer_name']}", "status": q["status"], "amount": q.get("grand_total", 0), "at": q.get("updated_at")}
+                for q in quotation_result.get("recent", [])
+            ],
+            "top_products": quotation_result.get("top_products", []),
+        }
+
+    # A very short cache makes route revisits instantaneous without making the
+    # dashboard materially stale. Version keys invalidate immediately for
+    # write paths that already publish analytics changes.
+    return await cache.cached("dashboard_stats", ["quotations", "customers", "products", "followups"], month_start[:10], floor_scope_ids(user), load, ttl=15)

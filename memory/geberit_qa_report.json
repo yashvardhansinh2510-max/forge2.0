@@ -1,0 +1,80 @@
+{
+  "brand": "Geberit",
+  "job_id": "d7c2e9c1-8708-4c02-bc77-fa573205eb97",
+  "runtime_s": 133.7,
+  "extraction": {
+    "brand": "Geberit",
+    "filename": "GEBERIT_MRP_Catalogue_-2026.pdf",
+    "source_type": "pdf",
+    "pages": 38,
+    "raw_rows": 3295,
+    "parsed_rows": 555,
+    "images_found": 538,
+    "images_mapped": 555,
+    "warnings": []
+  },
+  "certification": {
+    "extraction_accuracy": 100.0,
+    "sku_accuracy": 97.7,
+    "price_accuracy": 92.4,
+    "category_accuracy": 100.0,
+    "variant_accuracy": 100.0,
+    "image_accuracy": 100.0,
+    "duplicate_score": 97.7,
+    "missing_data_score": 91.0,
+    "total_products": 555,
+    "products_ready": 505,
+    "products_needing_review": 50,
+    "families_detected": 255,
+    "duplicates_sku": 13,
+    "cross_family_skus": 10,
+    "duplicates_family": 0,
+    "missing_images": 0,
+    "missing_mrp": 42,
+    "missing_categories": 0,
+    "image_quality": {
+      "total": 0,
+      "excellent": 0,
+      "good": 0,
+      "acceptable": 0,
+      "poor": 0,
+      "by_source": {},
+      "min_edge_px": 0,
+      "median_edge_px": 0,
+      "max_edge_px": 0,
+      "premium_pct": 0,
+      "verdict": "No images extracted from supplier file"
+    },
+    "excellent_images": 0,
+    "good_images": 0,
+    "acceptable_images": 0,
+    "poor_images": 0,
+    "variant_conflicts": [],
+    "category_conflicts": [
+      "Family 'geberit:sigma:109.771' spans multiple categories: ['Flush Plates', 'Water Closets']",
+      "Family 'geberit:sigma:116.091' spans multiple categories: ['Flush Plates', 'Water Closets']",
+      "Family 'geberit:sigma:115.883' spans multiple categories: ['Concealed Cisterns', 'Flush Plates']",
+      "Family 'geberit:kombifix:388.011' spans multiple categories: ['Accessories', 'Concealed Cisterns']",
+      "Family 'geberit:kombifix:388.012' spans multiple categories: ['Accessories', 'Concealed Cisterns']",
+      "Family 'geberit:duofix:116.015' spans multiple categories: ['Concealed Cisterns', 'Urinals']"
+    ],
+    "warnings": [
+      "10 cross-family SKU listing(s) detected \u2014 treated as legitimate re-listings, not errors"
+    ],
+    "overall_score": 97.4,
+    "production_ready": false
+  },
+  "accepted": 505,
+  "pending": 37,
+  "rejected": 13,
+  "counts": {
+    "rows": 555,
+    "families": 255,
+    "subcategories": 1,
+    "series": 11,
+    "finishes": 3,
+    "colours": 3,
+    "with_dimensions": 555,
+    "with_images": 555
+  }
+}

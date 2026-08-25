@@ -1,0 +1,62 @@
+{
+  "mode": "dry-run",
+  "source_file": "DONATO 2026.xlsx",
+  "extraction": {
+    "rows": 128,
+    "images_found": 128,
+    "images_mapped": 128,
+    "warnings": []
+  },
+  "total_rows": 128,
+  "accepted": 128,
+  "rejected_true_duplicates": 0,
+  "needs_manual_review": 0,
+  "needs_manual_review_detail": [],
+  "missing_images_in_source": 0,
+  "certification": {
+    "extraction_accuracy": 100.0,
+    "sku_accuracy": 100.0,
+    "price_accuracy": 100.0,
+    "category_accuracy": 100.0,
+    "variant_accuracy": 100.0,
+    "image_accuracy": 100.0,
+    "duplicate_score": 100.0,
+    "missing_data_score": 100.0,
+    "total_products": 128,
+    "products_ready": 128,
+    "products_needing_review": 0,
+    "families_detected": 98,
+    "duplicates_sku": 0,
+    "cross_family_skus": 0,
+    "duplicates_family": 0,
+    "missing_images": 0,
+    "missing_mrp": 0,
+    "missing_categories": 0,
+    "image_quality": {
+      "total": 128,
+      "excellent": 0,
+      "good": 0,
+      "acceptable": 72,
+      "poor": 56,
+      "by_source": {
+        "png": 90,
+        "jpeg": 38
+      },
+      "min_edge_px": 115,
+      "median_edge_px": 396,
+      "max_edge_px": 530,
+      "premium_pct": 0,
+      "verdict": "Supplier file only contains thumbnail-grade artwork (0% premium; median longest edge = 396px). Recommend sourcing official product photography separately."
+    },
+    "excellent_images": 0,
+    "good_images": 0,
+    "acceptable_images": 72,
+    "poor_images": 56,
+    "variant_conflicts": [],
+    "category_conflicts": [],
+    "warnings": [],
+    "overall_score": 100.0,
+    "production_ready": true
+  },
+  "runtime_s": 0.1
+}

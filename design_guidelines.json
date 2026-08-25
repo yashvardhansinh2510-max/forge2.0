@@ -1,0 +1,116 @@
+{
+  "theme_archetype": "SWISS & HIGH-CONTRAST (Industrial Command Center)",
+  "typography": {
+    "headings": {
+      "family": "IBM Plex Sans, sans-serif",
+      "styles": "font-bold tracking-tight text-slate-900",
+      "instruction": "CRITICAL: Never use 'Inter', 'Roboto', 'Open Sans', or 'Lato' for headings. Use IBM Plex Sans for authority and technical precision. Apply tight tracking (tracking-tight)."
+    },
+    "body": {
+      "family": "Inter, sans-serif",
+      "styles": "text-sm text-slate-800 leading-tight",
+      "instruction": "Use Inter for body data legibility only."
+    },
+    "data_numbers": {
+      "family": "IBM Plex Mono, monospace",
+      "styles": "text-xs tabular-nums tracking-tighter text-slate-900",
+      "instruction": "Use monospace for quantities, order numbers, and timestamps to ensure vertical alignment in tables."
+    }
+  },
+  "colors": {
+    "background": "#F4F4F5",
+    "surface": "#FFFFFF",
+    "text_primary": "#09090B",
+    "text_secondary": "#52525B",
+    "borders": "#E4E4E7",
+    "accents": {
+      "primary": "#2563EB", 
+      "success": "#16A34A",
+      "warning": "#D97706",
+      "danger": "#DC2626",
+      "neutral": "#71717A"
+    },
+    "instruction": "Strict adherence to Swiss High-Contrast. No gradients. No teal green. Colors exist strictly to guide action and denote status. Do NOT use transparent backgrounds for header/overlays."
+  },
+  "layouts": {
+    "app_container": "w-full max-w-[100vw] overflow-x-hidden bg-zinc-100 min-h-screen text-zinc-900",
+    "dashboard_grid": "p-2 md:p-4 grid grid-cols-1 gap-4",
+    "table_container": "bg-white border border-zinc-200 shadow-sm rounded-none overflow-x-auto",
+    "table_structure": "w-full text-left border-collapse",
+    "table_cells": "px-2 py-1.5 text-[11px] md:text-xs whitespace-nowrap border-b border-zinc-200 align-middle",
+    "sticky_header": "sticky top-0 bg-zinc-100 z-10 font-bold border-b-2 border-zinc-300",
+    "instruction": "Extreme data density is required. Fit 20-30 rows on desktop. Reduce standard padding dramatically (use py-1 or py-1.5, px-2). Eliminate empty whitespace. Go full width."
+  },
+  "components": {
+    "tables": {
+      "instruction": "Dense operational grids. Must include sticky headers (sticky top-0). Use row borders (border-b) and subtle hover effects (hover:bg-zinc-50). Horizontal scrolling allowed only on mobile.",
+      "styles": "w-full text-left border-collapse"
+    },
+    "status_badges": {
+      "instruction": "Small pill indicators for workflow stages.",
+      "styles": "px-1.5 py-0.5 rounded-sm text-[10px] font-bold uppercase tracking-wider border"
+    },
+    "buttons": {
+      "instruction": "Sharp, flat, distinct. No heavy roundness. max rounded-sm. Use primary color strictly for primary CTAs.",
+      "styles": "inline-flex items-center justify-center px-2.5 py-1 text-xs font-semibold border border-transparent shadow-sm rounded-sm text-white focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors"
+    },
+    "workflow_breadcrumb": {
+      "instruction": "At the top of every order/workspace, visually show: Quotation -> Brand Release -> Released -> Move to Godown or Dispatch Direct -> Dispatch -> Material Register -> Chalan -> Delivered.",
+      "styles": "flex flex-wrap items-center text-[10px] space-x-1.5 p-2 bg-zinc-900 text-zinc-400 rounded-sm mb-4"
+    },
+    "brand_workspace_table": {
+      "instruction": "ERP release table with Product, Ordered, Released, Remaining, Release Qty. Must support multi-product selection via checkboxes and a sticky 'Release Selected' batch submit button."
+    },
+    "customer_workspace_table": {
+      "instruction": "Operational table with current stock buckets (Ordered, Released, Godown, Dispatched, Delivered, Remaining) and rule-based action buttons (Move to Godown, Dispatch from Released, Dispatch from Godown, Generate Chalan, View Timeline)."
+    },
+    "dispatch_list_table": {
+      "instruction": "Logistics table focusing on Dispatch No, Customer, Brand, Products, Boxes, Source, Destination, Vehicle, Driver, Status, Created, Actions."
+    },
+    "material_movement_register": {
+      "instruction": "ERP audit log with Timestamp, Customer, Brand, Product, Movement, Quantity, From, To, Reference, User. Include dense filter bar above the table."
+    }
+  },
+  "motion": {
+    "hover_states": "hover:bg-zinc-100 transition-colors duration-150",
+    "focus_states": "focus:ring-2 focus:ring-blue-500 focus:outline-none",
+    "instruction": "Minimal micro-interactions. ERPs need speed and immediate responsiveness."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text passes minimum 4.5:1 contrast. Darken neutral grays if necessary.",
+    "test_ids": "All interactive elements MUST have data-testid attributes (e.g., data-testid='release-selected-btn').",
+    "instruction": "Use correct semantic table tags (th, td, tr, thead, tbody)."
+  },
+  "visual_enhancers": {
+    "borders": "1px solid crisp borders (border-zinc-200) on all containers. Expose the grid skeleton.",
+    "shadows": "Minimal ambient shadows (shadow-sm). Do not use deep, soft, modern SaaS shadows.",
+    "instruction": "Follow 'GRID BORDERS (The Technical Look)'. Surfaces must feel solid, functional, and devoid of unnecessary ornamentation."
+  },
+  "image_urls": {
+    "instruction": "No imagery required for this data-dense ERP.",
+    "categories": {}
+  },
+  "instructions_to_main_agent": [
+    "You MUST use .js files for React components (NOT .tsx).",
+    "Implement a mobile_web_erp_operations_workspace structure. Use React Router (or equivalent) for navigation between Tile Orders Dashboard, Brand Workspace, Customer Workspace, Dispatch List, and Material Movement Register.",
+    "Avoid the generic 'AI slop' look. Do not center-align forms or tables. Data should be left-aligned.",
+    "The UI MUST fit 20-30 rows without scrolling on a standard 1080p desktop. Reduce standard shadcn padding. Use py-1, px-2, text-[11px] or text-xs.",
+    "Use Phosphor Icons or lucide-react for iconography. Keep icons small (size 14 or 16).",
+    "Do not redesign the backend business workflow or invent new APIs. Create mock UI interactions that respect the existing states.",
+    "Implement the 'Workflow Breadcrumb' at the top of the relevant workspaces to highlight the current stage.",
+    "For 'Brand Workspace', the 'Release Selected' button must be sticky (e.g., sticky bottom-4 in the viewport) for quick batch actions.",
+    "For 'Customer Workspace', rule-based action states mean buttons should only appear or be enabled when the state permits (e.g., 'Dispatch from Godown' only available if Godown qty > 0).",
+    "Never use Space Grotesk or Inter for headings.",
+    "Ensure 'Sticky table headers' are properly implemented so warehouse staff don't lose context while scrolling large tables.",
+    "Every table cell must be dense and readable. Use 'tabular-nums' for numbers."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Use `sonner` for toast notifications located in /app/frontend/src/components/ui/sonner.js (or .tsx converted to .js).",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters ONLY where appropriate (e.g., sticky headers), never with fully transparent backgrounds.",
+    "DO NOT apply universal transition like 'transition: all'. Apply specific transitions.",
+    "DO NOT center align the app container. Left-align text naturally.",
+    "NEVER use emoji characters (🤖🧠) as icons."
+  ]
+}

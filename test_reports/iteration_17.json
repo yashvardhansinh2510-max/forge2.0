@@ -1,0 +1,79 @@
+{
+  "summary": "Tested executive analytics baseline backend + mobile web UI. Core filters/dashboard/funnel/products/exports work, but brand detail endpoint fails with 500 and brand drill-down UI breaks. Also found React Native web console errors from raw text nodes inside table cells.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/executive-analytics/brands/{brand_id}",
+        "issue": "Returns 500 Internal Server Error. Traceback shows dashboard() called with positional args causing `user` to become a FastAPI Depends object (`'Depends' object has no attribute 'role'`).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/executive-analytics/*",
+        "issue": "Public preview host had intermittent auth/login read timeouts during pytest runs (flaky network during test setup)."
+      },
+      {
+        "endpoint": "GET /api/executive-analytics/referrers/{referrer_id}",
+        "issue": "Could not validate happy-path due empty referrer data in current environment (`filters.referrers` and `dashboard.referrals` empty)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Brand drill-down from Executive > Brand performance table",
+        "issue": "Navigates to /sales-data/brands/{id} but renders ErrorState: 'Could not load brand analytics' due backend 500.",
+        "testID": "executive-brand-panel",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Executive analytics brand row tap -> brand detail fetch",
+        "issue": "Frontend call to /api/executive-analytics/brands/{id}?preset=this_month&granularity=month receives HTTP 500.",
+        "affected_testIDs": [
+          "executive-brand-panel",
+          "brand-detail-revenue"
+        ]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "Executive analytics tables (floor/brand/customer/salespeople/referrals rows)",
+        "issue": "Console repeatedly logs 'Unexpected text node ... cannot be a child of <View>' indicating raw string children rendered in View hierarchy (Text wrapping issue)."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/integration/test_executive_analytics_baseline.py",
+    "/app/test_reports/pytest/pytest_executive_analytics_baseline.xml",
+    "/app/test_reports/iteration_exec_analytics_ui/executive_mobile_state.jpeg",
+    "/app/test_reports/iteration_exec_analytics_ui_branddrill2/brand_panel_tap_state.jpeg",
+    "/root/.emergent/automation_output/20260731_104338/console_20260731_104338.log"
+  ],
+  "action_items": [
+    "Fix brand_detail route call to dashboard() using keyword args (pass user=user explicitly at correct parameter).",
+    "Retest brand detail API and UI drill-down after fix.",
+    "Fix table rendering so all cell text is wrapped with <Text> (or TableCell internally wraps primitive strings).",
+    "Re-run executive analytics pytest suite once network is stable to remove flaky timeout noise."
+  ],
+  "critical_code_review_comments": [
+    "backend/routes/executive_analytics_routes.py line ~174 uses positional args when calling dashboard(), causing parameter shift and runtime 500.",
+    "frontend executive table cells pass plain strings/numbers as children to View-based TableCell; this violates React Native text wrapping rules and produces runtime console errors."
+  ],
+  "updated_files": [
+    "/app/backend/tests/integration/test_executive_analytics_baseline.py",
+    "/app/test_reports/iteration_17.json"
+  ],
+  "success_rate": {
+    "backend": "83%",
+    "frontend": "70%"
+  },
+  "seed_data_creation": "No new seed data created.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Stable run confirmed filters/dashboard/funnel/products/exports and customer/salesperson detail routes. Main blocking defect is brand detail 500. Referrer happy-path was not testable due empty referrer dataset in this environment.",
+  "rca_of_issue": "Repro: login as owner -> GET /api/executive-analytics/dashboard (pick first brand_id) -> GET /api/executive-analytics/brands/{brand_id} => 500. Backend traceback shows `brand_detail` calls `dashboard()` positionally, shifting args so `user` remains Depends placeholder, leading to `AttributeError: 'Depends' object has no attribute 'role'` in accessible_floor_ids(). UI impact: Executive brand row opens Brand analytics screen but shows ErrorState. Mitigation: call dashboard with named args to preserve parameter binding; then rerun API + UI drilldown tests."
+}

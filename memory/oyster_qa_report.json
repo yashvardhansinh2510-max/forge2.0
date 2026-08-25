@@ -1,0 +1,168 @@
+{
+  "mode": "import",
+  "files_processed": [
+    "OYSTER BODY JET.xlsx",
+    "OYSTER SHOWER.xlsx",
+    "OYSTER SPOUT&HS&ANGLE W& TIGGER.xlsx",
+    "OYSTER BESIN MIXER.xlsx"
+  ],
+  "already_done_skipped": [],
+  "per_file": [
+    {
+      "file": "OYSTER BODY JET.xlsx",
+      "rows": 24,
+      "images_found": 24,
+      "images_mapped": 24,
+      "warnings": []
+    },
+    {
+      "file": "OYSTER SHOWER.xlsx",
+      "rows": 88,
+      "images_found": 87,
+      "images_mapped": 87,
+      "warnings": []
+    },
+    {
+      "file": "OYSTER SPOUT&HS&ANGLE W& TIGGER.xlsx",
+      "rows": 52,
+      "images_found": 52,
+      "images_mapped": 52,
+      "warnings": []
+    },
+    {
+      "file": "OYSTER BESIN MIXER.xlsx",
+      "rows": 56,
+      "images_found": 53,
+      "images_mapped": 53,
+      "warnings": []
+    }
+  ],
+  "total_rows": 220,
+  "accepted": 220,
+  "rejected_true_duplicates": 0,
+  "needs_manual_review": 0,
+  "needs_manual_review_detail": [],
+  "certification": {
+    "extraction_accuracy": 100.0,
+    "sku_accuracy": 100.0,
+    "price_accuracy": 100.0,
+    "category_accuracy": 100.0,
+    "variant_accuracy": 97.7,
+    "image_accuracy": 98.2,
+    "duplicate_score": 100.0,
+    "missing_data_score": 98.2,
+    "total_products": 220,
+    "products_ready": 216,
+    "products_needing_review": 4,
+    "families_detected": 68,
+    "duplicates_sku": 0,
+    "cross_family_skus": 0,
+    "duplicates_family": 0,
+    "missing_images": 4,
+    "missing_mrp": 0,
+    "missing_categories": 0,
+    "image_quality": {
+      "total": 216,
+      "excellent": 42,
+      "good": 6,
+      "acceptable": 101,
+      "poor": 67,
+      "by_source": {
+        "png": 133,
+        "jpeg": 83
+      },
+      "min_edge_px": 208,
+      "median_edge_px": 466,
+      "max_edge_px": 7680,
+      "premium_pct": 22,
+      "verdict": "Supplier file only contains thumbnail-grade artwork (22% premium; median longest edge = 466px). Recommend sourcing official product photography separately."
+    },
+    "excellent_images": 42,
+    "good_images": 6,
+    "acceptable_images": 101,
+    "poor_images": 67,
+    "variant_conflicts": [
+      "Family 'oyster:body-jet:wave-jet' has 2 rows for variant 'Brushed Rose Gold'",
+      "Family 'oyster:body-jet:bramble-body-jet' has 2 rows for variant 'Brushed Rose Gold'",
+      "Family 'oyster:outlet-hand-shower-angle-valve:aquatix-bath-spout' has 2 rows for variant 'Brushed Rose Gold'",
+      "Family 'oyster:outlet-hand-shower-angle-valve:hygio-helth-faucet' has 2 rows for variant 'Brushed Rose Gold'",
+      "Family 'oyster:basin-mixer:agua-besin-ai-mixer' has 2 rows for variant 'Brushed Rose Gold'"
+    ],
+    "category_conflicts": [],
+    "warnings": [],
+    "overall_score": 99.3,
+    "production_ready": true
+  },
+  "errors": [],
+  "runtime_s": 41.8,
+  "batch_result": "SUCCESS",
+  "categories_created": [],
+  "products_imported": 7,
+  "products_updated": 213,
+  "products_skipped": 0,
+  "import_errors": [],
+  "missing_images": 4,
+  "pre_import_snapshot": "/Users/yashvardhansinhjhala/buildcon house/forge2.0/backend/backups/20260719_035218",
+  "post_import_snapshot": "/Users/yashvardhansinhjhala/buildcon house/forge2.0/backend/backups/20260719_035430",
+  "integrity_guard": {
+    "total_products": 2821,
+    "total_media": 2783,
+    "total_brands": 6,
+    "total_categories": 41,
+    "same_brand_duplicate_skus": [],
+    "cross_brand_sku_collisions": [
+      {
+        "sku": "26455000",
+        "products": [
+          {
+            "id": "03907bd4-3ad3-4a46-b87f-6b922755659a",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG FixFit Square wall outlet DN15 ch.NRV"
+          },
+          {
+            "id": "b6627afc-dd37-488d-9c18-f3675dfe2567",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "ChromeEuphoria260SmartControlheadshower"
+          }
+        ]
+      },
+      {
+        "sku": "27704000",
+        "products": [
+          {
+            "id": "4e049e87-6a05-4de3-b49e-a8faf53dd7c3",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG Wall bar Unica Reno 720mm chrome"
+          },
+          {
+            "id": "dfe8bf4b-81af-424b-95f8-9fdc55d1c53d",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "EuphoriaCube wall union"
+          }
+        ]
+      },
+      {
+        "sku": "27477000",
+        "products": [
+          {
+            "id": "ed7f30ba-08d0-406a-975f-c6fcd3a2cdd2",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG Raindance Air ov.shower 240mm ceiling"
+          },
+          {
+            "id": "d8d876b8-229d-4092-9a32-8be7818cea62",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "Rainshower Cosmopolitan 310 Headshower"
+          }
+        ]
+      }
+    ],
+    "invalid_brand_refs": [],
+    "invalid_category_refs": [],
+    "orphaned_media": [],
+    "media_brand_mismatches": [],
+    "missing_images": 46,
+    "unexpected_modifications": [],
+    "ok": true
+  }
+}

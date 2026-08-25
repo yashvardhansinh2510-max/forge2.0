@@ -1,0 +1,57 @@
+{
+  "summary": "Backend + mobile-web frontend regression testing completed for Tile Orders restore workflow. Required tabs, dispatch list route, release/move/dispatch APIs, dispatch/chalan generation, PDF validity, persistence checks, and contract guard all passed. One frontend console regression was found (duplicate React key in Dispatch List rows).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/login",
+        "issue": "Observed one transient 30s read-timeout during new E2E pytest setup; retry succeeded and all workflow assertions passed."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Tile Orders Dispatch List row rendering",
+        "issue": "Console shows duplicate React key warning when two rows share dispatch_id + chalan_id + tile_name; this can cause row identity/render instability.",
+        "testID": "tile-orders-tab-dispatch-list",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tile_orders_restore_workflow_regression.py",
+    "/app/backend/tests/test_tile_orders_dispatch_workflow.py",
+    "/app/backend/tests/unit/test_tile_orders_dispatch_list.py",
+    "/app/test_reports/pytest/pytest_tile_orders_restore_iteration18.xml",
+    "/app/test_reports/pytest/pytest_tile_orders_restore_workflow_iteration18.xml",
+    "/app/test_reports/iteration_18_ui/dispatch_detail_modal.jpeg",
+    "/app/test_reports/iteration_18_ui/material_register.jpeg",
+    "/app/test_reports/iteration_18_ui_brand2/brand_release_only.jpeg",
+    "/app/frontend/scripts/verify-tile-orders-contract.mjs"
+  ],
+  "action_items": [
+    "Fix Dispatch List row key generation in frontend/app/(admin)/tiles/orders/index.tsx to guarantee uniqueness per rendered line item (not only dispatch_id/chalan_id/tile_name).",
+    "(Optional hardening) Add testID attributes to non-instrumented interactive rows in brand detail pages to improve deterministic mobile automation coverage."
+  ],
+  "critical_code_review_comments": [
+    "frontend/app/(admin)/tiles/orders/index.tsx uses key `${row.dispatch_id}-${row.chalan_id}-${row.tile_name}`; duplicate tile names within same dispatch/chalan produce duplicate keys and console errors.",
+    "New workflow API contracts and CI route contract guard are intact; no missing endpoint bindings found in frontend/src/api/tileOrders.ts and frontend/scripts/verify-tile-orders-contract.mjs."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tile_orders_restore_workflow_regression.py",
+    "/app/test_reports/iteration_18.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "92%"
+  },
+  "seed_data_creation": "Created one live TEST_ quotation/order via API flow in regression test: project_name TEST_restore_<uuid>.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use owner credentials from /app/memory/test_credentials.md. Re-run: pytest /app/backend/tests/test_tile_orders_restore_workflow_regression.py -v with EXPO_BACKEND_URL set to preview domain, then mobile UI check for Dispatch List after key fix.",
+  "rca_of_issue": "Duplicate Dispatch List console error RCA: React key collision in map rendering. Repro: open /tiles/orders -> Dispatch List with dataset containing repeated tile_name lines under same dispatch/chalan. Console logs emit 'Encountered two children with the same key'. Mitigation: include a guaranteed unique discriminator (line index or po_item_id from backend row payload) in row key."
+}

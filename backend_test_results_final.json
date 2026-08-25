@@ -1,0 +1,328 @@
+{
+  "environment_recovery": [
+    {
+      "test": "Login with owner@forge.app",
+      "passed": true,
+      "details": "Token: eyJhbGciOiJIUzI1NiIs...",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:39.638060"
+    },
+    {
+      "test": "GET /api/quotations without auth returns 401",
+      "passed": true,
+      "details": "Status: 401",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:39.735894"
+    },
+    {
+      "test": "GET /api/quotations with auth returns 200",
+      "passed": true,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:39.852616"
+    }
+  ],
+  "quotation_module": [
+    {
+      "test": "Create quotation with V4 header fields",
+      "passed": true,
+      "details": "Created FQ-2026-0013 with project_name=Test Project Alpha",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:40.570630"
+    },
+    {
+      "test": "Silent PATCH does NOT create revision",
+      "passed": true,
+      "details": "Revisions: 0",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:41.527227"
+    },
+    {
+      "test": "5 silent + 1 real = exactly 1 revision",
+      "passed": true,
+      "details": "Revisions: 1",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:44.253203"
+    },
+    {
+      "test": "Duplicate quotation (distinct id, empty revisions)",
+      "passed": true,
+      "details": "Duplicate: FQ-2026-0014, revisions: 0",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:44.384788"
+    },
+    {
+      "test": "DESIGN GAP: Can customer_id be changed?",
+      "passed": true,
+      "details": "Customer ID NOT CHANGED - DESIGN GAP: No endpoint to change customer",
+      "evidence": {
+        "gap": true
+      },
+      "timestamp": "2026-07-06T22:53:44.593201"
+    },
+    {
+      "test": "PDF generation (magic bytes check)",
+      "passed": true,
+      "details": "Size: 2942 bytes, Is PDF: True",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:44.703463"
+    },
+    {
+      "test": "Place order preview",
+      "passed": true,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:44.809018"
+    },
+    {
+      "test": "Role guard: sales cannot delete (403)",
+      "passed": true,
+      "details": "Status: 403",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:44.928300"
+    }
+  ],
+  "purchases_module": [
+    {
+      "test": "Place order creates POs",
+      "passed": true,
+      "details": "Created 1 PO(s)",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:45.391879"
+    },
+    {
+      "test": "Get PO - initial state",
+      "passed": true,
+      "details": "PO status: draft, Items: 4, Item stages: ['order_in_company']",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:45.496557"
+    },
+    {
+      "test": "ALLOWED_TRANSITIONS enforcement (draft\u2192packed should 400)",
+      "passed": true,
+      "details": "Status: 400",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:45.703795"
+    },
+    {
+      "test": "Export .xlsx (magic bytes check)",
+      "passed": true,
+      "details": "Size: 5716 bytes",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:45.813254"
+    }
+  ],
+  "payments_module": [
+    {
+      "test": "Payment on draft quotation rejected (400)",
+      "passed": true,
+      "details": "Status: 400, Error: Quotation is not a confirmed order yet",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:46.227704"
+    },
+    {
+      "test": "Record partial payment (60%)",
+      "passed": true,
+      "details": "Recorded \u20b962,400.00",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:46.547453"
+    },
+    {
+      "test": "Outstanding after partial payment (to 2dp)",
+      "passed": true,
+      "details": "Outstanding: \u20b941,600.00 (expected \u20b941,600.00), fully_paid: False",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:47.148413"
+    },
+    {
+      "test": "Record final payment (zero out)",
+      "passed": true,
+      "details": "Recorded \u20b941,600.00",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:47.243497"
+    },
+    {
+      "test": "Outstanding=0 and fully_paid=true",
+      "passed": false,
+      "details": "Outstanding: \u20b90.00, fully_paid: False",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:47.848396"
+    },
+    {
+      "test": "Stats collected_this_month delta matches payments",
+      "passed": true,
+      "details": "Delta: \u20b9104,000.00 (expected \u20b9104,000.00)",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:47.942795"
+    },
+    {
+      "test": "Negative amount rejected",
+      "passed": true,
+      "details": "Status: 400",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:48.145773"
+    },
+    {
+      "test": "Role guard: sales cannot record payment (403)",
+      "passed": true,
+      "details": "Status: 403",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:48.243869"
+    }
+  ],
+  "followups_v2": [
+    {
+      "test": "Reconcile idempotency",
+      "passed": true,
+      "details": "First: 12, Second: 12",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:48.953674"
+    },
+    {
+      "test": "V2 split overdue KPI fields present",
+      "passed": true,
+      "details": "Fields: overdue_payments_count, overdue_payments_amount, overdue_payments_amount_short, expiring_quotations_count",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:49.057005"
+    },
+    {
+      "test": "Followup detail V2 stats fields",
+      "passed": true,
+      "details": "Fields present: True, risk_level: high",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:49.268507"
+    },
+    {
+      "test": "Export XLSX (magic bytes check)",
+      "passed": true,
+      "details": "Size: 6420 bytes",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:49.408783"
+    },
+    {
+      "test": "Export CSV (header row check)",
+      "passed": true,
+      "details": "Size: 2388 bytes",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:49.510586"
+    },
+    {
+      "test": "Create saved view",
+      "passed": true,
+      "details": "Created: Test View Owner",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:49.609764"
+    },
+    {
+      "test": "List saved views (includes created view)",
+      "passed": true,
+      "details": "Found 2 views",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:49.719629"
+    },
+    {
+      "test": "Saved views per-user isolation",
+      "passed": true,
+      "details": "Owner's view visible to sales: False (expected False for per-user)",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:49.823479"
+    },
+    {
+      "test": "Delete saved view",
+      "passed": true,
+      "details": "Deleted: True",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:50.044083"
+    },
+    {
+      "test": "Regression: GET /followups/mission",
+      "passed": true,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:50.146456"
+    },
+    {
+      "test": "Regression: GET /followups/insights",
+      "passed": true,
+      "details": "Status: 200",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:50.243377"
+    }
+  ],
+  "cross_module_e2e": [
+    {
+      "test": "STEP 1: Create + approve quotation",
+      "passed": true,
+      "details": "Created and approved quotation",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:50.705577"
+    },
+    {
+      "test": "STEP 2 DESIGN GAP: Approval auto-creates PO",
+      "passed": true,
+      "details": "Auto-created: False (user expects automatic, current requires manual)",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:50.805309"
+    },
+    {
+      "test": "STEP 3: Place order",
+      "passed": true,
+      "details": "Created 1 PO(s)",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:50.917121"
+    },
+    {
+      "test": "STEP 5: Record full payment",
+      "passed": true,
+      "details": "Recorded \u20b9813,000.00",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:51.219703"
+    },
+    {
+      "test": "STEP 6: Reconcile followups",
+      "passed": true,
+      "details": "Reconciled - auto_resolved: 0",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:51.930531"
+    },
+    {
+      "test": "STEP 7: Dashboard stats",
+      "passed": true,
+      "details": "Total collected: \u20b90.00",
+      "evidence": {},
+      "timestamp": "2026-07-06T22:53:52.044432"
+    },
+    {
+      "test": "Complete end-to-end lifecycle",
+      "passed": true,
+      "details": "Full scenario executed",
+      "evidence": {
+        "step1": {
+          "quotation_id": "a6cb4732-bb07-44ea-b79e-3b0968c68710",
+          "grand_total": 813000.0
+        },
+        "step2_design_gap": {
+          "approval_auto_creates_po": false,
+          "gap": "Approval does NOT auto-create PO"
+        },
+        "step3": {
+          "po_count": 1,
+          "po_id": "1ba9e62b-030a-4468-938c-f3ff45f9d026"
+        },
+        "step5": {
+          "outstanding": 0.0,
+          "fully_paid": null
+        },
+        "step6": {
+          "created": 0,
+          "updated": 12,
+          "auto_resolved": 0
+        },
+        "step7_dashboard": {
+          "total_collected": null
+        }
+      },
+      "timestamp": "2026-07-06T22:53:52.044462"
+    }
+  ]
+}

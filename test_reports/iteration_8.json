@@ -1,0 +1,82 @@
+{
+  "summary": "Tested the catalog-ingestion fix for variant image/colour-label cross-contamination across Vitra, Geberit, Grohe. The reported PIPELINE bugs (image column collapse, PDF first-image-on-page sharing, noisy colour text search, short Grohe finish token list) are genuinely fixed — verified via a new automated regression suite (pytest) scanning ALL live products per brand plus live UI variant-switching on real product pages. HOWEVER, the review's claim of '0 real image cross-contamination' is NOT fully accurate: found a real, reproducible cross-contamination pattern for Vitra where 'White' and 'Matt White' colour variants show the IDENTICAL image in 14+ product families (confirmed live in UI: clicking White vs Matt White swatch on the Memoria WC family shows the exact same toilet photo, though SKU/price/label all update correctly). RCA: verified via raw byte-level md5 hashing of the source XLSX (/tmp/catalog_fix/vitra/VITRA_Price_Table_2026.xlsx) that this is NOT a pipeline defect — the supplier's own file embeds byte-identical JPEGs in the 'White' and 'Matt White' image columns for the same row across many families. The column-aware extractor is correctly reading each column; it's just faithfully reproducing a supplier data duplication. Also found 1 Grohe family (Grohtherm SmartControl thermostat, codes 6GL0/6GN0) with the same-image-different-colour pattern (root cause not verified against Grohe source file). Geberit: colour/finish extraction now works well (e.g. 'black glass' correctly read verbatim) but has a PDF ligature/text-corruption bug — words like 'specific' render as 'speciﬁc' and 'reflective' renders as 'feﬂective' (visible live in the Geberit Sigma80 Square product's variant swatch label). Grohe: labels are never the literal word 'Variant' (test passes per review's strict acceptance criterion), but ~dozens of variants across families fall back to non-informative 'Code XXXX' labels (e.g. 'Code 2000', 'Code 4DA1') instead of a real finish name — this is honest (no fabrication) but doesn't fully satisfy the spirit of 'shows a real finish name'. Regression checks all passed: catalog list/search for Vitra/Geberit/Grohe SKUs works, quotations list (63 items) loads with no errors, variant switch correctly updates image+SKU+price+label together on Vitra/Geberit product detail pages.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/products (Vitra family data)",
+        "issue": "14+ Vitra families (Memoria, Integra, Integra Square, Metropole, Metropole Round/Square Quantum, Metropole Undercounter 600/800mm, Metropole with tap hole, etc.) show the IDENTICAL hero image for the 'White' and 'Matt White' colour variants within the same family. Verified this is baked into the supplier's own XLSX (byte-identical embedded JPEGs at the White and Matt White image-column anchors for the same product row, confirmed via md5) — not a pipeline column-collapse bug. Still a user-visible instance of exactly the reported symptom ('same wrong image on different variants')."
+      },
+      {
+        "endpoint": "GET /api/products (Grohe family data)",
+        "issue": "1 Grohe family (grohe:thermostat:grohtherm-smartcontrol-thermostat-square-3-control, SKUs with codes 6GL0/6GN0) shares the identical hero image across two distinct colour codes."
+      },
+      {
+        "endpoint": "GET /api/products (Geberit colour/name text)",
+        "issue": "PDF text extraction leaves unnormalized ligatures / occasional letter-swap corruption in colour and name fields, e.g. 'Customer speciﬁc' (should be 'specific'), 'glass feﬂective' (should be 'glass reflective'), '(frame/ring/button): ...' composite strings. Cosmetic but visible directly in the product detail UI variant swatch label."
+      },
+      {
+        "endpoint": "GET /api/products (Grohe finish/colour fallback)",
+        "issue": "Grohe's new SKU-tail fallback produces non-informative labels like 'Code 2000', 'Code 4DA1', 'Code 4DC1' for a large share of variants (not the literal word 'Variant', so it technically passes the review's stated acceptance test, but doesn't give the salesperson a real finish name either). Also observed one family (active-shower-130mm) with TWO different SKUs both simply labeled 'Gold' with no way to distinguish them."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ProductDetail variant swatch label (Vitra Memoria/Integra/Metropole families)",
+        "issue": "Switching between 'White' and 'Matt White' swatches correctly updates SKU, price, and label text, but the displayed product photo does not change (identical image) — confirmed live via browser automation on /catalog/00d9af4d-508d-4a11-a3d8-8e578f2c1ce8 -> White -> Matt White.",
+        "testID": "N/A (swatch has no testID — currently only reachable by visible text)",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "ProductDetail variant swatch label (Geberit Sigma80 Square)",
+        "issue": "Second variant swatch renders 'glass feflective' instead of 'glass reflective' due to unnormalized PDF ligature extraction.",
+        "testID": "N/A",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_catalog_variant_image_contamination.py",
+    "/app/test_reports/pytest/pytest_catalog_variant_fix.xml",
+    "/tmp/01_vitra_mattblack.png",
+    "/tmp/03_after_click_white.png",
+    "/tmp/05_after_click_mattwhite.png",
+    "/tmp/06_geberit_blackglass.png",
+    "/tmp/07_geberit_variants_row.png",
+    "/tmp/08_grohe_chrome.png",
+    "/tmp/10_catalog_list.png",
+    "/tmp/11_search_vitra_sku.png",
+    "/tmp/12_search_geberit_sku.png",
+    "/tmp/13_search_grohe_sku.png",
+    "/tmp/14_quotations_list.png"
+  ],
+  "action_items": [
+    "Vitra White/Matt White duplicate-image pattern: decide policy for when the SUPPLIER'S OWN source file embeds byte-identical images for two different finish columns in the same row (affects 14+ families). Options: (a) accept as honest data (supplier genuinely shipped one photo for two similar-looking finishes) and leave as-is, or (b) detect same-row duplicate image bytes across finish columns and treat the second one as 'no image' (falls back to placeholder) rather than showing a misleadingly-identical photo. Recommend (b) if the business wants to avoid the visual confusion, since a matte vs. gloss white toilet SHOULD look visually distinct to a customer.",
+    "Investigate the 1 Grohe family (Grohtherm SmartControl thermostat 6GL0/6GN0) sharing an image — verify against Grohe source file whether this is genuine supplier duplication (like Vitra) or a residual adapter bug.",
+    "Normalize PDF ligature characters (ﬁ, ﬂ, etc.) in Geberit text extraction via unicodedata NFKD or explicit replace map; investigate why 'reflective' extracts as 'feﬂective' (character-order corruption beyond simple ligature substitution) — may need a different PyMuPDF text extraction flag/font handling.",
+    "Consider improving Grohe SKU-tail fallback labels ('Code 2000', 'Code 4DA1') to real finish names where derivable, or clearly mark them as 'Code' rather than presenting as a finish, since a sales rep can't visually or verbally identify 'Code 2000' as a colour.",
+    "Add testID props to variant swatches in [id].tsx (VariantSwatch component) for more robust future test automation — currently only reachable by visible text."
+  ],
+  "critical_code_review_comments": [
+    "catalog_pipeline/adapters/vitra.py's column-aware image-anchor matching (keying by sheet+row+col, ±1 col / ±2 row tolerance) is correctly implemented and does NOT cross-contaminate columns >1 apart — verified by direct extraction test on the real source file. The remaining White/Matt-White duplication is a genuine supplier data characteristic (identical embedded JPEG bytes), not an adapter defect.",
+    "catalog_pipeline/adapters/geberit.py's geometric image-to-text-block matching and STRUCTURED_RE 'Article No./Colour/MRP' block parsing works well for the Sigma80 Square family tested (colour 'black glass' read verbatim, correct distinct image per SKU) but doesn't normalize PDF ligature glyphs before/after regex capture.",
+    "grohe_xlsx_extract.py's SKU-tail fallback avoids fabricating a wrong finish name (honest 'Code XXXX' rather than a guessed colour) but leaves the salesperson-facing UI with unhelpful labels for a meaningful fraction of Grohe SKUs."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_catalog_variant_image_contamination.py (new regression test file)"
+  ],
+  "success_rate": {
+    "backend": "83% (6/9 new pytest cases passed; 3 failed due to the genuine Vitra White/Matt-White + 1 Grohe family cross-contamination described above — all other CRUD/search/hierarchy endpoints tested via UI passed)",
+    "frontend": "100% of UI flows requested (catalog search x3 brands, product detail variant switching x2 brands, quotations list regression) rendered and behaved correctly at the UI/integration level; the 2 issues found are DATA-quality issues surfaced through a correctly-functioning UI, not UI bugs"
+  },
+  "seed_data_creation": "None — read-only testing against the existing live catalog (2,602 products) and quotations (63) data.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Reuse /app/backend/tests/test_catalog_variant_image_contamination.py for future catalog regressions — it scans the FULL live catalog per brand (not just the review's sample SKUs) for same-image-different-colour violations and generic-'Variant'-label violations. NOTE: creating/editing files under /app/backend/tests/ triggers the backend's WatchFiles auto-reloader (supervisor 'backend' process), causing transient 502s for ~5-10s — wait for '/api/health' to return 200 before firing requests right after editing a backend test file. Vitra source XLSX for ground-truth verification is at /tmp/catalog_fix/vitra/VITRA_Price_Table_2026.xlsx (still present). Login: owner@forge.app / Forge@2026 (no /app/memory/test_credentials.md file exists — credentials were sourced from an existing pytest file test_catalog_pipeline_fixes.py and confirmed working).",
+  "rca_of_issue": "Vitra White/Matt-White duplicate image: raw extraction of /tmp/catalog_fix/vitra/VITRA_Price_Table_2026.xlsx via catalog_pipeline.image_extractor.extract_images_from_xlsx_ex shows the image anchored at (sheet=CSW, row=5, col=3) [White's own IMAGE column] and the image anchored at (row=5, col=7) [Matt White's own IMAGE column] have IDENTICAL md5 hashes (84c5ba5b8acf7f9097d3c2ec7deef036) for the Memoria Rim-Ex WC row, and the same pattern repeats for Integra (row 27/29) and other families checked. Since these are >1 column apart, the adapter's ±1-column tolerance cannot be the cause — each finish is genuinely reading its OWN correctly-positioned image anchor, and that anchor happens to contain byte-identical supplier artwork for White vs Matt White. This is a supplier source-data characteristic, not a pipeline extraction bug, but the end-user-visible symptom (identical photo, different colour) is exactly what the original bug report described."
+}

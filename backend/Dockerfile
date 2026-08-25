@@ -1,0 +1,37 @@
+# Forge/BuildCon House backend — reproducible production image.
+# Build:  docker build -t buildcon-backend ./backend
+# Run:    docker run -p 8000:8000 --env-file <secrets> buildcon-backend
+# All configuration comes from the process environment (see settings.py);
+# never bake .env into the image.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-prod.txt .
+RUN pip install -r requirements-prod.txt
+
+COPY . .
+
+RUN useradd --create-home forge && chown -R forge:forge /app
+USER forge
+
+EXPOSE 8000
+
+# /api/health also surfaces security warnings (such as a default demo
+# password) as degraded.  Probe the dedicated readiness endpoint instead so
+# an operational warning cannot trigger a deployment restart loop.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/api/health/ready" || exit 1
+
+# Railway supplies PORT for both routing and its deployment health check.  Keep
+# 8000 as the local-container default while binding to the platform port when
+# it is present.
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

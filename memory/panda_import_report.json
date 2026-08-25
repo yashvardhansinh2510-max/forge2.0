@@ -1,0 +1,143 @@
+{
+  "mode": "import",
+  "brand": "Panda",
+  "floor_id": "ground-floor",
+  "source_file": "/Users/yashvardhansinhjhala/Library/Containers/net.whatsapp.WhatsApp/Data/tmp/documents/DFAF364A-5C3B-4713-ADA1-EE3178BB668F/PANDA 2026.xlsx",
+  "extraction": {
+    "brand": "Panda",
+    "filename": "PANDA 2026.xlsx",
+    "source_type": "excel",
+    "pages": 0,
+    "raw_rows": 0,
+    "parsed_rows": 115,
+    "images_found": 115,
+    "images_mapped": 115,
+    "warnings": []
+  },
+  "rows": 115,
+  "accepted": 115,
+  "rejected": 0,
+  "pending": 0,
+  "missing_images_in_source": 0,
+  "certification": {
+    "extraction_accuracy": 100.0,
+    "sku_accuracy": 100.0,
+    "price_accuracy": 100.0,
+    "category_accuracy": 100.0,
+    "variant_accuracy": 100.0,
+    "image_accuracy": 100.0,
+    "duplicate_score": 100.0,
+    "missing_data_score": 100.0,
+    "total_products": 115,
+    "products_ready": 115,
+    "products_needing_review": 0,
+    "families_detected": 101,
+    "duplicates_sku": 0,
+    "cross_family_skus": 0,
+    "duplicates_family": 0,
+    "missing_images": 0,
+    "missing_mrp": 0,
+    "missing_categories": 0,
+    "image_quality": {
+      "total": 115,
+      "excellent": 0,
+      "good": 6,
+      "acceptable": 53,
+      "poor": 56,
+      "by_source": {
+        "jpeg": 115
+      },
+      "min_edge_px": 217,
+      "median_edge_px": 327,
+      "max_edge_px": 811,
+      "premium_pct": 5,
+      "verdict": "Supplier file only contains thumbnail-grade artwork (5% premium; median longest edge = 327px). Recommend sourcing official product photography separately."
+    },
+    "excellent_images": 0,
+    "good_images": 6,
+    "acceptable_images": 53,
+    "poor_images": 56,
+    "variant_conflicts": [],
+    "category_conflicts": [],
+    "warnings": [],
+    "overall_score": 100.0,
+    "production_ready": true
+  },
+  "runtime_s": 0.1,
+  "batch_result": "SUCCESS",
+  "job_id": "34ba16b1-d4cd-49db-bcd7-1d0babebe431",
+  "products_before_panda": 2620,
+  "panda_products_after": 115,
+  "panda_media_after": 115,
+  "stats": {
+    "imported": 115,
+    "updated": 0,
+    "skipped": 0,
+    "failed": 0,
+    "errors": []
+  },
+  "media_uploaded_delta": -2866,
+  "pre_import_snapshot": "/Users/yashvardhansinhjhala/buildcon house/forge2.0/backend/backups/20260822_111056",
+  "post_import_snapshot": "/Users/yashvardhansinhjhala/buildcon house/forge2.0/backend/backups/20260822_111218",
+  "integrity_guard": {
+    "total_products": 5556,
+    "total_media": 5879,
+    "total_brands": 28,
+    "total_categories": 42,
+    "same_brand_duplicate_skus": [],
+    "cross_brand_sku_collisions": [
+      {
+        "sku": "26455000",
+        "products": [
+          {
+            "id": "03907bd4-3ad3-4a46-b87f-6b922755659a",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG FixFit Square wall outlet DN15 ch.NRV"
+          },
+          {
+            "id": "b6627afc-dd37-488d-9c18-f3675dfe2567",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "ChromeEuphoria260SmartControlheadshower"
+          }
+        ]
+      },
+      {
+        "sku": "27704000",
+        "products": [
+          {
+            "id": "4e049e87-6a05-4de3-b49e-a8faf53dd7c3",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG Wall bar Unica Reno 720mm chrome"
+          },
+          {
+            "id": "dfe8bf4b-81af-424b-95f8-9fdc55d1c53d",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "EuphoriaCube wall union"
+          }
+        ]
+      },
+      {
+        "sku": "27477000",
+        "products": [
+          {
+            "id": "ed7f30ba-08d0-406a-975f-c6fcd3a2cdd2",
+            "brand_id": "9b72519c-bfb4-4576-9e79-e85072ab4216",
+            "name": "HG Raindance Air ov.shower 240mm ceiling"
+          },
+          {
+            "id": "d8d876b8-229d-4092-9a32-8be7818cea62",
+            "brand_id": "94292e11-6b64-41b4-8151-f30d66c674ad",
+            "name": "Rainshower Cosmopolitan 310 Headshower"
+          }
+        ]
+      }
+    ],
+    "invalid_brand_refs": [],
+    "invalid_category_refs": [],
+    "orphaned_media": [],
+    "media_brand_mismatches": [],
+    "missing_images": 87,
+    "unexpected_modifications": [],
+    "ok": true
+  }
+}

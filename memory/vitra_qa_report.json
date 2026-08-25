@@ -1,0 +1,81 @@
+{
+  "brand": "Vitra",
+  "job_id": "6baf4660-b48d-49ee-9ddd-e4546f3ccc15",
+  "runtime_s": 6.2,
+  "extraction": {
+    "brand": "Vitra",
+    "filename": "VITRA Price Table 2026.xlsx",
+    "source_type": "excel",
+    "pages": 0,
+    "raw_rows": 0,
+    "parsed_rows": 264,
+    "images_found": 72,
+    "images_mapped": 258,
+    "warnings": []
+  },
+  "certification": {
+    "extraction_accuracy": 100.0,
+    "sku_accuracy": 97.7,
+    "price_accuracy": 95.1,
+    "category_accuracy": 100.0,
+    "variant_accuracy": 98.1,
+    "image_accuracy": 97.7,
+    "duplicate_score": 97.7,
+    "missing_data_score": 92.4,
+    "total_products": 264,
+    "products_ready": 244,
+    "products_needing_review": 20,
+    "families_detected": 102,
+    "duplicates_sku": 6,
+    "cross_family_skus": 0,
+    "duplicates_family": 0,
+    "missing_images": 6,
+    "missing_mrp": 13,
+    "missing_categories": 0,
+    "image_quality": {
+      "total": 258,
+      "excellent": 4,
+      "good": 30,
+      "acceptable": 55,
+      "poor": 169,
+      "by_source": {
+        "png": 105,
+        "jpg": 36,
+        "jpeg": 117
+      },
+      "min_edge_px": 144,
+      "median_edge_px": 300,
+      "max_edge_px": 1126,
+      "premium_pct": 13,
+      "verdict": "Supplier file only contains thumbnail-grade artwork (13% premium; median longest edge = 300px). Recommend sourcing official product photography separately."
+    },
+    "excellent_images": 4,
+    "good_images": 30,
+    "acceptable_images": 55,
+    "poor_images": 169,
+    "variant_conflicts": [
+      "Family 'vitra:csw:design:detail' has 2 rows for variant 'White'",
+      "Family 'vitra:csw:design:detail' has 2 rows for variant 'Matt White'",
+      "Family 'vitra:csw:design:detail' has 2 rows for variant 'Matt Taupe /Sand Beige'",
+      "Family 'vitra:csw:design:detail' has 2 rows for variant 'Matt Stone Grey'",
+      "Family 'vitra:csw:design:detail' has 2 rows for variant 'Matt Black'"
+    ],
+    "category_conflicts": [],
+    "warnings": [],
+    "overall_score": 97.3,
+    "production_ready": false
+  },
+  "accepted": 250,
+  "pending": 8,
+  "rejected": 6,
+  "counts": {
+    "rows": 264,
+    "families": 102,
+    "subcategories": 20,
+    "series": 40,
+    "finishes": 5,
+    "colours": 5,
+    "with_dimensions": 264,
+    "with_images": 258
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "summary": "Round 3: verified the image-recovery re-import (LibreOffice/Inkscape/emf2svg binaries fix). Ground-truth via direct MongoDB query CONFIRMS the exact numbers E1 claimed for raw extraction success: Grohe 495/495 (100%) product_media docs, Vitra 247/250 (98.8%), Geberit 462/500 (92.4%). Grohe/Plate, Grohe/Handshower, Grohe/Wall Mounted categories now visually show real product photos (verified live via UI screenshots) - the core reported problem is fixed. Geberit 116.092 family variant switching correctly shows distinct image+SKU+price per variant (verified live). HOWEVER: discovered that the actual END-USER-VISIBLE image coverage (after the existing, correct-by-design duplicate-image-suppression logic in catalog_service._apply_media hides an image when 2+ sibling SKUs share a byte-identical photo) is substantially lower than the raw extraction numbers, and lower than the 'known acceptable gap' figures stated in this round's context note: Vitra shows only 216/250 (86.4%) visible instead of ~98.8% (34 SKUs placeholder, not ~3 as stated), and Geberit shows only 345/500 (69.0%) visible instead of ~92.4% (155 SKUs placeholder, not ~38 as stated). This was reproduced live in the UI (Geberit Sigma20/115.883 family: 3 of 7 variants show 'no image available' placeholder because they share an identical photo with a sibling, not because the supplier had zero photo for them). Grohe's visible rate (487/495, 98.4%, 8 SKUs suppressed) matches the previously-confirmed-acceptable Nova Cosmopolitan Flush Plate pattern from iteration_9, so that one is fine. Also re-confirmed the still-open Geberit ligature/text-extraction bug from iteration_9 ('glass feflective' instead of 'glass reflective') is still present live on SKU 116.092.SM.6 - unchanged, not part of this round's fix scope but visible during testing. General regression: all 5 brands' catalog lists (Grohe, Hansgrohe, Axor, Geberit, Vitra) load without errors and render real images; quotations screen loads cleanly (no test data, 0 total, no broken refs); no React Native red-screens or console errors observed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/products (Geberit/Vitra image coverage as displayed to end users)",
+        "issue": "The raw image re-import succeeded exactly as claimed (product_media collection: Grohe 495/495, Vitra 247/250, Geberit 462/500), but the existing duplicate-image-suppression guard in services/catalog_service.py::_apply_media (which correctly hides an image when 2+ sibling SKUs in the same family share a byte-identical sha1 photo, keeping only the lowest-SKU 'canonical' owner) suppresses far more SKUs than the 'known acceptable gap' cited in the task context. Measured via direct DB query + confirmed via API: Geberit visible coverage is only 345/500 (69.0%) -- 155 SKUs show the 'no image' placeholder, not the ~38 stated as acceptable. Vitra visible coverage is only 216/250 (86.4%) -- 34 SKUs placeholder, not ~3 as stated. Root cause for Geberit (reproduced live): family geberit:sigma20:115.883 has 7 variant SKUs but 3 (14.1, JQ.1, JT.1) have colour=None (they were parsed via the adapter's plain-line fallback path, not the structured Article/Colour/MRP regex) AND all 3 share the identical extracted photo with each other / with a labelled sibling -- so the duplicate-guard (correctly, by its own logic) hides 2 of them. It is unclear whether this is (a) genuinely the supplier's PDF only having one shared photo across these SKU codes (acceptable), or (b) the Geberit adapter's geometric image-matcher grabbing an already-claimed neighbouring image for unlabeled fallback-path rows that either have their own distinct photo nearby or should have none (a residual matching bug on top of the tie-break fix). This needs main-agent verification against the source Geberit PDF pages for family 115.883 (and the 62 other affected families) before deciding whether the 'known gap' estimate needs correcting or the adapter needs a further fix.",
+        "priority": "HIGH"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Geberit Sigma80 Square product detail (SKU 116.092.SM.6)",
+        "issue": "Carried over from iteration_9, still unresolved and reproduced again this round: colour/finish label renders 'glass feflective' (raw ligature glyph, and missing the letter 'r' from 'reflective'). Not in this round's fix scope but observed live during testing.",
+        "testID": "N/A (no testID on variant swatch/colour label)",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_catalog_image_recovery_v4.py",
+    "/app/test_reports/pytest/pytest_image_recovery_v4.xml",
+    "/root/.emergent/automation_output/20260714_114930/ (Geberit 116.092 detail + variant switch)",
+    "/root/.emergent/automation_output/20260714_115024/ (Geberit 116.092.SM.6 swatch switch, distinct image confirmed)",
+    "/root/.emergent/automation_output/20260714_115053/ and 20260714_115131/ (Geberit 115.883 Sigma20 family - placeholder-vs-real-image reproduction)",
+    "/root/.emergent/automation_output/20260714_114901/ (Grohe brand-filtered + Plate category real photos)",
+    "/root/.emergent/automation_output/20260714_114830/ (Grohe Handshower + Wall Mounted real photos)",
+    "/root/.emergent/automation_output/20260714_115207/ (Vitra Memoria + Hansgrohe + Axor general regression)"
+  ],
+  "action_items": [
+    "Verify against the source Geberit supplier PDF whether family 115.883 (and the other 62 affected families with dup-sha1 groups) genuinely ship only ONE photo shared across multiple colour-code SKUs (in which case the current placeholder behaviour is correct and the 'known gap' figure in the task summary should simply be corrected from ~38 to ~155 for Geberit and ~3 to ~34 for Vitra) OR whether the geometric image-matcher in catalog_pipeline/adapters/geberit.py is incorrectly assigning an already-claimed neighbour's image to unlabeled fallback-path rows that should get their own distinct photo (a residual bug).",
+    "Note that Geberit rows parsed via the plain-line fallback path (no Article No./Colour/MRP structured match) have colour=None AND are disproportionately represented in the dup-sha1 suppression groups (e.g. all 3 colour=None SKUs in family 115.883 are in a dup group) -- this correlation is worth investigating as a possible signal of the underlying cause.",
+    "(Carried over from iteration_9, still open, not addressed this round) Geberit ligature/character-loss text bug ('glass feflective') on SKU 116.092.SM.6 and other previously-identified SKUs -- fix requires re-running Geberit ingestion after the ligature-map code fix, and separately investigating the dropped-letter-r issue which the ligature map alone won't fix."
+  ],
+  "critical_code_review_comments": [
+    "services/catalog_service.py's _apply_media duplicate-suppression guard is logically correct and deterministic (lowest SKU wins) -- verified end-to-end live for Geberit 115.883 (JT.1 correctly shows placeholder+SKU+price, no borrowed image). This is NOT a UI bug; it is working exactly as iteration_8/9 confirmed. The concern is upstream: whether the Geberit/Vitra adapters are over-matching images to unrelated rows, feeding too many false 'duplicates' into this guard.",
+    "The task's own 'known acceptable gap' figures (Geberit ~38 SKUs, Vitra ~3 SKUs) describe only the RAW extraction gap (rows where the supplier PDF has literally zero embedded photo), not the larger DISPLAYED gap after duplicate-suppression is applied. Anyone auditing 'is the catalog at 100%/92.4%/98.8% image coverage' needs to measure at the API/UI layer (what the user actually sees), not just the raw product_media insert count, or the true placeholder rate will look ~4x smaller than reality for Geberit."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_catalog_image_recovery_v4.py (new regression test file: brand counts, per-brand image coverage via correct brand_id/category_id params, Grohe Plate/Handshower/Wall Mounted category checks, Geberit 116.092 variant check, 5-brand general regression, quotations/purchases smoke checks)"
+  ],
+  "success_rate": {
+    "backend": "87% (13/15 pytest cases passed; 2 failed on Vitra/Geberit overall-coverage assertions, both due to the duplicate-suppression finding above, not a request/response defect -- every endpoint itself returned 200 with correctly-structured data)",
+    "frontend": "100% of UI flows tested (Grohe category image recovery, Geberit family variant switching incl. suppressed-duplicate case, Vitra family, 5-brand catalog regression, quotations screen) rendered and behaved correctly per the code's own design -- the coverage-number gap is a data/reporting-accuracy issue, not a broken UI flow"
+  },
+  "seed_data_creation": "None -- read-only testing against the existing live catalog (2,601 products) and live MongoDB Atlas cluster.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "CONFIRMED WORKING (do not re-flag): (1) Grohe Plate/Handshower/Wall Mounted categories now show real photos in the UI -- the core system-binary-fix claim is verified true. (2) Geberit 116.092 and 115.883 family variant switching updates image+SKU+price+colour together correctly, including correctly showing the placeholder (not a borrowed image) for suppressed-duplicate siblings. (3) Vitra Memoria family loads with a 'thumbnail only, high-res coming' disclaimer -- informational, not a bug. STILL OPEN / needs main-agent decision: the true end-user-visible 'no image' placeholder count is ~155 SKUs for Geberit and ~34 for Vitra (not ~38/~3 as stated in the task context) once you account for the duplicate-suppression guard on top of raw extraction success -- see action_items for exactly how to verify root cause (genuine supplier gap vs adapter over-matching) before closing this task as 100% done. Geberit ligature text bug ('glass feflective') is unchanged from iteration_9, still live. Credentials used: owner@forge.app / Forge@2026 (test_credentials.md file does not exist in this environment -- flagging again).",
+  "rca_of_issue": "Two independent issues stacked together produce the coverage-number surprise: (1) the RE-IMPORT pipeline (LibreOffice/Inkscape/emf2svg binaries fix) worked exactly as claimed and populated product_media with 495/495, 247/250, 462/500 images respectively -- verified directly against MongoDB, matching the task's own numbers precisely. (2) Layered on top, the pre-existing (and previously validated-as-correct) duplicate-image-suppression logic in _apply_media additionally hides an image whenever 2+ sibling SKUs in a family share a byte-identical photo. For Geberit specifically, 63 families / 181 SKUs fall into this pattern (way more than for Grohe's 6 families/14 SKUs or Vitra's 31 families/62 SKUs), pushing Geberit's true visible rate down to 69% instead of 92.4%. Whether this is a supplier-data reality (many Geberit accessory colour-code SKUs may genuinely share one representative photo) or an adapter over-matching regression could not be fully determined without inspecting the raw source PDF pages directly, which was outside this testing pass's scope -- flagged as a HIGH-priority action item for the main agent."
+}
