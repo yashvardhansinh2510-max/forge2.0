@@ -82,7 +82,7 @@ async def enforce_access_profile(request: Request, call_next):
     except Exception:
         # Route dependencies supply the canonical authentication response.
         return await call_next(request)
-    if token.get("user_type") == "staff" and not profile_allows_request(
+    if token.get("kind") == "staff" and not profile_allows_request(
         token.get("access_profile"), request.method, request.url.path,
     ):
         return JSONResponse(status_code=403, content={"detail": "This account is not permitted to use this function"})
