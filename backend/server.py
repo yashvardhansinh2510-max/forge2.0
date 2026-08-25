@@ -4,7 +4,7 @@ import logging
 from time import monotonic
 from typing import Any
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
@@ -34,6 +34,8 @@ from routes.followup_routes import router as followup_router  # noqa: E402
 from routes.settings_routes import router as settings_router  # noqa: E402
 from routes.roles_routes import router as roles_router  # noqa: E402
 from routes.permissions_routes import router as permissions_router  # noqa: E402
+from access_profiles import profile_allows_request  # noqa: E402
+from auth import decode_token  # noqa: E402
 from routes.referrer_routes import router as referrer_router  # noqa: E402
 from routes.sales_data_routes import router as sales_data_router  # noqa: E402
 from routes.executive_analytics_routes import router as executive_analytics_router  # noqa: E402
@@ -65,6 +67,26 @@ _monitoring_status = init_monitoring()
 
 app = FastAPI(title="Forge API", version="0.1.0")
 api = APIRouter(prefix="/api")
+
+
+@app.middleware("http")
+async def enforce_access_profile(request: Request, call_next):
+    """Apply a fail-closed API allow-list before any restricted route runs."""
+    if request.method == "OPTIONS" or not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    authorization = request.headers.get("authorization", "")
+    if not authorization.lower().startswith("bearer "):
+        return await call_next(request)
+    try:
+        token = decode_token(authorization.split(" ", 1)[1].strip())
+    except Exception:
+        # Route dependencies supply the canonical authentication response.
+        return await call_next(request)
+    if token.get("user_type") == "staff" and not profile_allows_request(
+        token.get("access_profile"), request.method, request.url.path,
+    ):
+        return JSONResponse(status_code=403, content={"detail": "This account is not permitted to use this function"})
+    return await call_next(request)
 
 # TTL-cached demo-account detection for /api/health — reuses the same
 # lazy-refresh idiom as auth.py's principal cache. bcrypt is deliberately

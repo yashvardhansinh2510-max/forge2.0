@@ -12,6 +12,11 @@ Role = Literal[
     "purchase", "warehouse", "accounts", "worker",
 ]
 
+AccessProfile = Literal[
+    "ground_tile_quotations_followups", "ground_payments_dispatches",
+    "sanitary_quotations_followups", "sanitary_purchases",
+]
+
 QuotationStatus = Literal[
     "draft", "pending_approval", "approved", "rejected", "sent", "won", "lost", "expired",
     "ordered",  # order placed — POs generated
@@ -55,6 +60,8 @@ class UserBase(BaseModel):
     active: bool = True
     avatar_url: Optional[str] = None
     floor_ids: list[str] = Field(default_factory=list)
+    # An optional profile only narrows the normal role's access.
+    access_profile: Optional[AccessProfile] = None
 
 
 class UserCreate(UserBase):
@@ -202,6 +209,7 @@ class TeamCreatePayload(BaseModel):
     phone: Optional[str] = None
     password: str = Field(..., min_length=12, max_length=72)
     floor_ids: list[str] = Field(default_factory=list)
+    access_profile: Optional[AccessProfile] = None
 
 
 class TeamUpdatePayload(BaseModel):
@@ -210,6 +218,7 @@ class TeamUpdatePayload(BaseModel):
     phone: Optional[str] = None
     active: Optional[bool] = None
     floor_ids: Optional[list[str]] = None
+    access_profile: Optional[AccessProfile] = None
 
 
 class FloorPublic(TimestampedModel):

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
+import { PROFILE_MODULES } from "@/src/access-profiles";
 
 export type ModuleInfo = { key: string; label: string };
 export type MatrixRoleInfo = { role: string; label: string; level: number };
@@ -73,6 +74,8 @@ export function useModuleAccess() {
   return useCallback(
     (moduleKey: string) => {
       if (!staff || !data) return true;
+      const profileModules = staff.access_profile ? PROFILE_MODULES[staff.access_profile] : undefined;
+      if (profileModules) return profileModules.has(moduleKey);
       const row = data.matrix[staff.role];
       if (!row || !(moduleKey in row)) return true;
       return row[moduleKey] !== false;

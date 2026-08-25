@@ -5,6 +5,7 @@ import { Platform } from "react-native";
 
 import { api, clearToken, getToken, getTokenKind, setToken, TokenKind } from "@/src/api/client";
 import { getSelectedFloorId, setSelectedFloorId } from "@/src/hooks/use-floor-access";
+import type { AccessProfile } from "@/src/access-profiles";
 
 export type StaffUser = {
   id: string;
@@ -15,6 +16,7 @@ export type StaffUser = {
   avatar_url?: string | null;
   must_change_password?: boolean;
   floor_ids: string[];
+  access_profile?: AccessProfile | null;
 };
 
 export type CustomerUser = {

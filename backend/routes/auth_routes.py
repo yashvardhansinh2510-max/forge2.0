@@ -64,7 +64,9 @@ async def staff_login(body: LoginPayload, request: Request):
         )
     await clear_login_attempts(ip, body.email)
     sid = await create_session("staff", doc["id"], request, login_method="password")
-    token = create_token(doc["id"], "staff", {"role": doc["role"], "session_id": sid})
+    token = create_token(doc["id"], "staff", {
+        "role": doc["role"], "session_id": sid, "access_profile": doc.get("access_profile"),
+    })
     doc.pop("password_hash", None)
     await log_event(
         event_type="user.login", entity_type="user", entity_id=doc["id"],

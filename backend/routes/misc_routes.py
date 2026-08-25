@@ -282,6 +282,9 @@ async def update_team_member(
         raise HTTPException(status_code=400, detail="At least one active owner is required")
     patch["updated_at"] = now_iso()
     await db.users.update_one({"id": user_id}, {"$set": patch})
+    if "access_profile" in patch:
+        # Profiles are signed-token claims; make the changed scope immediate.
+        await revoke_all_sessions("staff", user_id)
     doc = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
 
     if "role" in patch and patch["role"] != before.get("role"):
