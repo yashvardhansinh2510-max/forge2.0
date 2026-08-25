@@ -175,7 +175,7 @@ def _flatten_item(po: dict, it: dict, sla_days: int) -> dict:
     last_moved_at = it.get("last_moved_at") or po.get("created_at")
     age = _age_days(last_moved_at) or 0
     blocked = (stage in EARLY_STAGES) and (age >= sla_days)
-    return {
+    response = {
         "item_id": it["id"],
         "po_id": po["id"],
         "po_number": po.get("number"),
@@ -636,6 +636,17 @@ async def customer_workspace(
             "purchase_orders": expected[:5],
         },
     }
+    # The sanitary purchases profile may open any customer's purchasing
+    # workspace, but it is not a customer/receivables account.  Keep the
+    # redirect target useful while removing payment balances, payment history,
+    # follow-ups and general CRM activity from the response itself.
+    if user.access_profile == "sanitary_purchases":
+        response["customer"] = {"id": customer["id"], "name": customer.get("name"), "company": customer.get("company")}
+        response["summary"].pop("outstanding_balance", None)
+        response.pop("payments", None)
+        response.pop("followups", None)
+        response.pop("recent_activity", None)
+    return response
 
 
 @router.get("/items")
