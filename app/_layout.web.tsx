@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { View } from "react-native";
 
 import { AuthProvider, useAuth } from "@/src/state/auth";
+import { staffLandingPath } from "@/src/access-profiles";
 import { colors } from "@/src/theme/tokens";
 import { ToastHost } from "@/src/components/Toast";
 import { initSentry } from "@/src/lib/monitoring";
@@ -40,13 +41,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       return;
     }
     if (kind && onForceChange) {
-      router.replace(kind === "staff" ? "/(admin)/dashboard" : "/(customer)/home");
+      router.replace(kind === "staff" ? staffLandingPath(staff?.access_profile) as any : "/(customer)/home");
       return;
     }
     if (!kind && !inAuth) {
       router.replace("/(auth)/login");
     } else if (kind === "staff" && !inAdmin && inAuth) {
-      router.replace("/(admin)/dashboard");
+      router.replace(staffLandingPath(staff?.access_profile) as any);
     } else if (kind === "customer" && !inCustomer && inAuth) {
       router.replace("/(customer)/home");
     }

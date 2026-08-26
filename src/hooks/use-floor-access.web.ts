@@ -11,6 +11,7 @@ export type FloorAccess = { all_floors: boolean; floors: Floor[]; floor_ids: str
 const SELECTED_FLOOR_KEY = "forge.active-floor";
 let cache: FloorAccess | null = null;
 let inflight: Promise<FloorAccess> | null = null;
+let accessGeneration = 0;
 let selectedFloorCache: string | null = null;
 let selectedFloorRead: Promise<string> | null = null;
 let selectedFloorPersistence: Promise<void> = Promise.resolve();
@@ -19,13 +20,33 @@ const selectedFloorListeners = new Set<(floorId: string) => void>();
 async function loadAccess() {
   if (cache) return cache;
   if (!inflight) {
+    const generation = accessGeneration;
     inflight = api.get<FloorAccess>("/settings/floor-access").then((value) => {
-      cache = value;
-      inflight = null;
+      // Do not let a request made under the previous staff session restore
+      // that session's assignments after logout/login.
+      if (generation === accessGeneration) {
+        cache = value;
+        inflight = null;
+      }
       return value;
-    }).catch((error) => { inflight = null; throw error; });
+    }).catch((error) => {
+      if (generation === accessGeneration) inflight = null;
+      throw error;
+    });
   }
   return inflight;
+}
+
+/** Clear identity-scoped floor assignments before changing staff sessions. */
+export function resetFloorAccess() {
+  accessGeneration += 1;
+  cache = null;
+  inflight = null;
+}
+
+/** Fetch the current session's assignments so login can select a real floor. */
+export function getFloorAccess() {
+  return loadAccess();
 }
 
 export async function getSelectedFloorId() {
