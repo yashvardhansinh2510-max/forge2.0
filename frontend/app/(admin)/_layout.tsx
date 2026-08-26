@@ -468,16 +468,27 @@ function PhoneBar() {
   // destination doesn't exist, so the slot takes that unit's equivalent
   // (Quotation Tiles) rather than collapsing and leaving a hole in the bar.
   const visiblePhoneTabs = visible(PHONE_TABS);
-  const contextualNotebookTab = selectedFloorId === KITCHEN_FLOOR_ID
-    ? { href: "/(admin)/notebook/kitchen", label: "Kitchen", icon: "user-plus" as FeatherName, match: "kitchen", floors: [KITCHEN_FLOOR_ID] }
+  // Notebook floors are deliberately a two-page mobile workspace. Generic
+  // navigation is hidden there, so keep both pages in the fixed bottom-bar
+  // slots instead of leaving the right slot empty and burying follow-up in
+  // More. This preserves the normal five-slot alignment at every viewport.
+  const contextualNotebookTabs = selectedFloorId === KITCHEN_FLOOR_ID
+    ? {
+      primary: { href: "/(admin)/notebook/kitchen", label: "Kitchen", icon: "user-plus" as FeatherName, match: "kitchen", floors: [KITCHEN_FLOOR_ID] },
+      secondary: { href: "/(admin)/notebook/kitchen/quotation-follow-up", label: "Follow-up", icon: "file-text" as FeatherName, match: "quotation-follow-up", floors: [KITCHEN_FLOOR_ID] },
+    }
     : selectedFloorId === FURNITURE_FLOOR_ID
-    ? { href: "/(admin)/notebook/furniture", label: "Furniture", icon: "user-plus" as FeatherName, match: "furniture", floors: [FURNITURE_FLOOR_ID] }
+    ? {
+      primary: { href: "/(admin)/notebook/furniture", label: "Furniture", icon: "user-plus" as FeatherName, match: "furniture", floors: [FURNITURE_FLOOR_ID] },
+      secondary: { href: "/(admin)/notebook/furniture/quotation-follow-up", label: "Follow-up", icon: "file-text" as FeatherName, match: "quotation-follow-up", floors: [FURNITURE_FLOOR_ID] },
+    }
     : null;
-  const phoneTabs = contextualNotebookTab
-    ? [...visiblePhoneTabs.filter((item) => item.match !== "quotations"), contextualNotebookTab]
+  const phoneTabs = contextualNotebookTabs
+    ? [...visiblePhoneTabs.filter((item) => item.match !== "quotations"), contextualNotebookTabs.primary]
     : visiblePhoneTabs.length < PHONE_TABS.length && tilesNav.items.length
     ? [...visiblePhoneTabs, { ...tilesNav.items[0], label: "Tiles" }]
     : visiblePhoneTabs;
+  const phoneTabsRight = contextualNotebookTabs ? [contextualNotebookTabs.secondary] : visible(PHONE_TABS_RIGHT);
   // The FAB is not a NavItem and isn't run through visible(), so it needs its
   // own unit check: it used to unconditionally open the Sanitary Quotation
   // Builder, which on Ground Floor doesn't exist for that unit and silently
@@ -538,7 +549,7 @@ function PhoneBar() {
             </Pressable>
           ) : null}
         </View>
-        {visible(PHONE_TABS_RIGHT).map((t) => <Tab key={t.href} item={t} />)}
+        {phoneTabsRight.map((t) => <Tab key={t.href} item={t} />)}
         <Pressable
           testID="bottom-nav-more"
           onPress={() => setMoreOpen(true)}
