@@ -218,6 +218,7 @@ const TILES_ITEMS: NavItem[] = [
 function useTilesNav() {
   const router = useRouter();
   const { staff } = useAuth();
+  const hasAccess = useModuleAccess();
   const { access, selectedFloorId, selectFloor } = useFloorAccess();
   const groundAccessible = Boolean(access && (access.all_floors || access.floor_ids.includes(TILES_FLOOR_ID)));
   // Ground Floor's Tiles module is not merely *reachable* from Ground
@@ -225,7 +226,9 @@ function useTilesNav() {
   // these while "The Sanitary Bathroom" is the active floor is what put
   // Tile Orders and Quotation Tiles in Sanitary's navigation.
   const items = groundAccessible && selectedFloorId === TILES_FLOOR_ID
-    ? TILES_ITEMS.filter((item) => !item.roles || Boolean(staff && item.roles.includes(staff.role)))
+    ? TILES_ITEMS.filter((item) => (
+      hasAccess(item.match) && (!item.roles || Boolean(staff && item.roles.includes(staff.role)))
+    ))
     : [];
   const open = (item: NavItem) => {
     if (selectedFloorId !== TILES_FLOOR_ID) {
@@ -269,7 +272,6 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
   const visible = useVisibleNav();
-  const hasAccess = useModuleAccess();
   const tilesNav = useTilesNav();
   const palette = usePalette();
   const isActive = (item: NavItem) => isNavActive(item, segments);
@@ -301,7 +303,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         {visible(PRIMARY).map((n) => (
           <SideItem key={n.href} item={n} active={isActive(n)} onPress={() => router.push(n.href as any)} compact={collapsed} />
         ))}
-        {hasAccess("tiles") && tilesNav.items.map((n) => (
+        {tilesNav.items.map((n) => (
           <SideItem
             key={n.href}
             item={n}
@@ -349,7 +351,6 @@ function Rail() {
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
   const visible = useVisibleNav();
-  const hasAccess = useModuleAccess();
   const palette = usePalette();
   const tilesNav = useTilesNav();
   const isActive = (item: NavItem) => isNavActive(item, segments);
@@ -385,7 +386,7 @@ function Rail() {
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 2 }} showsVerticalScrollIndicator={false}>
         {visible(PRIMARY).map((n) => <RailBtn key={n.href} item={n} />)}
-        {hasAccess("tiles") && tilesNav.items.map((n) => {
+        {tilesNav.items.map((n) => {
           const on = n.match === "orders" ? segments.includes("orders") : segments.includes("tiles") && !segments.includes("orders");
           return (
             <Pressable
@@ -568,7 +569,7 @@ function PhoneBar() {
           <FloorSwitcher />
         </View>
         <Hairline style={{ marginVertical: 6 }} />
-        {hasAccess("tiles") && tilesNav.items.map((n) => (
+        {tilesNav.items.map((n) => (
           <Pressable
             key={n.href}
             onPress={() => { setMoreOpen(false); void tilesNav.open(n); }}
