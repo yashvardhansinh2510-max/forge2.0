@@ -79,15 +79,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginStaff = useCallback(async (email: string, password: string) => {
     const res = await api.post<{ access_token: string; user: StaffUser }>("/auth/login", { email, password });
     await setToken(res.access_token, "staff");
-    // Pin an active floor BEFORE any screen mounts. `useFloorAccess` also
-    // resolves one, but it does so asynchronously — until it lands, every
-    // request goes out with no X-Floor-Id and the backend answers unscoped,
-    // so the first dashboard/list paint after a fresh login showed both
-    // business units' data merged together.
-    if (!(await getSelectedFloorId())) {
-      const first = res.user.floor_ids?.[0];
-      if (first) await setSelectedFloorId(first);
-    }
+    // Pin an active floor BEFORE any screen mounts. The previous guard only
+    // replaced an empty selection, so a floor persisted by a prior user (or
+    // a prior business unit) survived logout and every scoped request from
+    // the newly signed-in worker was rejected with "You do not have access
+    // to this floor". Keep a saved selection only when this account can use
+    // it; otherwise fall back to the first floor assigned to the account.
+    const savedFloor = await getSelectedFloorId();
+    const assignedFloors = res.user.floor_ids || [];
+    const activeFloor = assignedFloors.includes(savedFloor) ? savedFloor : assignedFloors[0];
+    if (activeFloor && activeFloor !== savedFloor) await setSelectedFloorId(activeFloor);
     setKind("staff"); setStaff(res.user); setCustomer(null);
   }, []);
 
