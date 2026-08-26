@@ -29,6 +29,7 @@ _COMMON = {
 def _catalog_read(method: str, path: str) -> bool:
     return method == "GET" and (
         path.startswith("/api/products") or path.startswith("/api/catalog/")
+        or path in {"/api/brands", "/api/categories"}
         or fullmatch(r"/api/families/[^/]+", path) is not None
         or fullmatch(r"/api/products/[^/]+/media", path) is not None
     )
@@ -42,24 +43,13 @@ def _customer_for_quotation(method: str, path: str) -> bool:
 
 
 def _dispatch_surface(method: str, path: str) -> bool:
-    """Dispatch operations only — expressly excludes release and godown moves."""
-    if path == "/api/tile-orders/history/export":
-        return method == "GET"
-    if path in {"/api/tile-orders/dispatches", "/api/tile-orders/movements"}:
-        return method == "GET"
-    if fullmatch(r"/api/tile-orders/dispatches/[^/]+/(godown-received|delivered)", path):
-        return method == "POST"
-    if fullmatch(r"/api/tile-orders/dispatches/[^/]+/transport", path):
-        return method == "PATCH"
-    if fullmatch(r"/api/tile-orders/dispatches/[^/]+", path):
-        return method in {"GET", "PATCH"}
-    if fullmatch(r"/api/tile-orders/chalans/[^/]+(?:/pdf)?", path):
-        return method == "GET"
-    if fullmatch(r"/api/tile-orders/customer-orders(?:/[^/]+(?:/timeline)?)?", path):
-        return method == "GET"
-    if fullmatch(r"/api/tile-orders/purchase-orders/[^/]+", path):
-        return method == "GET"
-    return bool(fullmatch(r"/api/tile-orders/purchase-orders/[^/]+/dispatch-from-(released|godown)", path) and method == "POST")
+    """The complete tile-orders workspace, and no other business area.
+
+    The ground-floor dispatch worker has full capability for tile orders.  This
+    route family includes the supporting brand, inventory, history, chalan and
+    release/movement calls required by that single workspace.
+    """
+    return path.startswith("/api/tile-orders/")
 
 
 def profile_allows_request(profile: str | None, method: str, path: str) -> bool:
@@ -72,6 +62,8 @@ def profile_allows_request(profile: str | None, method: str, path: str) -> bool:
     if profile in {GROUND_TILE_QUOTATIONS_FOLLOWUPS, SANITARY_QUOTATIONS_FOLLOWUPS}:
         return (path.startswith("/api/quotations") or path.startswith("/api/followups")
                 or _customer_for_quotation(method, path) or _catalog_read(method, path)
+                or (method in {"GET", "POST"} and path == "/api/referrers")
+                or (method == "POST" and path == "/api/products/custom")
                 or (method == "POST" and path == "/api/downloads/token"))
     if profile == GROUND_PAYMENTS_DISPATCHES:
         return (path.startswith("/api/payments") or _dispatch_surface(method, path)
