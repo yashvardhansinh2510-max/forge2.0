@@ -243,7 +243,7 @@ async def get_current_user(
             {"sub": record["user_id"], "session_id": record.get("session_id")},
             kind="staff", collection="users",
         )
-        user = UserPublic(**doc)
+        user = apply_effective_floor_ids(UserPublic(**doc))
         # The header wins when present (it can be, for a fetch()-based
         # download); otherwise replay the floor recorded at mint time so the
         # download stays scoped to the unit the user was actually in.
@@ -261,7 +261,7 @@ async def get_current_user(
         raise HTTPException(status_code=403, detail="Not a staff token")
     doc = await _load_active_principal(payload, kind="staff", collection="users")
     _enforce_password_change(doc, request, kind="staff")
-    user = UserPublic(**doc)
+    user = apply_effective_floor_ids(UserPublic(**doc))
     user.session_id = payload.get("session_id")
     if x_floor_id:
         allowed = accessible_floor_ids(user)
@@ -358,8 +358,36 @@ def has_all_floor_access(user: UserPublic) -> bool:
     return user.role in {"owner", "manager"}
 
 
+PROFILE_FLOOR_IDS: dict[str, tuple[str, ...]] = {
+    # Access profiles are workspaces, not merely menu filters. Binding them
+    # here keeps their data scope in lockstep with the API allow-list, even
+    # when an older staff row has stale floor_ids.
+    "ground_tile_quotations_followups": ("ground-floor",),
+    "ground_payments_dispatches": ("ground-floor",),
+    "sanitary_quotations_followups": ("first-floor",),
+    "sanitary_purchases": ("first-floor",),
+}
+
+
+def profile_floor_ids(access_profile: str | None) -> list[str] | None:
+    """Return the floor intrinsically assigned to a least-privilege profile."""
+    floors = PROFILE_FLOOR_IDS.get(access_profile or "")
+    return list(floors) if floors else None
+
+
+def apply_effective_floor_ids(user: UserPublic) -> UserPublic:
+    """Expose profile-bound floors consistently in authentication responses."""
+    profile_floors = profile_floor_ids(user.access_profile)
+    if profile_floors is not None:
+        user.floor_ids = profile_floors
+    return user
+
+
 def accessible_floor_ids(user: UserPublic) -> list[str] | None:
     """None means all active floors; otherwise return explicit assignments."""
+    profile_floors = profile_floor_ids(getattr(user, "access_profile", None))
+    if profile_floors is not None:
+        return profile_floors
     return None if has_all_floor_access(user) else list(user.floor_ids or [])
 
 

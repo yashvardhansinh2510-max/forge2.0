@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { Platform } from "react-native";
 
 import { api, clearToken, getToken, getTokenKind, setToken, TokenKind } from "@/src/api/client";
-import { getSelectedFloorId, setSelectedFloorId } from "@/src/hooks/use-floor-access";
+import { getFloorAccess, getSelectedFloorId, resetFloorAccess, setSelectedFloorId } from "@/src/hooks/use-floor-access";
 import type { AccessProfile } from "@/src/access-profiles";
 
 export type StaffUser = {
@@ -79,6 +79,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginStaff = useCallback(async (email: string, password: string) => {
     const res = await api.post<{ access_token: string; user: StaffUser }>("/auth/login", { email, password });
     await setToken(res.access_token, "staff");
+    // Floor access is identity-scoped, not app-scoped. In particular, a
+    // single-floor worker's cached response must never determine what the
+    // next owner sees in the shell.
+    resetFloorAccess();
     // Pin an active floor BEFORE any screen mounts. The previous guard only
     // replaced an empty selection, so a floor persisted by a prior user (or
     // a prior business unit) survived logout and every scoped request from
@@ -86,7 +90,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // to this floor". Keep a saved selection only when this account can use
     // it; otherwise fall back to the first floor assigned to the account.
     const savedFloor = await getSelectedFloorId();
-    const assignedFloors = res.user.floor_ids || [];
+    // Owners/managers have implicit all-floor access, so their user document
+    // may intentionally have no explicit floor_ids. Resolve the authoritative
+    // visible list instead of leaving a prior user's floor selected.
+    let assignedFloors = res.user.floor_ids || [];
+    try {
+      assignedFloors = (await getFloorAccess()).floor_ids;
+    } catch {
+      // Authentication must remain usable during a transient floor-settings
+      // outage; the shell will retry its normal access request after login.
+    }
     const activeFloor = assignedFloors.includes(savedFloor) ? savedFloor : assignedFloors[0];
     if (activeFloor && activeFloor !== savedFloor) await setSelectedFloorId(activeFloor);
     setKind("staff"); setStaff(res.user); setCustomer(null);
@@ -109,6 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     try { await api.post("/auth/logout"); } catch { /* best-effort */ }
     await clearToken();
+    resetFloorAccess();
     setStaff(null); setCustomer(null); setKind(null);
   }, []);
 

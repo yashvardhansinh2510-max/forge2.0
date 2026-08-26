@@ -43,6 +43,11 @@ def _quantity(value: object) -> str:
     return f"{number:,.3f}".rstrip("0").rstrip(".")
 
 
+def _quantity_unit_label(value: object) -> str:
+    """Use the customer-facing singular label for the chalan quantity unit."""
+    return "Piece" if str(value or "").strip().lower() in {"pcs", "pc", "piece", "pieces"} else "Box"
+
+
 def _money(value: object) -> str:
     number = _decimal(value)
     return f"{number:,.2f}" if number is not None else "—"
@@ -139,7 +144,7 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
         Paragraph("SR", styles["tableHead"]), Paragraph("BRAND", styles["tableHead"]),
         Paragraph("PRODUCT", styles["tableHead"]), Paragraph("SIZE", styles["tableHead"]),
         Paragraph("FINISH", styles["tableHead"]), Paragraph("QTY", styles["tableHead"]),
-        Paragraph("UNIT", styles["tableHead"]), Paragraph("RATE (INR)", styles["tableHead"]),
+        Paragraph("PIECE/BOX", styles["tableHead"]), Paragraph("RATE (INR)", styles["tableHead"]),
         Paragraph("TOTAL (INR)", styles["tableHead"]),
     ]
     rows: list[list[object]] = [head]
@@ -167,7 +172,7 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
             Paragraph(_escape(_first_value(item.get("size"), source.get("size"))), styles["cell"]),
             Paragraph(_escape(_first_value(item.get("finish"), source.get("finish"))), styles["cell"]),
             Paragraph(_escape(_quantity(qty_value)), styles["cellRight"]),
-            Paragraph(_escape(_first_value(item.get("unit"), source.get("unit"), source.get("quantity_unit"), default="Box")), styles["cell"]),
+            Paragraph(_quantity_unit_label(_first_value(item.get("unit"), source.get("unit"), source.get("quantity_unit"), default="Box")), styles["cell"]),
             Paragraph(_escape(_money(rate)), styles["cellRight"]),
             Paragraph(_escape(_money(line_total)), styles["cellRight"]),
         ])
@@ -178,7 +183,7 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
     rows.append(["", "", "", "", "", "", "", Paragraph(grand_total_label, styles["tableTotal"]), Paragraph(_money(grand_total_value), styles["tableTotal"])])
     table = Table(
         rows,
-        colWidths=[8 * mm, 18 * mm, 43 * mm, 18 * mm, 18 * mm, 13 * mm, 13 * mm, 25 * mm, 30 * mm],
+        colWidths=[8 * mm, 18 * mm, 40 * mm, 18 * mm, 18 * mm, 13 * mm, 16 * mm, 25 * mm, 30 * mm],
         repeatRows=1,
     )
     table_commands = [
@@ -308,7 +313,7 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
     cell = ParagraphStyle("tcCell", parent=styles["Normal"], fontSize=8, leading=9.5)
     cell_right = ParagraphStyle("tcCellRight", parent=cell, alignment=2)
 
-    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "SKU", "Unit", "Pcs/Box", "Qty"]
+    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "SKU", "Piece/Box", "Qty"]
     table_data = [header_row]
     for i, item in enumerate(chalan.get("items", []), start=1):
         table_data.append([
@@ -318,11 +323,10 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
             Paragraph(_escape(item.get("finish") or "—"), cell),
             Paragraph(_escape(item.get("size") or "—"), cell),
             Paragraph(_escape(item.get("sku") or "—"), cell),
-            Paragraph(_escape(item.get("quantity_unit") or "Box"), cell_right),
-            Paragraph(_escape(item.get("pieces_per_box") or "—"), cell_right),
+            Paragraph(_quantity_unit_label(item.get("quantity_unit")), cell_right),
             Paragraph(f"{item.get('quantity', 0):g}", cell_right),
         ])
-    product_table = Table(table_data, colWidths=[8 * mm, 40 * mm, 22 * mm, 18 * mm, 20 * mm, 20 * mm, 14 * mm, 16 * mm, 14 * mm])
+    product_table = Table(table_data, colWidths=[8 * mm, 40 * mm, 22 * mm, 18 * mm, 20 * mm, 20 * mm, 20 * mm, 14 * mm])
     product_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),

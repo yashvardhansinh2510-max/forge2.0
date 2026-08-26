@@ -338,7 +338,7 @@ def test_generated_chalan_persists_po_snapshot_and_renders_it_to_pdf(monkeypatch
     )
     for expected in (
         "Artize", "Artize Tailwater Basin", "620 x 420 x 150 mm", "Matte Black",
-        "Pieces", "4,321.25", "8,642.50", "Patel Logistics - insured delivery",
+        "Piece", "4,321.25", "8,642.50", "Patel Logistics - insured delivery",
         "Keep upright and call before unloading.",
     ):
         assert expected in text

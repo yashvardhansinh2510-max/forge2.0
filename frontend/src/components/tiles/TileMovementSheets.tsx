@@ -14,6 +14,7 @@ import { ActivityIndicator, Linking, Modal, Platform, Pressable, ScrollView, Tex
 import { tileOrdersApi, type CustomerOrderItem, type PurchaseOrderItemDetail } from "@/src/api/tileOrders";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
 
 async function openPdf(url: string) {
   if (Platform.OS === "web") {
@@ -113,7 +114,7 @@ export function ReleaseMaterialSheet({ poId, items, onClose, onDone }: { poId: s
       <ScrollView style={{ marginVertical: spacing.md }}>
         {items.filter((item) => item.boxes_pending > 0).map((item) => (
           <QtyRow
-            key={item.id} name={item.name} hint={`${item.boxes_pending} ${qtyUnit(item.quantity_unit)} remaining`}
+            key={item.id} name={item.name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${item.boxes_pending} ${qtyUnit(item.quantity_unit)} remaining`}
             value={qtyByItem[item.id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.id]: v }))}
           />
         ))}
@@ -153,7 +154,7 @@ export function MoveToGodownSheet({ poId, items, onClose, onDone }: { poId: stri
       <ScrollView style={{ marginVertical: spacing.md }}>
         {items.filter((item) => item.boxes_ready > 0).map((item) => (
           <QtyRow
-            key={item.po_item_id} name={item.tile_name} hint={`${item.boxes_ready} ${qtyUnit(item.quantity_unit)} Released`}
+            key={item.po_item_id} name={item.tile_name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${item.boxes_ready} ${qtyUnit(item.quantity_unit)} Released`}
             value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))}
           />
         ))}
@@ -259,7 +260,7 @@ function DispatchSheet({
       <ScrollView style={{ marginVertical: spacing.md }}>
         {items.filter((item) => available(item) > 0).map((item) => (
           <QtyRow
-            key={item.po_item_id} name={item.tile_name} hint={`${available(item)} ${qtyUnit(item.quantity_unit)} available`}
+            key={item.po_item_id} name={item.tile_name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${available(item)} ${qtyUnit(item.quantity_unit)} available`}
             value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))}
           />
         ))}

@@ -18,6 +18,7 @@ import { tileOrdersApi, type ChalanDetail, type DispatchDetail } from "@/src/api
 import { toast } from "@/src/components/Toast";
 import { Sheet } from "@/src/components/ui";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
 
 export async function openChalanPdf(chalanId: string, mode: "view" | "print" = "view") {
   try {
@@ -82,7 +83,7 @@ export function ChalanPreviewSheet({ chalanId, onClose }: { chalanId: string; on
                 <View key={`${line.po_item_id}-${index}`} style={styles.tableRow}>
                   <View style={styles.lineCol}>
                     <Text numberOfLines={1} style={type.bodyStrong}>{line.tile_name}</Text>
-                    <Text numberOfLines={1} style={type.caption}>{[line.series, line.finish].filter(Boolean).join(" · ") || "—"}</Text>
+                    <Text numberOfLines={1} style={type.caption}>{tileIdentityMeta([line.series, line.finish], line.sku)}</Text>
                   </View>
                   <Text numberOfLines={1} style={[styles.smallCol, type.bodySm]}>{line.size || "—"}</Text>
                   <Text style={[styles.numCol, styles.mono]}>{line.boxes} {line.quantity_unit === "Pieces" ? "pcs" : "box"}</Text>
@@ -177,7 +178,7 @@ export function DispatchRecordSheet({
                   <View key={`${line.po_item_id}-${index}`} style={styles.tableRow}>
                     <View style={styles.lineCol}>
                       <Text numberOfLines={1} style={type.bodyStrong}>{line.tile_name}</Text>
-                      <Text numberOfLines={1} style={type.caption}>{[line.series, line.finish, line.size].filter(Boolean).join(" · ") || "—"}</Text>
+                      <Text numberOfLines={1} style={type.caption}>{tileIdentityMeta([line.series, line.finish, line.size], line.sku)}</Text>
                     </View>
                     <Text style={[styles.numCol, styles.mono]}>{line.boxes} {line.quantity_unit === "Pieces" ? "pcs" : "box"}</Text>
                   </View>

@@ -23,6 +23,7 @@ import {
   Section, SectionHeader, Stat,
 } from "@/src/components/tiles/TileLayout";
 import { AgeingBadge, StatusPill, WorkflowRail } from "@/src/components/tiles/TileOrderStatusUI";
+import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
 import { CellNumber, CellStack, DataTable, type Column } from "@/src/components/tiles/TileTable";
 import { Sheet } from "@/src/components/ui";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
@@ -140,11 +141,11 @@ export default function CustomerOrderDetailScreen() {
   // same figure straight down the column; the product name absorbs the rest.
   const columns = useMemo<Column<CustomerOrderItem & { __poId: string }>[]>(() => [
     {
-      key: "product", label: "PRODUCT", grow: 3, minWidth: 240,
+      key: "product", label: "TILE NAME", grow: 3, minWidth: 240,
       render: (item) => (
         <CellStack
           title={item.tile_name}
-          subtitle={[item.series, item.finish, item.size].filter(Boolean).join(" · ") || "—"}
+          subtitle={tileIdentityMeta([item.series, item.finish, item.size], item.sku)}
         />
       ),
     },

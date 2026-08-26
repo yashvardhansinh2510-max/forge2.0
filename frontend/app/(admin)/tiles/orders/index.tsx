@@ -37,6 +37,7 @@ import {
   SearchField, Section, TabBar, Toolbar,
 } from "@/src/components/tiles/TileLayout";
 import { StatusPill } from "@/src/components/tiles/TileOrderStatusUI";
+import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
 import {
   CellChevron, CellLink, CellMono, CellNumber, CellStack, CellText, CellTitle, DataTable,
   ProgressCell, type Column,
@@ -292,8 +293,8 @@ export default function TileOrdersScreen() {
       render: (row) => <CellTitle>{row.customer_name}</CellTitle>,
     },
     {
-      key: "product", label: "BRAND / PRODUCT", grow: 3, minWidth: 220,
-      render: (row) => <CellStack title={row.tile_name} subtitle={row.brand_name} />,
+      key: "product", label: "BRAND / TILE", grow: 3, minWidth: 220,
+      render: (row) => <CellStack title={row.tile_name} subtitle={tileIdentityMeta([row.brand_name], row.sku)} />,
     },
     {
       key: "boxes", label: "QTY", width: 88, align: "right",
@@ -366,8 +367,8 @@ export default function TileOrdersScreen() {
       render: (row) => <CellTitle>{row.customer_name}</CellTitle>,
     },
     {
-      key: "product", label: "BRAND / PRODUCT", grow: 3, minWidth: 220,
-      render: (row) => <CellStack title={row.tile_name} subtitle={row.brand_name} />,
+      key: "product", label: "BRAND / TILE", grow: 3, minWidth: 220,
+      render: (row) => <CellStack title={row.tile_name} subtitle={tileIdentityMeta([row.brand_name], row.sku)} />,
     },
     {
       // Sized to render the longest movement label, "Dispatch from Released",
@@ -418,9 +419,9 @@ export default function TileOrdersScreen() {
 
   const inventoryColumns = useMemo<Column<GodownInventoryRow>[]>(() => [
     { key: "customer", label: "CUSTOMER", grow: 2, minWidth: 180, render: (row) => <CellTitle>{row.customer}</CellTitle> },
-    { key: "name", label: "NAME", grow: 3, minWidth: 220, render: (row) => <CellText>{row.name}</CellText> },
+    { key: "name", label: "TILE NAME", grow: 3, minWidth: 220, render: (row) => <CellText>{row.name}</CellText> },
     { key: "brand", label: "BRAND", grow: 2, minWidth: 150, render: (row) => <CellText muted>{row.brand}</CellText> },
-    { key: "product", label: "PRODUCT", grow: 2, minWidth: 150, render: (row) => <CellMono>{row.product || "—"}</CellMono> },
+    { key: "product", label: "SKU", grow: 2, minWidth: 150, render: (row) => <CellMono>{row.product || "—"}</CellMono> },
     { key: "size", label: "SIZE", width: 130, render: (row) => <CellText muted>{row.size || "—"}</CellText> },
     { key: "arrival", label: "ARRIVED", width: 160, render: (row) => <CellMono>{timestamp(row.arrival_date)}</CellMono> },
   ], []);
@@ -646,7 +647,7 @@ export default function TileOrdersScreen() {
           <View style={styles.sheetBody}>
             <View style={styles.sheetFacts}>
               <SheetFact label="Customer" value={selectedMovement.customer_name} />
-              <SheetFact label="Product" value={`${selectedMovement.brand_name} · ${selectedMovement.tile_name}`} />
+              <SheetFact label="Product" value={tileIdentityMeta([selectedMovement.brand_name, selectedMovement.tile_name], selectedMovement.sku)} />
               <SheetFact label="Quantity" value={quantityLabel(selectedMovement.boxes, selectedMovement.quantity_unit)} />
               <SheetFact
                 label="Route"
@@ -722,7 +723,7 @@ export default function TileOrdersScreen() {
               <SheetFact label="Delivery notes" value={selectedHistory.delivery_notes || "—"} />
               <SheetFact label="Chalans" value={selectedHistory.chalan_references.map((ref) => ref.number).join(", ") || "—"} />
               <SheetFact label="Dispatches" value={selectedHistory.dispatch_references.map((ref) => ref.number).join(", ") || "—"} />
-              <SheetFact label="Products" value={selectedHistory.products.map((product) => `${product.product} · ${product.size || "Size —"} · ${quantityLabel(product.boxes, product.quantity_unit)}${product.pieces == null ? "" : ` · ${product.pieces} pieces`}`).join("; ") || "—"} />
+              <SheetFact label="Products" value={selectedHistory.products.map((product) => `${tileIdentityMeta([product.product, product.size], product.sku)} · ${quantityLabel(product.boxes, product.quantity_unit)}${product.pieces == null ? "" : ` · ${product.pieces} pieces`}`).join("; ") || "—"} />
             </View>
             <ButtonGroup>
               <Button label="Open original order" variant="primary" testID="tile-orders-history-open-original" onPress={() => { const id = selectedHistory.id; setSelectedHistory(null); openCustomerOrder(id); }} />

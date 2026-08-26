@@ -1336,7 +1336,7 @@ async def customer_order_detail(co_id: str, user: UserPublic = Depends(require_m
         "overall_status": po.get("overall_status"),
         "items": [{
             "po_item_id": item["id"], "tile_name": item.get("name"), "series": item.get("series"),
-            "finish": item.get("finish"), "size": item.get("size"),
+            "finish": item.get("finish"), "size": item.get("size"), "sku": item.get("sku"),
             "boxes_ordered": item.get("qty"), "boxes_ready": item.get("boxes_ready"),
             "boxes_godown": item.get("boxes_godown") or 0,
             "boxes_dispatched": item.get("boxes_dispatched"), "boxes_pending": item.get("boxes_pending"),
@@ -1424,7 +1424,7 @@ async def list_dispatches(
                 "dispatch_id": "$id", "dispatch_number": 1, "dispatch_date": 1,
                 "customer_id": 1, "customer_name": 1, "customer_order_id": 1,
                 "brand_id": "$po.brand_id", "brand_name": {"$ifNull": ["$po.brand_name", {"$ifNull": ["$supplier_name", "Unassigned"]}]},
-                "tile_name": "$chalan.items.tile_name", "tile_size": "$chalan.items.size",
+                "tile_name": "$chalan.items.tile_name", "tile_size": "$chalan.items.size", "sku": "$chalan.items.sku",
                 "boxes": "$chalan.items.boxes", "quantity_unit": {"$ifNull": ["$chalan.items.quantity_unit", "Box"]},
                 "source": {"$cond": [{"$eq": ["$source", "godown"]}, "Godown", "Released"]},
                 "chalan_id": "$chalan.id", "chalan_number": "$chalan.number",
@@ -1501,7 +1501,7 @@ async def list_dispatches(
                 "customer_id": dispatch.get("customer_id"), "customer_name": dispatch.get("customer_name"),
                 "customer_order_id": dispatch.get("customer_order_id"),
                 "brand_id": this_brand_id, "brand_name": this_brand_name or dispatch.get("supplier_name") or "Unassigned",
-                "tile_name": line.get("tile_name"), "tile_size": line.get("size"), "boxes": line.get("boxes"), "quantity_unit": line.get("quantity_unit") or "Box",
+                "tile_name": line.get("tile_name"), "tile_size": line.get("size"), "sku": line.get("sku"), "boxes": line.get("boxes"), "quantity_unit": line.get("quantity_unit") or "Box",
                 "source": source_label,
                 "chalan_id": chalan.get("id"), "chalan_number": chalan.get("number"),
                 "vehicle_number": chalan.get("vehicle_number"), "driver_name": chalan.get("driver_name"),
@@ -1509,7 +1509,7 @@ async def list_dispatches(
             }
             if search:
                 haystack = " ".join(str(row.get(k) or "") for k in (
-                    "customer_name", "brand_name", "tile_name", "dispatch_number", "chalan_number",
+                    "customer_name", "brand_name", "tile_name", "sku", "dispatch_number", "chalan_number",
                 )).lower()
                 if search.lower() not in haystack:
                     continue
@@ -1653,7 +1653,7 @@ async def completed_tile_order_history(
                 pieces = None
                 try: pieces = float(item.get("boxes_dispatched") or 0) if quantity_unit == "Pieces" else float(item.get("boxes_dispatched") or 0) * float(pieces_per_box)
                 except (TypeError, ValueError): pass
-                products.append({"product": item.get("name"), "size": item.get("size"), "quantity": item.get("qty"), "boxes": item.get("boxes_dispatched") or 0, "pieces": pieces, "quantity_unit": quantity_unit})
+                products.append({"product": item.get("name"), "sku": item.get("sku"), "size": item.get("size"), "quantity": item.get("qty"), "boxes": item.get("boxes_dispatched") or 0, "pieces": pieces, "quantity_unit": quantity_unit})
         events = events_by_order.get(order["id"], [])
         brand_refs = []
         seen_brands = set()
@@ -1708,7 +1708,10 @@ async def export_completed_tile_order_history(
             "customer": row["customer"], "order_number": row["order_number"],
             "delivery_date": row["delivery_date"], "completion_date": row["completion_date"],
             "brands": ", ".join(row["brands"]),
-            "products": "; ".join(f'{p["product"]} ({p.get("size") or "—"})' for p in row["products"]),
+            "products": "; ".join(
+                f'{p["product"]} ({p.get("sku") or "No SKU"} · {p.get("size") or "—"})'
+                for p in row["products"]
+            ),
             "quantities": ", ".join(str(p.get("quantity") or 0) for p in row["products"]),
             "boxes": sum(float(p.get("boxes") or 0) for p in row["products"]),
             "pieces": ", ".join(str(p.get("pieces") or "—") for p in row["products"]),

@@ -31,9 +31,16 @@ def test_filename_matches_convention():
 
 
 def test_build_tile_chalan_pdf_produces_bytes():
-    pdf_bytes = build_tile_chalan_pdf(_chalan())
+    chalan = _chalan()
+    chalan["items"][0]["quantity_unit"] = "Pieces"
+    pdf_bytes = build_tile_chalan_pdf(chalan)
     assert isinstance(pdf_bytes, bytes)
     assert pdf_bytes[:4] == b"%PDF"
     assert len(pdf_bytes) > 500
     page = PdfReader(BytesIO(pdf_bytes)).pages[0]
     assert float(page.mediabox.width) > float(page.mediabox.height)
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf_bytes)).pages)
+    assert "Piece/Box" in text
+    assert "Piece" in text
+    assert "Pcs/Box" not in text
+    assert "Unit" not in text

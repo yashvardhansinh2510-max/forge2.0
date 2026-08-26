@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from auth import (
-    create_session, create_token, decode_token, get_current_customer, get_current_session, get_current_user,
+    apply_effective_floor_ids, create_session, create_token, decode_token, get_current_customer, get_current_session, get_current_user,
     hash_password, invalidate_principal_cache, verify_password,
 )
 from db import db
@@ -72,7 +72,7 @@ async def staff_login(body: LoginPayload, request: Request):
         event_type="user.login", entity_type="user", entity_id=doc["id"],
         actor_id=doc["id"], actor_name=doc.get("full_name"), summary="Staff Login",
     )
-    return TokenResponse(access_token=token, user=UserPublic(**doc))
+    return TokenResponse(access_token=token, user=apply_effective_floor_ids(UserPublic(**doc)))
 
 
 @router.get("/me", response_model=UserPublic)

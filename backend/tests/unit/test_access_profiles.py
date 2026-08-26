@@ -5,6 +5,17 @@ from access_profiles import (
     SANITARY_QUOTATIONS_FOLLOWUPS,
     profile_allows_request,
 )
+from auth import accessible_floor_ids
+from models import UserPublic
+
+
+def _profiled_user(profile: str) -> UserPublic:
+    # Deliberately use the wrong legacy assignment: profile binding must be
+    # authoritative or the worker is denied their own workspace.
+    return UserPublic(
+        id="staff-1", email="staff@example.com", full_name="Staff", role="worker",
+        floor_ids=["ground-floor"], access_profile=profile,
+    )
 
 
 def test_tile_quotation_profile_is_limited_to_its_workflow():
@@ -38,3 +49,11 @@ def test_sanitary_profiles_are_separated():
     assert profile_allows_request(SANITARY_PURCHASES, "GET", "/api/customers")
     assert not profile_allows_request(SANITARY_PURCHASES, "GET", "/api/customers/c-1")
     assert not profile_allows_request(SANITARY_PURCHASES, "GET", "/api/payments/history")
+
+
+def test_sanitary_quotation_profile_is_always_bound_to_sanitary_floor():
+    assert accessible_floor_ids(_profiled_user(SANITARY_QUOTATIONS_FOLLOWUPS)) == ["first-floor"]
+
+
+def test_sanitary_purchase_profile_is_always_bound_to_sanitary_floor():
+    assert accessible_floor_ids(_profiled_user(SANITARY_PURCHASES)) == ["first-floor"]

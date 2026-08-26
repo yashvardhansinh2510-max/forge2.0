@@ -58,6 +58,10 @@ type ChalanLine = {
   unit: string;
 };
 
+function chalanQuantityUnit(unit: string): "Piece" | "Box" {
+  return ["pcs", "pc", "piece", "pieces"].includes(unit.trim().toLowerCase()) ? "Piece" : "Box";
+}
+
 type Chalan = {
   id: string;
   number: string;
@@ -720,7 +724,7 @@ export default function PurchaseOrderDetail() {
                           <Text style={[type.bodySm, { flex: 1 }]} numberOfLines={2}>
                             {line.name}{line.size ? ` · ${line.size}` : ""}
                           </Text>
-                          <Text style={[type.mono, { fontSize: 12 }]}>{line.qty} {line.unit}</Text>
+                          <Text style={[type.mono, { fontSize: 12 }]}>{line.qty} {chalanQuantityUnit(line.unit)}</Text>
                         </View>
                       ))}
                     </View>

@@ -212,6 +212,7 @@ def _flatten_item(po: dict, it: dict, sla_days: int) -> dict:
         "transferred_from_item_id": it.get("transferred_from_item_id"),
         "transferred_from_customer_id": it.get("transferred_from_customer_id"),
     }
+    return response
 
 
 async def _hydrate_workspace_images(rows: list[dict]) -> None:

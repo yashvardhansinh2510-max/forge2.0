@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import os
 
-from auth import accessible_floor_ids, floor_for_write, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, require_min_role, revoke_all_sessions
+from auth import accessible_floor_ids, floor_for_write, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, profile_floor_ids, require_min_role, revoke_all_sessions
 from db import db
 from models import FloorCreatePayload, FloorPublic, TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from services.activity_log import log_event
@@ -239,9 +239,11 @@ async def create_team_member(body: TeamCreatePayload, user: UserPublic = Depends
         raise HTTPException(status_code=403, detail="Only an owner can create another owner")
     if await db.users.find_one({"email": body.email.lower()}, {"_id": 0, "id": 1}):
         raise HTTPException(status_code=409, detail="A team member with this email already exists")
+    profile_floors = profile_floor_ids(body.access_profile)
     doc = UserPublic(
         email=body.email.lower(), full_name=body.full_name, role=body.role, phone=body.phone,
-        floor_ids=body.floor_ids,
+        floor_ids=profile_floors if profile_floors is not None else body.floor_ids,
+        access_profile=body.access_profile,
         # New staff must set their own password on first login — the admin-
         # supplied password here is only a onboarding credential, never a
         # long-term secret someone else chose for them.
@@ -280,6 +282,12 @@ async def update_team_member(
     removes_owner = target_is_owner and (patch.get("active") is False or ("role" in patch and patch["role"] != "owner"))
     if removes_owner and await db.users.count_documents({"role": "owner", "active": {"$ne": False}}) <= 1:
         raise HTTPException(status_code=400, detail="At least one active owner is required")
+    if "access_profile" in patch:
+        profile_floors = profile_floor_ids(patch["access_profile"])
+        if profile_floors is not None:
+            # Keep the stored assignment inspectable and correct for legacy
+            # consumers; authorization independently enforces this binding.
+            patch["floor_ids"] = profile_floors
     patch["updated_at"] = now_iso()
     await db.users.update_one({"id": user_id}, {"$set": patch})
     if "access_profile" in patch:
