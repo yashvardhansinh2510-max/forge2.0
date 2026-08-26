@@ -19,8 +19,10 @@ def test_tile_quotation_profile_is_limited_to_its_workflow():
 
 def test_payment_dispatch_profile_cannot_release_or_move_stock():
     assert profile_allows_request(GROUND_PAYMENTS_DISPATCHES, "POST", "/api/payments")
+    assert profile_allows_request(GROUND_PAYMENTS_DISPATCHES, "POST", "/api/downloads/token")
     assert profile_allows_request(GROUND_PAYMENTS_DISPATCHES, "POST", "/api/tile-orders/purchase-orders/po-1/dispatch-from-released")
     assert profile_allows_request(GROUND_PAYMENTS_DISPATCHES, "PATCH", "/api/tile-orders/dispatches/d-1/transport")
+    assert profile_allows_request(GROUND_PAYMENTS_DISPATCHES, "GET", "/api/tile-orders/history/export")
     assert not profile_allows_request(GROUND_PAYMENTS_DISPATCHES, "POST", "/api/tile-orders/purchase-orders/po-1/ready")
     assert not profile_allows_request(GROUND_PAYMENTS_DISPATCHES, "POST", "/api/tile-orders/purchase-orders/po-1/items/move-to-godown")
 

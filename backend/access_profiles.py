@@ -43,6 +43,8 @@ def _customer_for_quotation(method: str, path: str) -> bool:
 
 def _dispatch_surface(method: str, path: str) -> bool:
     """Dispatch operations only — expressly excludes release and godown moves."""
+    if path == "/api/tile-orders/history/export":
+        return method == "GET"
     if path in {"/api/tile-orders/dispatches", "/api/tile-orders/movements"}:
         return method == "GET"
     if fullmatch(r"/api/tile-orders/dispatches/[^/]+/(godown-received|delivered)", path):
@@ -72,7 +74,8 @@ def profile_allows_request(profile: str | None, method: str, path: str) -> bool:
                 or _customer_for_quotation(method, path) or _catalog_read(method, path)
                 or (method == "POST" and path == "/api/downloads/token"))
     if profile == GROUND_PAYMENTS_DISPATCHES:
-        return path.startswith("/api/payments") or _dispatch_surface(method, path)
+        return (path.startswith("/api/payments") or _dispatch_surface(method, path)
+                or (method == "POST" and path == "/api/downloads/token"))
     if profile == SANITARY_PURCHASES:
         return (path.startswith("/api/purchases") or path.startswith("/api/purchase-orders")
                 or path.startswith("/api/suppliers")

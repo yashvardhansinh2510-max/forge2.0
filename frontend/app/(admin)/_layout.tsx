@@ -301,7 +301,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         {visible(PRIMARY).map((n) => (
           <SideItem key={n.href} item={n} active={isActive(n)} onPress={() => router.push(n.href as any)} compact={collapsed} />
         ))}
-        {hasAccess("quotations") && tilesNav.items.map((n) => (
+        {hasAccess("tiles") && tilesNav.items.map((n) => (
           <SideItem
             key={n.href}
             item={n}
@@ -385,7 +385,7 @@ function Rail() {
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 2 }} showsVerticalScrollIndicator={false}>
         {visible(PRIMARY).map((n) => <RailBtn key={n.href} item={n} />)}
-        {hasAccess("quotations") && tilesNav.items.map((n) => {
+        {hasAccess("tiles") && tilesNav.items.map((n) => {
           const on = n.match === "orders" ? segments.includes("orders") : segments.includes("tiles") && !segments.includes("orders");
           return (
             <Pressable
@@ -568,7 +568,7 @@ function PhoneBar() {
           <FloorSwitcher />
         </View>
         <Hairline style={{ marginVertical: 6 }} />
-        {hasAccess("quotations") && tilesNav.items.map((n) => (
+        {hasAccess("tiles") && tilesNav.items.map((n) => (
           <Pressable
             key={n.href}
             onPress={() => { setMoreOpen(false); void tilesNav.open(n); }}
