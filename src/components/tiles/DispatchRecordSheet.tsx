@@ -18,6 +18,7 @@ import { tileOrdersApi, type ChalanDetail, type DispatchDetail } from "@/src/api
 import { toast } from "@/src/components/Toast";
 import { Sheet } from "@/src/components/ui";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
 
 export async function openChalanPdf(chalanId: string, mode: "view" | "print" = "view") {
   try {
@@ -45,6 +46,8 @@ function Field({ label, value }: { label: string; value?: string | null }) {
   );
 }
 
+const money = (value?: number | null) => `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export function ChalanPreviewSheet({ chalanId, onClose }: { chalanId: string; onClose: () => void }) {
   const [chalan, setChalan] = useState<ChalanDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +74,7 @@ export function ChalanPreviewSheet({ chalanId, onClose }: { chalanId: string; on
               <Field label="Vehicle / driver" value={[chalan.vehicle_number, chalan.driver_name].filter(Boolean).join(" · ")} />
               <Field label="Received by" value={chalan.receiver_name} />
               <Field label="Reference no." value={chalan.reference_number} />
+              <Field label="Labour cost" value={money(chalan.labor_cost)} />
             </View>
             <View style={styles.table}>
               <View style={styles.tableHeader}>
@@ -82,10 +86,10 @@ export function ChalanPreviewSheet({ chalanId, onClose }: { chalanId: string; on
                 <View key={`${line.po_item_id}-${index}`} style={styles.tableRow}>
                   <View style={styles.lineCol}>
                     <Text numberOfLines={1} style={type.bodyStrong}>{line.tile_name}</Text>
-                    <Text numberOfLines={1} style={type.caption}>{[line.series, line.finish].filter(Boolean).join(" · ") || "—"}</Text>
+                    <Text numberOfLines={1} style={type.caption}>{tileIdentityMeta([line.series, line.finish])}</Text>
                   </View>
                   <Text numberOfLines={1} style={[styles.smallCol, type.bodySm]}>{line.size || "—"}</Text>
-                  <Text style={[styles.numCol, styles.mono]}>{line.boxes} {line.quantity_unit === "Pieces" ? "pcs" : "box"}</Text>
+                  <Text style={[styles.numCol, styles.mono]}>{line.quantity} {line.quantity_unit === "Pieces" ? "Piece" : "Box"}</Text>
                 </View>
               ))}
             </View>
@@ -166,6 +170,7 @@ export function DispatchRecordSheet({
                 <Field label="Brand" value={detail.brand.name} />
                 <Field label="Destination" value={[dispatch.destination_name, dispatch.destination_address, dispatch.destination_city].filter(Boolean).join(", ")} />
                 <Field label="Chalan no." value={detail.chalan.number} />
+                <Field label="Labour cost" value={money(dispatch.labor_cost)} />
                 <Field label="Raised by" value={`${dispatch.created_by_name} · ${dispatch.dispatch_time}`} />
                 <Field label="Godown received" value={dispatch.godown_received_at ? `${dispatch.godown_received_at.slice(0, 16).replace("T", " ")} · ${dispatch.godown_received_by_name || ""}` : null} />
                 <Field label="Delivered" value={dispatch.delivered_at ? `${dispatch.delivered_at.slice(0, 16).replace("T", " ")} · ${dispatch.delivered_by_name || ""}` : null} />
@@ -177,9 +182,9 @@ export function DispatchRecordSheet({
                   <View key={`${line.po_item_id}-${index}`} style={styles.tableRow}>
                     <View style={styles.lineCol}>
                       <Text numberOfLines={1} style={type.bodyStrong}>{line.tile_name}</Text>
-                      <Text numberOfLines={1} style={type.caption}>{[line.series, line.finish, line.size].filter(Boolean).join(" · ") || "—"}</Text>
+                      <Text numberOfLines={1} style={type.caption}>{tileIdentityMeta([line.series, line.finish, line.size])}</Text>
                     </View>
-                    <Text style={[styles.numCol, styles.mono]}>{line.boxes} {line.quantity_unit === "Pieces" ? "pcs" : "box"}</Text>
+                    <Text style={[styles.numCol, styles.mono]}>{line.quantity} {line.quantity_unit === "Pieces" ? "Piece" : "Box"}</Text>
                   </View>
                 ))}
               </View>

@@ -160,7 +160,17 @@ export const layout = {
   gutter: { phone: 20, tablet: 28, desktop: 40 },
   content: 1120,          // default page max width
   contentNarrow: 760,     // reading / form pages
-  bp: { tablet: 768, desktop: 1024, wide: 1440 },
+  // One responsive contract. Components must consume this through `useBp()`
+  // instead of creating their own width thresholds.
+  bp: {
+    tabletPortrait: 768,
+    tabletLandscape: 1024,
+    desktop: 1366,
+    // Backwards-compatible aliases for older primitives. New code should use
+    // the explicit orientation-aware names above.
+    tablet: 768,
+    wide: 1366,
+  },
 } as const;
 
 // ── Formatters ──────────────────────────────────────────────────────────────

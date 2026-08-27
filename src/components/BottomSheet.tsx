@@ -26,13 +26,30 @@ export function BottomSheet({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose} testID={`${testID}-backdrop`}>
-        <Pressable style={{ maxHeight: height * maxHeight, width: targetWidth, marginTop: "auto" }} onPress={(e) => e.stopPropagation()}>
+        <Pressable
+          style={{
+            maxHeight: height * maxHeight,
+            width: targetWidth,
+            marginTop: "auto",
+            // Phone sheets rise from the bottom; larger touch devices use a
+            // centered panel so the final action stays away from the edge.
+            ...(isTablet ? { marginBottom: "auto" } : null),
+          }}
+          onPress={(e) => e.stopPropagation()}
+        >
           <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"}>
             <SafeAreaView edges={["bottom"]} style={styles.sheet}>
-              <View style={styles.grabber} />
+              {!isTablet ? <View style={styles.grabber} /> : null}
               <View style={styles.head}>
                 <Text style={type.titleMd}>{title}</Text>
-                <Pressable testID={`${testID}-close`} hitSlop={12} onPress={onClose}>
+                <Pressable
+                  testID={`${testID}-close`}
+                  hitSlop={12}
+                  onPress={onClose}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Close ${title}`}
+                  style={styles.close}
+                >
                   <Feather name="x" size={20} color={colors.onSurfaceMuted} />
                 </Pressable>
               </View>
@@ -69,4 +86,5 @@ const styles = StyleSheet.create({
     padding: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surfaceSecondary,
   },
+  close: { width: 44, height: 44, alignItems: "center", justifyContent: "center", margin: -12 },
 });

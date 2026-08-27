@@ -19,7 +19,7 @@ import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
-import { MobileViewport } from "@/src/components/mobile/MobileShell";
+import { AppScaffold } from "@/src/components/mobile/AppScaffold";
 import { storage } from "@/src/utils/storage";
 import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID, SANITARY_FLOOR_ID, TILES_FLOOR_ID, floorDisplayLabel, floorLandingPath } from "@/src/constants/floors";
 
@@ -218,6 +218,7 @@ const TILES_ITEMS: NavItem[] = [
 function useTilesNav() {
   const router = useRouter();
   const { staff } = useAuth();
+  const hasAccess = useModuleAccess();
   const { access, selectedFloorId, selectFloor } = useFloorAccess();
   const groundAccessible = Boolean(access && (access.all_floors || access.floor_ids.includes(TILES_FLOOR_ID)));
   // Ground Floor's Tiles module is not merely *reachable* from Ground
@@ -225,7 +226,9 @@ function useTilesNav() {
   // these while "The Sanitary Bathroom" is the active floor is what put
   // Tile Orders and Quotation Tiles in Sanitary's navigation.
   const items = groundAccessible && selectedFloorId === TILES_FLOOR_ID
-    ? TILES_ITEMS.filter((item) => !item.roles || Boolean(staff && item.roles.includes(staff.role)))
+    ? TILES_ITEMS.filter((item) => (
+      hasAccess(item.match) && (!item.roles || Boolean(staff && item.roles.includes(staff.role)))
+    ))
     : [];
   const open = (item: NavItem) => {
     if (selectedFloorId !== TILES_FLOOR_ID) {
@@ -269,7 +272,6 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
   const visible = useVisibleNav();
-  const hasAccess = useModuleAccess();
   const tilesNav = useTilesNav();
   const palette = usePalette();
   const isActive = (item: NavItem) => isNavActive(item, segments);
@@ -301,7 +303,7 @@ function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => 
         {visible(PRIMARY).map((n) => (
           <SideItem key={n.href} item={n} active={isActive(n)} onPress={() => router.push(n.href as any)} compact={collapsed} />
         ))}
-        {hasAccess("quotations") && tilesNav.items.map((n) => (
+        {tilesNav.items.map((n) => (
           <SideItem
             key={n.href}
             item={n}
@@ -349,7 +351,6 @@ function Rail() {
   const segments = useSegments() as string[];
   const { staff, logout } = useAuth();
   const visible = useVisibleNav();
-  const hasAccess = useModuleAccess();
   const palette = usePalette();
   const tilesNav = useTilesNav();
   const isActive = (item: NavItem) => isNavActive(item, segments);
@@ -385,7 +386,7 @@ function Rail() {
       </View>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ alignItems: "center", gap: 2 }} showsVerticalScrollIndicator={false}>
         {visible(PRIMARY).map((n) => <RailBtn key={n.href} item={n} />)}
-        {hasAccess("quotations") && tilesNav.items.map((n) => {
+        {tilesNav.items.map((n) => {
           const on = n.match === "orders" ? segments.includes("orders") : segments.includes("tiles") && !segments.includes("orders");
           return (
             <Pressable
@@ -427,8 +428,10 @@ function Rail() {
 
 // ── Phone bottom bar + More sheet ───────────────────────────────────────────
 const PHONE_TABS: NavItem[] = [
-  { href: "/(admin)/dashboard", label: "Today", icon: "home", match: "dashboard" },
-  { href: "/(admin)/quotations", label: "Quotes", icon: "file-text", match: "quotations", floors: [SANITARY_FLOOR_ID] },
+  { href: "/(admin)/dashboard", label: "Home", icon: "home", match: "dashboard" },
+  // On Sanitary this starts at quotations; on Ground Floor the same slot is
+  // substituted with Tile Orders below. Both are the worker's order queue.
+  { href: "/(admin)/quotations", label: "Orders", icon: "file-text", match: "quotations", floors: [SANITARY_FLOOR_ID] },
 ];
 const PHONE_TABS_RIGHT: NavItem[] = [
   { href: "/(admin)/followups", label: "Tasks", icon: "check-square", match: "followups" },
@@ -485,7 +488,7 @@ function PhoneBar() {
   const phoneTabs = contextualNotebookTabs
     ? [...visiblePhoneTabs.filter((item) => item.match !== "quotations"), contextualNotebookTabs.primary]
     : visiblePhoneTabs.length < PHONE_TABS.length && tilesNav.items.length
-    ? [...visiblePhoneTabs, { ...tilesNav.items[0], label: "Tiles" }]
+    ? [...visiblePhoneTabs, { ...tilesNav.items[0], label: "Orders" }]
     : visiblePhoneTabs;
   const phoneTabsRight = contextualNotebookTabs ? [contextualNotebookTabs.secondary] : visible(PHONE_TABS_RIGHT);
   // The FAB is not a NavItem and isn't run through visible(), so it needs its
@@ -507,9 +510,9 @@ function PhoneBar() {
   const fabAction = !hasAccess("quotations")
     ? null
     : selectedFloorId === SANITARY_FLOOR_ID
-    ? { label: "New quotation", onPress: () => router.push("/(admin)/quotations/new" as any) }
+    ? { label: "Scan or start an order", onPress: () => router.push("/(admin)/quotations/new" as any) }
     : selectedFloorId === TILES_FLOOR_ID && tilesNav.items.length
-    ? { label: `Open ${tilesNav.items[0].label}`, onPress: () => { void tilesNav.open(tilesNav.items[0]); } }
+    ? { label: "Scan or start an order", onPress: () => { void tilesNav.open(tilesNav.items[0]); } }
     : null;
 
   const Tab = ({ item }: { item: NavItem }) => {
@@ -537,6 +540,7 @@ function PhoneBar() {
         {phoneTabs.map((t) => <Tab key={t.href} item={t} />)}
         <View style={styles.fabSlot}>
           {fabAction ? (
+            <>
             <Pressable
               testID="bottom-fab-new-quotation"
               accessibilityRole="button"
@@ -546,6 +550,8 @@ function PhoneBar() {
             >
               <Feather name="plus" size={22} color={color.onAction} />
             </Pressable>
+            <Text style={styles.actionLabel}>Action</Text>
+            </>
           ) : null}
         </View>
         {phoneTabsRight.map((t) => <Tab key={t.href} item={t} />)}
@@ -579,7 +585,7 @@ function PhoneBar() {
           <FloorSwitcher />
         </View>
         <Hairline style={{ marginVertical: 6 }} />
-        {hasAccess("quotations") && tilesNav.items.map((n) => (
+        {tilesNav.items.map((n) => (
           <Pressable
             key={n.href}
             onPress={() => { setMoreOpen(false); void tilesNav.open(n); }}
@@ -649,21 +655,13 @@ export default function AdminLayout() {
   if (isPhone) {
     return (
       <PaletteProvider>
-        <MobileViewport
+        <AppScaffold
           testID="admin-mobile-shell"
-          edges={["top", "left", "right"]}
           style={{ backgroundColor: color.canvas }}
+          bottomNavigation={<PhoneBar />}
         >
-          <View style={{ flex: 1 }}>
-            <Slot />
-          </View>
-          <SafeAreaView
-            edges={["bottom"]}
-            style={{ backgroundColor: color.canvas, borderTopWidth: layout.hairline, borderTopColor: color.line }}
-          >
-            <PhoneBar />
-          </SafeAreaView>
-        </MobileViewport>
+          <Slot />
+        </AppScaffold>
       </PaletteProvider>
     );
   }
@@ -736,12 +734,13 @@ const styles = StyleSheet.create({
   tabIconWrapActive: { backgroundColor: color.brassTint },
   tabLabel: { fontFamily: font.medium, fontWeight: "500", fontSize: 10.5, color: color.inkFaint, letterSpacing: 0.1 },
   tabLabelActive: { color: color.ink, fontWeight: "600" },
-  fabSlot: { width: 68, alignItems: "center", justifyContent: "center" },
+  fabSlot: { width: 68, alignItems: "center", justifyContent: "center", paddingTop: 4 },
   fab: {
     width: 52, height: 52, borderRadius: 26, backgroundColor: color.brass,
     alignItems: "center", justifyContent: "center", marginTop: -22,
     borderWidth: 4, borderColor: color.canvas,
   },
+  actionLabel: { marginTop: -2, fontFamily: font.medium, fontSize: 10.5, color: color.inkFaint },
   moreRow: {
     flexDirection: "row", alignItems: "center", gap: 12,
     height: 48, paddingHorizontal: 4,

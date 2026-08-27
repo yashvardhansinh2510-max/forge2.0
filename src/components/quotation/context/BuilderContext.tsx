@@ -23,7 +23,7 @@ import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import type { HistoryApi } from "@/src/hooks/useHistory";
 import { playAddProductSound } from "@/src/services/soundService";
 import { catalogReferences, CATALOG_PAGE_SIZE, fetchCatalogPage } from "@/src/services/catalogService";
-import { openApiFile } from "@/src/utils/downloadFile";
+import { downloadApiFile } from "@/src/utils/downloadFile";
 
 import { computeTotals, effectivePct } from "../helpers/pricing";
 import { enqueueQuotationPersist } from "../helpers/autosave";
@@ -1113,15 +1113,14 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     if (!persistedId) return;
     setWorkflowBusy(true);
     try {
-      // openApiFile opens the PDF via a blob: URL (not a data: URL, and not
-      // a bare window.open() on a URL minted after two awaited round-trips —
-      // both of which browsers can silently refuse) and shows its own toast
-      // on failure, so there's no separate success/error toast to add here.
-      await openApiFile(`/quotations/${persistedId}/pdf`, "quotation PDF");
+      const customerName = customers.find((customer) => customer.id === s.customerId)?.name || "Customer";
+      const safeCustomerName = customerName.replace(/[\\\\/:*?\"<>|]/g, "").trim().replace(/\s+/g, " ") || "Customer";
+      const filename = `${safeCustomerName}.pdf`;
+      await downloadApiFile(`/quotations/${persistedId}/pdf`, filename, "quotation PDF");
     } finally {
       setWorkflowBusy(false);
     }
-  }, [persist]);
+  }, [persist, customers, s.customerId]);
 
   const placeOrder = useCallback(async () => {
     const persistedId = await persist();

@@ -9,7 +9,7 @@ import { useBp } from "@/src/design/responsive";
 import { Button, Card, IconButton, PriceTag, StatusBadge } from "@/src/components/ui";
 import { ConfirmDialog } from "@/src/components/ds";
 import { api } from "@/src/api/client";
-import { openApiFile } from "@/src/utils/downloadFile";
+import { downloadApiFile } from "@/src/utils/downloadFile";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 
 type Line = { id: string; sku: string; name: string; qty: number; unit_price: number; discount_pct: number | null; room?: string; description?: string | null; category_id?: string | null };
@@ -61,13 +61,8 @@ export default function QuotationDetail() {
   useEffect(() => { load(); }, [load]);
 
   const openPdf = async () => {
-    // On web this used to convert the whole PDF into a base64 data: URL and
-    // hand it to window.open() — Chrome refuses to navigate a new tab
-    // straight to a data: URL (a hard security block, not a popup-blocker
-    // timing issue), so the tab silently never opened. openApiFile already
-    // does this correctly elsewhere (customer portal, catalog export) via a
-    // short-lived blob: URL instead.
-    await openApiFile(`/quotations/${id}/pdf`, "quotation PDF");
+    const name = (q?.customer_name || "Customer").replace(/[\\\\/:*?\"<>|]/g, "").trim().replace(/\s+/g, " ") || "Customer";
+    await downloadApiFile(`/quotations/${id}/pdf`, `${name}.pdf`, "quotation PDF");
   };
 
   const advance = async () => {
@@ -94,7 +89,7 @@ export default function QuotationDetail() {
   if (!q) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       {/* Sticky top bar — back on left, action buttons on right */}
       <View style={styles.topbar}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>

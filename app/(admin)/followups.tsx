@@ -232,7 +232,6 @@ export default function FollowupsScreen() {
   const { selectedFloorId } = useFloorAccess();
   const router = useRouter();
   const { isPhone, isDesktop } = useBp();
-  const { height: windowHeight } = useWindowDimensions();
   const pagePad = isPhone ? spacing.md : spacing.xl;
 
   const [loading, setLoading] = useState(true);
@@ -682,14 +681,9 @@ export default function FollowupsScreen() {
   }, [rawItems, selectedId, contact, completeFollowup, snoozeFollowup]);
 
   const activeTileStyle = { borderColor: colors.brand, backgroundColor: colors.brandTint };
-  // A bounded native scroll surface lets SectionList window its rows. Keeping
-  // the surrounding page scrollable preserves the existing dashboard layout,
-  // while large follow-up queues no longer mount every card at once.
-  const inboxListHeight = Math.max(isPhone ? 460 : 520, windowHeight - (isPhone ? 180 : 250));
-
   // ═══════════════════════════════════════════════════════════════════════
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         overline="WORKSPACE"
         title="Follow-ups"
@@ -740,7 +734,15 @@ export default function FollowupsScreen() {
         ) : null}
 
         {/* Today's Mission */}
-        <MissionHero mission={mission} loading={loading} onJumpTop={() => topPriorityOpen && selectCard(topPriorityOpen)} compact={isPhone} />
+        <MissionHero
+          mission={mission}
+          loading={loading}
+          onOpenPriority={(id) => {
+            const followup = rawItems.find((item) => item.id === id);
+            if (followup) selectCard(followup);
+          }}
+          compact={isPhone}
+        />
 
         {/* KPI strip */}
         <ScrollView horizontal={isPhone} showsHorizontalScrollIndicator={isPhone} contentContainerStyle={{ gap: spacing.md, paddingRight: isPhone ? spacing.md : 0 }} style={isPhone ? { marginHorizontal: -pagePad, paddingHorizontal: pagePad } : undefined}>
@@ -779,9 +781,10 @@ export default function FollowupsScreen() {
                   placeholder="Search customer, phone, quotation #, project…"
                 />
               </View>
-              <IconButton icon="bookmark" onPress={() => setSavedViewsSheet(true)} tone="surface" accessibilityLabel="Saved views" size={40} />
-              <IconButton icon="help-circle" onPress={() => setShortcutHelp(true)} tone="surface" accessibilityLabel="Keyboard shortcuts" size={40} />
+              {!isPhone ? <IconButton icon="bookmark" onPress={() => setSavedViewsSheet(true)} tone="surface" accessibilityLabel="Saved views" size={40} /> : null}
+              {!isPhone ? <IconButton icon="help-circle" onPress={() => setShortcutHelp(true)} tone="surface" accessibilityLabel="Keyboard shortcuts" size={40} /> : null}
             </View>
+            {q.trim() ? <Text style={type.caption}>{filtered.length} customer{filtered.length === 1 ? "" : "s"} found</Text> : null}
             <FilterBar
               label="PRIORITY"
               value={priorityFilter}
@@ -874,13 +877,8 @@ export default function FollowupsScreen() {
               <SectionList
                 sections={visibleSections}
                 keyExtractor={(item) => item.id}
-                style={{ height: inboxListHeight }}
                 contentContainerStyle={{ gap: spacing.sm, paddingBottom: spacing.sm }}
-                initialNumToRender={8}
-                maxToRenderPerBatch={6}
-                windowSize={7}
-                removeClippedSubviews={Platform.OS !== "web"}
-                nestedScrollEnabled
+                scrollEnabled={false}
                 stickySectionHeadersEnabled={false}
                 renderSectionHeader={({ section }) => {
                   const meta = BUCKET_META[section.bucket];
@@ -961,8 +959,26 @@ export default function FollowupsScreen() {
         subtitle={detail?.followup?.reason}
       >
         <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: 120 }}>
+          {detail?.followup && detail.followup.status === "open" ? (
+            <View style={styles.mobileCustomerActions}>
+              <Text style={type.overline}>NEXT ACTION</Text>
+              <Text style={type.bodySm} numberOfLines={2}>{detail.followup.next_action}</Text>
+              <View style={{ flexDirection: "row", gap: spacing.sm }}>
+                <Button label="Call" icon="phone" variant="primary" size="sm" onPress={() => contact(detail.followup, "call")} />
+                <IconButton icon="message-circle" tone="surface" size={44} accessibilityLabel="WhatsApp customer" onPress={() => contact(detail.followup, "whatsapp")} />
+                <IconButton icon="check" tone="surface" size={44} accessibilityLabel="Mark follow-up complete" onPress={() => completeFollowup(detail.followup)} />
+              </View>
+              <Pressable
+                onPress={() => router.push(`/(admin)/customers/${detail.customer.id}` as any)}
+                style={styles.mobileCustomerLink}
+                accessibilityRole="button"
+              >
+                <Text style={{ fontSize: 13, fontWeight: "700", color: colors.brand }}>View full customer profile</Text>
+                <Feather name="arrow-up-right" size={16} color={colors.brand} />
+              </Pressable>
+            </View>
+          ) : null}
           <ContextPanel detail={detail} loading={loadingDetail} embedded compact={isPhone} />
-          <InsightsPanel insights={insights} />
         </ScrollView>
       </Sheet>
 
@@ -1109,7 +1125,7 @@ function ShortcutHelpSheet({ visible, onClose }: { visible: boolean; onClose: ()
 // ─────────────────────────────────────────────────────────────────────────────
 // MissionHero — Today's Mission
 // ─────────────────────────────────────────────────────────────────────────────
-function MissionHero({ mission, loading, onJumpTop, compact }: { mission: Mission | null; loading: boolean; onJumpTop: () => void; compact?: boolean }) {
+function MissionHero({ mission, loading, onOpenPriority, compact }: { mission: Mission | null; loading: boolean; onOpenPriority: (id: string) => void; compact?: boolean }) {
   if (loading || !mission) {
     return (
       <View style={{ padding: spacing.xl, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, gap: spacing.md }}>
@@ -1136,12 +1152,12 @@ function MissionHero({ mission, loading, onJumpTop, compact }: { mission: Missio
               {clean ? "No revenue at risk right now." : `₹${mission.revenue_at_risk_short.replace("₹", "")} at risk · ${mission.estimated_minutes} min to clear`}
             </Text>
           </View>
-          {!clean ? <Button label="#1" icon="arrow-right" variant="primary" size="sm" onPress={onJumpTop} testID="mission-jump-top" /> : null}
+          {!clean && mission.top_priorities[0] ? <Button label="#1" icon="arrow-right" variant="primary" size="sm" onPress={() => onOpenPriority(mission.top_priorities[0].id)} testID="mission-jump-top" /> : null}
         </View>
         {!clean && mission.top_priorities.length ? (
           <View style={{ gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.divider }}>
             {mission.top_priorities.slice(0, 3).map((p, i) => (
-              <Pressable key={p.id} onPress={onJumpTop} style={styles.mobileMissionPriority}>
+              <Pressable key={p.id} onPress={() => onOpenPriority(p.id)} style={styles.mobileMissionPriority}>
                 <View style={styles.mobileRank}><Text style={styles.mobileRankText}>{i + 1}</Text></View>
                 <Text style={[type.bodySm, { flex: 1 }]} numberOfLines={1}>{p.customer_name} — {p.reason}</Text>
                 <Badge label={String(p.priority_score)} tone="brand" size="sm" />
@@ -1163,18 +1179,18 @@ function MissionHero({ mission, loading, onJumpTop, compact }: { mission: Missio
           : `₹${mission.revenue_at_risk_short.replace("₹", "")} potential revenue at risk · ${mission.overdue_payments} overdue payment${mission.overdue_payments === 1 ? "" : "s"} · ${mission.quotations_expiring_today} quotation${mission.quotations_expiring_today === 1 ? "" : "s"} expiring today · Est. ${mission.estimated_minutes} min to clear`}
       icon={clean ? "check-circle" : "zap"}
       iconTone={clean ? "success" : mission.critical_count > 0 ? "danger" : "brand"}
-      actions={clean ? undefined : <Button label="Start with #1" icon="arrow-right" variant="primary" size="md" onPress={onJumpTop} testID="mission-jump-top" />}
+      actions={clean || !mission.top_priorities[0] ? undefined : <Button label="Start with #1" icon="arrow-right" variant="primary" size="md" onPress={() => onOpenPriority(mission.top_priorities[0].id)} testID="mission-jump-top" />}
       metaRow={!clean && mission.top_priorities.length ? (
         <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
           <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.divider }} />
           {mission.top_priorities.map((p, i) => (
-            <View key={p.id} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+            <Pressable key={p.id} onPress={() => onOpenPriority(p.id)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 36 }}>
               <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: colors.brandTint, alignItems: "center", justifyContent: "center" }}>
                 <Text style={{ fontSize: 11, fontWeight: "700", color: colors.brand }}>{i + 1}</Text>
               </View>
               <Text style={[type.bodySm, { flex: 1 }]} numberOfLines={1}>{p.customer_name} — {p.reason}</Text>
               <Badge label={String(p.priority_score)} tone="brand" size="sm" />
-            </View>
+            </Pressable>
           ))}
         </View>
       ) : undefined}
@@ -1320,6 +1336,7 @@ function FollowupCard({
   onCustomSnooze: (f: Followup) => void; onPushDays: (f: Followup, days: number) => void;
   onAssign: (f: Followup, userId: string) => void; onNote: (f: Followup) => void; onDismiss: (f: Followup) => void; canDelete: boolean; onDelete: (f: Followup) => void; onOpenDoc?: (f: Followup) => void;
 }) {
+  const { isPhone } = useBp();
   const level = f.manual_priority_override || f.priority_level;
   const tone = PRIORITY_TONE[level];
   const isResolved = f.status === "done" || f.status === "dismissed";
@@ -1366,7 +1383,7 @@ function FollowupCard({
         </View>
 
         {/* Revenue — dedicated visual chip (was buried in prose; audit gap) */}
-        {f.value > 0 ? (
+        {f.value > 0 && !isPhone ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 3 }}>
             <Feather name="trending-up" size={11} color={colors.onSurfaceSecondary} />
             <Text style={[type.numeric, { fontSize: 12, lineHeight: 16, color: colors.onSurface }]}>{moneyShort(f.value)}</Text>
@@ -1376,14 +1393,14 @@ function FollowupCard({
 
         {/* Reason + explainability */}
         <View style={{ gap: 2 }}>
-          <Text style={type.bodySm} numberOfLines={2}>{f.reason}</Text>
-          {f.reason_factors?.length ? (
+          <Text style={type.bodySm} numberOfLines={isPhone ? 1 : 2}>{f.reason}</Text>
+          {!isPhone && f.reason_factors?.length ? (
             <Text style={type.caption} numberOfLines={2}>{f.reason_factors.join(" · ")}</Text>
           ) : null}
         </View>
 
         {/* Tags */}
-        {f.tags?.length ? (
+        {!isPhone && f.tags?.length ? (
           <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
             {f.tags.map((t, i) => <Badge key={`${t}-${i}`} label={t} tone="neutral" size="sm" />)}
           </View>
@@ -1396,7 +1413,7 @@ function FollowupCard({
               <Feather name={CHANNEL_ICON[f.suggested_channel]} size={12} color={colors.brand} />
               <Text style={{ fontSize: 12, fontWeight: "700", color: colors.brand }}>{f.next_action}</Text>
             </View>
-            <Text style={{ fontSize: 11, color: colors.brand, opacity: 0.85 }} numberOfLines={2}>{f.next_action_reason}</Text>
+            {!isPhone ? <Text style={{ fontSize: 11, color: colors.brand, opacity: 0.85 }} numberOfLines={2}>{f.next_action_reason}</Text> : null}
           </View>
         ) : f.resolution_note ? (
           <Text style={type.caption} numberOfLines={2}>{f.resolution_note}</Text>
@@ -1413,7 +1430,30 @@ function FollowupCard({
 
         {/* Actions — Call/WhatsApp/Snooze/Assign/Complete are 1-click; the
             rest (Email, custom snooze, note, dismiss) live in the overflow. */}
-        {!isResolved ? (
+        {!isResolved && isPhone ? (
+          <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", marginTop: 2 }}>
+            <Button
+              label={f.suggested_channel === "whatsapp" ? "WhatsApp" : "Call"}
+              icon={f.suggested_channel === "whatsapp" ? "message-circle" : "phone"}
+              variant="primary"
+              size="sm"
+              onPress={() => f.suggested_channel === "whatsapp" ? onWhatsApp(f, "whatsapp") : onCall(f, "call")}
+              testID={`contact-${f.id}`}
+            />
+            <IconButton icon="check" onPress={() => onComplete(f)} size={44} tone="surface" accessibilityLabel="Mark complete" testID={`complete-${f.id}`} />
+            <View style={{ flex: 1 }} />
+            <Dropdown
+              label="More" icon="more-horizontal" variant="secondary"
+              items={[
+                { label: "Open customer details", icon: "user", onPress: () => onPress(f) },
+                { label: "Call", icon: "phone", onPress: () => onCall(f, "call") },
+                { label: "WhatsApp", icon: "message-circle", onPress: () => onWhatsApp(f, "whatsapp") },
+                { label: "Snooze 1 hour", icon: "clock", onPress: () => onSnooze(f, "1h") },
+                { label: "Add note", icon: "edit-3", onPress: () => onNote(f) },
+              ]}
+            />
+          </View>
+        ) : !isResolved ? (
           <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
             <IconButton icon="phone" onPress={() => onCall(f, "call")} size={34} tone="brandLight" accessibilityLabel="Call" testID={`call-${f.id}`} />
             <IconButton icon="message-circle" onPress={() => onWhatsApp(f, "whatsapp")} size={34} tone="surface" accessibilityLabel="WhatsApp" testID={`wa-${f.id}`} />
@@ -1927,6 +1967,20 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.sm,
+  },
+  mobileCustomerActions: {
+    padding: spacing.md,
+    gap: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.brandTint,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.brandBorder,
+  },
+  mobileCustomerLink: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   mobileRank: {
     width: 22,

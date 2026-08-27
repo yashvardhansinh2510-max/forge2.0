@@ -38,7 +38,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ViewStyle,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -1092,11 +1092,18 @@ const paperStyles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 // SELECTION paper
 // ---------------------------------------------------------------------------
-const SEL_COLS = [10, 46, 28, 52, 24, 34]; // SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT
+// Matches backend/pdf_tiles.py's _SEL_COLS, normalized here as proportions.
+// Keeping one column map prevents the editor and generated document drifting.
+const SEL_COLS = [11, 70, 35, 74, 32, 59]; // SR / IMAGE / AREA / DETAIL / SIZE / RATE-SQFT
+const SEL_COL_TOTAL = SEL_COLS.reduce((total, width) => total + width, 0);
 
 function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
-  const flex = (index: number) => ({ flex: SEL_COLS[index] });
+  // Explicit percentage tracks keep every independently-rendered row on the
+  // same column geometry, including when a field contains long editable text.
+  const flex = (index: number): ViewStyle => ({
+    width: `${(SEL_COLS[index] / SEL_COL_TOTAL) * 100}%` as `${number}%`, flexGrow: 0, flexShrink: 0,
+  });
   const itemCount = doc.rows.filter((r) => r.productId).length;
   return (
     <View style={{ gap: spacing.lg }}>
@@ -1126,7 +1133,12 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
           </View>
         </View>
         {doc.rows.map((row, index) => (
-          <View key={row.key} style={[selStyles.tr, { minHeight: 92 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
+          <View key={row.key} style={[
+            selStyles.tr,
+            { minHeight: 92 },
+            index === doc.rows.length - 1 && selStyles.lastRow,
+            index % 2 === 1 && { backgroundColor: ZEBRA },
+          ]}>
             <View style={[selStyles.td, flex(0)]}><Text style={selStyles.cellText}>{index + 1}</Text></View>
             <View style={[selStyles.td, flex(1), { padding: 2 }]}>
               {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
@@ -1171,11 +1183,18 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
 }
 
 const selStyles = StyleSheet.create({
-  table: { marginTop: 14, borderWidth: 1.5, borderColor: "#111" },
-  tr: { position: "relative", flexDirection: "row", borderTopWidth: 1.25, borderColor: "#111", alignItems: "stretch" },
+  // Keep every rule on the same physical-pixel grid. Fractional border widths
+  // are rounded independently by react-native-web, which lets row dividers
+  // and column dividers appear to drift from one another.
+  table: { marginTop: 14, borderWidth: 1, borderColor: "#111" },
+  tr: { position: "relative", flexDirection: "row", borderBottomWidth: 1, borderColor: "#111", alignItems: "stretch", minWidth: 0 },
+  lastRow: { borderBottomWidth: 0 },
   td: {
-    borderRightWidth: 1.25, borderColor: "#111",
+    borderRightWidth: 1, borderColor: "#111",
     alignItems: "center", justifyContent: "center", paddingHorizontal: 4, paddingVertical: 5,
+    // Content must stay inside its allocated flex column; otherwise a long
+    // product name or web input can widen one row and misplace its dividers.
+    minWidth: 0, overflow: "hidden",
   },
   th: { fontSize: 11, fontWeight: "700", color: "#111", textAlign: "center" },
   cellText: { fontSize: 12.5, color: "#111" },
@@ -1186,11 +1205,18 @@ const selStyles = StyleSheet.create({
 // ---------------------------------------------------------------------------
 // SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
 // RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — mirrors pdf_tiles.py's _QUO_COLS.
-const QUO_COLS = [9, 28, 15, 50, 15, 15, 14, 14, 14, 12, 18];
+// Matches backend/pdf_tiles.py's _QUO_COLS, normalized here as proportions.
+const QUO_COLS = [10, 50, 20, 46, 21, 21, 21, 21, 19, 18, 34];
+const QUO_COL_TOTAL = QUO_COLS.reduce((total, width) => total + width, 0);
 
 function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
-  const flex = (index: number) => ({ flex: QUO_COLS[index] });
+  // Rows are separate flex containers, so the tracks must be explicit rather
+  // than inferred from each row's content. This preserves exact divider
+  // positions across the header, product rows, and the totals row.
+  const flex = (index: number): ViewStyle => ({
+    width: `${(QUO_COLS[index] / QUO_COL_TOTAL) * 100}%` as `${number}%`, flexGrow: 0, flexShrink: 0,
+  });
   const totals = {
     boxes: 0,
     transportation: doc.previewTotals.transportation,
@@ -1229,7 +1255,11 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
           ))}
         </View>
         {doc.rows.map((row, index) => (
-          <View key={row.key} style={[quoStyles.tr, { minHeight: 96 }, index % 2 === 1 && { backgroundColor: ZEBRA }]}>
+          <View key={row.key} style={[
+            quoStyles.tr,
+            { minHeight: 96 },
+            index % 2 === 1 && { backgroundColor: ZEBRA },
+          ]}>
             <View style={[quoStyles.td, flex(0)]}><Text style={quoStyles.cellText}>{index + 1}</Text></View>
             <View style={[quoStyles.td, flex(1), { padding: 2 }]}>
               {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
@@ -1285,7 +1315,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
             />
           </View>
         ))}
-        <View style={[quoStyles.tr, { backgroundColor: HEAD_GREY, minHeight: 30 }]}>
+        <View style={[quoStyles.tr, quoStyles.lastRow, { backgroundColor: HEAD_GREY, minHeight: 30 }]}>
           <View style={[quoStyles.td, flex(0)]} />
           <View style={[quoStyles.td, flex(1)]} />
           <View style={[quoStyles.td, flex(2)]} />
@@ -1314,12 +1344,15 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
 }
 
 const quoStyles = StyleSheet.create({
-  table: { marginTop: 14, borderWidth: 1.5, borderColor: "#111" },
+  // Use whole-pixel rules throughout the grid. Mixed 1.25px internal lines
+  // and 1.5px outer borders created browser rounding seams between rows.
+  table: { marginTop: 14, borderWidth: 1, borderColor: "#111" },
   // Product entries are deliberately horizontal rows: the same flex column
   // proportions are used by the header, each product and the total row.
-  tr: { position: "relative", flexDirection: "row", borderTopWidth: 1.25, borderColor: "#111", alignItems: "stretch", backgroundColor: "#fff" },
+  tr: { position: "relative", flexDirection: "row", borderBottomWidth: 1, borderColor: "#111", alignItems: "stretch", backgroundColor: "#fff", minWidth: 0 },
+  lastRow: { borderBottomWidth: 0 },
   td: {
-    borderRightWidth: 1.25, borderColor: "#111",
+    borderRightWidth: 1, borderColor: "#111",
     alignItems: "center", justifyContent: "center", paddingHorizontal: 6, paddingVertical: 8,
     minWidth: 0, overflow: "hidden",
   },

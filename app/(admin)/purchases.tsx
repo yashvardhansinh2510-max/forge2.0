@@ -98,7 +98,7 @@ export default function PurchasesScreen() {
   // this screen to "first-floor" is what made Ground Floor show The
   // Sanitary Bathroom's records.
   const router = useRouter();
-  const { isDesktop } = useBp();
+  const { isPhone, isDesktop } = useBp();
 
   // View + filter state
   const [view, setView] = useState<ViewMode>("today");
@@ -351,7 +351,7 @@ export default function PurchasesScreen() {
   if (!isDesktop) {
     const activeFilterCount = (brand !== "all" ? 1 : 0) + (stage ? 1 : 0);
     return (
-      <SafeAreaView style={styles.mobileSafe} edges={["top"]}>
+      <SafeAreaView style={styles.mobileSafe} edges={isPhone ? [] : ["top"]}>
         <FlatList
           testID="purchases-mobile-list"
           data={view === "customers" ? [] : items}
@@ -454,7 +454,7 @@ export default function PurchasesScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <ScrollView contentContainerStyle={[styles.scroll, !isDesktop && { paddingHorizontal: spacing.md, paddingBottom: 120 }]}>
         {/* Header + top actions */}
         <View style={[styles.headerRow, !isDesktop && { flexDirection: "column", alignItems: "stretch", gap: 12 }]}>

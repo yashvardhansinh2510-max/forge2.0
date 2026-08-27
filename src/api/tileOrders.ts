@@ -31,6 +31,7 @@ export type CustomerOrderCard = {
 
 export type CustomerOrderItem = {
   po_item_id: string; tile_name: string; series: string | null; finish: string | null; size: string | null;
+  sku: string | null;
   boxes_ordered: number; boxes_ready: number; boxes_godown: number; boxes_dispatched: number; boxes_pending: number; quantity_unit: "Box" | "Pieces";
   current_location: TileLocation; overall_status: TileOverallStatus;
 };
@@ -96,7 +97,7 @@ export type DispatchListRow = {
   dispatch_id: string; dispatch_number: string; dispatch_date: string;
   customer_id: string | null; customer_name: string; customer_order_id: string | null;
   brand_id: string | null; brand_name: string;
-  tile_name: string; tile_size: string | null; boxes: number; quantity_unit: "Box" | "Pieces";
+  tile_name: string; tile_size: string | null; sku: string | null; boxes: number; quantity_unit: "Box" | "Pieces";
   source: "Released" | "Godown";
   chalan_id: string; chalan_number: string;
   vehicle_number: string | null; driver_name: string | null;
@@ -110,7 +111,7 @@ export type TileOrdersDashboard = {
 };
 export type CompletedTileOrder = {
   id: string; customer_id: string | null; customer: string; order_number: string; delivery_date: string; completion_date: string;
-  brands: string[]; brand_refs: { id: string | null; name: string }[]; products: { product: string; size: string | null; quantity: number; boxes: number; pieces: number | null; quantity_unit: "Box" | "Pieces" }[];
+  brands: string[]; brand_refs: { id: string | null; name: string }[]; products: { product: string; sku: string | null; size: string | null; quantity: number; boxes: number; pieces: number | null; quantity_unit: "Box" | "Pieces" }[];
   final_amount: number; delivery_status: "Dispatched" | "Delivered"; delivery_notes: string | null;
   timeline: Record<string, any>[]; chalan_references: { id: string; number: string }[]; dispatch_references: { id: string; number: string }[];
 };
@@ -123,6 +124,7 @@ export type DispatchDestinationOverride = {
   destination_name?: string; destination_address?: string; destination_city?: string;
   reference_number?: string; receiver_name?: string; sender_name?: string;
   vehicle_number?: string; driver_name?: string;
+  labor_cost?: number;
 };
 
 export type ChalanItem = {
@@ -136,6 +138,7 @@ export type ChalanDetail = {
   receiver_name: string | null; sender_name: string | null;
   vehicle_number: string | null; driver_name: string | null;
   supplier_name: string; customer_name: string; customer_phone: string | null;
+  labor_cost: number;
   items: ChalanItem[];
 };
 
@@ -146,6 +149,7 @@ export type DispatchDetail = {
     destination_name: string; destination_address: string; destination_city: string;
     customer_id: string | null; customer_name: string; customer_order_id: string | null;
     purchase_order_id: string; supplier_name: string; created_by_name: string;
+    labor_cost: number;
     godown_received_at: string | null; godown_received_by_name: string | null;
     delivered_at: string | null; delivered_by_name: string | null;
     status: "Dispatched" | "At Godown" | "Delivered";

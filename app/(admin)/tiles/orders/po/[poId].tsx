@@ -20,6 +20,7 @@ import {
   Section, Stat, StatRow, Toolbar,
 } from "@/src/components/tiles/TileLayout";
 import { StatusPill, WorkflowRail } from "@/src/components/tiles/TileOrderStatusUI";
+import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
 import { CellNumber, CellStack, CellText, DataTable, type Column } from "@/src/components/tiles/TileTable";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
@@ -143,9 +144,9 @@ export default function BrandOrderDetailScreen() {
       // the two of them split the surplus and push the row 50px past the
       // viewport, which put RELEASE QTY — the page's entire purpose — off
       // screen. One grow column keeps the total predictable.
-      key: "product", label: "PRODUCT", grow: 1, minWidth: 200,
+      key: "product", label: "TILE NAME", grow: 1, minWidth: 200,
       render: (item) => (
-        <CellStack title={item.name} subtitle={[item.series, item.size].filter(Boolean).join(" · ") || "—"} />
+        <CellStack title={item.name} subtitle={tileIdentityMeta([item.series, item.size], item.sku)} />
       ),
     },
     {
@@ -347,7 +348,7 @@ export default function BrandOrderDetailScreen() {
         />
         <DataTable
           testID="tile-release-table"
-          fillViewport
+          scrollOwner="parent"
           columns={columns}
           data={order.items}
           keyExtractor={(item) => item.id}

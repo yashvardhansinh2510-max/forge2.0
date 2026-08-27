@@ -78,6 +78,27 @@ const MODE_ICONS: Record<PayMode, keyof typeof Feather.glyphMap> = {
 function money(n: number): string {
   return `₹${(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
+
+function paymentHistoryCopy(payment: PaymentEntry): { title: string; subtitle: string } {
+  // Dispatch labor charges are persisted by the backend as a pending ledger
+  // row. Promote that human-readable charge to the main line and leave the
+  // dispatch number as supporting context rather than burying the charge in
+  // the generic bank-transfer label.
+  const laborMatch = payment.note?.match(/^(₹[\d,]+(?:\.\d{1,2})?) labor cost added(?: via dispatch (.+))?$/);
+  if (laborMatch) {
+    return {
+      title: `${laborMatch[1]} labor cost added`,
+      subtitle: laborMatch[2] ? `Dispatch ${laborMatch[2]}` : `Recorded by ${payment.recorded_by_name || "—"}`,
+    };
+  }
+  return {
+    title: `${MODE_LABELS[payment.mode]} · ${money(payment.amount)}`,
+    subtitle: (payment.reference || payment.note)
+      ? `${payment.reference || ""}${payment.reference && payment.note ? " · " : ""}${payment.note || ""}`
+      : `Recorded by ${payment.recorded_by_name || "—"}`,
+  };
+}
+
 function dateShort(iso?: string | null): string {
   if (!iso) return "—";
   try {
@@ -504,21 +525,18 @@ export default function PaymentsScreen() {
                       subtitle="No payments to show." tone="brand" />
                   ) : (
                     <View>
-                      {detail.payments.map((p, i) => (
-                        <ActivityRow
+                      {detail.payments.map((p, i) => {
+                        const copy = paymentHistoryCopy(p);
+                        return <ActivityRow
                           key={p.id}
                           icon={MODE_ICONS[p.mode]}
                           iconTone="success"
-                          title={`${MODE_LABELS[p.mode]} · ${money(p.amount)}`}
-                          subtitle={
-                            (p.reference || p.note)
-                              ? `${p.reference || ""}${p.reference && p.note ? " · " : ""}${p.note || ""}`
-                              : `Recorded by ${p.recorded_by_name || "—"}`
-                          }
+                          title={copy.title}
+                          subtitle={copy.subtitle}
                           timestamp={dateShort(p.paid_at || p.created_at)}
                           isLast={i === detail.payments.length - 1}
-                        />
-                      ))}
+                        />;
+                      })}
                     </View>
                   )}
                 </Panel>

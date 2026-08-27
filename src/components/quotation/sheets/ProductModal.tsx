@@ -7,7 +7,7 @@
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -16,6 +16,7 @@ import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
 import { colors, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, shadow, spacing } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
+import { useBp } from "@/src/design/responsive";
 import { useBuilder } from "../context/BuilderContext";
 import { productImageList, resolveVariantImages } from "../helpers/media";
 import { variantDescriptor } from "../helpers/pricing";
@@ -27,8 +28,8 @@ export function ProductModal() {
   const canEditProduct = !!staff && ["owner", "admin", "manager", "accounts", "purchase"].includes(staff.role);
   const open = !!b.productModal;
   const product = b.productModal;
-  const { width: windowWidth } = useWindowDimensions();
-  const isCompactFooter = windowWidth < 480;
+  const { isPhone } = useBp();
+  const isCompactFooter = isPhone;
   const [editorOpen, setEditorOpen] = useState(false);
 
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);

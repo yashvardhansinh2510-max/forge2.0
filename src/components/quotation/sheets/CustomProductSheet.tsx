@@ -6,20 +6,20 @@
 // -----------------------------------------------------------------------------
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, shadow, spacing } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 import { useBuilder } from "../context/BuilderContext";
 import type { Product } from "../helpers/types";
 
 export function CustomProductSheet() {
   const b = useBuilder();
   const open = b.customProductSheetOpen;
-  const { width } = useWindowDimensions();
-  const isPhone = width < 600;
+  const { isPhone } = useBp();
 
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
