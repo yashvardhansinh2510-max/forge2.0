@@ -41,7 +41,7 @@ def test_build_tile_chalan_pdf_produces_bytes():
     page = PdfReader(BytesIO(pdf_bytes)).pages[0]
     assert float(page.mediabox.width) > float(page.mediabox.height)
     text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf_bytes)).pages)
-    assert "Box" in text
+    assert "Box / Pieces" in text
     assert "Piece" in text
     assert "SKU" not in text
     assert "SKU-1" not in text

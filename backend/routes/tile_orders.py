@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from auth import TILES_FLOOR_ID, require_min_role, tiles_floor_query
 from db import client, db
-from models import UserPublic, now_iso
+from models import Payment, UserPublic, now_iso
 from models_tile_orders import TileChalan, TileChalanItem, TileDispatch, TileDispatchLineConsumed, TileReadyBatch
 from pdf_chalan import build_tile_chalan_pdf, tile_chalan_pdf_filename
 from services.activity_log import log_event
@@ -354,7 +354,7 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
             chalan.dispatch_id = dispatch.id
             await db.chalans.insert_one(chalan.dict(), session=session)
             await db.dispatches.insert_one(dispatch.dict(), session=session)
-            await _apply_dispatch_labor_cost(po, body.labor_cost, session)
+            await _apply_dispatch_labor_cost(po, dispatch.dict(), body.labor_cost, session)
 
             items = list(items_by_id.values())
             ordered_boxes = sum(float(i.get("qty") or 0) for i in items)
@@ -528,14 +528,14 @@ class SimpleDispatchBody(BaseModel):
     labor_cost: float = Field(default=0, ge=0)
 
 
-async def _apply_dispatch_labor_cost(po: dict, labor_cost: float, session) -> None:
+async def _apply_dispatch_labor_cost(po: dict, dispatch: dict, labor_cost: float, session) -> None:
     """Add a dispatch charge to the customer-facing order balance.
 
     Collections uses ``quotation.grand_total`` as its authoritative amount
-    due.  The pending automation payment is the matching ledger placeholder,
-    so it is incremented too.  Keeping these writes in the dispatch
-    transaction means neither a chalan nor a payment balance can be saved
-    without the other.
+    due. Record labor as its own pending ledger row rather than mutating the
+    order-placement placeholder: operators can then see exactly which
+    dispatch added the charge. The dispatch-specific automation key makes a
+    transaction retry idempotent.
     """
     if labor_cost <= 0 or not po.get("quotation_id"):
         return
@@ -547,10 +547,18 @@ async def _apply_dispatch_labor_cost(po: dict, labor_cost: float, session) -> No
     )
     if getattr(quote_update, "matched_count", 1) == 0:
         raise HTTPException(status_code=409, detail="Linked quotation changed — refresh and dispatch again")
+    payment = Payment(
+        quotation_id=po["quotation_id"], quotation_number=po.get("quotation_number"),
+        customer_id=po["customer_id"], customer_name=po.get("customer_name"),
+        amount=round(float(labor_cost), 2), mode="bank", status="pending",
+        note=f"₹{labor_cost:,.0f} labor cost added via dispatch {dispatch.get('dispatch_number', '')}".strip(),
+        recorded_by=dispatch.get("created_by"), recorded_by_name=dispatch.get("created_by_name"),
+        floor_id=po.get("floor_id", TILES_FLOOR_ID),
+    ).dict()
+    payment.pop("idempotency_key", None)
+    payment["automation_key"] = f"dispatch:{dispatch['id']}:labor_cost"
     await db.payments.update_one(
-        {"quotation_id": po["quotation_id"], "status": "pending"},
-        {"$inc": {"amount": labor_cost}, "$set": {"updated_at": now_iso()}},
-        session=session,
+        {"automation_key": payment["automation_key"]}, {"$setOnInsert": payment}, upsert=True, session=session,
     )
     if po.get("customer_order_id"):
         await db.customer_orders.update_one(
@@ -655,7 +663,7 @@ async def _commit_simple_dispatch(
             chalan.dispatch_id = dispatch.id
             await db.chalans.insert_one(chalan.dict(), session=session)
             await db.dispatches.insert_one(dispatch.dict(), session=session)
-            await _apply_dispatch_labor_cost(po, body.labor_cost, session)
+            await _apply_dispatch_labor_cost(po, dispatch.dict(), body.labor_cost, session)
 
             items = list(items_by_id.values())
             ordered_boxes = sum(float(i.get("qty") or 0) for i in items)

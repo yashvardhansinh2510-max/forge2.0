@@ -16,7 +16,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Flowable, HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from pdf_generator import LANDSCAPE_A4, LOGO_PATH, _escape  # noqa: F401 — LOGO_PATH kept for parity with pdf_tiles imports
-from pdf_tiles import DEFAULT_ADDRESS, DEFAULT_EMAIL, DEFAULT_MOBILE, _logo_flowable
+from pdf_tiles import DEFAULT_ADDRESS, DEFAULT_EMAIL, DEFAULT_MOBILE, _logo_flowable, _rupee
 
 INK = colors.HexColor("#111111")
 GRID_BLACK = colors.HexColor("#000000")
@@ -144,8 +144,8 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
         Paragraph("SR", styles["tableHead"]), Paragraph("BRAND", styles["tableHead"]),
         Paragraph("PRODUCT", styles["tableHead"]), Paragraph("SIZE", styles["tableHead"]),
         Paragraph("FINISH", styles["tableHead"]), Paragraph("QTY", styles["tableHead"]),
-        Paragraph("PIECE/BOX", styles["tableHead"]), Paragraph("RATE (INR)", styles["tableHead"]),
-        Paragraph("TOTAL (INR)", styles["tableHead"]),
+        Paragraph("BOX / PIECES", styles["tableHead"]), Paragraph("RATE", styles["tableHead"]),
+        Paragraph("TOTAL", styles["tableHead"]),
     ]
     rows: list[list[object]] = [head]
     po_items = {item.get("id"): item for item in (po.get("items") or []) if item.get("id")}
@@ -173,14 +173,14 @@ def build_chalan_pdf(chalan: dict, po: dict, customer: dict, branding: dict | No
             Paragraph(_escape(_first_value(item.get("finish"), source.get("finish"))), styles["cell"]),
             Paragraph(_escape(_quantity(qty_value)), styles["cellRight"]),
             Paragraph(_quantity_unit_label(_first_value(item.get("unit"), source.get("unit"), source.get("quantity_unit"), default="Box")), styles["cell"]),
-            Paragraph(_escape(_money(rate)), styles["cellRight"]),
-            Paragraph(_escape(_money(line_total)), styles["cellRight"]),
+            Paragraph(_rupee(rate) if rate is not None else "—", styles["cellRight"]),
+            Paragraph(_rupee(line_total) if line_total is not None else "—", styles["cellRight"]),
         ])
     if len(rows) == 1:
         rows.append([Paragraph("No products listed", styles["cellLeft"]), "", "", "", "", "", "", "", ""])
     grand_total_label = "GRAND TOTAL (INCOMPLETE)" if has_incomplete_pricing else "GRAND TOTAL"
     grand_total_value = None if has_incomplete_pricing else grand_total
-    rows.append(["", "", "", "", "", "", "", Paragraph(grand_total_label, styles["tableTotal"]), Paragraph(_money(grand_total_value), styles["tableTotal"])])
+    rows.append(["", "", "", "", "", "", "", Paragraph(grand_total_label, styles["tableTotal"]), Paragraph(_rupee(grand_total_value) if grand_total_value is not None else "—", styles["tableTotal"])])
     table = Table(
         rows,
         colWidths=[8 * mm, 18 * mm, 40 * mm, 18 * mm, 18 * mm, 13 * mm, 16 * mm, 25 * mm, 30 * mm],
@@ -312,10 +312,9 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
     cell = ParagraphStyle("tcCell", parent=styles["Normal"], fontSize=8, leading=9.5)
     cell_right = ParagraphStyle("tcCellRight", parent=cell, alignment=2)
 
-    # Operational challans deliberately omit SKU and the old unit/pieces
-    # columns. "Box" is the type indicator requested by the business: its
-    # value is either Box or Piece for each dispatched line.
-    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "Box", "Qty"]
+    # Keep one clear quantity-type column for warehouse staff.  The previous
+    # "Box" label was misleading whenever a line was dispatched as pieces.
+    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "Box / Pieces", "Qty"]
     table_data = [header_row]
     for i, item in enumerate(chalan.get("items", []), start=1):
         table_data.append([
@@ -327,19 +326,24 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
             Paragraph(_quantity_unit_label(item.get("quantity_unit")), cell_right),
             Paragraph(f"{item.get('quantity', 0):g}", cell_right),
         ])
-    product_table = Table(table_data, colWidths=[8 * mm, 58 * mm, 28 * mm, 24 * mm, 25 * mm, 18 * mm, 16 * mm])
+    # Use the full printable width. This gives long product names and the
+    # explicit Box / Pieces heading room to wrap cleanly rather than making
+    # the operational grid look compressed in a landscape document.
+    product_table = Table(table_data, colWidths=[8 * mm, 74 * mm, 32 * mm, 27 * mm, 29 * mm, 38 * mm, 25 * mm])
     product_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
     flow.append(product_table)
     labor_cost = _decimal(chalan.get("labor_cost")) or Decimal("0")
     labor_table = Table(
-        [[Paragraph("Labour cost", cell_right), Paragraph(f"₹ {_money(labor_cost)}", cell_right)]],
-        colWidths=[145 * mm, 32 * mm], hAlign="RIGHT",
+        [[Paragraph("Labour cost", cell_right), Paragraph(_rupee(labor_cost), cell_right)]],
+        colWidths=[200 * mm, 33 * mm], hAlign="RIGHT",
     )
     labor_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F2F2F2")),

@@ -123,7 +123,7 @@ def test_build_chalan_pdf_extracts_complete_contract_and_wraps_long_text():
         "Gloss White",
         "QTY",
         "2.5",
-        "PIECE/BOX",
+        "BOX / PIECES",
         "Piece",
         "RATE",
         "1,234.50",
