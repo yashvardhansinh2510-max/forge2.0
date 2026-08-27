@@ -89,7 +89,7 @@ export default function QuotationDetail() {
   if (!q) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       {/* Sticky top bar — back on left, action buttons on right */}
       <View style={styles.topbar}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>

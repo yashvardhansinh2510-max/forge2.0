@@ -52,7 +52,7 @@ export default function QuotationTilesList() {
   const label = documentType === "tiles_selection" ? "selections" : "quotations";
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <View style={[styles.header, compact && styles.headerCompact]}>
         <View style={compact && { width: "100%" }}>
           <Text style={type.overline}>Ground Floor · Tiles</Text>

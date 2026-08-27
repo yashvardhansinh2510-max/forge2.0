@@ -683,7 +683,7 @@ export default function FollowupsScreen() {
   const activeTileStyle = { borderColor: colors.brand, backgroundColor: colors.brandTint };
   // ═══════════════════════════════════════════════════════════════════════
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         overline="WORKSPACE"
         title="Follow-ups"
