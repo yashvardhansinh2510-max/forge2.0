@@ -170,11 +170,19 @@ export type DataTableProps<T> = {
    * height would strand each brand in its own little scrollbox.
    */
   fillViewport?: boolean;
+  /**
+   * `parent` is for a paginated table rendered in a route-level scroll view.
+   * It keeps the route as the only vertical scroll owner; the table retains
+   * its horizontal desktop overflow without creating a second vertical pan
+   * responder on phones.
+   */
+  scrollOwner?: "self" | "parent";
 };
 
 export function DataTable<T>({
   columns, data, keyExtractor, onRowPress, rowTestID, isRowSelected,
   rowMinHeight = 56, emptyMessage = "Nothing to show yet.", testID, fillViewport,
+  scrollOwner = "self",
 }: DataTableProps<T>) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
@@ -215,7 +223,8 @@ export function DataTable<T>({
         <FlatList
           data={data}
           keyExtractor={keyExtractor}
-          nestedScrollEnabled
+          scrollEnabled={scrollOwner === "self"}
+          nestedScrollEnabled={scrollOwner === "self"}
           initialNumToRender={6}
           maxToRenderPerBatch={6}
           windowSize={5}

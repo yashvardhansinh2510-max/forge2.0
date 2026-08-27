@@ -29,8 +29,15 @@ export function PageShell({
   children, footer, testID,
 }: { children: ReactNode; footer?: ReactNode; testID?: string }) {
   const gutter = usePageGutter();
+  const { isPhone } = useBreakpoint();
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]} testID={testID}>
+    <SafeAreaView
+      style={styles.safe}
+      // The phone AppScaffold already owns the top inset. Tablet/desktop
+      // routes retain their standalone inset because they do not mount in it.
+      edges={isPhone ? [] : ["top"]}
+      testID={testID}
+    >
       <ScrollView
         style={styles.pageScroll}
         contentContainerStyle={[
@@ -53,8 +60,9 @@ export function PageShell({
 }
 
 export function CenteredState({ children }: { children: ReactNode }) {
+  const { isPhone } = useBreakpoint();
   return (
-    <SafeAreaView style={[styles.safe, styles.centered]} edges={["top"]}>
+    <SafeAreaView style={[styles.safe, styles.centered]} edges={isPhone ? [] : ["top"]}>
       <View style={styles.centeredInner}>{children}</View>
     </SafeAreaView>
   );
@@ -135,14 +143,19 @@ export function Button({
   testID?: string;
   fullWidth?: boolean;
 }) {
-  const { isPhone } = useBreakpoint();
   const metrics = SIZE_METRICS[size];
-  const height = isPhone ? Math.max(44, metrics.height) : metrics.height;
+  // Tile screens are routinely operated on touch-enabled tablets as well as
+  // phones. Visual density may change, but an operational control is never
+  // smaller than the platform's 44pt touch target.
+  const height = Math.max(44, metrics.height);
   return (
     <Pressable
       testID={testID}
       disabled={disabled}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled) }}
       style={({ hovered, pressed }: any) => [
         styles.buttonBase,
         {

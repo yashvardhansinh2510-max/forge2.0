@@ -348,7 +348,7 @@ export default function BrandOrderDetailScreen() {
         />
         <DataTable
           testID="tile-release-table"
-          fillViewport
+          scrollOwner="parent"
           columns={columns}
           data={order.items}
           keyExtractor={(item) => item.id}

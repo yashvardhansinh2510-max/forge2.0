@@ -146,7 +146,7 @@ export default function BrandDashboardScreen() {
           <Section>
             <DataTable
               testID="tile-brand-queue-table"
-              fillViewport
+              scrollOwner="parent"
               columns={columns}
               data={orders}
               rowMinHeight={60}

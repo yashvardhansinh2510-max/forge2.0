@@ -260,6 +260,7 @@ export default function CustomerOrderDetailScreen() {
               }
             />
             <DataTable
+              scrollOwner="parent"
               columns={columns}
               data={group.items.map((item) => ({ ...item, __poId: group.purchase_order_id }))}
               keyExtractor={(item) => item.po_item_id}

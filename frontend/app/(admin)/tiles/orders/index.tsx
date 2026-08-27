@@ -448,7 +448,7 @@ export default function TileOrdersScreen() {
       return (
         <DataTable
           testID="tile-orders-customer-table"
-          fillViewport
+          scrollOwner="parent"
           columns={customerColumns}
           data={customerOrders}
           rowMinHeight={60}
@@ -464,7 +464,7 @@ export default function TileOrdersScreen() {
       return (
         <DataTable
           testID="tile-orders-brands-table"
-          fillViewport
+          scrollOwner="parent"
           columns={brandColumns}
           data={brands}
           rowMinHeight={60}
@@ -477,18 +477,18 @@ export default function TileOrdersScreen() {
     }
 
     if (tab === "history") {
-      return <DataTable testID="tile-orders-history-table" fillViewport columns={historyColumns} data={history} rowMinHeight={60} keyExtractor={(row) => row.id} rowTestID={(row) => `tile-orders-history-${row.id}`} onRowPress={(row) => setSelectedHistory(row)} emptyMessage="No completed tile deliveries yet." />;
+      return <DataTable testID="tile-orders-history-table" scrollOwner="parent" columns={historyColumns} data={history} rowMinHeight={60} keyExtractor={(row) => row.id} rowTestID={(row) => `tile-orders-history-${row.id}`} onRowPress={(row) => setSelectedHistory(row)} emptyMessage="No completed tile deliveries yet." />;
     }
 
     if (tab === "inventory") {
-      return <DataTable testID="tile-orders-inventory-table" fillViewport columns={inventoryColumns} data={inventory} rowMinHeight={60} keyExtractor={(row) => row.id} emptyMessage="No stock is currently recorded in the go-down." />;
+      return <DataTable testID="tile-orders-inventory-table" scrollOwner="parent" columns={inventoryColumns} data={inventory} rowMinHeight={60} keyExtractor={(row) => row.id} emptyMessage="No stock is currently recorded in the go-down." />;
     }
 
     if (tab === "dispatch-list") {
       return (
         <DataTable
           testID="tile-orders-dispatch-table"
-          fillViewport
+          scrollOwner="parent"
           columns={dispatchColumns}
           data={dispatchRows}
           rowMinHeight={64}
@@ -501,7 +501,7 @@ export default function TileOrdersScreen() {
     return (
       <DataTable
         testID="tile-orders-movement-table"
-        fillViewport
+        scrollOwner="parent"
         columns={movementColumns}
         data={movements}
         rowMinHeight={56}
