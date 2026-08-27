@@ -14,7 +14,6 @@ import {
   Text,
   TextInput,
   TextInputProps,
-  useWindowDimensions,
   View,
   ViewStyle,
 } from "react-native";
@@ -1117,8 +1116,7 @@ export function Sheet({
   dismissable?: boolean;
   headerRight?: React.ReactNode;
 }) {
-  const { width: winW } = useWindowDimensions();
-  const isDesktop = winW >= 900;
+  const { isDesktop } = useBp();
   const kind: "right" | "center" | "bottom" =
     variant === "modal" ? "center"
     : variant === "bottom" ? "bottom"
@@ -1156,7 +1154,14 @@ export function Sheet({
   return (
     <RNModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={[{ flex: 1, backgroundColor: colors.overlay, zIndex: 1000 }, backdropAlign]}>
-        {dismissable ? <Pressable onPress={onClose} style={StyleSheet.absoluteFillObject} /> : null}
+        {dismissable ? (
+          <Pressable
+            onPress={onClose}
+            style={StyleSheet.absoluteFillObject}
+            accessibilityRole="button"
+            accessibilityLabel="Close sheet"
+          />
+        ) : null}
         <View
           testID={testID}
           style={[

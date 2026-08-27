@@ -38,7 +38,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ViewStyle,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -1101,8 +1101,8 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
   const [pickerRow, setPickerRow] = useState<string | null>(null);
   // Explicit percentage tracks keep every independently-rendered row on the
   // same column geometry, including when a field contains long editable text.
-  const flex = (index: number) => ({
-    width: `${(SEL_COLS[index] / SEL_COL_TOTAL) * 100}%`, flexGrow: 0, flexShrink: 0,
+  const flex = (index: number): ViewStyle => ({
+    width: `${(SEL_COLS[index] / SEL_COL_TOTAL) * 100}%` as `${number}%`, flexGrow: 0, flexShrink: 0,
   });
   const itemCount = doc.rows.filter((r) => r.productId).length;
   return (
@@ -1214,8 +1214,8 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
   // Rows are separate flex containers, so the tracks must be explicit rather
   // than inferred from each row's content. This preserves exact divider
   // positions across the header, product rows, and the totals row.
-  const flex = (index: number) => ({
-    width: `${(QUO_COLS[index] / QUO_COL_TOTAL) * 100}%`, flexGrow: 0, flexShrink: 0,
+  const flex = (index: number): ViewStyle => ({
+    width: `${(QUO_COLS[index] / QUO_COL_TOTAL) * 100}%` as `${number}%`, flexGrow: 0, flexShrink: 0,
   });
   const totals = {
     boxes: 0,

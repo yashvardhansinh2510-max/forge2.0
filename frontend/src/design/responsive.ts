@@ -3,20 +3,23 @@ import { useWindowDimensions } from "react-native";
 
 import { layout } from "./tokens";
 
-export type Bp = "phone" | "tablet" | "desktop" | "wide";
+/** The only supported viewport tiers for application layout. */
+export type Bp = "phone" | "tabletPortrait" | "tabletLandscape" | "desktop";
 
 export function useBp() {
   const { width, height } = useWindowDimensions();
   const bp: Bp =
-    width >= layout.bp.wide ? "wide" :
     width >= layout.bp.desktop ? "desktop" :
-    width >= layout.bp.tablet ? "tablet" : "phone";
+    width >= layout.bp.tabletLandscape ? "tabletLandscape" :
+    width >= layout.bp.tabletPortrait ? "tabletPortrait" : "phone";
 
   const isPhone = bp === "phone";
-  const isTablet = bp === "tablet";
-  const isDesktop = bp === "desktop" || bp === "wide";
+  const isTablet = bp === "tabletPortrait" || bp === "tabletLandscape";
+  const isDesktop = bp === "desktop";
+  const isTabletPortrait = bp === "tabletPortrait";
+  const isTabletLandscape = bp === "tabletLandscape";
 
   const gutter = isPhone ? layout.gutter.phone : isTablet ? layout.gutter.tablet : layout.gutter.desktop;
 
-  return { bp, width, height, isPhone, isTablet, isDesktop, gutter };
+  return { bp, width, height, isPhone, isTablet, isDesktop, isTabletPortrait, isTabletLandscape, gutter };
 }

@@ -984,16 +984,6 @@ class ActivityEvent(TimestampedModel):
     floor_id: Optional[str] = None
 
 
-class PurchaseOrder_Legacy(TimestampedModel):
-    """Kept temporarily so anything still typing against the old scaffold doesn't
-    crash. New code should use PurchaseOrder above."""
-    number: str
-    supplier_name: str
-    status: Literal["draft", "sent", "received", "cancelled"] = "draft"
-    total: float = 0
-    items: list[dict] = []
-
-
 class Payment(TimestampedModel):
     floor_id: str
     idempotency_key: Optional[str] = None

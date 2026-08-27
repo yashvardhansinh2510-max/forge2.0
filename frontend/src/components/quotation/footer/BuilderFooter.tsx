@@ -5,7 +5,7 @@
 // Finish) is shown by default — tapping it expands the same note/discount/
 // breakdown content inline above it. This replaces what used to be TWO
 // separate, redundant footers stacked on top of each other (this component's
-// full desktop layout PLUS a second MobileSummaryBar) — which is what made
+// full desktop layout PLUS a second mobile summary) — which is what made
 // the phone builder feel completely broken/cluttered.
 import { useState } from "react";
 import { Feather } from "@expo/vector-icons";

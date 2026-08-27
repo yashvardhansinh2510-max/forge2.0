@@ -19,7 +19,7 @@ import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
-import { MobileViewport } from "@/src/components/mobile/MobileShell";
+import { AppScaffold } from "@/src/components/mobile/AppScaffold";
 import { storage } from "@/src/utils/storage";
 import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID, SANITARY_FLOOR_ID, TILES_FLOOR_ID, floorDisplayLabel, floorLandingPath } from "@/src/constants/floors";
 
@@ -650,21 +650,13 @@ export default function AdminLayout() {
   if (isPhone) {
     return (
       <PaletteProvider>
-        <MobileViewport
+        <AppScaffold
           testID="admin-mobile-shell"
-          edges={["top", "left", "right"]}
           style={{ backgroundColor: color.canvas }}
+          bottomNavigation={<PhoneBar />}
         >
-          <View style={{ flex: 1 }}>
-            <Slot />
-          </View>
-          <SafeAreaView
-            edges={["bottom"]}
-            style={{ backgroundColor: color.canvas, borderTopWidth: layout.hairline, borderTopColor: color.line }}
-          >
-            <PhoneBar />
-          </SafeAreaView>
-        </MobileViewport>
+          <Slot />
+        </AppScaffold>
       </PaletteProvider>
     );
   }

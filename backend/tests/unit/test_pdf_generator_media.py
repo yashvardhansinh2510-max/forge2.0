@@ -1,6 +1,7 @@
 """Regression tests for upright quotation product images and fit geometry."""
 
 from io import BytesIO
+from pathlib import Path
 
 from PIL import Image as PILImage
 from pypdf import PdfReader
@@ -33,6 +34,33 @@ def test_contain_box_centers_a_horizontal_product_image():
     assert height == 78
     assert x == 12
     assert y == 6
+
+
+def test_sanitary_pdf_filename_uses_the_customer_name():
+    assert pdf_generator.quotation_pdf_filename("myrubai") == "myrubai.pdf"
+    assert pdf_generator.quotation_pdf_filename('  Myruba / Sons  ') == "Myruba Sons.pdf"
+
+
+def test_standard_item_tables_fill_the_landscape_printable_width():
+    source = Path(pdf_generator.__file__).read_text()
+
+    assert "item_widths = [12 * mm, 68 * mm, 34 * mm, 42 * mm, 24 * mm, 12 * mm, 25 * mm, 25 * mm, 25 * mm]" in source
+    assert "item_widths = [12 * mm, 75 * mm, 38 * mm, 62 * mm, 28 * mm, 12 * mm, 40 * mm]" in source
+
+
+def test_standard_pdf_keeps_full_width_terms_care_and_signature_on_page_one():
+    quotation = {
+        "customer_name": "Page One Contract",
+        "items": [{"sku": "ART-100", "name": "Wall Mixer", "room": "Master Bath", "qty": 1, "unit_price": 1000}],
+        "rooms": ["Master Bath"], "subtotal": 1000, "grand_total": 1000,
+    }
+
+    pages = PdfReader(BytesIO(pdf_generator.build_quotation_pdf(quotation, {"name": "Page One Contract"}))).pages
+    first_page_text = pages[0].extract_text()
+
+    assert "TERMS & CONDITIONS" in first_page_text
+    assert "CUSTOMER CARE" in first_page_text
+    assert "CUSTOMER SIGNATURE & DATE" in first_page_text
 
 
 def test_pdf_image_bytes_rotate_portrait_sources_to_horizontal_product_media():

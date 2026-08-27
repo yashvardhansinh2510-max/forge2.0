@@ -17,6 +17,7 @@ import {
   color, fmtMoney, fmtMoneyCompact, font, layout, motion, radius, shadow, space,
   statusTone, text, Tone, toneColor,
 } from "./tokens";
+import { useBp } from "./responsive";
 
 export type FeatherName = keyof typeof Feather.glyphMap;
 const webCursor = Platform.OS === "web" ? ({ cursor: "pointer" } as any) : null;
@@ -453,7 +454,7 @@ export function Sheet({
 }) {
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const isPhone = winW < layout.bp.tablet;
+  const { isPhone } = useBp();
   const anim = useRef(new Animated.Value(0)).current;
   const [visible, setVisible] = useState(open);
 
@@ -528,7 +529,12 @@ export function Sheet({
     <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: color.scrim, opacity: anim }]}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close sheet"
+          />
         </Animated.View>
         <View
           pointerEvents="box-none"

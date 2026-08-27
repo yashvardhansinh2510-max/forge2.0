@@ -9,13 +9,7 @@ export type Breakpoint = "phone" | "tabletPortrait" | "tabletLandscape" | "deskt
 export function useBreakpoint() {
   const canonical = useBp();
   const { width, height } = canonical;
-  const bp: Breakpoint = canonical.bp === "phone"
-    ? "phone"
-    : canonical.bp === "tablet"
-      ? "tabletPortrait"
-      : canonical.bp === "desktop"
-        ? "tabletLandscape"
-        : "desktop";
+  const bp: Breakpoint = canonical.bp;
 
   const isPhone = bp === "phone";
   const isTablet = bp === "tabletPortrait" || bp === "tabletLandscape";

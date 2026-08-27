@@ -46,7 +46,7 @@ BRAND_PARTNERS = [
 ]
 
 
-def brand_partners_table(base_cell_style: ParagraphStyle, col_width_mm: float = 28.3, grid_color=None) -> Table:
+def brand_partners_table(base_cell_style: ParagraphStyle, col_width_mm: float = 44.5, grid_color=None) -> Table:
     """The original 2x6 partner grid used on quotation page 1."""
     partner_style = ParagraphStyle("partner", parent=base_cell_style, fontSize=6.6, leading=8, alignment=1)
     rows = [[Paragraph(f"<b>{name}</b><br/><font size='5.4'><i>{tagline}</i></font>", partner_style) for name, tagline in row] for row in BRAND_PARTNERS]
@@ -69,18 +69,17 @@ TOP_MARGIN_MM = 13.0
 BOTTOM_MARGIN_MM = 22.0
 AREA_HEADER_BLOCK_MM = 21.0     # brand/area title block + rule + spacers above the table
 ITEM_HEADER_ROW_MM = 10.0
-# The printable part of the standard quotation image column is 44 mm wide
-# (50 mm column less 3 mm padding on either side).  Keep every product-image
-# target at 16:10 and leave enough row height for that box plus vertical
-# padding.  Source images are still contained inside this target, never
-# cropped or rotated to fill it.
+# The regular quotation image column is 75 mm wide, leaving a 69 mm drawable
+# image box after table padding. Keep every product-image target at 16:10 and
+# leave enough row height for that box plus vertical padding. Source images
+# are still contained inside this target, never cropped or rotated to fill it.
 PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10
-STANDARD_PRODUCT_IMAGE_WIDTH_MM = 44.0
+STANDARD_PRODUCT_IMAGE_WIDTH_MM = 69.0
 STANDARD_PRODUCT_IMAGE_HEIGHT_MM = STANDARD_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
 # Used for pagination planning. The table itself still measures wrapped
 # descriptions dynamically, but the larger image box needs this conservative
 # minimum so a row never paints into the next row or page.
-ITEM_ROW_MM = 31.5
+ITEM_ROW_MM = 47.0
 ITEM_TOTAL_ROW_MM = 8.0
 SUMMARY_HEADER_ROW_MM = 7.0
 SUMMARY_ROW_MM = 5.6
@@ -98,6 +97,19 @@ def _money(value: float) -> str:
 
 def _escape(value: object) -> str:
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def quotation_pdf_filename(customer_name: object) -> str:
+    """Return the sanitary quotation download name, based on the customer.
+
+    Keep this deliberately separate from the document number: customers use
+    the PDF as a shareable selection sheet, so its filename should identify
+    the customer in the same way the Ground Floor documents do.  Strip only
+    characters that are invalid or unsafe in a cross-platform filename.
+    """
+    name = " ".join(str(customer_name or "Customer").split())
+    safe = " ".join("".join(ch for ch in name if ch not in '\\\\/:*?\"<>|').split()).strip(".")
+    return f"{safe or 'Customer'}.pdf"
 
 
 @lru_cache(maxsize=512)
@@ -182,7 +194,7 @@ def _img(
     height_mm: float = STANDARD_PRODUCT_IMAGE_HEIGHT_MM,
     force_landscape: bool = False,
 ) -> Flowable:
-    """Render the supplied product image inside the official narrow image cell.
+    """Render the supplied product image inside the quotation image cell.
 
     Sized to the largest centered contain box that fits inside a 16:10
     landscape cell without stretching, cropping, or changing the product's
@@ -263,7 +275,7 @@ def _brand_header(right_title: str, styles: dict, style_key: str = "titleRight")
         logo = Image(str(LOGO_PATH), width=logo_width, height=logo_width / LOGO_RATIO, kind="proportional")
     else:
         logo = Paragraph("<b>BUILDCON HOUSE</b><br/><font size='8'>Let You Live Better</font>", styles["brandFallback"])
-    table = Table([[logo, Paragraph(right_title, styles[style_key])]], colWidths=[105 * mm, 65 * mm])
+    table = Table([[logo, Paragraph(right_title, styles[style_key])]], colWidths=[165 * mm, 102 * mm])
     table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
     return table
 
@@ -394,7 +406,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                 ("SPAN", (0, row), (-1, row)), ("SPAN", (0, row + 1), (-1, row + 1)),
                 ("LINEBELOW", (0, row + 1), (-1, row + 1), 0.4, LINE),
             ])
-    meta_table = Table(meta, colWidths=[60 * mm, 60 * mm, 50 * mm], rowHeights=meta_row_heights)
+    meta_table = Table(meta, colWidths=[90 * mm, 90 * mm, 87 * mm], rowHeights=meta_row_heights)
     meta_table.setStyle(TableStyle(meta_style))
     story.extend([meta_table, Spacer(1, 2 * mm)])
     story.append(Paragraph("Dear Sir/Madam, thank you for your interest in our products. We are pleased to offer our most competitive rates for premium bath and sanitaryware fittings, prepared as per your requirements.", styles["body"]))
@@ -404,10 +416,10 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     n_rooms = len(room_order)
     if has_discount:
         summary_header = ["SL. NO.", "BATHROOM / AREA", "MRP (Rs.)", "OFFER TOTAL (Rs.)"]
-        summary_col_widths = [17 * mm, 75 * mm, 39 * mm, 39 * mm]
+        summary_col_widths = [20 * mm, 120 * mm, 63 * mm, 64 * mm]
     else:
         summary_header = ["SL. NO.", "BATHROOM / AREA", "TOTAL (Rs.)"]
-        summary_col_widths = [17 * mm, 88 * mm, 65 * mm]
+        summary_col_widths = [20 * mm, 135 * mm, 112 * mm]
     summary_rows: list[list[object]] = [[Paragraph(h, styles["tableHead"]) for h in summary_header]]
     for index, room in enumerate(room_order):
         gross, _, net = _room_totals(grouped.get(room, []))
@@ -458,34 +470,41 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     ]
     if b.get("terms_text"):
         terms.append(f"Additional terms: {_escape(b['terms_text'])}")
-    # Two columns keep the complete contractual block on page one while
-    # using the wide landscape page instead of forcing terms onto page two.
+    # Use the full landscape width for contractual copy. The earlier narrow
+    # left panel forced terms into cramped lines while the adjacent customer
+    # care panel left a conspicuous amount of unused space.
     terms_rows = []
     for index in range(0, len(terms), 2):
         terms_rows.append([
             Paragraph(terms[index], styles["terms"]),
             Paragraph(terms[index + 1], styles["terms"]) if index + 1 < len(terms) else "",
         ])
-    terms_table = Table(terms_rows, colWidths=[60 * mm, 60 * mm], hAlign="CENTER")
+    terms_table = Table(terms_rows, colWidths=[133.5 * mm, 133.5 * mm])
     terms_table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 1.5), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 0.8), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.0),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
     ]))
-    care_rows = [[Paragraph("BRAND", styles["tableHead"]), Paragraph("TOLL FREE", styles["tableHead"])]] + [[brand, number] for brand, number in [
+    care_entries = [
         ("GEBERIT", "1800 102 4323"), ("GROHE", "1800 102 4475"), ("HANSGROHE", "1800 209 3246"), ("VITRA", "70451 32132"), ("OYSTER", "1800 120 8999"),
-    ]]
-    care = Table(care_rows, colWidths=[30 * mm, 30 * mm], rowHeights=[4.4 * mm] * 6, hAlign="CENTER")
-    care.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.3, GRID), ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY), ("FONTNAME", (0, 1), (-1, -1), "Helvetica"), ("FONTSIZE", (0, 1), (-1, -1), 6.4), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]))
-    signature = Table([[Paragraph("I/We have reviewed and agree to the terms and conditions mentioned in this quotation.", styles["small"]), Paragraph("CUSTOMER SIGNATURE &amp; DATE", styles["signature"])]], colWidths=[110 * mm, 70 * mm], rowHeights=[8 * mm])
+    ]
+    care_rows = [
+        [Paragraph(brand, styles["tableHead"]) for brand, _ in care_entries],
+        [Paragraph(number, styles["cellCenter"]) for _, number in care_entries],
+    ]
+    care = Table(care_rows, colWidths=[53.4 * mm] * len(care_entries), rowHeights=[5 * mm, 5.5 * mm])
+    care.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.3, GRID), ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    signature = Table([[Paragraph("I/We have reviewed and agree to the terms and conditions mentioned in this quotation.", styles["small"]), Paragraph("CUSTOMER SIGNATURE &amp; DATE", styles["signature"])]], colWidths=[160 * mm, 107 * mm], rowHeights=[8 * mm])
     signature.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.45, GRID), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5)]))
-    terms_panel = Table([[Paragraph("TERMS &amp; CONDITIONS", styles["section"])], [terms_table]], colWidths=[120 * mm])
-    terms_panel.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    care_panel = Table([[Paragraph("CUSTOMER CARE — TOLL FREE NUMBERS", styles["section"])], [care]], colWidths=[60 * mm])
-    care_panel.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    terms_and_care = Table([[terms_panel, care_panel]], colWidths=[120 * mm, 60 * mm], hAlign="CENTER")
-    terms_and_care.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
-    story.extend([terms_and_care, Spacer(1, 1.5 * mm), signature])
+    story.extend([
+        Paragraph("TERMS &amp; CONDITIONS", styles["section"]), Spacer(1, 0.8 * mm), terms_table,
+        Spacer(1, 1.4 * mm), Paragraph("CUSTOMER CARE — TOLL FREE NUMBERS", styles["section"]),
+        Spacer(1, 0.8 * mm), care, Spacer(1, 1.5 * mm), signature,
+    ])
     if b.get("signature_name"):
         sig_line = _escape(b["signature_name"]) + (f", {_escape(b['signature_title'])}" if b.get("signature_title") else "")
         story.append(Paragraph(f"For {_escape(b.get('footer_company_name') or 'Buildcon House')} — {sig_line}", ParagraphStyle("sigLine", parent=styles["small"], alignment=2, spaceBefore=2)))
@@ -504,7 +523,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             Paragraph("MRP<br/>TOTAL (Rs.)", styles["tableHead"]),
             Paragraph("OFFER<br/>RATE", styles["tableHead"]), Paragraph("OFFER<br/>TOTAL (Rs.)", styles["tableHead"]),
         ]
-        item_widths = [12 * mm, 50 * mm, 18 * mm, 18 * mm, 18 * mm, 8 * mm, 18 * mm, 18 * mm, 20 * mm]
+        item_widths = [12 * mm, 68 * mm, 34 * mm, 42 * mm, 24 * mm, 12 * mm, 25 * mm, 25 * mm, 25 * mm]
     else:
         item_header = [
             Paragraph("SR.<br/>NO.", styles["tableHead"]), Paragraph("PRODUCT IMAGE", styles["tableHead"]),
@@ -512,7 +531,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             Paragraph("RATE<br/>(Rs.)", styles["tableHead"]), Paragraph("QTY", styles["tableHead"]),
             Paragraph("TOTAL<br/>(Rs.)", styles["tableHead"]),
         ]
-        item_widths = [12 * mm, 50 * mm, 20 * mm, 35 * mm, 20 * mm, 8 * mm, 35 * mm]
+        item_widths = [12 * mm, 75 * mm, 38 * mm, 62 * mm, 28 * mm, 12 * mm, 40 * mm]
     max_rows = _max_item_rows_per_page()
     for area_index, room in enumerate(room_order, 1):
         room_items = grouped.get(room, [])
@@ -540,7 +559,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                     description += f"<br/><font color='#737373'>Finish: {_escape(finish)}</font>"
                 if has_discount:
                     rows.append([
-                        Paragraph(str(sr_no), styles["cellCenter"]), _img(item.get("image")),
+                        Paragraph(str(sr_no), styles["cellCenter"]), _img(item.get("image"), width_mm=62.0),
                         Paragraph(_escape(item.get("sku")), styles["cell"]), Paragraph(description, styles["tiny"]),
                         Paragraph(_money(listed_mrp), styles["cellCenter"]), Paragraph(f"{qty:g}", styles["cellCenter"]),
                         Paragraph(_money(qty * listed_mrp), styles["cellCenter"]),

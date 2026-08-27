@@ -19,7 +19,7 @@ from models import (
     Quotation, QuotationCreate, QuotationLineItem, QuotationRevision,
     QuotationUpdate, RoomDiscountCfg, UserPublic, now_iso,
 )
-from pdf_generator import build_quotation_pdf
+from pdf_generator import build_quotation_pdf, quotation_pdf_filename
 from pdf_tiles import build_tiles_quotation_pdf, build_tiles_selection_pdf, tiles_pdf_filename
 from services import catalog_service
 from services.activity_log import log_event
@@ -892,7 +892,7 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     else:
         pdf_doc = {**doc, "items": pdf_items}
         pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, customer, branding)
-        filename = f'{doc["number"]}.pdf'
+        filename = quotation_pdf_filename(doc.get("customer_name") or customer.get("name"))
     revision = len(doc.get("revisions") or [])
     key = f"quotation-generated:{quotation_id}:revision:{revision}"
     event = await db.event_outbox.find_one({"idempotency_key": key}, {"_id": 0})
@@ -929,7 +929,8 @@ async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_curre
         raise HTTPException(status_code=404, detail="Quotation not found")
     pdf_doc = {**doc, "items": await _pdf_items(doc)}
     pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
-    return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{doc["number"]}.pdf"'})
+    filename = quotation_pdf_filename(doc.get("customer_name") or cust.name)
+    return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
 # --- PDF of a previous revision snapshot (customer portal; read-only) ---
@@ -959,7 +960,7 @@ async def portal_pdf_revision(
     )
     pdf_doc = {**merged, **totals, "items": await _pdf_items(merged)}
     pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
-    filename = f'{doc["number"]}-rev{revision_no}.pdf'
+    filename = quotation_pdf_filename(doc.get("customer_name") or cust.name)
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
@@ -998,9 +999,7 @@ async def portal_pdf_brand(
     filtered_doc = {**doc, "items": filtered}
     pdf_doc = {**filtered_doc, **totals, "items": await _pdf_items(filtered_doc)}
     pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
-    brand_doc = None if is_unassigned else await db.brands.find_one({"id": brand_id}, {"_id": 0, "name": 1})
-    brand_label = (brand_doc or {}).get("name") or "Other"
-    filename = f'{doc["number"]}-{brand_label}.pdf'.replace(" ", "-")
+    filename = quotation_pdf_filename(doc.get("customer_name") or cust.name)
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
 
