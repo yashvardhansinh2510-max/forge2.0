@@ -194,6 +194,7 @@ class DispatchBody(BaseModel):
     reference_number: Optional[str] = None
     receiver_name: Optional[str] = None
     sender_name: Optional[str] = None
+    labor_cost: float = Field(default=0, ge=0)
 
 
 async def _resolve_dispatch_lines(po: dict, body: DispatchBody, session=None) -> tuple[list[dict], list[str]]:
@@ -336,6 +337,7 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
                 delivery_address=body.destination_address, delivery_city=body.destination_city,
                 reference_number=body.reference_number, items=chalan_items,
                 receiver_name=body.receiver_name, sender_name=body.sender_name,
+                labor_cost=body.labor_cost,
                 created_by=user.id, created_by_name=user.full_name,
                 generated_at=now, generated_by_name=user.full_name,
             )
@@ -347,11 +349,12 @@ async def commit_dispatch(po_id: str, body: DispatchBody, user: UserPublic = Dep
                 ready_batches_consumed=consumed, destination_type=body.destination_type,
                 destination_name=body.destination_name, destination_address=body.destination_address,
                 destination_city=body.destination_city, dispatch_date=now[:10], dispatch_time=now[11:16],
-                created_by=user.id, created_by_name=user.full_name, chalan_id=chalan.id,
+                created_by=user.id, created_by_name=user.full_name, chalan_id=chalan.id, labor_cost=body.labor_cost,
             )
             chalan.dispatch_id = dispatch.id
             await db.chalans.insert_one(chalan.dict(), session=session)
             await db.dispatches.insert_one(dispatch.dict(), session=session)
+            await _apply_dispatch_labor_cost(po, body.labor_cost, session)
 
             items = list(items_by_id.values())
             ordered_boxes = sum(float(i.get("qty") or 0) for i in items)
@@ -522,6 +525,39 @@ class SimpleDispatchBody(BaseModel):
     # actually knows the truck.
     vehicle_number: Optional[str] = None
     driver_name: Optional[str] = None
+    labor_cost: float = Field(default=0, ge=0)
+
+
+async def _apply_dispatch_labor_cost(po: dict, labor_cost: float, session) -> None:
+    """Add a dispatch charge to the customer-facing order balance.
+
+    Collections uses ``quotation.grand_total`` as its authoritative amount
+    due.  The pending automation payment is the matching ledger placeholder,
+    so it is incremented too.  Keeping these writes in the dispatch
+    transaction means neither a chalan nor a payment balance can be saved
+    without the other.
+    """
+    if labor_cost <= 0 or not po.get("quotation_id"):
+        return
+    quote_filter = {"id": po["quotation_id"], "floor_id": po.get("floor_id", TILES_FLOOR_ID)}
+    quote_update = await db.quotations.update_one(
+        quote_filter,
+        {"$inc": {"grand_total": labor_cost, "labor_cost_total": labor_cost}, "$set": {"updated_at": now_iso()}},
+        session=session,
+    )
+    if getattr(quote_update, "matched_count", 1) == 0:
+        raise HTTPException(status_code=409, detail="Linked quotation changed — refresh and dispatch again")
+    await db.payments.update_one(
+        {"quotation_id": po["quotation_id"], "status": "pending"},
+        {"$inc": {"amount": labor_cost}, "$set": {"updated_at": now_iso()}},
+        session=session,
+    )
+    if po.get("customer_order_id"):
+        await db.customer_orders.update_one(
+            {"id": po["customer_order_id"], "floor_id": po.get("floor_id", TILES_FLOOR_ID)},
+            {"$inc": {"total_value": labor_cost}, "$set": {"updated_at": now_iso()}},
+            session=session,
+        )
 
 
 async def _commit_simple_dispatch(
@@ -604,6 +640,7 @@ async def _commit_simple_dispatch(
                 reference_number=body.reference_number, items=chalan_items,
                 receiver_name=body.receiver_name, sender_name=body.sender_name,
                 vehicle_number=body.vehicle_number, driver_name=body.driver_name,
+                labor_cost=body.labor_cost,
                 created_by=user.id, created_by_name=user.full_name, generated_at=now, generated_by_name=user.full_name,
             )
             dispatch = TileDispatch(
@@ -613,11 +650,12 @@ async def _commit_simple_dispatch(
                 customer_name=po.get("customer_name") or "", ready_batches_consumed=consumed, source=source,
                 destination_type="Customer", destination_name=destination_name, destination_address=destination_address,
                 destination_city=destination_city, dispatch_date=now[:10], dispatch_time=now[11:16],
-                created_by=user.id, created_by_name=user.full_name, chalan_id=chalan.id,
+                created_by=user.id, created_by_name=user.full_name, chalan_id=chalan.id, labor_cost=body.labor_cost,
             )
             chalan.dispatch_id = dispatch.id
             await db.chalans.insert_one(chalan.dict(), session=session)
             await db.dispatches.insert_one(dispatch.dict(), session=session)
+            await _apply_dispatch_labor_cost(po, body.labor_cost, session)
 
             items = list(items_by_id.values())
             ordered_boxes = sum(float(i.get("qty") or 0) for i in items)
@@ -775,6 +813,7 @@ async def dispatch_detail(dispatch_id: str, user: UserPublic = Depends(require_m
                 "id", "dispatch_number", "dispatch_date", "dispatch_time", "source", "destination_type",
                 "destination_name", "destination_address", "destination_city", "customer_id", "customer_name",
                 "customer_order_id", "purchase_order_id", "supplier_name", "created_by_name",
+                "labor_cost",
                 "godown_received_at", "godown_received_by_name", "delivered_at", "delivered_by_name",
             )},
             "status": _dispatch_status(dispatch),
@@ -786,6 +825,7 @@ async def dispatch_detail(dispatch_id: str, user: UserPublic = Depends(require_m
             "reference_number": chalan.get("reference_number"), "receiver_name": chalan.get("receiver_name"),
             "sender_name": chalan.get("sender_name"), "vehicle_number": chalan.get("vehicle_number"),
             "driver_name": chalan.get("driver_name"), "items": chalan.get("items", []),
+            "labor_cost": float(chalan.get("labor_cost") or 0),
             "supplier_name": chalan.get("supplier_name"), "customer_name": chalan.get("customer_name"),
             "customer_phone": chalan.get("customer_phone"),
         },

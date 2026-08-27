@@ -34,7 +34,7 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
   const [group, setGroup] = useState<CustomerOrderBrandGroup | null>(null);
   const [source, setSource] = useState<Source>("released");
   const [qty, setQty] = useState<Record<string, string>>({});
-  const [transport, setTransport] = useState({ vehicle_number: "", driver_name: "", receiver_name: "", reference_number: "" });
+  const [transport, setTransport] = useState({ vehicle_number: "", driver_name: "", receiver_name: "", reference_number: "", labor_cost: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -93,7 +93,15 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
       toast.error("Enter at least one quantity");
       return;
     }
-    const destination = Object.fromEntries(Object.entries(transport).filter(([, v]) => v.trim() !== ""));
+    const laborCost = Number(transport.labor_cost || 0);
+    if (!Number.isFinite(laborCost) || laborCost < 0) {
+      toast.error("Enter a valid labour cost");
+      return;
+    }
+    const destination = {
+      ...Object.fromEntries(Object.entries(transport).filter(([key, value]) => key !== "labor_cost" && value.trim() !== "")),
+      ...(laborCost > 0 ? { labor_cost: laborCost } : {}),
+    };
     setBusy(true);
     let chalanId: string | null = null;
     try {
@@ -214,7 +222,7 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
               </View>
             ))}
             <Text style={[type.bodyStrong, { marginTop: spacing.xs }]}>Transport details</Text>
-            {([
+            {([ 
               ["vehicle_number", "Vehicle number"], ["driver_name", "Driver name"],
               ["receiver_name", "Received by"], ["reference_number", "Reference no."],
             ] as const).map(([key, label]) => (
@@ -224,6 +232,11 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
                 placeholder={label} placeholderTextColor={colors.onSurfaceSubtle} style={styles.input}
               />
             ))}
+            <TextInput
+              testID="tile-create-dispatch-labor-cost" keyboardType="decimal-pad"
+              value={transport.labor_cost} onChangeText={(v) => setTransport((t) => ({ ...t, labor_cost: v.replace(/[^0-9.]/g, "") }))}
+              placeholder="Labour cost (added to payment)" placeholderTextColor={colors.onSurfaceSubtle} style={styles.input}
+            />
             <View style={styles.actionRow}>
               <Pressable
                 testID="tile-create-dispatch-confirm" disabled={busy || lines.length === 0}

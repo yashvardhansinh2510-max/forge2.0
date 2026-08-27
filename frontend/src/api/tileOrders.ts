@@ -124,6 +124,7 @@ export type DispatchDestinationOverride = {
   destination_name?: string; destination_address?: string; destination_city?: string;
   reference_number?: string; receiver_name?: string; sender_name?: string;
   vehicle_number?: string; driver_name?: string;
+  labor_cost?: number;
 };
 
 export type ChalanItem = {
@@ -137,6 +138,7 @@ export type ChalanDetail = {
   receiver_name: string | null; sender_name: string | null;
   vehicle_number: string | null; driver_name: string | null;
   supplier_name: string; customer_name: string; customer_phone: string | null;
+  labor_cost: number;
   items: ChalanItem[];
 };
 
@@ -147,6 +149,7 @@ export type DispatchDetail = {
     destination_name: string; destination_address: string; destination_city: string;
     customer_id: string | null; customer_name: string; customer_order_id: string | null;
     purchase_order_id: string; supplier_name: string; created_by_name: string;
+    labor_cost: number;
     godown_received_at: string | null; godown_received_by_name: string | null;
     delivered_at: string | null; delivered_by_name: string | null;
     status: "Dispatched" | "At Godown" | "Delivered";

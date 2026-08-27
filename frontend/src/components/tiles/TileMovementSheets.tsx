@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { ActivityIndicator, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, type ViewStyle } from "react-native";
 
-import { tileOrdersApi, type CustomerOrderItem, type PurchaseOrderItemDetail } from "@/src/api/tileOrders";
+import { tileOrdersApi, type CustomerOrderItem, type DispatchDestinationOverride, type PurchaseOrderItemDetail } from "@/src/api/tileOrders";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
@@ -168,8 +168,8 @@ export function MoveToGodownSheet({ poId, items, onClose, onDone }: { poId: stri
 // always had vehicle_number/driver_name columns (they print on the Chalan
 // PDF and show on the Dispatch List) but nothing ever collected them, so
 // both rendered permanently blank.
-export type TransportDetails = { vehicle_number: string; driver_name: string; receiver_name: string; reference_number: string };
-const EMPTY_TRANSPORT: TransportDetails = { vehicle_number: "", driver_name: "", receiver_name: "", reference_number: "" };
+export type TransportDetails = { vehicle_number: string; driver_name: string; receiver_name: string; reference_number: string; labor_cost: string };
+const EMPTY_TRANSPORT: TransportDetails = { vehicle_number: "", driver_name: "", receiver_name: "", reference_number: "", labor_cost: "" };
 
 function TransportFields({ value, onChange }: { value: TransportDetails; onChange: (next: TransportDetails) => void }) {
   const field = (key: keyof TransportDetails, label: string, placeholder: string) => (
@@ -177,6 +177,7 @@ function TransportFields({ value, onChange }: { value: TransportDetails; onChang
       <Text style={type.caption}>{label}</Text>
       <TextInput
         testID={`tile-dispatch-${key.replace(/_/g, "-")}`}
+        keyboardType={key === "labor_cost" ? "decimal-pad" : "default"}
         value={value[key]} onChangeText={(v) => onChange({ ...value, [key]: v })} placeholder={placeholder}
         placeholderTextColor={colors.onSurfaceSubtle}
         style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, marginTop: 2 }}
@@ -194,12 +195,20 @@ function TransportFields({ value, onChange }: { value: TransportDetails; onChang
         {field("receiver_name", "Received by", "Site contact")}
         {field("reference_number", "Reference no.", "Optional")}
       </View>
+      <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+        {field("labor_cost", "Labour cost", "Added to payment")}
+      </View>
     </View>
   );
 }
 
-function transportPayload(t: TransportDetails) {
-  return Object.fromEntries(Object.entries(t).filter(([, v]) => v.trim() !== ""));
+function transportPayload(t: TransportDetails): DispatchDestinationOverride {
+  const laborCost = Number(t.labor_cost || 0);
+  if (!Number.isFinite(laborCost) || laborCost < 0) throw new Error("Enter a valid labour cost");
+  return {
+    ...Object.fromEntries(Object.entries(t).filter(([key, value]) => key !== "labor_cost" && value.trim() !== "")),
+    ...(laborCost > 0 ? { labor_cost: laborCost } : {}),
+  };
 }
 
 async function submitDispatch(
@@ -237,7 +246,7 @@ function DispatchSheet({
 }: {
   title: string; poId: string; items: CustomerOrderItem[];
   available: (item: CustomerOrderItem) => number;
-  dispatch: (poId: string, entries: { po_item_id: string; qty: number }[], destination: Record<string, string>) => Promise<{ chalan: { id: string; [key: string]: any } }>;
+  dispatch: (poId: string, entries: { po_item_id: string; qty: number }[], destination: DispatchDestinationOverride) => Promise<{ chalan: { id: string; [key: string]: any } }>;
   onClose: () => void; onDone: () => void;
 }) {
   const [qtyByItem, setQtyByItem] = useState<Record<string, string>>(
@@ -252,7 +261,11 @@ function DispatchSheet({
       toast.error("Enter at least one quantity");
       return;
     }
-    await submitDispatch(poId, entries, (id, e) => dispatch(id, e, transportPayload(transport)), onDone, setBusy);
+    try {
+      await submitDispatch(poId, entries, (id, e) => dispatch(id, e, transportPayload(transport)), onDone, setBusy);
+    } catch (e: any) {
+      toast.error(e?.message || "Could not dispatch");
+    }
   };
 
   return (

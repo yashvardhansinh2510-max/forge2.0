@@ -18,6 +18,7 @@ def _chalan() -> dict:
         "customer_name": "Nileshbhai Pokiya", "customer_phone": "9909900000",
         "delivery_address": "123 Ring Road", "delivery_city": "Rajkot",
         "reference_number": "TORD-2026-0001",
+        "labor_cost": 450,
         "items": [{"po_item_id": "item-1", "tile_name": "Glossy Ivory 600x600", "series": "Metropole", "finish": None, "size": "600X600", "sku": "SKU-1", "boxes": 5, "pieces_per_box": "4", "quantity": 5}],
         "receiver_name": "Nileshbhai Pokiya", "sender_name": "Qutone Rep",
         "vehicle_number": None, "driver_name": None,
@@ -40,7 +41,10 @@ def test_build_tile_chalan_pdf_produces_bytes():
     page = PdfReader(BytesIO(pdf_bytes)).pages[0]
     assert float(page.mediabox.width) > float(page.mediabox.height)
     text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(pdf_bytes)).pages)
-    assert "Piece/Box" in text
+    assert "Box" in text
     assert "Piece" in text
-    assert "Pcs/Box" not in text
+    assert "SKU" not in text
+    assert "SKU-1" not in text
+    assert "Labour cost" in text
+    assert "450.00" in text
     assert "Unit" not in text

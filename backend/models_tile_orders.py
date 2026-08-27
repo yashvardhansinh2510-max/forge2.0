@@ -148,6 +148,9 @@ class TileDispatch(TimestampedModel):
     created_by: str
     created_by_name: str
     chalan_id: str              # 1:1, always set — Chalan is generated in the same transaction
+    # Charged at the point material is dispatched.  This is deliberately a
+    # dispatch-level value: one order can be delivered in several loads.
+    labor_cost: float = Field(default=0, ge=0)
     godown_received_at: Optional[str] = None
     godown_received_by: Optional[str] = None
     godown_received_by_name: Optional[str] = None
@@ -189,6 +192,8 @@ class TileChalan(TimestampedModel):
     delivery_city: str
     reference_number: Optional[str] = None
     items: list[TileChalanItem]      # only this dispatch's quantities
+    # Immutable snapshot of the dispatch charge, printed below the items.
+    labor_cost: float = Field(default=0, ge=0)
     receiver_name: Optional[str] = None
     sender_name: Optional[str] = None
     vehicle_number: Optional[str] = None

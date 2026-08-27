@@ -188,6 +188,23 @@ def test_dispatch_from_existing_ready_batch(monkeypatch):
     assert fake_db.customer_orders.co["dashboard_summary"]["completion_percentage"] == 25.0
 
 
+def test_dispatch_persists_labor_cost_on_dispatch_and_chalan(monkeypatch):
+    fake_db = _FakeDb(_po(), [_ready_batch()], _customer_order())
+    monkeypatch.setattr(router_module, "db", fake_db)
+    monkeypatch.setattr(router_module, "client", _FakeClient())
+    monkeypatch.setattr(router_module, "next_number", _fake_next_number)
+    monkeypatch.setattr(router_module, "log_event", _noop_log_event)
+
+    body = router_module.DispatchBody(
+        items=[router_module.DispatchLineInput(po_item_id="item-1", ready_batch_id="rb-1", qty=5)],
+        labor_cost=450, **_DESTINATION,
+    )
+    result = asyncio.run(router_module.commit_dispatch("po-1", body, user=_user()))
+
+    assert result["dispatch"]["labor_cost"] == 450
+    assert result["chalan"]["labor_cost"] == 450
+
+
 def test_direct_dispatch_from_pending_auto_creates_ready_batch(monkeypatch):
     fake_db = _FakeDb(_po(), [], _customer_order())
     monkeypatch.setattr(router_module, "db", fake_db)

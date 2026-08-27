@@ -307,13 +307,15 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
 
     # Text columns must be Paragraphs, not bare strings: ReportLab does not
     # wrap a plain string inside a Table cell, it lets it run straight over
-    # the neighbouring column. Real tile names and SKUs are long enough that
-    # every generated Chalan had "Tile Name" overprinting "Series" and the
-    # SKU overprinting Boxes/Pcs/Qty.
+    # the neighbouring column. Real tile names are long enough to need that
+    # protection in the compact printed grid.
     cell = ParagraphStyle("tcCell", parent=styles["Normal"], fontSize=8, leading=9.5)
     cell_right = ParagraphStyle("tcCellRight", parent=cell, alignment=2)
 
-    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "SKU", "Piece/Box", "Qty"]
+    # Operational challans deliberately omit SKU and the old unit/pieces
+    # columns. "Box" is the type indicator requested by the business: its
+    # value is either Box or Piece for each dispatched line.
+    header_row = ["Sr", "Tile Name", "Series", "Finish", "Size", "Box", "Qty"]
     table_data = [header_row]
     for i, item in enumerate(chalan.get("items", []), start=1):
         table_data.append([
@@ -322,11 +324,10 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
             Paragraph(_escape(item.get("series") or "—"), cell),
             Paragraph(_escape(item.get("finish") or "—"), cell),
             Paragraph(_escape(item.get("size") or "—"), cell),
-            Paragraph(_escape(item.get("sku") or "—"), cell),
             Paragraph(_quantity_unit_label(item.get("quantity_unit")), cell_right),
             Paragraph(f"{item.get('quantity', 0):g}", cell_right),
         ])
-    product_table = Table(table_data, colWidths=[8 * mm, 40 * mm, 22 * mm, 18 * mm, 20 * mm, 20 * mm, 20 * mm, 14 * mm])
+    product_table = Table(table_data, colWidths=[8 * mm, 58 * mm, 28 * mm, 24 * mm, 25 * mm, 18 * mm, 16 * mm])
     product_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F2F2F2")),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
@@ -335,6 +336,18 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
     flow.append(product_table)
+    labor_cost = _decimal(chalan.get("labor_cost")) or Decimal("0")
+    labor_table = Table(
+        [[Paragraph("Labour cost", cell_right), Paragraph(f"₹ {_money(labor_cost)}", cell_right)]],
+        colWidths=[145 * mm, 32 * mm], hAlign="RIGHT",
+    )
+    labor_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F2F2F2")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    flow.append(labor_table)
     flow.append(Spacer(1, 8 * mm))
 
     signature_table = Table([
