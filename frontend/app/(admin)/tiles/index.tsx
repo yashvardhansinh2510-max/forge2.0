@@ -4,12 +4,13 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { FlatList, LayoutChangeEvent, Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Button, EmptyState, SegmentedControl } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
+import { useBp } from "@/src/design/responsive";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { tilesStageLabel } from "@/src/components/tiles/tilesStage";
 
@@ -23,12 +24,12 @@ export default function QuotationTilesList() {
   const router = useRouter();
   const [documents, setDocuments] = useState<Record<TilesDoc["doc_type"], TilesDoc[]> | null>(null);
   const [documentType, setDocumentType] = useState<TilesDoc["doc_type"]>("tiles_quotation");
-  const [width, setWidth] = useState(0);
+  const { isPhone, isTablet } = useBp();
   // The tablet shell reserves a 64px navigation rail. At a 768px viewport the
   // page itself is only about 704px wide, which is not enough for this title
   // and both labelled actions on one line. Stack the actions before they can
   // squeeze the title out of the header.
-  const compact = width > 0 && width < 900;
+  const compact = isPhone || isTablet;
 
   const load = useCallback(async () => {
     const [selections, quotations] = await Promise.all([
@@ -52,7 +53,7 @@ export default function QuotationTilesList() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
-      <View onLayout={(event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width)} style={[styles.header, compact && styles.headerCompact]}>
+      <View style={[styles.header, compact && styles.headerCompact]}>
         <View style={compact && { width: "100%" }}>
           <Text style={type.overline}>Ground Floor · Tiles</Text>
           <Text style={type.titleMd}>Quotation Tiles</Text>

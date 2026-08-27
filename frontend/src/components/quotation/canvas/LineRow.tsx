@@ -3,12 +3,13 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { memo, useState } from "react";
-import { Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { Badge } from "@/src/components/ui";
 import { colors, font, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
+import { useBp } from "@/src/design/responsive";
 
 import { useBuilder } from "../context/BuilderContext";
 import { computeLineBreakdown, effectivePct, sourceBadge } from "../helpers/pricing";
@@ -27,7 +28,7 @@ function LineRowImpl({
   roomDiscs?: Record<string, RoomDiscount>;
 }) {
   const b = useBuilder();
-  const isPhone = useWindowDimensions().width < 600;
+  const { isPhone } = useBp();
   const [menuOpen, setMenuOpen] = useState(false);
   const l = line;
   const eff = effectivePct(l, roomDiscs || {}, catDiscs, projDisc);

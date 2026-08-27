@@ -12,9 +12,10 @@
 // into a Brand-page version (Ordered/Released/Remaining) and a
 // Customer-page version (Ordered/Released/Godown/Delivered) — no more
 // generic Ready/Dispatched/Pending counters.
-import { Text, useWindowDimensions, View } from "react-native";
+import { Text, View } from "react-native";
 
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import type { AgeingBand, CustomerOrderBrand, TileOverallStatus } from "@/src/api/tileOrders";
 
 const STATUS_COLORS: Record<TileOverallStatus, { fg: string; bg: string; border: string }> = {
@@ -150,10 +151,10 @@ const WORKFLOW_STEPS: { key: WorkflowStage; label: string }[] = [
 // the same fact in the form that does fit: which step, out of how many, and
 // how far along.
 export function WorkflowRail({ active, testID }: { active: WorkflowStage; testID?: string }) {
-  const { width } = useWindowDimensions();
+  const { isDesktop } = useBreakpoint();
   const current = Math.max(0, WORKFLOW_STEPS.findIndex((step) => step.key === active));
 
-  if (width < 1000) {
+  if (!isDesktop) {
     const percent = Math.round(((current + 1) / WORKFLOW_STEPS.length) * 100);
     return (
       <View testID={testID} style={workflowStyles.compactRail}>
