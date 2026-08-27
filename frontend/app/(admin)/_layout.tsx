@@ -428,8 +428,10 @@ function Rail() {
 
 // ── Phone bottom bar + More sheet ───────────────────────────────────────────
 const PHONE_TABS: NavItem[] = [
-  { href: "/(admin)/dashboard", label: "Today", icon: "home", match: "dashboard" },
-  { href: "/(admin)/quotations", label: "Quotes", icon: "file-text", match: "quotations", floors: [SANITARY_FLOOR_ID] },
+  { href: "/(admin)/dashboard", label: "Home", icon: "home", match: "dashboard" },
+  // On Sanitary this starts at quotations; on Ground Floor the same slot is
+  // substituted with Tile Orders below. Both are the worker's order queue.
+  { href: "/(admin)/quotations", label: "Orders", icon: "file-text", match: "quotations", floors: [SANITARY_FLOOR_ID] },
 ];
 const PHONE_TABS_RIGHT: NavItem[] = [
   { href: "/(admin)/followups", label: "Tasks", icon: "check-square", match: "followups" },
@@ -486,7 +488,7 @@ function PhoneBar() {
   const phoneTabs = contextualNotebookTabs
     ? [...visiblePhoneTabs.filter((item) => item.match !== "quotations"), contextualNotebookTabs.primary]
     : visiblePhoneTabs.length < PHONE_TABS.length && tilesNav.items.length
-    ? [...visiblePhoneTabs, { ...tilesNav.items[0], label: "Tiles" }]
+    ? [...visiblePhoneTabs, { ...tilesNav.items[0], label: "Orders" }]
     : visiblePhoneTabs;
   const phoneTabsRight = contextualNotebookTabs ? [contextualNotebookTabs.secondary] : visible(PHONE_TABS_RIGHT);
   // The FAB is not a NavItem and isn't run through visible(), so it needs its
@@ -508,9 +510,9 @@ function PhoneBar() {
   const fabAction = !hasAccess("quotations")
     ? null
     : selectedFloorId === SANITARY_FLOOR_ID
-    ? { label: "New quotation", onPress: () => router.push("/(admin)/quotations/new" as any) }
+    ? { label: "Scan or start an order", onPress: () => router.push("/(admin)/quotations/new" as any) }
     : selectedFloorId === TILES_FLOOR_ID && tilesNav.items.length
-    ? { label: `Open ${tilesNav.items[0].label}`, onPress: () => { void tilesNav.open(tilesNav.items[0]); } }
+    ? { label: "Scan or start an order", onPress: () => { void tilesNav.open(tilesNav.items[0]); } }
     : null;
 
   const Tab = ({ item }: { item: NavItem }) => {
@@ -538,6 +540,7 @@ function PhoneBar() {
         {phoneTabs.map((t) => <Tab key={t.href} item={t} />)}
         <View style={styles.fabSlot}>
           {fabAction ? (
+            <>
             <Pressable
               testID="bottom-fab-new-quotation"
               accessibilityRole="button"
@@ -547,6 +550,8 @@ function PhoneBar() {
             >
               <Feather name="plus" size={22} color={color.onAction} />
             </Pressable>
+            <Text style={styles.actionLabel}>Action</Text>
+            </>
           ) : null}
         </View>
         {phoneTabsRight.map((t) => <Tab key={t.href} item={t} />)}
@@ -729,12 +734,13 @@ const styles = StyleSheet.create({
   tabIconWrapActive: { backgroundColor: color.brassTint },
   tabLabel: { fontFamily: font.medium, fontWeight: "500", fontSize: 10.5, color: color.inkFaint, letterSpacing: 0.1 },
   tabLabelActive: { color: color.ink, fontWeight: "600" },
-  fabSlot: { width: 68, alignItems: "center", justifyContent: "center" },
+  fabSlot: { width: 68, alignItems: "center", justifyContent: "center", paddingTop: 4 },
   fab: {
     width: 52, height: 52, borderRadius: 26, backgroundColor: color.brass,
     alignItems: "center", justifyContent: "center", marginTop: -22,
     borderWidth: 4, borderColor: color.canvas,
   },
+  actionLabel: { marginTop: -2, fontFamily: font.medium, fontSize: 10.5, color: color.inkFaint },
   moreRow: {
     flexDirection: "row", alignItems: "center", gap: 12,
     height: 48, paddingHorizontal: 4,
