@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, KeyboardAvoidingView, LayoutChangeEvent, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { colors } from "@/src/theme/tokens";
+import { quotationBuilderLayout } from "@/src/design/responsive";
 import { storage } from "@/src/utils/storage";
 
 import { useBuilder } from "../context/BuilderContext";
@@ -29,9 +30,6 @@ import { ReferrerSwitcherSheet } from "../sheets/ReferrerSwitcherSheet";
 import { RoomSheet } from "../sheets/RoomSheet";
 import { SwapSheet } from "../sheets/SwapSheet";
 import { BuilderTopbar } from "./BuilderTopbar";
-
-const THREE_PANE = 1180;
-const TWO_PANE = 820;
 
 export function BuilderShell({ onBack }: { onBack: () => void }) {
   const b = useBuilder();
@@ -54,8 +52,7 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
 
   const onLayout = (e: LayoutChangeEvent) => setW(e.nativeEvent.layout.width);
 
-  const threePane = w >= THREE_PANE;
-  const twoPane = !threePane && w >= TWO_PANE;
+  const { threePane, twoPane, railWidth: railW, quotationWidth: quotationW } = quotationBuilderLayout(w, railCollapsed);
   const isPhone = !threePane && !twoPane;
   // The catalog grid (ProductExplorer) only renders inline in the threePane
   // layout — everywhere else it lives inside ProductPickerSheet and needs an
@@ -69,9 +66,6 @@ export function BuilderShell({ onBack }: { onBack: () => void }) {
   // shell but the desktop-style footer/empty-state with no way to open the
   // picker sheet at all. Passing this one flag down removes the ambiguity.
   const compactCatalog = !threePane;
-
-  const railW = railCollapsed ? 56 : w >= 1400 ? 260 : 240;
-  const quotationW = w >= 1440 ? 480 : w >= 1200 ? 440 : 400;
 
   // On smaller layouts, when a line/product gets focused, open the Assistant sheet.
   useEffect(() => {

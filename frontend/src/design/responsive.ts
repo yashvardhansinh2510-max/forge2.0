@@ -23,3 +23,21 @@ export function useBp() {
 
   return { bp, width, height, isPhone, isTablet, isDesktop, isTabletPortrait, isTabletLandscape, gutter };
 }
+
+/**
+ * The quotation builder responds to its usable container, not merely the
+ * device viewport (the admin rail consumes part of the latter). Keep those
+ * content thresholds here so the builder does not create a second breakpoint
+ * system beside the app-wide viewport contract.
+ */
+export function quotationBuilderLayout(containerWidth: number, railCollapsed: boolean) {
+  const threePane = containerWidth >= 1180;
+  const twoPane = !threePane && containerWidth >= 820;
+
+  return {
+    threePane,
+    twoPane,
+    railWidth: railCollapsed ? 56 : containerWidth >= 1400 ? 260 : 240,
+    quotationWidth: containerWidth >= 1440 ? 480 : containerWidth >= 1200 ? 440 : 400,
+  };
+}
