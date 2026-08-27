@@ -5,7 +5,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Alert as RNAlert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert as RNAlert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { useBp } from "@/src/design/responsive";
@@ -83,6 +83,8 @@ export default function QuotationsList() {
     <AdminPage
       title="Quotations"
       subtitle={items ? `${items.length} total · ${money(totalValue)} filtered pipeline` : "Loading pipeline…"}
+      scroll={false}
+      contentStyle={{ paddingHorizontal: 0, paddingTop: 0 }}
       right={
         <Pressable
           testID="new-quotation-btn"
@@ -94,61 +96,44 @@ export default function QuotationsList() {
         </Pressable>
       }
     >
-      <View style={{ gap: spacing.md }}>
-        <SearchField
-          testID="quotations-search"
-          value={q}
-          onChangeText={setQ}
-          placeholder="Search by number or customer…"
-          onClear={() => setQ("")}
-        />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={isPhone}
-          contentContainerStyle={{ gap: 8, paddingRight: spacing.lg }}
-        >
-          {FILTERS.map((f) => (
-            <Chip
-              key={f.key}
-              testID={`filter-${f.key}`}
-              label={f.label}
-              active={statusFilter === f.key}
-              onPress={() => setStatusFilter(f.key)}
-              count={counts[f.key]}
+      <FlatList
+        data={items ? filtered : []}
+        keyExtractor={(quotation) => quotation.id}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={7}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.listContent}
+        ItemSeparatorComponent={() => <View style={{ height: spacing.sm }} />}
+        ListHeaderComponent={
+          <View style={styles.listHeader}>
+            <SearchField
+              testID="quotations-search"
+              value={q}
+              onChangeText={setQ}
+              placeholder="Search by number or customer…"
+              onClear={() => setQ("")}
             />
-          ))}
-        </ScrollView>
-      </View>
-
-      {!items ? (
-        <View style={{ gap: spacing.sm }}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <View key={i} style={[styles.card, { gap: 10 }]}>
-              <Skeleton w={110} h={12} />
-              <Skeleton w={220} h={16} />
-              <Skeleton w={160} h={12} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={isPhone} contentContainerStyle={{ gap: 8, paddingRight: spacing.lg }}>
+              {FILTERS.map((f) => (
+                <Chip key={f.key} testID={`filter-${f.key}`} label={f.label} active={statusFilter === f.key} onPress={() => setStatusFilter(f.key)} count={counts[f.key]} />
+              ))}
+            </ScrollView>
+          </View>
+        }
+        ListEmptyComponent={
+          !items ? (
+            <View style={{ gap: spacing.sm }}>
+              {Array.from({ length: 6 }).map((_, i) => <View key={i} style={[styles.card, { gap: 10 }]}><Skeleton w={110} h={12} /><Skeleton w={220} h={16} /><Skeleton w={160} h={12} /></View>)}
             </View>
-          ))}
-        </View>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon="file-text"
-          title={q || statusFilter !== "all" ? "No quotations match" : "No quotations yet"}
-          subtitle={q || statusFilter !== "all" ? "Try clearing filters or searching a different term." : "Press New Quotation to start building."}
-        />
-      ) : (
-        <View style={{ gap: spacing.sm }}>
-          {filtered.map((q0) => (
-            <QuotationRow
-              key={q0.id}
-              q={q0}
-              onPress={() => router.push(`/(admin)/quotations/${q0.id}` as any)}
-              canDelete={!!staff && ["owner", "admin", "manager"].includes(staff.role)}
-              onDelete={() => setDeleteTarget(q0)}
-            />
-          ))}
-        </View>
-      )}
+          ) : (
+            <EmptyState icon="file-text" title={q || statusFilter !== "all" ? "No quotations match" : "No quotations yet"} subtitle={q || statusFilter !== "all" ? "Try clearing filters or searching a different term." : "Press New Quotation to start building."} />
+          )
+        }
+        renderItem={({ item }) => (
+          <QuotationRow q={item} onPress={() => router.push(`/(admin)/quotations/${item.id}` as any)} canDelete={!!staff && ["owner", "admin", "manager"].includes(staff.role)} onDelete={() => setDeleteTarget(item)} />
+        )}
+      />
       <ConfirmDialog
         visible={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -216,6 +201,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: spacing.md,
   },
+  listContent: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.huge, flexGrow: 1 },
+  listHeader: { gap: spacing.md, marginBottom: spacing.md },
   numberText: {
     fontSize: 12,
     fontFamily: font.medium,
