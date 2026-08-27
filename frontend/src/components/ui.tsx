@@ -7,6 +7,7 @@ import { isValidElement, useEffect, useRef } from "react";
 import {
   ActivityIndicator,
   Animated,
+  KeyboardAvoidingView,
   Modal as RNModal,
   Platform,
   Pressable,
@@ -17,6 +18,7 @@ import {
   View,
   ViewStyle,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
   colors,
@@ -1117,6 +1119,7 @@ export function Sheet({
   headerRight?: React.ReactNode;
 }) {
   const { isDesktop } = useBp();
+  const insets = useSafeAreaInsets();
   const kind: "right" | "center" | "bottom" =
     variant === "modal" ? "center"
     : variant === "bottom" ? "bottom"
@@ -1153,6 +1156,7 @@ export function Sheet({
 
   return (
     <RNModal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
       <View style={[{ flex: 1, backgroundColor: colors.overlay, zIndex: 1000 }, backdropAlign]}>
         {dismissable ? (
           <Pressable
@@ -1164,6 +1168,7 @@ export function Sheet({
         ) : null}
         <View
           testID={testID}
+          accessibilityViewIsModal
           style={[
             { backgroundColor: colors.surfaceSecondary, overflow: "hidden", position: "relative", zIndex: 1001 },
             elevation.high,
@@ -1189,10 +1194,11 @@ export function Sheet({
 
           {/* Footer — identical everywhere */}
           {footer ? (
-            <View style={sheetStyles.footer}>{footer}</View>
+            <View style={[sheetStyles.footer, kind === "bottom" ? { paddingBottom: Math.max(spacing.md, insets.bottom + spacing.xs) } : null]}>{footer}</View>
           ) : null}
         </View>
       </View>
+      </KeyboardAvoidingView>
     </RNModal>
   );
 }
