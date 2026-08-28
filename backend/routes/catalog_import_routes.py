@@ -9,8 +9,8 @@ import logging
 import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 
-from auth import floor_for_write, floor_inherit, floor_query, get_current_user, require_min_role
-from catalog_pipeline.orchestrator import import_accepted, rollback_job, run_pipeline
+from auth import floor_for_write, floor_query, get_current_user, require_min_role
+from catalog_pipeline.orchestrator import rollback_job, run_pipeline
 from db import db
 from models import CatalogImportJob, UserPublic
 from settings import settings
@@ -272,7 +272,7 @@ async def approve_and_import(
             raise HTTPException(status_code=409, detail="This import is already processing; refresh for progress.")
         raise HTTPException(status_code=409, detail="This import cannot be approved in its current state.")
     await enqueue(job_id, user.id)
-    return {"job_id": job_id, "status": "processing", "progress": claimed.get("import_progress", {"completed": 0, "failed": 0, "total": sum(r.get("status") == "accepted" for r in doc.get("rows", []))})
+    return {"job_id": job_id, "status": "processing", "progress": claimed.get("import_progress", {"completed": 0, "failed": 0, "total": sum(r.get("status") == "accepted" for r in doc.get("rows", []))})}
 
 
 @router.post("/{job_id}/rows/{row_id}/retry")

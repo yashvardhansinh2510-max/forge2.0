@@ -28,6 +28,24 @@ def normalize_tile_line_item(item: QuotationLineItem) -> QuotationLineItem:
     here—not in a presentation component. The offer rate is the actual
     selling price: if it is absent, the rate per SQ.FT is used instead.
     """
+    # Individual tiles are priced per *piece*, not per square foot or box.
+    # A Pieces line can still carry old box fields after an editor toggle, so
+    # resolve its unit price before the box-rate conversion below.  Prefer an
+    # explicit rate_box (the legacy persisted unit-rate field), then the
+    # offered rate, and finally the submitted unit_price.  In particular,
+    # treat 0 as an unset fallback here: the editor used to submit rate_box=0
+    # alongside a valid ₹/piece offer rate, producing a zero-value order.
+    if item.quantity_unit == "Pieces":
+        per_piece_rate = next(
+            (value for value in (item.rate_box, item.offer_rate, item.unit_price) if value is not None and float(value) > 0),
+            0.0,
+        )
+        item.rate_box = round(float(per_piece_rate), 2)
+        item.unit_price = item.rate_box
+        # Preserve rate_sqft / box_sqft as historical display metadata only;
+        # they must never affect a per-piece line's arithmetic.
+        return item
+
     if item.rate_sqft is None and item.offer_rate is not None:
         item.rate_sqft = item.offer_rate
     if item.offer_rate is None:

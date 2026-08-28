@@ -186,13 +186,14 @@ const num = (text: string): number => {
   return Number.isFinite(value) ? value : 0;
 };
 
-// Offer rate is the selling rate. When no offer has been entered, rate/SQ.FT
-// is the effective offer; this keeps the editor, API, and PDF on one formula.
+// Offer rate is the selling rate. Per-piece products use it directly; boxed
+// products use it as a per-square-foot rate before converting to rate/box.
 function effectiveTileRate(row: TileRow): number {
   return row.offerRate.trim() !== "" ? num(row.offerRate) : num(row.rateSqft);
 }
 
 function derivedTileBoxRate(row: TileRow): number | null {
+  if (row.quantityUnit === "Pieces") return null;
   const sqft = num(row.boxSqft);
   return sqft > 0 ? Math.round(effectiveTileRate(row) * sqft * 100) / 100 : null;
 }
@@ -206,10 +207,8 @@ function resolvedLineTotal(row: TileRow): number {
   if (row.totalEdited && manualTotal > 0) return manualTotal;
 
   const quantity = num(row.totalBox) || 1;
-  const rateBox = derivedTileBoxRate(row) ?? num(row.rateBox);
-  // Box/Piece is an operational quantity label, not a pricing mode. Toggling
-  // it must never silently divide the quoted rate by pieces-per-box.
-  return quantity * rateBox;
+  const unitRate = (derivedTileBoxRate(row) ?? num(row.rateBox)) || effectiveTileRate(row);
+  return quantity * unitRate;
 }
 
 function lineTotalInputValue(row: TileRow): string {
@@ -335,7 +334,7 @@ function useTilesDoc(docType: TilesDocType) {
       }
       // Recalculate immediately when the selling rate or box coverage changes
       // so the on-screen total never lags behind the edited offer.
-      if ("offerRate" in patch || "boxSqft" in patch || ("rateSqft" in patch && row.offerRateIsFallback)) {
+      if (next.quantityUnit === "Box" && ("offerRate" in patch || "boxSqft" in patch || ("rateSqft" in patch && row.offerRateIsFallback))) {
         const derived = derivedTileBoxRate(next);
         if (derived !== null) next.rateBox = String(derived);
       }
@@ -379,8 +378,9 @@ function useTilesDoc(docType: TilesDocType) {
     };
     setRows((cur) => cur.map((row) => {
       if (row.key !== key) return row;
-      const boxSqft = history?.box_sqft != null ? String(history.box_sqft) : (specNum("sqft_per_box", "box_sqft") || row.boxSqft);
-      const rateSqft = history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft);
+      const isPerPiece = String((specs as any).price_unit || "").trim().toLowerCase() === "per piece";
+      const boxSqft = isPerPiece ? "" : (history?.box_sqft != null ? String(history.box_sqft) : (specNum("sqft_per_box", "box_sqft") || row.boxSqft));
+      const rateSqft = isPerPiece ? "" : (history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft));
       const derivedRateBox = num(rateSqft) > 0 && num(boxSqft) > 0
         ? String(Math.round(num(rateSqft) * num(boxSqft) * 100) / 100)
         : row.rateBox;
@@ -395,11 +395,12 @@ function useTilesDoc(docType: TilesDocType) {
         size: history?.size || product.size || product.dimensions || row.size,
         rateSqft,
         boxSqft,
-        rateBox: history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox || derivedRateBox),
-        offerRate: history?.rate_sqft != null ? String(history.rate_sqft) : rateSqft,
+        rateBox: isPerPiece ? String(product.price || product.mrp || 0) : (history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox || derivedRateBox)),
+        offerRate: isPerPiece ? String(product.price || product.mrp || 0) : (history?.rate_sqft != null ? String(history.rate_sqft) : rateSqft),
         offerRateIsFallback: true,
-        pcsBox: history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox,
+        pcsBox: isPerPiece ? "" : (history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox),
         totalBox: row.totalBox || "1",
+        quantityUnit: isPerPiece ? "Pieces" : row.quantityUnit,
         totalEdited: false,
       };
       return next;
@@ -416,13 +417,13 @@ function useTilesDoc(docType: TilesDocType) {
         const qty = num(row.totalBox) || 1;
         const manualTotal = num(row.total);
         const derivedRateBox = derivedTileBoxRate(row);
-        const baseRateBox = derivedRateBox ?? num(row.rateBox);
+        const baseRateBox = (derivedRateBox ?? num(row.rateBox)) || effectiveTileRate(row);
         const rateBox = row.totalEdited && manualTotal > 0 && qty > 0
           ? Math.round(manualTotal / qty * 100) / 100
           : baseRateBox;
-        // Quantity unit changes workflow/fulfilment metadata only. Persist the
-        // same quoted price for Box and Piece so backend recalculation cannot
-        // change the quotation after a unit toggle.
+        // The rate is per selected quantity unit: per box for boxed tiles and
+        // per piece for individually sold tiles. The backend validates the
+        // same rule, so a quantity of 10 at ₹200/piece persists as ₹2,000.
         const unitPrice = rateBox;
         const item: any = {
           product_id: row.productId, sku: row.sku, name: row.name.trim(),
@@ -1204,7 +1205,7 @@ const selStyles = StyleSheet.create({
 // QUOTATION paper
 // ---------------------------------------------------------------------------
 // SR / PRODUCT IMAGE / AREA / PRODUCT DETAIL / SIZE / RATE-SQFT / OFFER RATE /
-// RATE-BOX / TOTAL BOX / PCS-BOX / TOTAL — mirrors pdf_tiles.py's _QUO_COLS.
+// RATE-UNIT / QUANTITY / PCS-BOX / TOTAL — mirrors pdf_tiles.py's _QUO_COLS.
 // Matches backend/pdf_tiles.py's _QUO_COLS, normalized here as proportions.
 const QUO_COLS = [10, 50, 20, 46, 21, 21, 21, 21, 19, 18, 34];
 const QUO_COL_TOTAL = QUO_COLS.reduce((total, width) => total + width, 0);
@@ -1227,7 +1228,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
 
   const headLabels = [
     "SR.\nNO.", "PRODUCT IMAGE", "AREA", "PRODUCT DETAIL", "SIZE",
-    "RATE/\nSQ.FT", "OFFER\nRATE", "RATE/\nBOX", "TOTAL\nBOX", "PCS/\nBOX", "TOTAL\n(Rs.)",
+    "RATE/\nSQ.FT", "OFFER\nRATE", "RATE/\nUNIT", "QUANTITY", "PCS/\nBOX", "TOTAL\n(Rs.)",
   ];
   return (
     <View style={{ gap: spacing.lg }}>
@@ -1388,8 +1389,8 @@ const MOBILE_FIELDS: Record<TilesDocType, MobileFieldDef[]> = {
     { key: "size", label: "Size" },
     { key: "rateSqft", label: "Rate / Sq.Ft", numeric: true },
     { key: "offerRate", label: "Offer Rate", numeric: true },
-    { key: "rateBox", label: "Rate / Box", numeric: true },
-    { key: "totalBox", label: "Qty (Boxes)", numeric: true },
+    { key: "rateBox", label: "Rate / Unit", numeric: true },
+    { key: "totalBox", label: "Quantity", numeric: true },
     { key: "pcsBox", label: "Pcs / Box" },
     { key: "total", label: "Line Total (Rs.)", numeric: true },
   ],
@@ -1469,7 +1470,7 @@ function MobileRowCard({
         {fields.map((f) => (
           <View key={f.key} style={mobileStyles.fieldFull}>
             <TextField
-              label={f.label}
+              label={f.key === "rateBox" ? `Rate / ${quantityUnitLabel(row.quantityUnit)}` : f.key === "totalBox" ? `Qty (${row.quantityUnit === "Pieces" ? "Pieces" : "Boxes"})` : f.label}
               value={f.key === "total" ? lineTotalInputValue(row) : (row as any)[f.key]}
               onChangeText={(t: string) => doc.updateRow(row.key, { [f.key]: t } as Partial<TileRow>)}
               keyboardType={f.numeric ? "decimal-pad" : "default"}

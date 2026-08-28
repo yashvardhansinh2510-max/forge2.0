@@ -71,3 +71,15 @@ def test_health_demo_check_is_ttl_cached(monkeypatch):
     asyncio.run(server.health())
     asyncio.run(server.health())
     assert calls["count"] == 1  # second call served from the TTL cache, no re-check
+
+
+def test_startup_bootstrap_result_primes_health_demo_cache(monkeypatch):
+    server._cache_demo_check_from_bootstrap({"demo_accounts_detected": []})
+
+    async def _should_not_run(_db):
+        raise AssertionError("health should reuse the completed startup check")
+
+    monkeypatch.setattr(server, "_check_demo_accounts", _should_not_run)
+    monkeypatch.setattr(server, "db", _FakeDb())
+
+    assert asyncio.run(server.health()) == {"status": "ok"}

@@ -142,6 +142,20 @@ async def _demo_accounts_detected() -> list[str]:
     return _demo_check_cache["emails"]
 
 
+def _cache_demo_check_from_bootstrap(checks: dict[str, Any]) -> None:
+    """Reuse startup's bcrypt-based demo-account result for health probes.
+
+    ``run_bootstrap`` already performs this same security check before the
+    process can become ready. Repeating several deliberately slow bcrypt calls
+    on the first `/health` request adds avoidable cold-path latency, while
+    retaining the ten-minute refresh preserves detection after startup.
+    """
+    detected = checks.get("demo_accounts_detected")
+    if isinstance(detected, list) and all(isinstance(email, str) for email in detected):
+        _demo_check_cache["emails"] = detected
+        _demo_check_cache["checked_at"] = monotonic()
+
+
 @api.get("/")
 async def root():
     return {"name": "Forge API", "version": "0.1.0", "status": "ok"}
@@ -276,6 +290,7 @@ async def _startup():
     # migration that would satisfy it never gets the chance to run.
     preflight = await run_bootstrap()
     preflight.require_healthy()
+    _cache_demo_check_from_bootstrap(preflight.checks)
 
     await ensure_floor_scope()
     await seed_if_empty()

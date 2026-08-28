@@ -18,18 +18,25 @@ import { uriToBlob } from "@/src/utils/uriToBlob";
 const SUPPORTED = ["Hansgrohe", "Axor", "Grohe", "Vitra", "Geberit"] as const;
 type Brand = typeof SUPPORTED[number];
 const MISSING = "[MISSING DATA]";
+// Keep bulk edits gentle on the API and on the browser. This is deliberately
+// small: the server remains the authority for row updates.
+const ROW_PATCH_CONCURRENCY = 4;
+const REVIEW_PAGE_SIZE = 50;
 
 type Row = {
   row_id: string; brand: string; name: string; sku: string; category: string;
   finish: string; material: string; dimensions: string; warranty: string;
   mrp: number | string; price: number | string; confidence: number;
   issues: string[]; status: "pending" | "accepted" | "rejected";
+  import_state?: "succeeded" | "failed";
+  import_error?: string | null;
 };
 
 type Job = {
   id: string; filename: string; source_type: "excel" | "pdf" | "csv";
   supplier_name: string; total_rows: number; accepted_rows: number;
   rejected_rows: number; status: string; rows: Row[]; created_at: string;
+  import_progress?: { completed: number; failed: number; total: number };
   extraction?: {
     pages: number; raw_rows: number; parsed_rows: number;
     images_found: number; images_mapped: number; warnings?: string[];
@@ -46,6 +53,27 @@ type Job = {
   };
 };
 
+type RowOperation = {
+  busy?: boolean;
+  failedPatch?: Record<string, unknown>;
+  error?: string;
+};
+
+function requestError(error: any) {
+  return error?.detail || error?.message || "Could not save this row. Try again.";
+}
+
+async function runBounded<T>(items: T[], worker: (item: T) => Promise<void>, concurrency = ROW_PATCH_CONCURRENCY) {
+  let next = 0;
+  const consume = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      await worker(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, consume));
+}
+
 export default function CatalogImport() {
   const router = useRouter();
   const [jobs, setJobs] = useState<Job[] | null>(null);
@@ -54,12 +82,43 @@ export default function CatalogImport() {
   const [uploading, setUploading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [urlInput, setUrlInput] = useState("");
+  const [rowOperations, setRowOperations] = useState<Record<string, RowOperation>>({});
+  const [acceptingAll, setAcceptingAll] = useState(false);
+  const [reviewPage, setReviewPage] = useState(0);
+  const [retryingImportRows, setRetryingImportRows] = useState<Record<string, boolean>>({});
+  const processingJobId = current?.status === "processing" ? current.id : null;
+
+  useEffect(() => {
+    setRowOperations({});
+    setReviewPage(0);
+  }, [current?.id]);
 
   const loadJobs = useCallback(async () => {
     const list = await api.get<Job[]>("/catalog/imports");
     setJobs(list);
   }, []);
   useEffect(() => { loadJobs(); }, [loadJobs]);
+
+  // Approval runs as a bounded server-side job. Poll only while that job is
+  // active, keeping the review visible so failed rows can be retried safely.
+  useEffect(() => {
+    if (!processingJobId) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const job = await api.get<Job>(`/catalog/imports/${processingJobId}`);
+        if (!active) return;
+        setCurrent((previous) => previous?.id === processingJobId ? job : previous);
+        if (job.status !== "processing") void loadJobs();
+      } catch {
+        // Keep the last known status and let the next poll recover from a
+        // transient network failure; avoid noisy toasts every few seconds.
+      }
+    };
+    void refresh();
+    const timer = setInterval(refresh, 2000);
+    return () => { active = false; clearInterval(timer); };
+  }, [processingJobId, loadJobs]);
 
   const pickAndUpload = async () => {
     try {
@@ -105,37 +164,70 @@ export default function CatalogImport() {
     }
   };
 
-  const acceptAll = () => {
-    if (!current) return;
-    const rows = current.rows.map((r) => ({ ...r, status: "accepted" as const }));
-    setCurrent({ ...current, rows });
-    Promise.all(rows.map((r) =>
-      api.patch(`/catalog/imports/${current.id}/rows/${r.row_id}`, { status: "accepted" })
-    ));
+  const saveRowPatch = async (row: Row, patch: Record<string, unknown>) => {
+    if (!current || importing || current.status === "processing" || rowOperations[row.row_id]?.busy) return;
+    const jobId = current.id;
+    setCurrent((job) => job && job.id === jobId ? {
+      ...job, rows: job.rows.map((candidate) => candidate.row_id === row.row_id ? { ...candidate, ...patch } : candidate),
+    } : job);
+    setRowOperations((operations) => ({ ...operations, [row.row_id]: { busy: true } }));
+    try {
+      await api.patch(`/catalog/imports/${jobId}/rows/${row.row_id}`, patch);
+      setRowOperations((operations) => {
+        const { [row.row_id]: _, ...rest } = operations;
+        return rest;
+      });
+    } catch (error: any) {
+      setRowOperations((operations) => ({
+        ...operations,
+        [row.row_id]: { failedPatch: patch, error: requestError(error) },
+      }));
+    }
   };
 
-  const toggleRow = async (r: Row, next: Row["status"]) => {
-    if (!current) return;
-    const rows = current.rows.map((x) => (x.row_id === r.row_id ? { ...x, status: next } : x));
-    setCurrent({ ...current, rows });
-    await api.patch(`/catalog/imports/${current.id}/rows/${r.row_id}`, { status: next });
+  const acceptAll = async () => {
+    if (!current || acceptingAll || importing) return;
+    const candidates = current.rows.filter((row) => row.status !== "accepted" && !rowOperations[row.row_id]?.busy);
+    if (!candidates.length) return;
+    setAcceptingAll(true);
+    try {
+      await runBounded(candidates, (row) => saveRowPatch(row, { status: "accepted" }));
+    } finally {
+      setAcceptingAll(false);
+    }
   };
 
-  const editField = async (r: Row, field: keyof Row, value: any) => {
-    if (!current) return;
-    const rows = current.rows.map((x) => (x.row_id === r.row_id ? { ...x, [field]: value } : x));
-    setCurrent({ ...current, rows });
-    await api.patch(`/catalog/imports/${current.id}/rows/${r.row_id}`, { [field]: value });
+  const toggleRow = (row: Row, status: Row["status"]) => saveRowPatch(row, { status });
+  const editField = (row: Row, field: keyof Row, value: unknown) => saveRowPatch(row, { [field]: value });
+  const retryRowSave = (row: Row) => {
+    const failedPatch = rowOperations[row.row_id]?.failedPatch;
+    if (failedPatch) void saveRowPatch(row, failedPatch);
+  };
+
+  const retryImportRow = async (row: Row) => {
+    if (!current || retryingImportRows[row.row_id]) return;
+    setRetryingImportRows((rows) => ({ ...rows, [row.row_id]: true }));
+    try {
+      const job = await api.post<Job>(`/catalog/imports/${current.id}/rows/${row.row_id}/retry`);
+      setCurrent((previous) => previous && previous.id === current.id ? { ...previous, status: job.status || "processing" } : previous);
+      toast.success(`Retry queued for ${row.name}`);
+    } catch (error: any) {
+      toast.error(requestError(error));
+    } finally {
+      setRetryingImportRows((rows) => {
+        const { [row.row_id]: _, ...rest } = rows;
+        return rest;
+      });
+    }
   };
 
   const importAccepted = async () => {
     if (!current) return;
     setImporting(true);
     try {
-      const res = await api.post<{ imported: number; skipped: number }>(`/catalog/imports/${current.id}/approve`);
-      toast.success(`Imported ${res.imported} products${res.skipped ? ` · ${res.skipped} skipped` : ""}`);
-      setCurrent(null);
-      loadJobs();
+      const res = await api.post<{ status: "processing"; progress: Job["import_progress"] }>(`/catalog/imports/${current.id}/approve`);
+      setCurrent((job) => job ? { ...job, status: res.status, import_progress: res.progress } : job);
+      toast.success("Import queued. This review will update as rows finish.");
     } catch (e: any) {
       toast.error(e?.detail || "Import failed");
     } finally {
@@ -150,20 +242,26 @@ export default function CatalogImport() {
     const pending = current.rows.filter((r) => r.status === "pending").length;
     const cert = current.certification;
     const ext = current.extraction;
+    const pageCount = Math.max(1, Math.ceil(current.rows.length / REVIEW_PAGE_SIZE));
+    const safePage = Math.min(reviewPage, pageCount - 1);
+    const pageRows = current.rows.slice(safePage * REVIEW_PAGE_SIZE, (safePage + 1) * REVIEW_PAGE_SIZE);
+    const processing = importing || current.status === "processing";
+    const changesInFlight = acceptingAll || Object.values(rowOperations).some((operation) => operation.busy);
+    const progress = current.import_progress;
     return (
       <AdminPage
         title={`Review · ${current.supplier_name}`}
         subtitle={`${current.filename} · ${current.total_rows} products · Powered by BuildCon Ingestion Framework`}
         right={
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button label="Discard" variant="secondary" onPress={() => setCurrent(null)} testID="discard-import" />
-            <Button label="Accept all" icon="check-square" variant="secondary" onPress={acceptAll} testID="accept-all" />
+            <Button label="Discard" variant="secondary" onPress={() => setCurrent(null)} disabled={processing || changesInFlight} testID="discard-import" />
+            <Button label={acceptingAll ? "Accepting…" : "Accept all"} icon="check-square" variant="secondary" onPress={acceptAll} disabled={processing || changesInFlight} loading={acceptingAll} testID="accept-all" />
             <Button
-              label={importing ? "Importing…" : `Import ${accepted} products`}
+              label={processing ? "Processing…" : `Import ${accepted} products`}
               icon="upload-cloud"
               onPress={importAccepted}
-              loading={importing}
-              disabled={accepted === 0}
+              loading={processing}
+              disabled={accepted === 0 || changesInFlight || processing}
               testID="import-accepted"
             />
           </View>
@@ -218,19 +316,38 @@ export default function CatalogImport() {
           <Badge tone="error" label={`${rejected} rejected`} />
         </View>
 
+        {processing && progress ? <View accessibilityLiveRegion="polite" style={styles.importProgress}><ActivityIndicator size="small" color={colors.brand} /><Text style={type.caption}>Importing in the background: {progress.completed + progress.failed} / {progress.total} complete{progress.failed ? ` · ${progress.failed} failed` : ""}</Text></View> : null}
+
+        <View accessibilityLabel={`Review page ${safePage + 1} of ${pageCount}. Showing ${pageRows.length} of ${current.rows.length} import rows.`} style={styles.reviewPagination}>
+          <Text style={type.caption}>Showing {safePage * REVIEW_PAGE_SIZE + 1}–{Math.min((safePage + 1) * REVIEW_PAGE_SIZE, current.rows.length)} of {current.rows.length}</Text>
+          <View style={styles.pageActions}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Previous review page" accessibilityState={{ disabled: safePage === 0 }} disabled={safePage === 0} onPress={() => setReviewPage((page) => Math.max(0, page - 1))} style={[styles.pageButton, safePage === 0 && styles.disabledControl]}><Feather name="chevron-left" size={16} color={colors.onSurface} /></Pressable>
+            <Text style={type.caption}>Page {safePage + 1} / {pageCount}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Next review page" accessibilityState={{ disabled: safePage >= pageCount - 1 }} disabled={safePage >= pageCount - 1} onPress={() => setReviewPage((page) => Math.min(pageCount - 1, page + 1))} style={[styles.pageButton, safePage >= pageCount - 1 && styles.disabledControl]}><Feather name="chevron-right" size={16} color={colors.onSurface} /></Pressable>
+          </View>
+        </View>
+
         <FlatList
-          data={current.rows}
+          data={pageRows}
           keyExtractor={(r) => r.row_id}
           scrollEnabled={false}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={5}
           contentContainerStyle={{ gap: spacing.sm }}
-          renderItem={({ item }) => (
+          renderItem={({ item }) => {
+            const operation = rowOperations[item.row_id];
+            const disabled = processing || Boolean(operation?.busy);
+            return (
             <Card style={styles.rowCard}>
               <View style={styles.rowHead}>
                 <View style={{ flex: 1, gap: 2 }}>
                   <TextInput
                     testID={`row-name-${item.row_id}`}
-                    value={item.name === MISSING ? "" : item.name}
-                    onChangeText={(v) => editField(item, "name", v)}
+                    defaultValue={item.name === MISSING ? "" : item.name}
+                    onEndEditing={(event) => editField(item, "name", event.nativeEvent.text || MISSING)}
+                    editable={!disabled}
+                    accessibilityLabel={`Product name for ${item.sku === MISSING ? "unspecified SKU" : item.sku}`}
                     placeholder="Product name"
                     placeholderTextColor={colors.onSurfaceMuted}
                     style={styles.rowNameInput}
@@ -245,14 +362,22 @@ export default function CatalogImport() {
                   <Pressable
                     testID={`reject-${item.row_id}`}
                     onPress={() => toggleRow(item, "rejected")}
-                    style={[styles.iconBtn, item.status === "rejected" && { backgroundColor: colors.errorBg }]}
+                    disabled={disabled}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Reject ${item.name}`}
+                    accessibilityState={{ disabled, selected: item.status === "rejected" }}
+                    style={[styles.iconBtn, item.status === "rejected" && { backgroundColor: colors.errorBg }, disabled && styles.disabledControl]}
                   >
                     <Feather name="x" size={14} color={item.status === "rejected" ? colors.error : colors.onSurfaceMuted} />
                   </Pressable>
                   <Pressable
                     testID={`accept-${item.row_id}`}
                     onPress={() => toggleRow(item, "accepted")}
-                    style={[styles.iconBtn, item.status === "accepted" && { backgroundColor: colors.successBg }]}
+                    disabled={disabled}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Accept ${item.name}`}
+                    accessibilityState={{ disabled, selected: item.status === "accepted" }}
+                    style={[styles.iconBtn, item.status === "accepted" && { backgroundColor: colors.successBg }, disabled && styles.disabledControl]}
                   >
                     <Feather name="check" size={14} color={item.status === "accepted" ? colors.success : colors.onSurfaceMuted} />
                   </Pressable>
@@ -260,11 +385,16 @@ export default function CatalogImport() {
               </View>
 
               <View style={styles.rowFields}>
-                <FieldInput label="MRP ₹" value={item.mrp} onChange={(v) => editField(item, "mrp", v === "" ? MISSING : Number(v))} keyboardType="decimal-pad" testID={`mrp-${item.row_id}`} />
-                <FieldInput label="PRICE ₹" value={item.price} onChange={(v) => editField(item, "price", v === "" ? MISSING : Number(v))} keyboardType="decimal-pad" testID={`price-${item.row_id}`} />
-                <FieldInput label="FINISH" value={item.finish} onChange={(v) => editField(item, "finish", v || MISSING)} />
-                <FieldInput label="MATERIAL" value={item.material} onChange={(v) => editField(item, "material", v || MISSING)} />
+                <FieldInput label="MRP ₹" value={item.mrp} onCommit={(v) => editField(item, "mrp", v === "" ? MISSING : Number(v))} keyboardType="decimal-pad" testID={`mrp-${item.row_id}`} disabled={disabled} accessibilityLabel={`MRP for ${item.name}`} />
+                <FieldInput label="PRICE ₹" value={item.price} onCommit={(v) => editField(item, "price", v === "" ? MISSING : Number(v))} keyboardType="decimal-pad" testID={`price-${item.row_id}`} disabled={disabled} accessibilityLabel={`Price for ${item.name}`} />
+                <FieldInput label="FINISH" value={item.finish} onCommit={(v) => editField(item, "finish", v || MISSING)} disabled={disabled} accessibilityLabel={`Finish for ${item.name}`} />
+                <FieldInput label="MATERIAL" value={item.material} onCommit={(v) => editField(item, "material", v || MISSING)} disabled={disabled} accessibilityLabel={`Material for ${item.name}`} />
               </View>
+
+              {operation?.busy ? <View accessibilityLiveRegion="polite" style={styles.rowSaveState}><ActivityIndicator size="small" color={colors.brand} /><Text style={type.caption}>Saving row…</Text></View> : null}
+              {operation?.error ? <View accessibilityLiveRegion="polite" style={styles.rowFailure}><Text style={[type.caption, { color: colors.error, flex: 1 }]}>Save failed: {operation.error}</Text><Pressable testID={`retry-save-${item.row_id}`} accessibilityRole="button" accessibilityLabel={`Retry saving ${item.name}`} onPress={() => retryRowSave(item)} style={styles.retryButton}><Feather name="rotate-cw" size={13} color={colors.error} /><Text style={[type.caption, { color: colors.error, fontWeight: "700" }]}>Retry</Text></Pressable></View> : null}
+              {item.import_state === "failed" ? <View accessibilityLiveRegion="polite" style={styles.rowFailure}><Text style={[type.caption, { color: colors.error, flex: 1 }]}>Import failed: {item.import_error || "Unknown import error"}</Text><Pressable testID={`retry-import-${item.row_id}`} accessibilityRole="button" accessibilityLabel={`Retry importing ${item.name}`} disabled={Boolean(retryingImportRows[item.row_id])} onPress={() => retryImportRow(item)} style={[styles.retryButton, retryingImportRows[item.row_id] && styles.disabledControl]}>{retryingImportRows[item.row_id] ? <ActivityIndicator size="small" color={colors.error} /> : <Feather name="rotate-cw" size={13} color={colors.error} />}<Text style={[type.caption, { color: colors.error, fontWeight: "700" }]}>Retry import</Text></Pressable></View> : null}
+              {item.import_state === "succeeded" ? <View accessibilityLiveRegion="polite" style={styles.rowImported}><Feather name="check-circle" size={13} color={colors.success} /><Text style={[type.caption, { color: colors.success }]}>Imported</Text></View> : null}
 
               {item.issues?.length ? (
                 <View style={styles.issueRow}>
@@ -275,7 +405,8 @@ export default function CatalogImport() {
                 </View>
               ) : null}
             </Card>
-          )}
+            );
+          }}
         />
       </AdminPage>
     );
@@ -417,17 +548,20 @@ export default function CatalogImport() {
   );
 }
 
-function FieldInput({ label, value, onChange, keyboardType = "default", testID }: {
-  label: string; value: string | number; onChange: (v: string) => void;
-  keyboardType?: "default" | "decimal-pad"; testID?: string;
+function FieldInput({ label, value, onCommit, keyboardType = "default", testID, disabled = false, accessibilityLabel }: {
+  label: string; value: string | number; onCommit: (v: string) => void;
+  keyboardType?: "default" | "decimal-pad"; testID?: string; disabled?: boolean; accessibilityLabel: string;
 }) {
   const display = value === MISSING || value === undefined || value === null ? "" : String(value);
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
-        value={display}
-        onChangeText={onChange}
+        defaultValue={display}
+        onEndEditing={(event) => onCommit(event.nativeEvent.text)}
+        editable={!disabled}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityState={{ disabled }}
         keyboardType={keyboardType}
         placeholder={MISSING}
         placeholderTextColor={colors.warning}
@@ -509,4 +643,13 @@ const styles = StyleSheet.create({
   issueSummary: {
     flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4,
   },
+  reviewPagination: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  pageActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  pageButton: { minWidth: 36, minHeight: 36, borderWidth: 1, borderColor: colors.border, borderRadius: 6, alignItems: "center", justifyContent: "center" },
+  disabledControl: { opacity: 0.5 },
+  rowSaveState: { flexDirection: "row", gap: 6, alignItems: "center" },
+  rowFailure: { flexDirection: "row", gap: 8, alignItems: "center", backgroundColor: colors.errorBg, padding: 8, borderRadius: 6 },
+  rowImported: { flexDirection: "row", gap: 6, alignItems: "center", backgroundColor: colors.successBg, padding: 8, borderRadius: 6 },
+  importProgress: { flexDirection: "row", gap: 8, alignItems: "center", backgroundColor: colors.brandTertiary, padding: 10, borderRadius: 6 },
+  retryButton: { minHeight: 36, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", gap: 4, borderWidth: 1, borderColor: colors.error, borderRadius: 6 },
 });

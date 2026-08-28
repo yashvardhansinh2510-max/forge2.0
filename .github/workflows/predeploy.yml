@@ -1,0 +1,49 @@
+name: Pre-deployment Gate
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Backend tests and dependency audit
+        working-directory: backend
+        run: |
+          pip install -r requirements-prod.txt pip-audit pytest
+          pip-audit -r requirements-prod.txt
+          python -m pytest tests/unit -q
+      - name: Frontend checks, tests, build and bundle budget
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npx tsc --noEmit
+          npx expo lint -- --max-warnings 0
+          npm run test:quotation-media && npm run test:quotation-contract && npm run test:notebook && npm run test:mobile-ux
+          npx expo export --platform web
+          npm run test:mobile-budget
+      - name: Live MongoDB, Supabase and required-index check (read-only)
+        working-directory: backend
+        env:
+          MONGO_URL: ${{ secrets.MONGO_URL }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_PUBLIC_BUCKET: forge-products
+          SUPABASE_PRIVATE_BUCKET: forge-private
+          MEDIA_STORAGE_DRIVER: supabase
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ENVIRONMENT: production
+        run: |
+          python scripts/predeploy_backend_gate.py
+          python scripts/predeploy_media_integrity.py --page-size 100 --delay-seconds 0.05
