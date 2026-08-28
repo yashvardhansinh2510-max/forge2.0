@@ -273,12 +273,22 @@ async def create_quotation(
     items = _normalize_tile_items([QuotationLineItem(**item) for item in canonical_items], body.doc_type)
     item_floor_ids: set[str] = set()
     for it in items:
-        p = await db.products.find_one({"id": it.product_id}, {"_id": 0, "category_id": 1, "floor_id": 1})
-        if p:
-            if not it.category_id:
-                it.category_id = p.get("category_id")
-            if p.get("floor_id"):
-                item_floor_ids.add(p["floor_id"])
+        p = await db.products.find_one(
+            floor_query(user, {"id": it.product_id}),
+            {"_id": 0, "category_id": 1, "floor_id": 1},
+        )
+        if not p:
+            raise HTTPException(status_code=400, detail="One or more quotation products are unavailable on this floor.")
+        if not it.category_id:
+            it.category_id = p.get("category_id")
+        if p.get("floor_id"):
+            item_floor_ids.add(p["floor_id"])
+
+    # A standard quotation must never mix catalog floors. This makes the
+    # document's business unit a server-enforced invariant rather than a
+    # best-effort inference from client-supplied item data.
+    if body.doc_type not in TILES_DOC_TYPES and len(item_floor_ids) > 1:
+        raise HTTPException(status_code=400, detail="A quotation can only contain products from one floor.")
 
     totals = _tile_totals(
         _recalc(items, body.project_discount_pct or 0, body.category_discounts or {}, body.room_discounts or {}),
@@ -422,12 +432,19 @@ async def update_quotation(
             QuotationLineItem(**i.dict()) if not isinstance(i, dict) else QuotationLineItem(**i)
             for i in body.items
         ]
-        # Backfill category_id
+        # Backfill category_id and ensure replacement lines stay in the
+        # quotation's established floor. Product ids are client-controlled,
+        # so an unscoped lookup here would let a caller splice a foreign-floor
+        # catalog item into an otherwise valid quotation.
         for it in items_typed:
+            p = await db.products.find_one(
+                floor_query(user, {"id": it.product_id, "floor_id": doc.get("floor_id")}),
+                {"_id": 0, "category_id": 1},
+            )
+            if not p:
+                raise HTTPException(status_code=400, detail="One or more quotation products are unavailable on this quotation's floor.")
             if not it.category_id:
-                p = await db.products.find_one({"id": it.product_id}, {"_id": 0, "category_id": 1})
-                if p:
-                    it.category_id = p.get("category_id")
+                it.category_id = p.get("category_id")
         canonical_items = await _canonicalize_item_images(items_typed)
         update["items"] = [i.dict() for i in _normalize_tile_items(
             [QuotationLineItem(**item) for item in canonical_items], doc.get("doc_type", "standard")

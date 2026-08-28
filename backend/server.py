@@ -13,7 +13,11 @@ from middleware import SecurityHeadersMiddleware
 
 from bootstrap import _check_demo_accounts, run_bootstrap
 from settings import settings
-from services.monitoring import init_monitoring
+from services.monitoring import (
+    init_monitoring,
+    record_request_timing,
+    request_timing_enabled,
+)
 from media_storage import get_media_storage
 
 from db import client, db  # noqa: E402
@@ -67,6 +71,37 @@ _monitoring_status = init_monitoring()
 
 app = FastAPI(title="Forge API", version="0.1.0")
 api = APIRouter(prefix="/api")
+
+
+@app.middleware("http")
+async def record_api_request_timing(request: Request, call_next):
+    """Emit bounded, PII-safe latency telemetry without affecting responses.
+
+    The timer covers middleware plus endpoint execution.  It intentionally
+    uses the matched route template after dispatch, never a raw path/query,
+    and only adds the response header for API calls so static/media responses
+    retain their existing cache behaviour.
+    """
+    if not request_timing_enabled() or not request.url.path.startswith("/api/"):
+        return await call_next(request)
+
+    started_at = monotonic()
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", None) or "<unmatched>"
+        status_code = response.status_code if response is not None else 500
+        duration_ms = record_request_timing(
+            method=request.method,
+            path=route_path,
+            status_code=status_code,
+            started_at=started_at,
+        )
+        if response is not None:
+            response.headers["Server-Timing"] = f'app;dur={duration_ms:.1f}'
 
 
 @app.middleware("http")

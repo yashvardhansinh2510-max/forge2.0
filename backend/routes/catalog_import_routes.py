@@ -16,6 +16,7 @@ from models import CatalogImportJob, UserPublic
 from settings import settings
 
 from services import catalog_service
+from services.catalog_import_jobs import claim_for_processing, enqueue
 
 router = APIRouter(prefix="/catalog/imports", tags=["catalog-import"])
 logger = logging.getLogger("forge.catalog_import")
@@ -264,22 +265,40 @@ async def approve_and_import(
     if not doc:
         raise HTTPException(status_code=404, detail="Import job not found")
 
-    cert = doc.get("certification") or {}
-    if cert and cert.get("duplicates_sku", 0) > 0:
-        # Not fatal but flagged in response
-        pass
+    claimed = await claim_for_processing(job_id, floor_query(user, {"id": job_id}))
+    if not claimed:
+        current = await db.catalog_imports.find_one(floor_query(user, {"id": job_id}), {"_id": 0, "status": 1, "import_progress": 1})
+        if current and current.get("status") == "processing":
+            raise HTTPException(status_code=409, detail="This import is already processing; refresh for progress.")
+        raise HTTPException(status_code=409, detail="This import cannot be approved in its current state.")
+    await enqueue(job_id, user.id)
+    return {"job_id": job_id, "status": "processing", "progress": claimed.get("import_progress", {"completed": 0, "failed": 0, "total": sum(r.get("status") == "accepted" for r in doc.get("rows", []))})
 
-    stats = await import_accepted(doc, user.id, floor_id=floor_inherit(doc))
-    catalog_service.schedule_catalog_refresh()
-    await db.catalog_imports.update_one(
-        floor_query(user, {"id": job_id}),
-        {"$set": {
-            "status": "imported",
-            "accepted_rows": stats["imported"] + stats["updated"],
-            "rejected_rows": stats["skipped"],
-        }},
-    )
-    return stats
+
+@router.post("/{job_id}/rows/{row_id}/retry")
+async def retry_failed_row(
+    job_id: str, row_id: str,
+    user: UserPublic = Depends(require_min_role("manager")),
+):
+    doc = await db.catalog_imports.find_one(floor_query(user, {"id": job_id}), {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Import job not found")
+    rows = doc.get("rows") or []
+    row = next((r for r in rows if r.get("row_id") == row_id), None)
+    if not row:
+        raise HTTPException(status_code=404, detail="Row not found")
+    if row.get("import_state") != "failed":
+        raise HTTPException(status_code=409, detail="Only failed rows can be retried")
+    row.update({"import_state": None, "import_error": None, "imported_at": None})
+    claimed = await claim_for_processing(job_id, floor_query(user, {"id": job_id}))
+    if not claimed:
+        # A concurrent retry/approval owns the worker; persist the retry request
+        # and let that worker pick it up rather than launching duplicate writes.
+        await db.catalog_imports.update_one(floor_query(user, {"id": job_id}), {"$set": {"rows": rows}})
+        return {"job_id": job_id, "status": "processing"}
+    await db.catalog_imports.update_one(floor_query(user, {"id": job_id}), {"$set": {"rows": rows}})
+    await enqueue(job_id, user.id)
+    return {"job_id": job_id, "status": "processing"}
 
 
 @router.post("/{job_id}/rollback")
@@ -300,7 +319,7 @@ async def delete_job(
     job_id: str,
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
-    res = await db.catalog_imports.delete_one(floor_query(user, {"id": job_id}))
+    res = await db.catalog_imports.delete_one(floor_query(user, {"id": job_id, "status": {"$ne": "processing"}}))
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Import job not found")
     return {"ok": True}

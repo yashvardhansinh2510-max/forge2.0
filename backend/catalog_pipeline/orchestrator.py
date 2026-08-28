@@ -158,6 +158,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
     errors: list[dict] = []
     snapshots: list[dict] = []
     job_id = job.get("id")
+    attempted_row_ids: list[str] = []
 
     def _clean(v):
         return None if v in (None, MISSING) else v
@@ -165,8 +166,11 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
     for r in job.get("rows", []):
         if r.get("status") != "accepted":
             continue
+        if r.get("row_id") is not None:
+            attempted_row_ids.append(str(r["row_id"]))
         if r.get("mrp") in (None, MISSING) or r.get("category") in (None, MISSING):
             skipped += 1
+            errors.append({"row_id": r.get("row_id"), "sku": r.get("sku"), "error": "Accepted row is missing price or category"})
             continue
 
         try:
@@ -326,7 +330,7 @@ async def import_accepted(job: dict, user_id: str, blob_map: dict[str, str] | No
         for i in range(0, len(snapshots), 200):
             await db.catalog_import_snapshots.insert_many(snapshots[i:i + 200])
 
-    return {"imported": imported, "updated": updated, "skipped": skipped, "failed": failed, "errors": errors}
+    return {"imported": imported, "updated": updated, "skipped": skipped, "failed": failed, "errors": errors, "attempted_row_ids": attempted_row_ids}
 
 
 async def _upload_supplier_images(

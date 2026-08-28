@@ -49,7 +49,12 @@ async def main() -> int:
     print()
     print("RESULT:", "PASS (clean)" if public["ok"] else "FAIL (see above)")
 
-    Path("/app/memory/catalog_verify_latest.json").write_text(json.dumps(public, indent=2), encoding="utf-8")
+    # Keep the report alongside the repository in both the production image
+    # (/app) and local checkouts. A hard-coded container path made this
+    # otherwise read-only pre-deployment check exit non-zero on developer and
+    # CI machines after it had already completed the database scan.
+    output_path = Path(__file__).resolve().parents[2] / "memory" / "catalog_verify_latest.json"
+    output_path.write_text(json.dumps(public, indent=2), encoding="utf-8")
     return 0 if public["ok"] else 1
 
 

@@ -51,17 +51,24 @@ export function ProductImageManagerBody({
   const [pending, setPending] = useState<Pending | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const list = await api.get<MediaItem[]>(`/products/${productId}/media`);
+      const list = await api.get<MediaItem[]>(`/products/${productId}/media`, { signal });
       setMedia(list);
     } catch (e: any) {
+      if (signal?.aborted) return;
       toast.error(e?.message || "Couldn't load images");
       setMedia([]);
     }
   }, [productId]);
 
-  useEffect(() => { setMedia(null); setPending(null); load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setMedia(null);
+    setPending(null);
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   const pick = async (replaceId?: string) => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
