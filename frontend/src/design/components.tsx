@@ -371,8 +371,8 @@ export function Skeleton({ w = "100%", h = 14, r = 6, style }: {
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.5, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: Platform.OS !== "web" }),
+        Animated.timing(pulse, { toValue: 0.5, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: Platform.OS !== "web" }),
       ]),
     );
     loop.start();
@@ -443,7 +443,7 @@ export function Tabs<T extends string>({
 // ═════════════════════════════════════════════ Sheet ════════════════════════
 // One overlay primitive: bottom sheet on phones, centered panel on larger.
 export function Sheet({
-  open, onClose, title, children, footer, width = 480,
+  open, onClose, title, children, footer, width = 480, maxHeight = 0.88, testID,
 }: {
   open: boolean;
   onClose: () => void;
@@ -451,6 +451,8 @@ export function Sheet({
   children: React.ReactNode;
   footer?: React.ReactNode;
   width?: number;
+  maxHeight?: number;
+  testID?: string;
 }) {
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -461,9 +463,9 @@ export function Sheet({
   useEffect(() => {
     if (open) {
       setVisible(true);
-      Animated.timing(anim, { toValue: 1, duration: motion.standard, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      Animated.timing(anim, { toValue: 1, duration: motion.standard, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== "web" }).start();
     } else {
-      Animated.timing(anim, { toValue: 0, duration: motion.quick, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(({ finished }) => {
+      Animated.timing(anim, { toValue: 0, duration: motion.quick, easing: Easing.in(Easing.cubic), useNativeDriver: Platform.OS !== "web" }).start(({ finished }) => {
         if (finished) setVisible(false);
       });
     }
@@ -483,12 +485,12 @@ export function Sheet({
           ? {
               borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl,
               paddingBottom: insets.bottom + space.x4,
-              maxHeight: winH * 0.88,
+              maxHeight: winH * maxHeight,
               transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [40, 0] }) }],
             }
           : {
               borderRadius: radius.xl, width: Math.min(width, winW - 48),
-              maxHeight: winH * 0.85, alignSelf: "center",
+              maxHeight: winH * Math.min(maxHeight, 0.85), alignSelf: "center",
               transform: [
                 { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
                 { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] }) },
@@ -537,8 +539,10 @@ export function Sheet({
           />
         </Animated.View>
         <View
-          pointerEvents="box-none"
-          style={{ flex: 1, justifyContent: isPhone ? "flex-end" : "center" }}
+          style={{ flex: 1, justifyContent: isPhone ? "flex-end" : "center", pointerEvents: "box-none" }}
+          accessibilityViewIsModal
+          accessibilityLabel={title ? `${title} sheet` : "Dialog"}
+          testID={testID}
         >
           {panel}
         </View>
@@ -596,7 +600,7 @@ export function Menu({
     ref.current?.measureInWindow((x, y, w, h) => {
       setPos({ x, y: y + h + 6, w });
       anim.setValue(0);
-      Animated.timing(anim, { toValue: 1, duration: motion.quick, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      Animated.timing(anim, { toValue: 1, duration: motion.quick, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== "web" }).start();
     });
   }, [anim]);
 
@@ -670,7 +674,7 @@ export function FadeIn({ children, delay = 0, style }: {
   useEffect(() => {
     Animated.timing(anim, {
       toValue: 1, duration: motion.entrance, delay,
-      easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== "web",
     }).start();
   }, [anim, delay]);
   return (

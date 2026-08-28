@@ -8,7 +8,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
@@ -47,7 +47,7 @@ export default function SettingsNotifications() {
 
   return (
     <AdminPage title="Notifications" subtitle="Channels & follow-up rules" back={() => router.back()}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: spacing.lg }}>
+      <View style={{ gap: spacing.lg }}>
         <Card style={{ gap: spacing.md }}>
           <Text style={type.overline}>Channels</Text>
           <IntegrationRow icon="mail" name="Email" status="Not connected" ok={false} note="No email provider is configured yet. Connecting one (e.g. SendGrid) is a setup step for a future release, not a launch blocker." />
@@ -72,7 +72,7 @@ export default function SettingsNotifications() {
             ))
           )}
         </Card>
-      </ScrollView>
+      </View>
     </AdminPage>
   );
 }

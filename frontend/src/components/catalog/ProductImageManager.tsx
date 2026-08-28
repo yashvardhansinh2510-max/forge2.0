@@ -12,7 +12,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { api, csrfHeaders, getToken } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
@@ -20,6 +20,7 @@ import { Badge, Button, ConfirmDialog, EmptyState, Sheet } from "@/src/component
 import { ProductImage } from "@/src/components/ProductImage";
 import { colors, PRODUCT_IMAGE_ASPECT_RATIO, radius, spacing, type } from "@/src/theme/tokens";
 import { uriToBlob } from "@/src/utils/uriToBlob";
+import { useBp } from "@/src/design/responsive";
 
 type MediaItem = {
   id: string; public_url?: string | null; source_type: string; role: string;
@@ -43,8 +44,8 @@ export function ProductImageManagerBody({
    * makes THIS screen reflect it immediately without a manual reload). */
   onChanged?: () => void;
 }) {
-  const { width: winW } = useWindowDimensions();
-  const cols = winW >= 640 ? 3 : 2;
+  const { isPhone } = useBp();
+  const cols = isPhone ? 2 : 3;
   const [media, setMedia] = useState<MediaItem[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);

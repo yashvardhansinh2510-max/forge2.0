@@ -139,7 +139,7 @@ const HISTORY_SORTS: { value: string; label: string }[] = [
 
 // ═══════════════════════════════════════════════════════════════════════════
 export default function PaymentsScreen() {
-  const { isDesktop } = useBp();
+  const { isDesktop, isPhone } = useBp();
   const router = useRouter();
 
   const [tab, setTab] = useState<TabKey>("collections");
@@ -332,7 +332,7 @@ export default function PaymentsScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         title="Payments"
         subtitle={tab === "collections"

@@ -1498,6 +1498,7 @@ function MobileRowCard({
 function MobileTilesEditor({
   docType, doc, router, onDelete,
 }: { docType: TilesDocType; doc: ReturnType<typeof useTilesDoc>; router: ReturnType<typeof useRouter>; onDelete: () => void }) {
+  const { isPhone } = useBp();
   const insets = useSafeAreaInsets();
   const [pickerRow, setPickerRow] = useState<string | null>(null);
   const isSelection = docType === "tiles_selection";
@@ -1529,7 +1530,7 @@ function MobileTilesEditor({
       : null;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={isPhone ? [] : ["top"]}>
       <View style={mobileStyles.header}>
         <Pressable onPress={() => router.back()} hitSlop={10} style={shellStyles.backBtn} testID="tiles-back">
           <Feather name="chevron-left" size={20} color={colors.onSurface} />

@@ -201,13 +201,45 @@ export function DataTable<T>({
   const stickyWidth = columns
     .filter((column) => column.sticky)
     .reduce((total, column) => total + columnFloor(column), 0);
-  const innerScroll = Boolean(fillViewport) && bodyMaxHeight != null;
+  // Route-level pages own vertical movement for their paginated tables. Do
+  // not let `fillViewport` silently introduce a second vertical responder
+  // when such a table is rendered inside PageShell (especially on tablets).
+  const innerScroll = Boolean(fillViewport) && bodyMaxHeight != null && scrollOwner === "self";
   const pinEnabled = stickyWidth > 0
     && !innerScroll
     && availableWidth > 0
     && availableWidth - stickyWidth >= MIN_UNPINNED_WIDTH;
 
   if (isPhone) {
+    const renderMobileRow = (item: T, index: number) => {
+      const selected = isRowSelected?.(item, index) ?? false;
+      const content = (
+        <View style={styles.mobileCardContent}>
+          {columns.filter((column) => column.label).map((column) => (
+            <View key={column.key} style={styles.mobileField}>
+              <Text style={styles.mobileLabel}>{column.label}</Text>
+              <View style={styles.mobileValue}>{column.render(item)}</View>
+            </View>
+          ))}
+          {columns.filter((column) => !column.label).map((column) => (
+            <View key={column.key} style={styles.mobileAction}>{column.render(item)}</View>
+          ))}
+        </View>
+      );
+      if (!onRowPress) {
+        return <View testID={rowTestID?.(item, index)} style={[styles.mobileCard, selected ? styles.bodyRowSelected : null]}>{content}</View>;
+      }
+      return (
+        <Pressable
+          testID={rowTestID?.(item, index)}
+          onPress={() => onRowPress(item, index)}
+          style={({ pressed }) => [styles.mobileCard, selected ? styles.bodyRowSelected : null, pressed ? styles.bodyRowPressed : null]}
+        >
+          {content}
+        </Pressable>
+      );
+    };
+
     return (
       <View
         ref={shellRef}
@@ -220,45 +252,27 @@ export function DataTable<T>({
           });
         }}
       >
-        <FlatList
-          data={data}
-          keyExtractor={keyExtractor}
-          scrollEnabled={scrollOwner === "self"}
-          nestedScrollEnabled={scrollOwner === "self"}
-          initialNumToRender={6}
-          maxToRenderPerBatch={6}
-          windowSize={5}
-          contentContainerStyle={styles.mobileListContent}
-          ListEmptyComponent={<View style={styles.mobileEmpty}><Text style={type.bodyMuted}>{emptyMessage}</Text></View>}
-          renderItem={({ item, index }) => {
-            const selected = isRowSelected?.(item, index) ?? false;
-            const content = (
-              <View style={styles.mobileCardContent}>
-                {columns.filter((column) => column.label).map((column) => (
-                  <View key={column.key} style={styles.mobileField}>
-                    <Text style={styles.mobileLabel}>{column.label}</Text>
-                    <View style={styles.mobileValue}>{column.render(item)}</View>
-                  </View>
-                ))}
-                {columns.filter((column) => !column.label).map((column) => (
-                  <View key={column.key} style={styles.mobileAction}>{column.render(item)}</View>
-                ))}
-              </View>
-            );
-            if (!onRowPress) {
-              return <View testID={rowTestID?.(item, index)} style={[styles.mobileCard, selected ? styles.bodyRowSelected : null]}>{content}</View>;
-            }
-            return (
-              <Pressable
-                testID={rowTestID?.(item, index)}
-                onPress={() => onRowPress(item, index)}
-                style={({ pressed }) => [styles.mobileCard, selected ? styles.bodyRowSelected : null, pressed ? styles.bodyRowPressed : null]}
-              >
-                {content}
-              </Pressable>
-            );
-          }}
-        />
+        {scrollOwner === "parent" ? (
+          // This table is inside PageShell's vertical ScrollView. Rendering
+          // the paginated (30-row) page as ordinary views makes that shell
+          // the only vertical scroll owner instead of nesting a FlatList.
+          <View style={styles.mobileListContent}>
+            {data.length === 0
+              ? <View style={styles.mobileEmpty}><Text style={type.bodyMuted}>{emptyMessage}</Text></View>
+              : data.map(renderMobileRow)}
+          </View>
+        ) : (
+          <FlatList
+            data={data}
+            keyExtractor={keyExtractor}
+            initialNumToRender={6}
+            maxToRenderPerBatch={6}
+            windowSize={5}
+            contentContainerStyle={styles.mobileListContent}
+            ListEmptyComponent={<View style={styles.mobileEmpty}><Text style={type.bodyMuted}>{emptyMessage}</Text></View>}
+            renderItem={({ item, index }) => renderMobileRow(item, index)}
+          />
+        )}
       </View>
     );
   }

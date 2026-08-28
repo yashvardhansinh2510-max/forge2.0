@@ -19,6 +19,7 @@ import { ConfirmDialog } from "@/src/components/ds";
 import { TempPasswordDialog, TempPasswordResult } from "@/src/components/TempPasswordDialog";
 import { toast } from "@/src/components/Toast";
 import { ReferrerField } from "@/src/components/customer/ReferrerField";
+import { useBp } from "@/src/design/responsive";
 import { useAuth } from "@/src/state/auth";
 import { canManageDestructiveData } from "@/src/constants/roles";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
@@ -36,6 +37,7 @@ type Customer = {
 export default function EditCustomer() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { isPhone } = useBp();
   const { staff } = useAuth();
 
   const [loaded, setLoaded] = useState(false);
@@ -163,7 +165,7 @@ export default function EditCustomer() {
   if (!loaded) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         title="Edit Customer"
         overline="CRM"

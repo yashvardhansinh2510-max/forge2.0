@@ -681,6 +681,118 @@ export default function FollowupsScreen() {
   }, [rawItems, selectedId, contact, completeFollowup, snoozeFollowup]);
 
   const activeTileStyle = { borderColor: colors.brand, backgroundColor: colors.brandTint };
+  const workspaceAndFilters = (
+    <>
+      {hasTileFollowupWorkspaces ? (
+        <SegmentedControl
+          value={workspace}
+          onChange={setWorkspace}
+          fullWidth
+          testID="followups-workspace-tabs"
+          options={[
+            { value: "all", label: "All", icon: "layers" },
+            { value: "selection", label: `Selections${stats ? ` · ${stats.workspace_counts.selection}` : ""}`, icon: "grid" },
+            { value: "quotation_tiles", label: `Quotations${stats ? ` · ${stats.workspace_counts.quotation_tiles}` : ""}`, icon: "file-text" },
+          ]}
+        />
+      ) : null}
+
+      <MissionHero
+        mission={mission}
+        loading={loading}
+        onOpenPriority={(id) => {
+          const followup = rawItems.find((item) => item.id === id);
+          if (followup) selectCard(followup);
+        }}
+        compact={isPhone}
+      />
+
+      <ScrollView horizontal={isPhone} showsHorizontalScrollIndicator={isPhone} contentContainerStyle={{ gap: spacing.md, paddingRight: isPhone ? spacing.md : 0 }} style={isPhone ? { marginHorizontal: -pagePad, paddingHorizontal: pagePad } : undefined}>
+        <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: isPhone ? "nowrap" : "wrap" }}>
+          <StatTile label="Today's Tasks" value={stats ? stats.today_tasks : "—"} icon="sun" tone="brand"
+            sub={stats?.today_critical ? `${stats.today_critical} critical` : "On track"}
+            onPress={() => toggleKpi("today")} style={kpiFilter === "today" ? activeTileStyle : undefined} />
+          <StatTile label="Overdue Tasks" value={stats ? stats.overdue : "—"} icon="alert-circle" tone="danger"
+            sub={stats?.overdue_critical ? `${stats.overdue_critical} critical` : "None overdue"}
+            onPress={() => toggleKpi("overdue")} style={kpiFilter === "overdue" ? activeTileStyle : undefined} />
+          <StatTile label="Payments Overdue" value={stats ? stats.overdue_payments_count : "—"} icon="credit-card" tone="danger"
+            sub={stats?.overdue_payments_count ? `₹${stats.overdue_payments_amount_short} at stake` : "None overdue"}
+            onPress={() => toggleKpi("overdue")} />
+          <StatTile label="Expiring Soon" value={stats ? stats.expiring_quotations_count : "—"} icon="clock" tone="warning"
+            sub="Quotations lapsing" onPress={() => setCategoryFilter("quotation")} />
+          <StatTile label="Waiting For Customer" value={stats ? stats.waiting_for_customer : "—"} icon="watch" tone="warning"
+            sub="Ball's in their court" onPress={() => toggleKpi("waiting")} style={kpiFilter === "waiting" ? activeTileStyle : undefined} />
+          <StatTile label="Completed Today" value={stats ? stats.completed_today : "—"} icon="check-circle" tone="success"
+            sub={stats ? `${stats.completed_trend >= 0 ? "+" : ""}${stats.completed_trend} vs yesterday` : undefined}
+            onPress={() => toggleKpi("completed")} style={kpiFilter === "completed" ? activeTileStyle : undefined} />
+        </View>
+      </ScrollView>
+
+      <Panel padding={spacing.md}>
+        <View style={{ gap: spacing.md }}>
+          <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: isPhone ? "wrap" : "nowrap" }}>
+            <View style={{ flex: 1, minWidth: isPhone ? "100%" : 0 }}>
+              <SearchField testID="followups-search" value={q} onChangeText={setQ} onClear={() => setQ("")} placeholder="Search customer, phone, quotation #, project…" />
+            </View>
+            {!isPhone ? <IconButton icon="bookmark" onPress={() => setSavedViewsSheet(true)} tone="surface" accessibilityLabel="Saved views" size={40} /> : null}
+            {!isPhone ? <IconButton icon="help-circle" onPress={() => setShortcutHelp(true)} tone="surface" accessibilityLabel="Keyboard shortcuts" size={40} /> : null}
+          </View>
+          {q.trim() ? <Text style={type.caption}>{filtered.length} customer{filtered.length === 1 ? "" : "s"} found</Text> : null}
+          <FilterBar label="PRIORITY" value={priorityFilter} onChange={setPriorityFilter as any} options={[
+            { value: "all", label: "All priorities" }, { value: "critical", label: "Critical", count: priorityCounts.critical || undefined },
+            { value: "high", label: "High", count: priorityCounts.high || undefined }, { value: "medium", label: "Medium", count: priorityCounts.medium || undefined },
+            { value: "low", label: "Low", count: priorityCounts.low || undefined },
+          ]} />
+          <Pressable onPress={() => setFiltersExpanded((v) => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", minHeight: 44, paddingVertical: 8 }}>
+            <Feather name={filtersExpanded ? "chevron-up" : "sliders"} size={14} color={colors.onSurfaceSecondary} />
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary }}>{filtersExpanded ? "Hide filters" : "More filters"}{activeFilterCount ? ` (${activeFilterCount})` : ""}</Text>
+          </Pressable>
+          {filtersExpanded ? <>
+            <FilterBar label="TYPE" value={categoryFilter} onChange={setCategoryFilter} options={CATEGORY_OPTIONS} />
+            <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center", flexWrap: "wrap" }}>
+              <SegmentedControl size="sm" value={tierFilter} onChange={setTierFilter as any} options={[
+                { value: "all", label: "All customers" }, { value: "retail", label: "Retail" }, { value: "trade", label: "Trade" }, { value: "vip", label: "VIP" },
+              ]} />
+              <Dropdown label={ownerLabel} icon="user" variant="secondary" items={[
+                { label: "All owners", icon: "users", onPress: () => setOwnerFilter("all") }, { label: "Mine", icon: "user-check", onPress: () => setOwnerFilter("mine") },
+                ...assignees.map((a) => ({ label: a.full_name, icon: "user" as FeatherName, onPress: () => setOwnerFilter(a.id) })),
+              ]} />
+            </View>
+          </> : null}
+          {kpiFilter !== "all" || activeFilterCount > 0 ? <Chip label="Clear filters ✕" active onPress={() => { setKpiFilter("all"); setPriorityFilter("all"); setCategoryFilter("all"); setTierFilter("all"); setOwnerFilter("all"); }} /> : null}
+        </View>
+      </Panel>
+
+      {selectedIds.size > 0 ? <BulkActionBar count={selectedIds.size} assignees={assignees} onClear={clearSelection} onSnooze={bulkSnooze} onComplete={bulkComplete} onAssign={bulkAssign} /> : null}
+    </>
+  );
+
+  const renderFollowupList = (phone = false) => (
+    <SectionList
+      sections={visibleSections}
+      keyExtractor={(item) => item.id}
+      scrollEnabled={phone}
+      stickySectionHeadersEnabled={false}
+      style={phone ? { flex: 1 } : undefined}
+      refreshControl={phone ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} /> : undefined}
+      contentContainerStyle={phone ? { paddingBottom: 132 } : { gap: spacing.sm, paddingBottom: spacing.sm }}
+      ListHeaderComponent={phone ? <View style={{ padding: pagePad, gap: spacing.md }}>{workspaceAndFilters}</View> : undefined}
+      ListEmptyComponent={loading ? (
+        <View style={{ paddingHorizontal: phone ? pagePad : 0, gap: spacing.md }}><Skeleton w="30%" h={16} radius={radius.sm} /><SkeletonList rows={4} /></View>
+      ) : (
+        <View style={{ paddingHorizontal: phone ? pagePad : 0 }}><Card><EmptyState icon="check-circle" tone="brand" title="You're all caught up." subtitle="Nothing requires attention. Automated follow-ups will appear here the moment a quotation, payment or purchase needs you." action={<Button label="New Follow-up" icon="plus" variant="primary" onPress={() => setNewSheet(true)} />} /></Card></View>
+      )}
+      ListFooterComponent={phone ? <View style={{ height: spacing.md }} /> : undefined}
+      renderSectionHeader={({ section }) => {
+        const meta = BUCKET_META[section.bucket];
+        const isCollapsed = collapsed.has(section.bucket);
+        return <Pressable onPress={() => toggleSection(section.bucket)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 4, paddingHorizontal: phone ? pagePad : 0, backgroundColor: colors.surface }}>
+          <Feather name={meta.icon} size={14} color={colors.onSurfaceSecondary} /><Text style={type.overline}>{meta.label}</Text><Badge label={String(section.itemCount)} tone="neutral" size="sm" /><View style={{ flex: 1 }} /><Feather name={isCollapsed ? "chevron-down" : "chevron-up"} size={16} color={colors.onSurfaceMuted} />
+        </Pressable>;
+      }}
+      renderItem={({ item: f }) => <View style={{ paddingHorizontal: phone ? pagePad : 0, marginBottom: spacing.sm }}><MemoFollowupCard f={f} active={f.id === selectedId} assignees={assignees} rank={rankMap.get(f.id)} checked={selectedIds.has(f.id)} onToggleSelect={toggleSelect} onPress={selectCard} onCall={contact} onWhatsApp={contact} onEmail={contact} onComplete={completeFollowup} onSnooze={snoozeFollowup} onCustomSnooze={setCustomSnoozeFor} onPushDays={pushDue} onAssign={assignFollowup} onNote={setNoteFor} onDismiss={dismissFollowup} canDelete={!!staff && MANAGER_ROLES.includes(staff.role)} onDelete={setDeleteTarget} onOpenDoc={openRelatedDocument} /></View>}
+    />
+  );
   // ═══════════════════════════════════════════════════════════════════════
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
@@ -715,6 +827,7 @@ export default function FollowupsScreen() {
         }
       />
 
+      {isPhone ? renderFollowupList(true) : (
       <ScrollView
         contentContainerStyle={{ padding: pagePad, gap: isPhone ? spacing.md : spacing.lg, paddingBottom: isPhone ? 132 : spacing.xxxl }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
@@ -929,6 +1042,7 @@ export default function FollowupsScreen() {
           ) : null}
         </View>
       </ScrollView>
+      )}
 
       {/* Mobile: floating quick-contact for the #1 priority item */}
       {!isDesktop && !isPhone && topPriorityOpen ? (

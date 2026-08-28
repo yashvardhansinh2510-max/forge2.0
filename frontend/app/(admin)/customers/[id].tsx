@@ -376,7 +376,7 @@ export default function CustomerDetail() {
 
   if (loadError) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md }}>
           <EmptyState icon="alert-triangle" title="Couldn't load this customer" subtitle={loadError} />
           <Button label="Try again" icon="refresh-cw" onPress={() => { setLoadError(null); void loadCore(); }} testID="customer-detail-retry" />
@@ -387,14 +387,14 @@ export default function CustomerDetail() {
   }
   if (!customer) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }} edges={["top"]}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }} edges={isPhone ? [] : ["top"]}>
         <ActivityIndicator color={colors.onSurfaceMuted} />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         title={customer.company || customer.name}
         subtitle={`${customer.email}${customer.city ? ` · ${customer.city}` : ""}`}

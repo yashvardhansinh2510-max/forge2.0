@@ -91,7 +91,7 @@ export default function Customers() {
   const visibleCustomers = filtered.slice(0, visibleCount);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         title="Customers"
         subtitle={items ? `${items.length} accounts · Trade, VIP & retail buyers` : "Loading customers…"}

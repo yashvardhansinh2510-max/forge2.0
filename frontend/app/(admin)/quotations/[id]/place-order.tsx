@@ -122,7 +122,7 @@ export default function PlaceOrderReview() {
 
   if (error) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
         <View style={{ padding: spacing.xxl, alignItems: "center", gap: spacing.md }}>
           <Feather name="alert-triangle" size={30} color={colors.warning} />
           <Text style={type.titleMd}>{error}</Text>
@@ -138,7 +138,7 @@ export default function PlaceOrderReview() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <View style={styles.topbar}>
         <Pressable testID="back-btn" onPress={() => router.back()} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
           <Feather name="chevron-left" size={18} color={colors.onSurface} />

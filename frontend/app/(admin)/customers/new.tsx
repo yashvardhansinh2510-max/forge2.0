@@ -18,12 +18,14 @@ import {
 } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { ReferrerField } from "@/src/components/customer/ReferrerField";
+import { useBp } from "@/src/design/responsive";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 type Tier = "retail" | "trade" | "vip";
 
 export default function NewCustomer() {
   const router = useRouter();
+  const { isPhone } = useBp();
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
   const [company, setCompany] = useState("");
@@ -72,7 +74,7 @@ export default function NewCustomer() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader title="Add Customer" overline="CRM" back={() => router.back()} />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}

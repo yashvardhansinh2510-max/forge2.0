@@ -12,6 +12,7 @@ import { toast } from "@/src/components/Toast";
 import { Button, Chip, EmptyState, PageHeader, SearchField, StatTile } from "@/src/components/ui";
 import { WalkInCard } from "@/src/components/walkins/WalkInCard";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
+import { useBp } from "@/src/design/responsive";
 import { spacing } from "@/src/theme/tokens";
 
 const STATUS_FILTERS: { value: string; label: string }[] = [
@@ -34,6 +35,7 @@ export default function WalkInsScreen({
   fixedFloorId, title = "Walk-ins", quotationFollowup = false, enableQuotationTransfer = false,
 }: { fixedFloorId?: string; title?: string; quotationFollowup?: boolean; enableQuotationTransfer?: boolean } = {}) {
   const router = useRouter();
+  const { isPhone } = useBp();
   const { floors } = useFloorAccess();
   const [dashboard, setDashboard] = useState<WalkInsDashboard | null>(null);
   const [items, setItems] = useState<WalkIn[]>([]);
@@ -105,7 +107,7 @@ export default function WalkInsScreen({
   };
 
   return (
-    <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1 }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         title={title} overline={quotationFollowup ? "QUOTATION FOLLOW-UP" : "CRM"}
         subtitle="Every customer journey starts here"
