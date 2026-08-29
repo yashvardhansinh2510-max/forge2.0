@@ -122,7 +122,17 @@ async def run_migrations(db, *, dry_run: bool = False, use_lease: bool = True) -
             if not hasattr(module, "up"):
                 raise RuntimeError(f"Migration {name} has no async up(db) function.")
             logger.info("Applying migration %s ...", name)
-            await module.up(db)
+            try:
+                await module.up(db)
+            except Exception as exc:
+                logger.exception(
+                    "Migration %s failed before being recorded. No later migrations were applied; "
+                    "see RECOVERY.md before retrying.", name,
+                )
+                raise RuntimeError(
+                    f"Migration {name} failed and was not recorded; no later migrations ran. "
+                    "Inspect the original error and RECOVERY.md, fix data/index conflicts, then retry."
+                ) from exc
             await db.schema_migrations.insert_one({"name": name, "applied_at": datetime.now(timezone.utc).isoformat()})
             logger.info("Applied %s.", name)
             ran.append(name)

@@ -1,6 +1,7 @@
 """Forge backend entrypoint. Wires routes and boots demo data on first run."""
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from time import monotonic
 from typing import Any
 
@@ -69,7 +70,65 @@ logger = logging.getLogger("forge")
 # construction so an unhandled exception anywhere downstream is captured.
 _monitoring_status = init_monitoring()
 
-app = FastAPI(title="Forge API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Own startup/shutdown work in one lifecycle boundary.
+
+    Keeping cleanup in ``finally`` is important when any readiness step fails:
+    an outbox worker or media client created before a later failure is not left
+    running in a half-started process.
+    """
+    preflight = await run_bootstrap(enforce_indexes=False)
+    preflight.require_healthy()
+
+    applied = await run_migrations(db)
+    if applied:
+        logger.info("Applied %d migration(s) on startup: %s", len(applied), ", ".join(applied))
+
+    preflight = await run_bootstrap()
+    preflight.require_healthy()
+    _cache_demo_check_from_bootstrap(preflight.checks)
+    await ensure_floor_scope()
+    await seed_if_empty()
+    await resync_catalog_if_needed()
+    await ensure_outbox_indexes()
+    await ensure_tile_order_indexes()
+    await ensure_transfer_indexes()
+    await ensure_download_token_indexes()
+    await dispatch_pending()
+    app.state.outbox_worker = asyncio.create_task(outbox_worker())
+    snapshot = await catalog_service.refresh_catalog_snapshot()
+    logger.info("Catalog read model ready: %d products.", len(snapshot.products))
+    try:
+        from services.automation_rules import ensure_seeded
+        await ensure_seeded()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Automation rules seed skipped: %s", e)
+    try:
+        await reconcile_followups()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Initial follow-up reconciliation skipped: %s", e)
+    logger.info("Forge API ready; infrastructure preflight passed.")
+    logger.info("Monitoring status: sentry=%s", _monitoring_status["sentry"])
+    try:
+        yield
+    finally:
+        worker = getattr(app.state, "outbox_worker", None)
+        if worker:
+            worker.cancel()
+            try:
+                await worker
+            except asyncio.CancelledError:
+                pass
+        storage = get_media_storage()
+        close_storage = getattr(storage, "close", None)
+        if close_storage:
+            await close_storage()
+        client.close()
+        logger.info("Forge API shutting down.")
+
+
+app = FastAPI(title="Forge API", version="0.1.0", lifespan=lifespan)
 api = APIRouter(prefix="/api")
 
 
@@ -266,70 +325,3 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.on_event("startup")
-async def _startup():
-    # Validate external infrastructure before any seed/reconciliation writes.
-    # Uvicorn does not report the application ready until this preflight passes.
-    # The first pass gates external dependencies but permits index gaps that a
-    # pending migration is about to create.  The post-migration pass enforces
-    # the complete index contract before any ordinary application writes.
-    preflight = await run_bootstrap(enforce_indexes=False)
-    # No migration, seed, cache refresh, or reconciliation write may occur
-    # until both persistence dependencies are proven healthy.
-    preflight.require_healthy()
-
-    applied = await run_migrations(db)
-    if applied:
-        logger.info("Applied %d migration(s) on startup: %s", len(applied), ", ".join(applied))
-
-    # Re-run preflight now that migrations may have just created indexes the
-    # first pass reported missing (e.g. brands.slug/categories.slug via
-    # migrations 0005/0007). Checking once, before migrations, would deadlock
-    # a not-yet-fully-migrated database: preflight blocks startup, so the
-    # migration that would satisfy it never gets the chance to run.
-    preflight = await run_bootstrap()
-    preflight.require_healthy()
-    _cache_demo_check_from_bootstrap(preflight.checks)
-
-    await ensure_floor_scope()
-    await seed_if_empty()
-    await resync_catalog_if_needed()
-    await ensure_outbox_indexes()
-    await ensure_tile_order_indexes()
-    await ensure_transfer_indexes()
-    await ensure_download_token_indexes()
-    await dispatch_pending()
-    # Durable background dispatcher — pending events retry on a schedule and
-    # dead-letter after repeated failure instead of waiting for a restart.
-    app.state.outbox_worker = asyncio.create_task(outbox_worker())
-    snapshot = await catalog_service.refresh_catalog_snapshot()
-    logger.info("Catalog read model ready: %d products.", len(snapshot.products))
-    try:
-        from services.automation_rules import ensure_seeded
-        await ensure_seeded()
-    except Exception as e:  # noqa: BLE001 — best-effort, defaults still work without a DB row
-        logger.warning("Automation rules seed skipped: %s", e)
-    try:
-        await reconcile_followups()
-    except Exception as e:  # noqa: BLE001 — best-effort, frontend also triggers this on load
-        logger.warning("Initial follow-up reconciliation skipped: %s", e)
-    logger.info("Forge API ready; infrastructure preflight passed.")
-    logger.info("Monitoring status: sentry=%s", _monitoring_status["sentry"])
-
-
-@app.on_event("shutdown")
-async def _shutdown():
-    worker = getattr(app.state, "outbox_worker", None)
-    if worker:
-        worker.cancel()
-        try:
-            await worker
-        except asyncio.CancelledError:
-            pass
-    storage = get_media_storage()
-    close_storage = getattr(storage, "close", None)
-    if close_storage:
-        await close_storage()
-    client.close()
-    logger.info("Forge API shutting down.")

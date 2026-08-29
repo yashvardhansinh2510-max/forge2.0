@@ -17,6 +17,17 @@ class _FakeProducts:
     async def create_index(self, keys, **kwargs):
         self.create_index_calls.append((keys, kwargs))
 
+    def aggregate(self, _pipeline):
+        return _FakeAggregate([])
+
+
+class _FakeAggregate:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def to_list(self, _length):
+        return self.rows
+
 
 class _FakeDb:
     def __init__(self):
@@ -31,3 +42,16 @@ def test_migration_creates_compound_unique_index():
     assert keys == [("floor_id", 1), ("brand_id", 1), ("sku", 1)]
     assert kwargs.get("unique") is True
     assert kwargs.get("name") == "products_floor_brand_sku_unique"
+
+
+def test_migration_refuses_to_create_index_when_duplicate_data_exists():
+    fake_db = _FakeDb()
+    fake_db.products.aggregate = lambda _pipeline: _FakeAggregate([{"_id": {"sku": "DUP"}, "ids": ["a", "b"]}])
+
+    try:
+        asyncio.run(migration.up(fake_db))
+    except RuntimeError as exc:
+        assert "duplicate" in str(exc).lower()
+    else:
+        raise AssertionError("duplicate preflight must fail before index creation")
+    assert fake_db.products.create_index_calls == []

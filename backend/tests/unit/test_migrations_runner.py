@@ -49,6 +49,12 @@ class _GenericFakeCollection:
         # up against a coroutine-returning no-op.
         return _FakeCursor([])
 
+    def aggregate(self, *_args, **_kwargs):
+        class _Aggregate:
+            async def to_list(self, _length):
+                return []
+        return _Aggregate()
+
     def __getattr__(self, _name):
         async def _noop(*_args, **_kwargs):
             return None

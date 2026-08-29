@@ -22,6 +22,18 @@ python bootstrap.py --health-url http://127.0.0.1:8001/api/health
 6. Confirm `GET /api/health/system` reports MongoDB and Supabase connected and the expected catalog count.
 7. If data counts are wrong, stop. Do not seed over production. Use the documented Supabase backup restore flow.
 
+## Migration failure recovery
+
+Do not restart a production-connected service just to retry a failed migration. The runner records a migration only after its `up()` function succeeds, and stops before later migrations run. Preserve the original exception and inspect the affected documents/indexes with read-only queries first.
+
+1. Put deployment/restart work on hold and record the failed migration name from the logs.
+2. Run `cd backend && .venv/bin/python scripts/run_migrations.py --dry-run` against the same environment to confirm the pending sequence; this command makes no writes.
+3. For a unique-index failure, use the migration's reported duplicate document ids to make an approved data correction or merge. Never delete rows automatically to satisfy an index.
+4. For an index-options conflict, inspect `db.<collection>.index_information()` and create the compatible replacement before removing any old constraint. Do not drop an index merely to make startup pass.
+5. After the data/index condition is resolved and reviewed, run the migration once in a controlled maintenance window, confirm it is recorded in `schema_migrations`, then perform the normal deployment health checks.
+
+Every index migration must include a duplicate-data preflight and use create-before-remove ordering when replacing an existing constraint.
+
 ## Preview/local recovery
 
 Preview cannot persist custom secrets. Supply them to the current runtime and generate the ignored fallback file through the existing guarded script:

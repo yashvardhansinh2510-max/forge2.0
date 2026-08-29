@@ -9,17 +9,17 @@ from __future__ import annotations
 
 
 async def _replace_global_slug_index(collection, name: str) -> None:
+    # Create the stricter scoped replacement first. The legacy global unique
+    # index remains protection if this operation or the subsequent cleanup is
+    # interrupted; it is only removed after the replacement is confirmed.
+    await collection.create_index(
+        [("floor_id", 1), ("slug", 1)], unique=True, sparse=True, name=name,
+    )
     indexes = await collection.index_information() or {}
     for index_name, spec in indexes.items():
         keys = tuple(spec.get("key", []))
         if keys == (("slug", 1),) and spec.get("unique"):
             await collection.drop_index(index_name)
-    await collection.create_index(
-        [("floor_id", 1), ("slug", 1)],
-        unique=True,
-        sparse=True,
-        name=name,
-    )
 
 
 async def up(db) -> None:
