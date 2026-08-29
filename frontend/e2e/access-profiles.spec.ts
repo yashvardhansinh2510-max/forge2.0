@@ -16,6 +16,12 @@ const profiles: Profile[] = [
   { name: "Sanitary purchases", email: process.env.E2E_SANITARY_PURCHASES_EMAIL, password: process.env.E2E_SANITARY_PURCHASES_PASSWORD, landingPath: "/purchases", allowed: "Purchases", denied: "Payments" },
 ];
 
+// `page` is a worker fixture and would try to launch a browser before a
+// callback-level `test.skip()` executes. Pick the skipped test declaration at
+// definition time instead, so a developer/CI run with no E2E environment is
+// safe and does not require Playwright browser binaries.
+const configuredTest = (ready: boolean) => ready ? test : test.skip;
+
 async function signIn(page: import("@playwright/test").Page, profile: Profile) {
   await page.goto("/login");
   await page.getByTestId("login-email").fill(profile.email!);
@@ -25,16 +31,14 @@ async function signIn(page: import("@playwright/test").Page, profile: Profile) {
 }
 
 for (const profile of profiles) {
-  test(`${profile.name}: assigned workspace and denied modules`, async ({ page }) => {
-    test.skip(!process.env.E2E_BASE_URL || !profile.email || !profile.password, "Requires a disposable account and E2E_BASE_URL.");
+  configuredTest(Boolean(process.env.E2E_BASE_URL && profile.email && profile.password))(`${profile.name}: assigned workspace and denied modules`, async ({ page }) => {
     await signIn(page, profile);
     await expect(page.getByText(profile.allowed, { exact: true }).first()).toBeVisible();
     await expect(page.getByText(profile.denied, { exact: true })).toHaveCount(0);
   });
 }
 
-test("Ground tiles profile: delivery lookup is customer-specific and read-only", async ({ page }) => {
-  test.skip(!process.env.E2E_BASE_URL || !process.env.E2E_GROUND_TILES_EMAIL || !process.env.E2E_GROUND_TILES_PASSWORD || !process.env.E2E_DELIVERY_CUSTOMER, "Requires disposable Ground Tiles credentials and a fixture customer.");
+configuredTest(Boolean(process.env.E2E_BASE_URL && process.env.E2E_GROUND_TILES_EMAIL && process.env.E2E_GROUND_TILES_PASSWORD && process.env.E2E_DELIVERY_CUSTOMER))("Ground tiles profile: delivery lookup is customer-specific and read-only", async ({ page }) => {
   await signIn(page, profiles[0]);
   await page.getByPlaceholder(/search customers/i).fill(process.env.E2E_DELIVERY_CUSTOMER!);
   await page.getByText(process.env.E2E_DELIVERY_CUSTOMER!, { exact: true }).first().click();
@@ -42,11 +46,10 @@ test("Ground tiles profile: delivery lookup is customer-specific and read-only",
   await expect(page.getByText(/Create dispatch|Mark ready|Dispatch order/i)).toHaveCount(0);
 });
 
-test("temporary-password staff must change password before reaching the workspace", async ({ page }) => {
+configuredTest(Boolean(process.env.E2E_BASE_URL && process.env.E2E_TEMP_STAFF_EMAIL && process.env.E2E_TEMP_STAFF_PASSWORD && process.env.E2E_TEMP_STAFF_NEW_PASSWORD))("temporary-password staff must change password before reaching the workspace", async ({ page }) => {
   const email = process.env.E2E_TEMP_STAFF_EMAIL;
   const temporaryPassword = process.env.E2E_TEMP_STAFF_PASSWORD;
   const newPassword = process.env.E2E_TEMP_STAFF_NEW_PASSWORD;
-  test.skip(!process.env.E2E_BASE_URL || !email || !temporaryPassword || !newPassword, "Requires a disposable forced-password-change account.");
   await page.goto("/login");
   await page.getByTestId("login-email").fill(email!);
   await page.getByTestId("login-password").fill(temporaryPassword!);
@@ -59,10 +62,9 @@ test("temporary-password staff must change password before reaching the workspac
   await expect(page).not.toHaveURL(/set-new-password/);
 });
 
-test("logout/login does not retain the preceding account floor", async ({ page }) => {
+configuredTest(Boolean(process.env.E2E_BASE_URL && profiles[0].email && profiles[0].password && profiles[3].email && profiles[3].password))("logout/login does not retain the preceding account floor", async ({ page }) => {
   const first = profiles[0];
   const second = profiles[3];
-  test.skip(!process.env.E2E_BASE_URL || !first.email || !first.password || !second.email || !second.password, "Requires two disposable accounts on distinct floors.");
   await signIn(page, first);
   await page.getByLabel(/sign out|logout/i).click();
   await signIn(page, second);
