@@ -44,6 +44,7 @@ import {
 } from "@/src/components/tiles/TileTable";
 import { Sheet } from "@/src/components/ui";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
+import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 type TabKey = "customer" | "brands" | "history" | "inventory" | "dispatch-list" | "material-register";
@@ -92,6 +93,8 @@ function quantityLabel(value: number | string, unit?: "Box" | "Pieces") {
 
 export default function TileOrdersScreen() {
   useRequireFloorAccess("ground-floor");
+  const { staff } = useAuth();
+  const readOnlyDeliveryLookup = staff?.access_profile === "ground_tile_quotations_followups";
   const router = useRouter();
   // Deep-link params let the Customer workspace jump straight here with the
   // right tab already selected and pre-filtered to that order — "View
@@ -567,14 +570,14 @@ export default function TileOrdersScreen() {
                   onPress={() => setDispatchStatus(status)}
                 />
               ))}
-              actions={
+              actions={!readOnlyDeliveryLookup ? (
                 <Button
                   label="Create dispatch"
                   variant="primary"
                   testID="tile-orders-create-dispatch"
                   onPress={() => setCreatingDispatch(true)}
                 />
-              }
+              ) : undefined}
             />
           ) : null}
 
@@ -626,6 +629,7 @@ export default function TileOrdersScreen() {
           dispatchId={openDispatchId}
           onClose={() => setOpenDispatchId(null)}
           onChanged={() => load()}
+          readOnly={readOnlyDeliveryLookup}
         />
       ) : null}
 
