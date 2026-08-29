@@ -15,7 +15,8 @@
     "test:quotation-contract": "node --experimental-strip-types --no-warnings scripts/test-quotation-contract.mjs",
     "test:notebook": "node --experimental-strip-types --no-warnings scripts/test-notebook.mjs",
     "test:mobile-ux": "node scripts/test-mobile-ux-contract.mjs",
-    "test:mobile-budget": "node scripts/check-web-budget.mjs"
+    "test:mobile-budget": "node scripts/check-web-budget.mjs",
+    "test:e2e:profiles": "playwright test --config playwright.config.ts"
   },
   "dependencies": {
     "@expo-google-fonts/fraunces": "0.4.1",
@@ -60,6 +61,7 @@
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.55.0",
     "@types/react": "19.1.10",
     "eslint": "9.25.0",
     "eslint-config-expo": "10.0.0",
