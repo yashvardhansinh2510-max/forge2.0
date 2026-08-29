@@ -29,22 +29,25 @@ async def global_activity(
     return await timeline_for(limit=limit, floor_ids=floor_scope_ids(user))
 
 
-async def _assert_quotation_access(user: UserPublic, quotation_id: str) -> None:
-    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0, "id": 1})
+async def _assert_quotation_access(user: UserPublic, quotation_id: str) -> dict:
+    doc = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0, "id": 1, "floor_id": 1})
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
+    return doc
 
 
-async def _assert_purchase_access(user: UserPublic, purchase_id: str) -> None:
-    doc = await db.purchase_orders.find_one(floor_query(user, {"id": purchase_id}), {"_id": 0, "id": 1})
+async def _assert_purchase_access(user: UserPublic, purchase_id: str) -> dict:
+    doc = await db.purchase_orders.find_one(floor_query(user, {"id": purchase_id}), {"_id": 0, "id": 1, "floor_id": 1})
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase order not found")
+    return doc
 
 
-async def _assert_customer_access(user: UserPublic, customer_id: str) -> None:
-    doc = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0, "id": 1})
+async def _assert_customer_access(user: UserPublic, customer_id: str) -> dict:
+    doc = await db.customers.find_one(floor_query(user, {"id": customer_id}), {"_id": 0, "id": 1, "floor_id": 1})
     if not doc:
         raise HTTPException(status_code=404, detail="Customer not found")
+    return doc
 
 
 @router.get("/quotation/{quotation_id}")
@@ -59,8 +62,8 @@ async def quotation_timeline(
     # the ID, with no check that the caller's floor assignment actually
     # covers that quotation — bypassing the same isolation the quotation
     # list/detail endpoints already enforce.
-    await _assert_quotation_access(user, quotation_id)
-    return await timeline_for(quotation_id=quotation_id, limit=limit)
+    doc = await _assert_quotation_access(user, quotation_id)
+    return await timeline_for(quotation_id=quotation_id, limit=limit, floor_ids=[doc["floor_id"]])
 
 
 @router.get("/purchase/{purchase_id}")
@@ -69,8 +72,8 @@ async def purchase_timeline(
     limit: int = Query(200, ge=1, le=500),
     user: UserPublic = Depends(get_current_user),
 ):
-    await _assert_purchase_access(user, purchase_id)
-    return await timeline_for(purchase_id=purchase_id, limit=limit)
+    doc = await _assert_purchase_access(user, purchase_id)
+    return await timeline_for(purchase_id=purchase_id, limit=limit, floor_ids=[doc["floor_id"]])
 
 
 @router.get("/customer/{customer_id}")
@@ -79,8 +82,8 @@ async def customer_timeline(
     limit: int = Query(200, ge=1, le=500),
     user: UserPublic = Depends(get_current_user),
 ):
-    await _assert_customer_access(user, customer_id)
-    return await timeline_for(customer_id=customer_id, limit=limit)
+    doc = await _assert_customer_access(user, customer_id)
+    return await timeline_for(customer_id=customer_id, limit=limit, floor_ids=[doc["floor_id"]])
 
 
 @router.get("/product/{product_id}")

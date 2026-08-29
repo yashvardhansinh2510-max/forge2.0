@@ -145,3 +145,79 @@ def test_rule_counts_scopes_to_the_active_floor(monkeypatch):
     else:
         floor_constraint = next(c["floor_id"] for c in match_stage.get("$and", []) if "floor_id" in c)
     assert floor_constraint == {"$in": ["ground-floor"]}
+
+
+class _DetailCollection:
+    """Small Motor-shaped fake that records every floor-sensitive read."""
+
+    def __init__(self, one: dict | None = None, rows: list[dict] | None = None):
+        self.one = one
+        self.rows = rows or []
+        self.queries: list[dict] = []
+
+    async def find_one(self, query, *_args, **_kwargs):
+        self.queries.append(query)
+        return dict(self.one) if self.one else None
+
+    def find(self, query, *_args, **_kwargs):
+        self.queries.append(query)
+        return self
+
+    def sort(self, *_args, **_kwargs):
+        return self
+
+    async def to_list(self, _limit):
+        return list(self.rows)
+
+
+def test_followup_detail_scopes_every_related_record_to_followups_floor(monkeypatch):
+    """A same-customer record on another floor must never enter the panel."""
+    followup = {"id": "f-ground", "customer_id": "customer-1", "floor_id": "ground-floor",
+                "status": "open", "priority_level": "medium"}
+
+    class _Db:
+        followups = _DetailCollection(one=followup)
+        customers = _DetailCollection(one={"id": "customer-1", "floor_id": "ground-floor"})
+        quotations = _DetailCollection()
+        payments = _DetailCollection()
+        purchase_orders = _DetailCollection()
+
+    fake_db = _Db()
+    monkeypatch.setattr(followups, "db", fake_db)
+    from routes import payment_routes
+    monkeypatch.setattr(payment_routes, "db", fake_db)
+    captured_timeline: dict = {}
+
+    async def fake_timeline_for(**kwargs):
+        captured_timeline.update(kwargs)
+        return []
+
+    monkeypatch.setattr(followups, "timeline_for", fake_timeline_for)
+
+    detail = asyncio.run(followups.get_detail("f-ground", user=_user("ground-floor")))
+
+    assert detail["customer"]["floor_id"] == "ground-floor"
+    for collection in (fake_db.customers, fake_db.quotations, fake_db.payments, fake_db.purchase_orders):
+        assert collection.queries[-1]["floor_id"] == "ground-floor"
+    assert captured_timeline["floor_ids"] == ["ground-floor"]
+
+
+@pytest.mark.parametrize(("allowed_floor", "target_floor"), [
+    ("ground-floor", "first-floor"),
+    ("first-floor", "ground-floor"),
+])
+def test_followup_detail_denies_the_other_floor(monkeypatch, allowed_floor, target_floor):
+    """Both business units get the same non-enumerating 404 boundary."""
+    class _Db:
+        followups = _DetailCollection(one={
+            "id": "other-floor-followup", "customer_id": "c1", "floor_id": target_floor,
+        })
+
+    monkeypatch.setattr(followups, "db", _Db())
+    user = UserPublic(email="staff@forge.app", full_name="Staff", role="sales",
+                      floor_ids=[allowed_floor], active_floor_id=allowed_floor)
+
+    with pytest.raises(Exception) as exc:
+        asyncio.run(followups.get_detail("other-floor-followup", user=user))
+
+    assert getattr(exc.value, "status_code", None) == 404

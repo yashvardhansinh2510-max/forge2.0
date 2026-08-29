@@ -677,16 +677,26 @@ async def list_assignments(
 async def get_detail(followup_id: str, user: UserPublic = Depends(get_current_user)):
     from routes.payment_routes import ORDER_STATUSES, _paid_by_quotation
 
-    f = await db.followups.find_one(floor_query(user, {"id": followup_id}), {"_id": 0})
-    if not f:
-        raise HTTPException(status_code=404, detail="Follow-up not found")
+    # Authorize the addressed follow-up first, then use its floor for every
+    # related read. Customer ids are shared identifiers rather than a floor
+    # boundary, so filtering only the follow-up itself used to merge another
+    # unit's customer history into this detail panel.
+    f = await get_floor_scoped_or_404(
+        db.followups, followup_id, user, not_found="Follow-up not found",
+        projection={"_id": 0},
+    )
+    floor_id = f.get("floor_id")
     f["bucket"] = compute_bucket(f)
     f["effective_priority_level"] = f.get("manual_priority_override") or f.get("priority_level")
 
-    customer = await db.customers.find_one({"id": f["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
-    all_q = await db.quotations.find({"customer_id": f["customer_id"]}, {"_id": 0}).sort("updated_at", -1).to_list(200)
+    customer = await db.customers.find_one(
+        {"id": f["customer_id"], "floor_id": floor_id}, {"_id": 0, "password_hash": 0},
+    ) or {}
+    all_q = await db.quotations.find(
+        {"customer_id": f["customer_id"], "floor_id": floor_id}, {"_id": 0},
+    ).sort("updated_at", -1).to_list(200)
     q_ids = [q["id"] for q in all_q]
-    paid_map = await _paid_by_quotation(q_ids)
+    paid_map = await _paid_by_quotation(q_ids, floor_id=floor_id)
 
     lifetime_revenue = sum(q.get("grand_total", 0) for q in all_q if q.get("status") in ORDER_STATUSES)
     outstanding_total = sum(
@@ -697,11 +707,13 @@ async def get_detail(followup_id: str, user: UserPublic = Depends(get_current_us
         q for q in all_q
         if q.get("status") in ORDER_STATUSES and (q.get("grand_total", 0) - paid_map.get(q["id"], 0.0)) > 1
     ]
-    recent_payments = await db.payments.find({"customer_id": f["customer_id"]}, {"_id": 0}).sort("paid_at", -1).to_list(10)
+    recent_payments = await db.payments.find(
+        {"customer_id": f["customer_id"], "floor_id": floor_id}, {"_id": 0},
+    ).sort("paid_at", -1).to_list(10)
     recent_purchases = await db.purchase_orders.find(
-        {"customer_id": f["customer_id"]}, {"_id": 0},
+        {"customer_id": f["customer_id"], "floor_id": floor_id}, {"_id": 0},
     ).sort("updated_at", -1).to_list(10)
-    timeline = await timeline_for(customer_id=f["customer_id"], limit=60)
+    timeline = await timeline_for(customer_id=f["customer_id"], limit=60, floor_ids=[floor_id])
 
     # ── Premium context additions (Follow-ups V2) — all derived from data
     # already loaded above, no new integration or LLM call needed. ──────────
@@ -943,7 +955,9 @@ async def contact_followup(followup_id: str, body: FollowupContactPayload, user:
         result["message"] = msg["message"]
         result["wa_url"] = msg["url"]
     elif body.channel == "email":
-        cust = await db.customers.find_one({"id": f["customer_id"]}, {"_id": 0, "email": 1})
+        cust = await db.customers.find_one(
+            {"id": f["customer_id"], "floor_id": f.get("floor_id")}, {"_id": 0, "email": 1},
+        )
         result["email"] = cust.get("email") if cust else None
         template_key = "payment_reminder" if f.get("category") == "payment" else "quotation"
         email = build_email(template_key, result["email"], {**ctx, "invoice_number": f.get("quotation_number") or "", "order_number": f.get("quotation_number") or ""})

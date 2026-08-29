@@ -298,15 +298,17 @@ async def delete_customer(
             }
         raise
     quotation_docs = await db.quotations.find(
-        {"customer_id": customer_id}, {"_id": 0, "id": 1},
+        {"customer_id": customer_id, "floor_id": existing.get("floor_id")}, {"_id": 0, "id": 1},
     ).to_list(5000)
     quotation_ids = [doc["id"] for doc in quotation_docs if doc.get("id")]
     quotation_ref = {"$in": quotation_ids} if quotation_ids else {"$in": ["__none__"]}
     po_count, completed_payment_count = await asyncio.gather(
         db.purchase_orders.count_documents({
+            "floor_id": existing.get("floor_id"),
             "$or": [{"customer_id": customer_id}, {"quotation_id": quotation_ref}],
         }),
         db.payments.count_documents({
+            "floor_id": existing.get("floor_id"),
             "$or": [
                 {"customer_id": customer_id, "status": "completed"},
                 {"quotation_id": quotation_ref, "status": "completed"},
@@ -323,23 +325,24 @@ async def delete_customer(
         )
 
     legacy_results = await asyncio.gather(
-        db.walkins.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
-        db.followups.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
-        db.quotations.update_many({"customer_id": customer_id}, {"$unset": {"gender": ""}}),
+        db.walkins.update_many({"customer_id": customer_id, "floor_id": existing.get("floor_id")}, {"$unset": {"gender": ""}}),
+        db.followups.update_many({"customer_id": customer_id, "floor_id": existing.get("floor_id")}, {"$unset": {"gender": ""}}),
+        db.quotations.update_many({"customer_id": customer_id, "floor_id": existing.get("floor_id")}, {"$unset": {"gender": ""}}),
     )
     followups_result, walkins_result, pending_payments_result, quotations_result, activity_result = await asyncio.gather(
-        db.followups.delete_many({"customer_id": customer_id}),
-        db.walkins.delete_many({"customer_id": customer_id}),
+        db.followups.delete_many({"customer_id": customer_id, "floor_id": existing.get("floor_id")}),
+        db.walkins.delete_many({"customer_id": customer_id, "floor_id": existing.get("floor_id")}),
         db.payments.delete_many({
+            "floor_id": existing.get("floor_id"),
             "$or": [
                 {"customer_id": customer_id, "status": {"$ne": "completed"}},
                 {"quotation_id": quotation_ref, "status": {"$ne": "completed"}},
             ],
         }),
-        db.quotations.delete_many({"customer_id": customer_id}),
-        db.activity_events.delete_many({"customer_id": customer_id}),
+        db.quotations.delete_many({"customer_id": customer_id, "floor_id": existing.get("floor_id")}),
+        db.activity_events.delete_many({"customer_id": customer_id, "floor_id": existing.get("floor_id")}),
     )
-    customer_result = await db.customers.delete_one({"id": customer_id})
+    customer_result = await db.customers.delete_one({"id": customer_id, "floor_id": existing.get("floor_id")})
     if customer_result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Customer not found")
     return {

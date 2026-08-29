@@ -895,7 +895,9 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     and follow-up handlers only run after that commit succeeds.
     """
     doc = await get_floor_scoped_or_404(db.quotations, quotation_id, user, not_found="Quotation not found", projection={"_id": 0})
-    customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
+    customer = await db.customers.find_one(
+        {"id": doc["customer_id"], "floor_id": doc.get("floor_id")}, {"_id": 0, "password_hash": 0},
+    ) or {}
     doc_type = doc.get("doc_type") or "standard"
     _require_tiles_quotation_address(doc_type, doc.get("address_snapshot"))
     branding = await _pdf_branding()
@@ -1134,9 +1136,10 @@ async def workflow_status(
     quotation = await db.quotations.find_one(floor_query(user, {"id": quotation_id}), {"_id": 0})
     if not quotation:
         raise HTTPException(status_code=404, detail="Quotation not found")
-    events = await db.event_outbox.find({"payload.quotation_id": quotation_id}, {"_id": 0}).sort("created_at", 1).to_list(50)
-    purchase_orders = await db.purchase_orders.find({"quotation_id": quotation_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
-    payments = await db.payments.find({"quotation_id": quotation_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
-    timeline = await db.activity_events.find({"quotation_id": quotation_id, "automation_key": {"$exists": True}}, {"_id": 0}).sort("created_at", 1).to_list(100)
-    followups = await db.followups.find({"quotation_id": quotation_id, "automation_key": {"$exists": True}}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    floor_id = quotation.get("floor_id")
+    events = await db.event_outbox.find({"payload.quotation_id": quotation_id, "floor_id": floor_id}, {"_id": 0}).sort("created_at", 1).to_list(50)
+    purchase_orders = await db.purchase_orders.find({"quotation_id": quotation_id, "floor_id": floor_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    payments = await db.payments.find({"quotation_id": quotation_id, "floor_id": floor_id}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    timeline = await db.activity_events.find({"quotation_id": quotation_id, "floor_id": floor_id, "automation_key": {"$exists": True}}, {"_id": 0}).sort("created_at", 1).to_list(100)
+    followups = await db.followups.find({"quotation_id": quotation_id, "floor_id": floor_id, "automation_key": {"$exists": True}}, {"_id": 0}).sort("created_at", 1).to_list(100)
     return {"quotation_id": quotation_id, "quotation_total": round(float(quotation.get("grand_total") or 0), 2), "events": events, "purchase_orders": purchase_orders, "payments": payments, "timeline": timeline, "followups": followups}

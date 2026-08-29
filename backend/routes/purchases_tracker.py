@@ -2460,7 +2460,9 @@ async def order_detail(po_id: str, user: UserPublic = Depends(get_current_user))
     po = await db.purchase_orders.find_one(floor_query(user, {"id": po_id}), {"_id": 0})
     if not po:
         raise HTTPException(status_code=404, detail="Purchase order not found")
-    customer = await db.customers.find_one({"id": po.get("customer_id")}, {"_id": 0, "phone": 1}) or {}
+    customer = await db.customers.find_one(
+        {"id": po.get("customer_id"), "floor_id": po.get("floor_id")}, {"_id": 0, "phone": 1},
+    ) or {}
     return {
         **po,
         # Orders written before the Chalan field existed have no "chalans"

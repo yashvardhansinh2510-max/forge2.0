@@ -64,12 +64,20 @@ MODE_LABELS = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-async def _paid_by_quotation(quotation_ids: list[str]) -> dict[str, float]:
-    """Sum completed payment amounts per quotation."""
+async def _paid_by_quotation(quotation_ids: list[str], *, floor_id: str | None = None) -> dict[str, float]:
+    """Sum completed payment amounts per quotation.
+
+    A quotation context panel is anchored to one business unit.  Accepting
+    its already-authorized floor keeps an unrelated payment with a malformed
+    or reused quotation id from affecting that unit's balance.
+    """
     if not quotation_ids:
         return {}
+    match: dict = {"quotation_id": {"$in": quotation_ids}, "status": "completed"}
+    if floor_id is not None:
+        match["floor_id"] = floor_id
     pipeline = [
-        {"$match": {"quotation_id": {"$in": quotation_ids}, "status": "completed"}},
+        {"$match": match},
         {"$group": {"_id": "$quotation_id", "total": {"$sum": "$amount"}}},
     ]
     rows = await db.payments.aggregate(pipeline).to_list(len(quotation_ids) + 5)
@@ -244,16 +252,19 @@ async def order_detail(order_id: str, user: UserPublic = Depends(get_current_use
     if doc.get("status") not in ORDER_STATUSES:
         raise HTTPException(status_code=400, detail="Quotation is not a confirmed order yet")
 
-    paid_map = await _paid_by_quotation([order_id])
+    floor_id = doc.get("floor_id")
+    paid_map = await _paid_by_quotation([order_id], floor_id=floor_id)
     paid = paid_map.get(order_id, 0.0)
     grand = float(doc.get("grand_total") or 0)
     mrp = await _mrp_for_quotation(doc)
     outstanding = max(0.0, grand - paid)
 
-    customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0, "password_hash": 0}) or {}
+    customer = await db.customers.find_one(
+        {"id": doc["customer_id"], "floor_id": floor_id}, {"_id": 0, "password_hash": 0},
+    ) or {}
 
     payments = await db.payments.find(
-        {"quotation_id": order_id}, {"_id": 0},
+        {"quotation_id": order_id, "floor_id": floor_id}, {"_id": 0},
     ).sort("paid_at", -1).to_list(500)
     # Ensure legacy payments (without paid_at) still sort sensibly
     payments.sort(key=lambda p: (p.get("paid_at") or p.get("created_at") or ""), reverse=True)
@@ -703,8 +714,9 @@ def _clean_phone(phone: Optional[str]) -> Optional[str]:
 async def whatsapp_reminder(order_id: str, user: UserPublic = Depends(get_current_user)):
     """Build a wa.me link + message body for a payment reminder."""
     doc = await get_floor_scoped_or_404(db.quotations, order_id, user, not_found="Order not found", projection={"_id": 0})
-    customer = await db.customers.find_one({"id": doc["customer_id"]}, {"_id": 0}) or {}
-    paid_map = await _paid_by_quotation([order_id])
+    floor_id = doc.get("floor_id")
+    customer = await db.customers.find_one({"id": doc["customer_id"], "floor_id": floor_id}, {"_id": 0}) or {}
+    paid_map = await _paid_by_quotation([order_id], floor_id=floor_id)
     paid = paid_map.get(order_id, 0.0)
     grand = float(doc.get("grand_total") or 0)
     outstanding = max(0.0, grand - paid)
