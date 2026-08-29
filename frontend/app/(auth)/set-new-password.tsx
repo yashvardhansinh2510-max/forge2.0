@@ -25,7 +25,7 @@ export default function SetNewPassword() {
   const submit = async () => {
     setError(null);
     if (!current) { setError("Enter the temporary password you just used to sign in"); return; }
-    if (next.length < 8) { setError("New password must be at least 8 characters"); return; }
+    if (next.length < 12) { setError("New password must be at least 12 characters"); return; }
     if (next !== confirm) { setError("Passwords don't match"); return; }
     setSaving(true);
     try {
@@ -68,7 +68,7 @@ export default function SetNewPassword() {
               onChangeText={setNext}
               secureTextEntry
               autoCapitalize="none"
-              placeholder="At least 8 characters"
+              placeholder="At least 12 characters"
             />
             <TextField
               testID="force-change-confirm"
