@@ -27,6 +27,7 @@ import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
 import { CellNumber, CellStack, DataTable, type Column } from "@/src/components/tiles/TileTable";
 import { Sheet } from "@/src/components/ui";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
+import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 type ActiveSheet = { kind: "godown" | "dispatch-released" | "dispatch-godown"; poId: string; item: CustomerOrderItem } | null;
@@ -37,8 +38,9 @@ type ActiveSheet = { kind: "godown" | "dispatch-released" | "dispatch-godown"; p
 // all, so most rows of a real order showed zero buttons and the page read
 // as a report rather than a workspace.
 function ItemActions({
-  item, poId, onOpen,
-}: { item: CustomerOrderItem; poId: string; onOpen: (sheet: ActiveSheet) => void }) {
+  item, poId, onOpen, readOnly = false,
+}: { item: CustomerOrderItem; poId: string; onOpen: (sheet: ActiveSheet) => void; readOnly?: boolean }) {
+  if (readOnly) return <Text style={styles.hint}>Read-only delivery lookup</Text>;
   const actions: { key: string; label: string; kind: NonNullable<ActiveSheet>["kind"]; enabled: boolean; primary?: boolean }[] = [
     { key: "move-godown", label: "Move to Godown", kind: "godown", enabled: item.boxes_ready > 0 },
     { key: "dispatch-released", label: "Dispatch from Released", kind: "dispatch-released", enabled: item.boxes_ready > 0, primary: true },
@@ -70,6 +72,8 @@ function ItemActions({
 
 export default function CustomerOrderDetailScreen() {
   useRequireFloorAccess("ground-floor");
+  const { staff } = useAuth();
+  const readOnlyDeliveryLookup = staff?.access_profile === "ground_tile_quotations_followups";
   const { id, timeline: timelineParam } = useLocalSearchParams<{ id: string; timeline?: string }>();
   const router = useRouter();
   const [order, setOrder] = useState<CustomerOrderDetail | null>(null);
@@ -162,9 +166,9 @@ export default function CustomerOrderDetailScreen() {
       // Pinned: the three movement verbs are the reason this screen exists, so
       // they stay on screen even when the counters scroll under them.
       key: "actions", label: "ACTIONS", width: 524, sticky: true,
-      render: (item) => <ItemActions item={item} poId={item.__poId} onOpen={setSheet} />,
+      render: (item) => <ItemActions item={item} poId={item.__poId} onOpen={setSheet} readOnly={readOnlyDeliveryLookup} />,
     },
-  ], []);
+  ], [readOnlyDeliveryLookup]);
 
   if (loading) {
     return (
@@ -248,7 +252,7 @@ export default function CustomerOrderDetailScreen() {
             <SectionHeader
               title={group.brand_name}
               meta={<StatusPill status={group.overall_status} />}
-              actions={
+              actions={!readOnlyDeliveryLookup ? (
                 // Releasing is the brand's step, but this is where an operator
                 // notices it is owed — so the release queue has to be one tap
                 // from here, not a separate hunt through the Brands tab.
@@ -257,7 +261,7 @@ export default function CustomerOrderDetailScreen() {
                   testID={`tile-order-open-release-queue-${group.purchase_order_id}`}
                   onPress={() => router.push(`/(admin)/tiles/orders/po/${group.purchase_order_id}` as any)}
                 />
-              }
+              ) : undefined}
             />
             <DataTable
               scrollOwner="parent"
@@ -318,6 +322,7 @@ export default function CustomerOrderDetailScreen() {
           dispatchId={openDispatchId}
           onClose={() => setOpenDispatchId(null)}
           onChanged={async () => { await load(); }}
+          readOnly={readOnlyDeliveryLookup}
         />
       ) : null}
 

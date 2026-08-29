@@ -42,6 +42,11 @@ export function resetFloorAccess() {
   accessGeneration += 1;
   cache = null;
   inflight = null;
+  // Do not let a just-signed-out account's persisted workspace header leak
+  // into the next account's first request. Login will choose an assigned
+  // floor from the newly authenticated server response.
+  selectedFloorCache = "";
+  setRequestFloorId("");
 }
 
 /** Fetch the current session's assignments so login can select a real floor. */
@@ -74,6 +79,22 @@ export function setSelectedFloorId(id: string) {
 export function useFloorAccess() {
   const [access, setAccess] = useState<FloorAccess | null>(cache);
   const [selectedFloorId, setSelectedFloorIdState] = useState(selectedFloorCache || "");
+  const [error, setError] = useState<string | null>(null);
+  const retry = useCallback(async () => {
+    cache = null;
+    inflight = null;
+    setError(null);
+    try {
+      const [value, saved] = await Promise.all([loadAccess(), getSelectedFloorId()]);
+      setAccess(value);
+      const valid = saved && value.floor_ids.includes(saved) ? saved : value.floors[0]?.id || "";
+      setSelectedFloorIdState(valid);
+      if (valid !== saved) void setSelectedFloorId(valid);
+    } catch (cause: any) {
+      setAccess(null);
+      setError(cause?.detail || "We couldn't load your workspace access.");
+    }
+  }, []);
   useEffect(() => {
     let alive = true;
     const onSelectedFloorChange = (floorId: string) => { if (alive) setSelectedFloorIdState(floorId); };
@@ -85,7 +106,11 @@ export function useFloorAccess() {
       const valid = saved && value.floor_ids.includes(saved) ? saved : fallback;
       setSelectedFloorIdState(valid);
       if (valid !== saved) void setSelectedFloorId(valid);
-    }).catch(() => { if (alive) setAccess(null); });
+    }).catch((cause: any) => {
+      if (!alive) return;
+      setAccess(null);
+      setError(cause?.detail || "We couldn't load your workspace access.");
+    });
     return () => { alive = false; selectedFloorListeners.delete(onSelectedFloorChange); };
   }, []);
   const selectFloor = useCallback((id: string) => {
@@ -93,7 +118,7 @@ export function useFloorAccess() {
       (access.all_floors || access.floor_ids.includes(id)));
     return canSelect ? setSelectedFloorId(id) : Promise.resolve();
   }, [access]);
-  return { access, floors: access?.floors || [], selectedFloorId, selectFloor };
+  return { access, floors: access?.floors || [], selectedFloorId, selectFloor, loading: !access && !error, error, retry };
 }
 
 export function useRequireFloorAccess(floorId: string) {
