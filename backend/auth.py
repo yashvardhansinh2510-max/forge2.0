@@ -368,11 +368,46 @@ PROFILE_FLOOR_IDS: dict[str, tuple[str, ...]] = {
     "sanitary_purchases": ("first-floor",),
 }
 
+# The profile allow-list grants exactly the workflow's API surface, but the
+# normal route-level role gates still apply.  Keep the minimum role beside the
+# profile binding so Team provisioning cannot create an account that can see a
+# workspace but receives inexplicable 403s for its core actions.
+PROFILE_MIN_ROLES: dict[str, Role] = {
+    "ground_tile_quotations_followups": "sales",
+    "ground_payments_dispatches": "accounts",
+    "sanitary_quotations_followups": "sales",
+    "sanitary_purchases": "purchase",
+}
+
 
 def profile_floor_ids(access_profile: str | None) -> list[str] | None:
     """Return the floor intrinsically assigned to a least-privilege profile."""
     floors = PROFILE_FLOOR_IDS.get(access_profile or "")
     return list(floors) if floors else None
+
+
+def normalize_staff_access(*, role: Role, floor_ids: list[str], access_profile: str | None) -> tuple[Role, list[str]]:
+    """Validate a staff assignment and apply the least role needed by a profile.
+
+    A profile is authoritative for its floor.  Without one, every account
+    below manager must be explicitly assigned at least one floor.  This is a
+    security boundary, not a UI convenience: an empty assignment must never
+    fall back to the legacy Sanitary Bathroom default.
+    """
+    profile_floors = profile_floor_ids(access_profile)
+    if access_profile is not None and profile_floors is None:
+        raise HTTPException(status_code=422, detail="Unknown access profile")
+    if profile_floors is not None:
+        minimum = PROFILE_MIN_ROLES[access_profile]
+        if ROLE_HIERARCHY[role] < ROLE_HIERARCHY[minimum]:
+            role = minimum
+        floor_ids = profile_floors
+    # Owners/managers are intentionally all-floor accounts. Everyone else
+    # needs an explicit non-empty assignment, even if that user was loaded
+    # from a legacy document without floor_ids.
+    if role not in {"owner", "manager"} and not floor_ids:
+        raise HTTPException(status_code=422, detail="Assign at least one floor to every non-owner, non-manager account")
+    return role, list(dict.fromkeys(floor_ids))
 
 
 def apply_effective_floor_ids(user: UserPublic) -> UserPublic:
@@ -385,9 +420,14 @@ def apply_effective_floor_ids(user: UserPublic) -> UserPublic:
 
 def accessible_floor_ids(user: UserPublic) -> list[str] | None:
     """None means all active floors; otherwise return explicit assignments."""
-    profile_floors = profile_floor_ids(getattr(user, "access_profile", None))
+    profile = getattr(user, "access_profile", None)
+    profile_floors = profile_floor_ids(profile)
     if profile_floors is not None:
         return profile_floors
+    # A malformed legacy profile is fail-closed, rather than becoming a
+    # normal staff account through an accidental typo or partial migration.
+    if profile is not None:
+        return []
     return None if has_all_floor_access(user) else list(user.floor_ids or [])
 
 
@@ -423,10 +463,17 @@ def _resolve_floor_scope(user: UserPublic) -> list[str]:
     isolation benefit. Mirroring it into reads closes the asymmetry without
     touching that contract.
     """
-    if user.active_floor_id:
-        return [user.active_floor_id]
     allowed = accessible_floor_ids(user)
-    return list(allowed) if allowed else ["first-floor"]
+    if user.active_floor_id:
+        # Never trust a persisted/request-scoped selection by itself: a
+        # restricted account could otherwise construct UserPublic directly
+        # with a floor it is not assigned.
+        if allowed is None or user.active_floor_id in allowed:
+            return [user.active_floor_id]
+        return []
+    if allowed is not None:
+        return list(allowed)  # [] is a deliberate deny-all scope.
+    return ["first-floor"]
 
 
 def floor_query(user: UserPublic, base: dict | None = None) -> dict:
@@ -445,7 +492,10 @@ def floor_scope_ids(user: UserPublic) -> list[str]:
 
 
 def floor_for_write(user: UserPublic) -> str:
-    return _resolve_floor_scope(user)[0]
+    scope = _resolve_floor_scope(user)
+    if not scope:
+        raise HTTPException(status_code=403, detail="No floor access is assigned to this account")
+    return scope[0]
 
 
 def floor_inherit(source: dict | None) -> str:

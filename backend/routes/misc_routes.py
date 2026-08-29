@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import os
 
-from auth import accessible_floor_ids, floor_for_write, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, profile_floor_ids, require_min_role, revoke_all_sessions
+from auth import accessible_floor_ids, floor_for_write, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, normalize_staff_access, require_min_role, revoke_all_sessions
 from db import db
 from models import FloorCreatePayload, FloorPublic, TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from services.activity_log import log_event
@@ -239,10 +239,12 @@ async def create_team_member(body: TeamCreatePayload, user: UserPublic = Depends
         raise HTTPException(status_code=403, detail="Only an owner can create another owner")
     if await db.users.find_one({"email": body.email.lower()}, {"_id": 0, "id": 1}):
         raise HTTPException(status_code=409, detail="A team member with this email already exists")
-    profile_floors = profile_floor_ids(body.access_profile)
+    role, floor_ids = normalize_staff_access(
+        role=body.role, floor_ids=body.floor_ids, access_profile=body.access_profile,
+    )
     doc = UserPublic(
-        email=body.email.lower(), full_name=body.full_name, role=body.role, phone=body.phone,
-        floor_ids=profile_floors if profile_floors is not None else body.floor_ids,
+        email=body.email.lower(), full_name=body.full_name, role=role, phone=body.phone,
+        floor_ids=floor_ids,
         access_profile=body.access_profile,
         # New staff must set their own password on first login — the admin-
         # supplied password here is only a onboarding credential, never a
@@ -256,7 +258,7 @@ async def create_team_member(body: TeamCreatePayload, user: UserPublic = Depends
     await log_event(
         event_type="user.created", entity_type="user", entity_id=doc["id"],
         actor=user, summary="Staff Account Created",
-        payload={"role": body.role, "email": doc["email"]},
+        payload={"role": role, "floor_ids": floor_ids, "access_profile": body.access_profile, "email": doc["email"]},
     )
     return doc
 
@@ -272,7 +274,11 @@ async def update_team_member(
     before = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     if not before:
         raise HTTPException(status_code=404, detail="Team member not found")
-    patch = {k: v for k, v in body.dict(exclude_unset=True).items() if v is not None}
+    # `access_profile: null` is a meaningful request: it safely clears the
+    # provisioner profile.  Other nulls retain PATCH's usual "not supplied"
+    # semantics.
+    supplied = body.dict(exclude_unset=True)
+    patch = {k: v for k, v in supplied.items() if v is not None or k == "access_profile"}
     if not patch:
         raise HTTPException(status_code=400, detail="Nothing to update")
     target_is_owner = before.get("role") == "owner"
@@ -282,16 +288,26 @@ async def update_team_member(
     removes_owner = target_is_owner and (patch.get("active") is False or ("role" in patch and patch["role"] != "owner"))
     if removes_owner and await db.users.count_documents({"role": "owner", "active": {"$ne": False}}) <= 1:
         raise HTTPException(status_code=400, detail="At least one active owner is required")
-    if "access_profile" in patch:
-        profile_floors = profile_floor_ids(patch["access_profile"])
-        if profile_floors is not None:
-            # Keep the stored assignment inspectable and correct for legacy
-            # consumers; authorization independently enforces this binding.
-            patch["floor_ids"] = profile_floors
+    proposed_role, proposed_floors = normalize_staff_access(
+        role=patch.get("role", before["role"]),
+        floor_ids=patch.get("floor_ids", before.get("floor_ids") or []),
+        access_profile=patch["access_profile"] if "access_profile" in patch else before.get("access_profile"),
+    )
+    # Profile provisioning may raise the requested role to the workflow's
+    # minimum and always pins its corresponding floor. Store that correction
+    # even when the client only supplied the profile.
+    if proposed_role != before.get("role") or "role" in patch:
+        patch["role"] = proposed_role
+    if proposed_floors != (before.get("floor_ids") or []) or "floor_ids" in patch or "access_profile" in patch:
+        patch["floor_ids"] = proposed_floors
     patch["updated_at"] = now_iso()
     await db.users.update_one({"id": user_id}, {"$set": patch})
-    if "access_profile" in patch:
-        # Profiles are signed-token claims; make the changed scope immediate.
+    security_fields = ("role", "floor_ids", "access_profile")
+    security_changed = any(field in patch and patch[field] != before.get(field) for field in security_fields)
+    if security_changed:
+        # Roles/floors/profiles are authorization claims. Revoke every device
+        # before returning the updated account so stale tokens cannot retain
+        # the old scope for their remaining JWT lifetime.
         await revoke_all_sessions("staff", user_id)
     doc = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
 
@@ -306,6 +322,18 @@ async def update_team_member(
             event_type="user.enabled" if patch["active"] else "user.disabled",
             entity_type="user", entity_id=user_id, actor=user,
             summary="Staff Account Enabled" if patch["active"] else "Staff Account Disabled",
+        )
+    if "floor_ids" in patch and patch["floor_ids"] != (before.get("floor_ids") or []):
+        await log_event(
+            event_type="user.floor_access_changed", entity_type="user", entity_id=user_id, actor=user,
+            summary="Staff Floor Access Changed",
+            payload={"from": before.get("floor_ids") or [], "to": patch["floor_ids"]},
+        )
+    if "access_profile" in patch and patch["access_profile"] != before.get("access_profile"):
+        await log_event(
+            event_type="user.access_profile_changed", entity_type="user", entity_id=user_id, actor=user,
+            summary="Staff Access Profile Changed",
+            payload={"from": before.get("access_profile"), "to": patch["access_profile"]},
         )
     return doc
 
