@@ -192,7 +192,7 @@ export default function ProductDetail() {
   if (!p) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.surface }}>
-        <SafeAreaView edges={["top"]} style={styles.topBar}>
+        <SafeAreaView edges={isPhone ? [] : ["top"]} style={styles.topBar}>
           <IconButton icon="chevron-left" onPress={() => router.back()} size={36} tone="surface" accessibilityLabel="Back" />
           <View style={{ flex: 1 }} />
         </SafeAreaView>
@@ -466,7 +466,7 @@ export default function ProductDetail() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <SafeAreaView edges={["top"]} style={styles.topBar}>
+      <SafeAreaView edges={isPhone ? [] : ["top"]} style={styles.topBar}>
         <IconButton icon="chevron-left" onPress={() => router.back()} size={36} tone="surface" accessibilityLabel="Back" />
         <View style={{ flex: 1 }}>
           <Text style={type.caption} numberOfLines={1}>{brandName}{p.series ? ` · ${p.series}` : ""}</Text>

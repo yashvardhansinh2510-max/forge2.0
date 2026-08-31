@@ -113,11 +113,18 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
     if (!open || notebookOnly) return;
     if (debounce.current) clearTimeout(debounce.current);
     if (q.trim().length < 2) { setProducts([]); return; }
+    const controller = new AbortController();
     debounce.current = setTimeout(() => {
-      api.get<any>(`/products?q=${encodeURIComponent(q.trim())}&limit=5`)
+      api.get<any>(`/products?q=${encodeURIComponent(q.trim())}&limit=5`, { signal: controller.signal })
         .then((d) => setProducts(d?.items ?? []))
-        .catch(() => setProducts([]));
+        .catch((error) => {
+          if (!controller.signal.aborted) setProducts([]);
+        });
     }, 180);
+    return () => {
+      if (debounce.current) clearTimeout(debounce.current);
+      controller.abort();
+    };
   }, [q, open, notebookOnly]);
 
   const go = useCallback((href: string) => {
@@ -227,6 +234,7 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
               value={q}
               onChangeText={(v) => { setQ(v); setSel(0); }}
               placeholder="Search or jump to…"
+              accessibilityLabel="Search commands, customers, quotations, and products"
               placeholderTextColor={color.inkFaint}
               autoCapitalize="none"
               autoCorrect={false}
@@ -237,7 +245,7 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
               onSubmitEditing={() => items[sel]?.run()}
             />
             {isPhone ? (
-              <Pressable onPress={onClose} hitSlop={layout.hitSlop}>
+              <Pressable onPress={onClose} hitSlop={layout.hitSlop} accessibilityRole="button" accessibilityLabel="Close command palette">
                 <Text style={{ fontFamily: font.medium, fontSize: 14, color: color.inkMid }}>Cancel</Text>
               </Pressable>
             ) : <KeyCap label="esc" />}
@@ -271,6 +279,9 @@ function PaletteHost({ open, onClose }: { open: boolean; onClose: () => void }) 
                   <Pressable
                     onPress={it.run}
                     onHoverIn={() => setSel(i)}
+                    accessibilityRole="button"
+                    accessibilityLabel={[it.title, it.sub, it.meta].filter(Boolean).join(", ")}
+                    accessibilityState={{ selected: active }}
                     style={[
                       {
                         flexDirection: "row", alignItems: "center", gap: 12,

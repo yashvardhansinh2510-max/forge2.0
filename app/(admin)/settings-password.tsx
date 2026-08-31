@@ -2,7 +2,7 @@
 // was no change-password endpoint or screen anywhere before this.
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { ScrollView } from "react-native";
+import { View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
@@ -36,14 +36,14 @@ export default function SettingsPassword() {
 
   return (
     <AdminPage title="Change password" back={() => router.back()}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: spacing.lg }}>
+      <View style={{ gap: spacing.lg }}>
         <Card style={{ gap: spacing.md }}>
           <TextField testID="current-password-input" label="Current password" value={current} onChangeText={setCurrent} secureTextEntry placeholder="••••••••" autoCapitalize="none" />
           <TextField testID="new-password-input" label="New password" value={next} onChangeText={setNext} secureTextEntry placeholder="At least 8 characters" autoCapitalize="none" />
           <TextField testID="confirm-password-input" label="Confirm new password" value={confirm} onChangeText={setConfirm} secureTextEntry placeholder="Re-enter new password" autoCapitalize="none" error={error} />
           <Button testID="save-password-btn" label="Update password" icon="lock" loading={saving} onPress={submit} fullWidth />
         </Card>
-      </ScrollView>
+      </View>
     </AdminPage>
   );
 }

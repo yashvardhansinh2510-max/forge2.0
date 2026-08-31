@@ -1,10 +1,10 @@
 // BuildCon House · Notifications
 import { Feather } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
-import { EmptyState, Skeleton } from "@/src/components/ui";
+import { EmptyState, ErrorState, Skeleton } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
@@ -26,7 +26,19 @@ const iconMap = {
 
 export default function Notifications() {
   const [items, setItems] = useState<N[] | null>(null);
-  useEffect(() => { api.get<N[]>("/notifications").then(setItems).catch(() => setItems([])); }, []);
+  const [loadError, setLoadError] = useState(false);
+  const requestIdRef = useRef(0);
+  const load = useCallback(() => {
+    const requestId = ++requestIdRef.current;
+    setLoadError(false);
+    setItems(null);
+    api.get<N[]>("/notifications").then(
+      (response) => { if (requestId === requestIdRef.current) setItems(response); },
+      () => { if (requestId === requestIdRef.current) setLoadError(true); },
+    );
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const unread = (items || []).filter((n) => !n.read).length;
 
@@ -35,7 +47,13 @@ export default function Notifications() {
       title="Notifications"
       subtitle={unread ? `${unread} unread · alerts & approvals` : "You’re all caught up"}
     >
-      {!items ? (
+      {loadError ? (
+        <ErrorState
+          title="Couldn't load notifications"
+          subtitle="Check your connection and try again."
+          onRetry={load}
+        />
+      ) : !items ? (
         <View style={{ gap: spacing.sm }}>
           {Array.from({ length: 4 }).map((_, i) => (
             <View key={i} style={[styles.card, { flexDirection: "row", gap: spacing.md }]}>

@@ -9,6 +9,7 @@ import {
 import { CellMono, CellNumber, CellText, CellTitle, DataTable, type Column } from "@/src/components/tiles/TileTable";
 import { toast } from "@/src/components/Toast";
 import { colors, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 type PayMode = "cash" | "upi" | "bank" | "cheque" | "card";
 type PaymentRow = {
@@ -47,6 +48,7 @@ function dateShort(value?: string | null): string {
 }
 
 export default function PaymentListScreen() {
+  const { isPhone } = useBp();
   const [rows, setRows] = useState<PaymentRow[]>([]);
   const [floors, setFloors] = useState<Floor[]>([]);
   const [query, setQuery] = useState("");
@@ -95,13 +97,13 @@ export default function PaymentListScreen() {
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <SafeAreaView style={styles.screen} edges={["top"]}>
+    <SafeAreaView style={styles.screen} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         title="Payment List"
         overline="PAYMENTS"
         subtitle="Complete payment history for orders paid in full (100%)."
       />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={[styles.content, isPhone && styles.contentPhone]}>
         <View style={styles.filters}>
           <View style={styles.search}><SearchField testID="payment-list-search" value={query} onChangeText={setQuery} onClear={() => setQuery("")} placeholder="Search client, invoice or reference…" /></View>
           <Dropdown label={floor === "all" ? "All business units" : floors.find((item) => item.id === floor)?.name || floor} items={[{ label: "All business units", onPress: () => setFloor("all") }, ...floors.map((item) => ({ label: item.name, onPress: () => setFloor(item.id) }))]} />
@@ -133,6 +135,7 @@ export default function PaymentListScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.surface },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
+  contentPhone: { padding: spacing.lg, paddingBottom: 132 },
   filters: { flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: "wrap" },
   search: { flex: 1, minWidth: Platform.OS === "web" ? 280 : 220 },
   pagination: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.md, flexWrap: "wrap" },

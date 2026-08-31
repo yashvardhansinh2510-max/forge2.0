@@ -28,6 +28,10 @@ type ProductHistory = {
   pcs_per_box: string | null; box_sqft: number | null;
 };
 
+function tileSizes(product: Product): string[] {
+  return [...new Set((product.available_sizes || []).map((size) => String(size || "").trim()).filter(Boolean))];
+}
+
 export function TilesProductPicker({
   open, onClose, onPick, customerId,
 }: {
@@ -83,9 +87,9 @@ export function TilesProductPicker({
     return () => clearTimeout(debounce);
   }, [query, open, search]);
 
-  const pick = useCallback(async (product: Product) => {
+  const pick = useCallback(async (product: Product, useCustomerHistory = true) => {
     Haptics.selectionAsync();
-    if (customerId) {
+    if (customerId && useCustomerHistory) {
       try {
         const history = await api.get<{ found: boolean } & Partial<ProductHistory>>(
           `/quotations/tiles/product-history?customer_id=${customerId}&product_id=${product.id}`,
@@ -146,7 +150,21 @@ export function TilesProductPicker({
           columnWrapperStyle={columns === 2 ? styles.gridRow : undefined}
           contentContainerStyle={styles.grid}
           keyboardShouldPersistTaps="handled"
-          renderItem={({ item }) => <TileCatalogCard product={item} compact={isPhonePicker} onPress={() => void pick(item)} />}
+          renderItem={({ item }) => (
+            <TileCatalogCard
+              product={item}
+              compact={isPhonePicker}
+              onPress={() => void pick(item)}
+              onPickSize={(size) => void (async () => {
+                try {
+                  // Resolve by size server-side. The response is the complete
+                  // sibling product, so adding it updates all tile attributes.
+                  const resolution = await api.get<{ product: Product }>(`/products/${item.id}/size-variants?size=${encodeURIComponent(size)}`, { floorId: "ground-floor" });
+                  await pick(resolution.product, false);
+                } catch { /* Keep the catalog open if a size is unavailable. */ }
+              })()}
+            />
+          )}
           initialNumToRender={8}
           maxToRenderPerBatch={8}
           windowSize={7}
@@ -163,7 +181,14 @@ export function TilesProductPicker({
   );
 }
 
-function TileCatalogCard({ product, compact, onPress }: { product: Product; compact: boolean; onPress: () => void }) {
+function TileCatalogCard({
+  product, compact, onPress, onPickSize,
+}: {
+  product: Product; compact: boolean; onPress: () => void; onPickSize: (size: string) => void;
+}) {
+  const sizes = tileSizes(product);
+  const canSwitchSize = sizes.length >= 2;
+  const selectedSize = String(product.size || product.dimensions || "").trim();
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.card, compact && styles.phoneCard, pressed && styles.cardPressed]} testID={`tiles-picker-card-${product.id}`} accessibilityRole="button" accessibilityLabel={`Add ${product.name}`}>
       <ProductImage source={productImageList(product)} style={[styles.image, ...(compact ? [styles.phoneImage] : [])]} fallbackLabel={product.sku} disableSkeleton contentFit="contain" />
@@ -171,6 +196,26 @@ function TileCatalogCard({ product, compact, onPress }: { product: Product; comp
         <Text style={styles.brand} numberOfLines={1}>{product.brand_name || "Tile"}</Text>
         <Text style={styles.name} numberOfLines={2}>{product.name}</Text>
         <Text style={styles.meta} numberOfLines={1}>{[product.sku, product.size || product.dimensions].filter(Boolean).join(" · ")}</Text>
+        {canSwitchSize ? (
+          <View style={styles.sizePicker} accessibilityLabel={`${sizes.length} sizes available for ${product.name}`}>
+            <Text style={styles.sizeLabel}>{sizes.length} sizes</Text>
+            <View style={styles.sizeChoices}>
+              {sizes.map((choice) => (
+                <Pressable
+                  key={choice}
+                  onPress={(event) => { event.stopPropagation(); onPickSize(choice); }}
+                  style={({ pressed }) => [styles.sizeChoice, choice === selectedSize && styles.sizeChoiceCurrent, pressed && styles.sizeChoicePressed]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: choice === selectedSize }}
+                  accessibilityLabel={`Choose ${choice}${choice === selectedSize ? ", selected" : ""}`}
+                  testID={`tiles-picker-size-${product.id}-${choice}`}
+                >
+                  <Text numberOfLines={1} style={[styles.sizeChoiceText, choice === selectedSize && styles.sizeChoiceTextCurrent]}>{choice}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
         <View style={styles.cardFooter}>
           <Text style={styles.price}>{product.price ? money(product.price) : "Price on request"}</Text>
           <View style={styles.add}><Feather name="plus" size={16} color={colors.onBrand} /></View>
@@ -199,6 +244,14 @@ const styles = StyleSheet.create({
   brand: { fontSize: 10, fontWeight: "700", letterSpacing: 0.45, textTransform: "uppercase", color: colors.onSurfaceMuted },
   name: { minHeight: 34, fontSize: 13, lineHeight: 17, fontWeight: "700", color: colors.onSurface },
   meta: { fontSize: 11, color: colors.onSurfaceSecondary },
+  sizePicker: { gap: 4, marginTop: 2 },
+  sizeLabel: { fontSize: 10, fontWeight: "700", color: colors.onSurfaceMuted, textTransform: "uppercase", letterSpacing: 0.35 },
+  sizeChoices: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
+  sizeChoice: { maxWidth: 104, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 3, backgroundColor: colors.surface },
+  sizeChoiceCurrent: { backgroundColor: colors.brand, borderColor: colors.brand },
+  sizeChoicePressed: { opacity: 0.72 },
+  sizeChoiceText: { fontSize: 10, fontWeight: "600", color: colors.onSurfaceSecondary },
+  sizeChoiceTextCurrent: { color: colors.onBrand },
   cardFooter: { minHeight: 32, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 4, marginTop: 3 },
   price: { flex: 1, minWidth: 0, fontSize: 12, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] },
   add: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: colors.brand },

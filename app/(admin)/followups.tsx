@@ -7,7 +7,7 @@
 // only orchestrates reads + user actions, never invents data.
 // ═══════════════════════════════════════════════════════════════════════════
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -133,6 +133,7 @@ type CustomerLite = { id: string; name: string; company?: string | null; phone?:
 type SavedView = { id: string; name: string; filters: Record<string, any> };
 
 type KpiFilter = Bucket | "waiting" | "all";
+type FollowupView = "active" | "won" | "lost";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static meta
@@ -223,6 +224,11 @@ function greeting(): string {
   if (h < 17) return "Good afternoon";
   return "Good evening";
 }
+function isWonOrderFollowup(f: Followup): boolean {
+  // "converted" is retained here only so records written during the rollout
+  // stay out of the active queue; all new order placements are marked won.
+  return f.auto_resolved && (f.completed_outcome === "won" || f.completed_outcome === "converted");
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Screen
@@ -249,6 +255,7 @@ export default function FollowupsScreen() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [tierFilter, setTierFilter] = useState<"all" | "retail" | "trade" | "vip">("all");
   const [ownerFilter, setOwnerFilter] = useState<"all" | "mine" | string>("all");
+  const [followupView, setFollowupView] = useState<FollowupView>("active");
   const [collapsed, setCollapsed] = useState<Set<Bucket>>(new Set(["completed", "snoozed"]));
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -259,6 +266,7 @@ export default function FollowupsScreen() {
   const [rulesSheet, setRulesSheet] = useState(false);
   const [newSheet, setNewSheet] = useState(false);
   const [callOutcomeFor, setCallOutcomeFor] = useState<Followup | null>(null);
+  const [lossActionFor, setLossActionFor] = useState<Followup | null>(null);
   const [noteFor, setNoteFor] = useState<Followup | null>(null);
   const [customSnoozeFor, setCustomSnoozeFor] = useState<Followup | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Followup | null>(null);
@@ -343,6 +351,14 @@ export default function FollowupsScreen() {
     setRefreshing(false);
     toast.success("Workspace synced");
   }, [bootstrap]);
+
+  // An order can be placed from the quotation screen while this route remains
+  // mounted in the navigator. Refresh on return so its follow-ups move to the
+  // Won orders view without relying on a manual page reload.
+  useFocusEffect(useCallback(() => {
+    void loadList();
+    void refreshStatsQuiet();
+  }, [loadList, refreshStatsQuiet]));
 
   const loadDetail = useCallback(async (id: string) => {
     setLoadingDetail(true);
@@ -457,6 +473,7 @@ export default function FollowupsScreen() {
       });
       toast.success("Call logged");
       setCallOutcomeFor(null);
+      setLossActionFor(null);
       await loadList();
       refreshStatsQuiet();
     } catch (e: any) { toast.error(e?.detail || "Could not log call"); }
@@ -494,6 +511,9 @@ export default function FollowupsScreen() {
     } else if (kpiFilter !== "all") {
       list = list.filter((f) => f.bucket === kpiFilter);
     }
+    if (followupView === "won") list = list.filter(isWonOrderFollowup);
+    else if (followupView === "lost") list = list.filter((f) => f.completed_outcome === "lost");
+    else list = list.filter((f) => !isWonOrderFollowup(f) && f.completed_outcome !== "lost");
     if (priorityFilter !== "all") list = list.filter((f) => (f.manual_priority_override || f.priority_level) === priorityFilter);
     if (categoryFilter !== "all") list = list.filter((f) => f.category === categoryFilter);
     if (workspace === "selection") list = list.filter((f) => f.rule_type === "selection_waiting");
@@ -507,7 +527,7 @@ export default function FollowupsScreen() {
       if (mineA !== mineB) return mineA - mineB;
       return (b.priority_score - a.priority_score) || (a.due_at || "").localeCompare(b.due_at || "");
     });
-  }, [rawItems, q, kpiFilter, priorityFilter, categoryFilter, workspace, tierFilter, ownerFilter, staff]);
+  }, [rawItems, q, kpiFilter, followupView, priorityFilter, categoryFilter, workspace, tierFilter, ownerFilter, staff]);
 
   const sections = useMemo(() => {
     const map: Record<string, Followup[]> = {};
@@ -515,8 +535,8 @@ export default function FollowupsScreen() {
     return SECTION_ORDER.filter((b) => map[b]?.length).map((b) => ({ bucket: b, data: map[b] }));
   }, [filtered]);
   const visibleSections = useMemo(
-    () => sections.map((section) => ({ ...section, itemCount: section.data.length, data: collapsed.has(section.bucket) ? [] : section.data })),
-    [collapsed, sections],
+    () => sections.map((section) => ({ ...section, itemCount: section.data.length, data: followupView === "active" && collapsed.has(section.bucket) ? [] : section.data })),
+    [collapsed, followupView, sections],
   );
 
   const priorityCounts = useMemo(() => {
@@ -527,6 +547,11 @@ export default function FollowupsScreen() {
     }
     return c;
   }, [rawItems]);
+
+  const outcomeCounts = useMemo(() => ({
+    won: rawItems.filter(isWonOrderFollowup).length,
+    lost: rawItems.filter((f) => f.completed_outcome === "lost").length,
+  }), [rawItems]);
 
   const topPriorityOpen = useMemo(
     () => [...rawItems].filter((f) => f.bucket === "overdue" || f.bucket === "today")
@@ -557,7 +582,7 @@ export default function FollowupsScreen() {
   }, [router]);
 
   const ownerLabel = ownerFilter === "all" ? "Owner: All" : ownerFilter === "mine" ? "Owner: Mine" : `Owner: ${assignees.find((a) => a.id === ownerFilter)?.full_name || "—"}`;
-  const activeFilterCount = [priorityFilter !== "all", categoryFilter !== "all", tierFilter !== "all", ownerFilter !== "all"].filter(Boolean).length;
+  const activeFilterCount = [followupView !== "active", priorityFilter !== "all", categoryFilter !== "all", tierFilter !== "all", ownerFilter !== "all"].filter(Boolean).length;
 
   // ── Bulk selection ───────────────────────────────────────────────────────
   const toggleSelect = useCallback((id: string) => {
@@ -601,6 +626,7 @@ export default function FollowupsScreen() {
     const flt = v.filters || {};
     setQ(flt.q || "");
     setKpiFilter(flt.kpiFilter || "all");
+    setFollowupView(flt.followupView || "active");
     setPriorityFilter(flt.priorityFilter || "all");
     setCategoryFilter(flt.categoryFilter || "all");
     setTierFilter(flt.tierFilter || "all");
@@ -610,13 +636,13 @@ export default function FollowupsScreen() {
   }, []);
 
   const saveCurrentView = useCallback(async (name: string) => {
-    const filters = { q, kpiFilter, priorityFilter, categoryFilter, tierFilter, ownerFilter };
+    const filters = { q, kpiFilter, followupView, priorityFilter, categoryFilter, tierFilter, ownerFilter };
     try {
       const v = await api.post<SavedView>("/followups/saved-views", { name, filters });
       setSavedViews((prev) => [v, ...prev]);
       toast.success("View saved");
     } catch (e: any) { toast.error(e?.detail || "Could not save view"); }
-  }, [q, kpiFilter, priorityFilter, categoryFilter, tierFilter, ownerFilter]);
+  }, [q, kpiFilter, followupView, priorityFilter, categoryFilter, tierFilter, ownerFilter]);
 
   const deleteSavedView = useCallback(async (id: string) => {
     setSavedViews((prev) => prev.filter((v) => v.id !== id));
@@ -681,6 +707,134 @@ export default function FollowupsScreen() {
   }, [rawItems, selectedId, contact, completeFollowup, snoozeFollowup]);
 
   const activeTileStyle = { borderColor: colors.brand, backgroundColor: colors.brandTint };
+  const followupViewControl = (
+    <SegmentedControl
+      value={followupView}
+      onChange={setFollowupView as any}
+      fullWidth
+      testID="followups-outcome-tabs"
+      options={[
+        { value: "active", label: "Follow-ups", icon: "inbox" },
+        { value: "won", label: `Won orders${outcomeCounts.won ? ` · ${outcomeCounts.won}` : ""}`, icon: "shopping-bag" },
+        { value: "lost", label: `Loss${outcomeCounts.lost ? ` · ${outcomeCounts.lost}` : ""}`, icon: "user-x" },
+      ]}
+    />
+  );
+  const workspaceAndFilters = (
+    <>
+      {followupViewControl}
+      {hasTileFollowupWorkspaces ? (
+        <SegmentedControl
+          value={workspace}
+          onChange={setWorkspace}
+          fullWidth
+          testID="followups-workspace-tabs"
+          options={[
+            { value: "all", label: "All", icon: "layers" },
+            { value: "selection", label: `Selections${stats ? ` · ${stats.workspace_counts.selection}` : ""}`, icon: "grid" },
+            { value: "quotation_tiles", label: `Quotations${stats ? ` · ${stats.workspace_counts.quotation_tiles}` : ""}`, icon: "file-text" },
+          ]}
+        />
+      ) : null}
+
+      <MissionHero
+        mission={mission}
+        loading={loading}
+        onOpenPriority={(id) => {
+          const followup = rawItems.find((item) => item.id === id);
+          if (followup) selectCard(followup);
+        }}
+        compact={isPhone}
+      />
+
+      <ScrollView horizontal={isPhone} showsHorizontalScrollIndicator={isPhone} contentContainerStyle={{ gap: spacing.md, paddingRight: isPhone ? spacing.md : 0 }} style={isPhone ? { marginHorizontal: -pagePad, paddingHorizontal: pagePad } : undefined}>
+        <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: isPhone ? "nowrap" : "wrap" }}>
+          <StatTile label="Today's Tasks" value={stats ? stats.today_tasks : "—"} icon="sun" tone="brand"
+            sub={stats?.today_critical ? `${stats.today_critical} critical` : "On track"}
+            onPress={() => toggleKpi("today")} style={kpiFilter === "today" ? activeTileStyle : undefined} />
+          <StatTile label="Overdue Tasks" value={stats ? stats.overdue : "—"} icon="alert-circle" tone="danger"
+            sub={stats?.overdue_critical ? `${stats.overdue_critical} critical` : "None overdue"}
+            onPress={() => toggleKpi("overdue")} style={kpiFilter === "overdue" ? activeTileStyle : undefined} />
+          <StatTile label="Payments Overdue" value={stats ? stats.overdue_payments_count : "—"} icon="credit-card" tone="danger"
+            sub={stats?.overdue_payments_count ? `₹${stats.overdue_payments_amount_short} at stake` : "None overdue"}
+            onPress={() => toggleKpi("overdue")} />
+          <StatTile label="Expiring Soon" value={stats ? stats.expiring_quotations_count : "—"} icon="clock" tone="warning"
+            sub="Quotations lapsing" onPress={() => setCategoryFilter("quotation")} />
+          <StatTile label="Waiting For Customer" value={stats ? stats.waiting_for_customer : "—"} icon="watch" tone="warning"
+            sub="Ball's in their court" onPress={() => toggleKpi("waiting")} style={kpiFilter === "waiting" ? activeTileStyle : undefined} />
+          <StatTile label="Completed Today" value={stats ? stats.completed_today : "—"} icon="check-circle" tone="success"
+            sub={stats ? `${stats.completed_trend >= 0 ? "+" : ""}${stats.completed_trend} vs yesterday` : undefined}
+            onPress={() => toggleKpi("completed")} style={kpiFilter === "completed" ? activeTileStyle : undefined} />
+        </View>
+      </ScrollView>
+
+      <Panel padding={spacing.md}>
+        <View style={{ gap: spacing.md }}>
+          <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: isPhone ? "wrap" : "nowrap" }}>
+            <View style={{ flex: 1, minWidth: isPhone ? "100%" : 0 }}>
+              <SearchField testID="followups-search" value={q} onChangeText={setQ} onClear={() => setQ("")} placeholder="Search customer, phone, quotation #, project…" />
+            </View>
+            {!isPhone ? <IconButton icon="bookmark" onPress={() => setSavedViewsSheet(true)} tone="surface" accessibilityLabel="Saved views" size={40} /> : null}
+            {!isPhone ? <IconButton icon="help-circle" onPress={() => setShortcutHelp(true)} tone="surface" accessibilityLabel="Keyboard shortcuts" size={40} /> : null}
+          </View>
+          {q.trim() ? <Text style={type.caption}>{filtered.length} customer{filtered.length === 1 ? "" : "s"} found</Text> : null}
+          <FilterBar label="PRIORITY" value={priorityFilter} onChange={setPriorityFilter as any} options={[
+            { value: "all", label: "All priorities" }, { value: "critical", label: "Critical", count: priorityCounts.critical || undefined },
+            { value: "high", label: "High", count: priorityCounts.high || undefined }, { value: "medium", label: "Medium", count: priorityCounts.medium || undefined },
+            { value: "low", label: "Low", count: priorityCounts.low || undefined },
+          ]} />
+          <Pressable onPress={() => setFiltersExpanded((v) => !v)} style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", minHeight: 44, paddingVertical: 8 }}>
+            <Feather name={filtersExpanded ? "chevron-up" : "sliders"} size={14} color={colors.onSurfaceSecondary} />
+            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.onSurfaceSecondary }}>{filtersExpanded ? "Hide filters" : "More filters"}{activeFilterCount ? ` (${activeFilterCount})` : ""}</Text>
+          </Pressable>
+          {filtersExpanded ? <>
+            <FilterBar label="TYPE" value={categoryFilter} onChange={setCategoryFilter} options={CATEGORY_OPTIONS} />
+            <View style={{ flexDirection: "row", gap: spacing.md, alignItems: "center", flexWrap: "wrap" }}>
+              <SegmentedControl size="sm" value={tierFilter} onChange={setTierFilter as any} options={[
+                { value: "all", label: "All customers" }, { value: "retail", label: "Retail" }, { value: "trade", label: "Trade" }, { value: "vip", label: "VIP" },
+              ]} />
+              <Dropdown label={ownerLabel} icon="user" variant="secondary" items={[
+                { label: "All owners", icon: "users", onPress: () => setOwnerFilter("all") }, { label: "Mine", icon: "user-check", onPress: () => setOwnerFilter("mine") },
+                ...assignees.map((a) => ({ label: a.full_name, icon: "user" as FeatherName, onPress: () => setOwnerFilter(a.id) })),
+              ]} />
+            </View>
+          </> : null}
+          {kpiFilter !== "all" || activeFilterCount > 0 ? <Chip label="Clear filters ✕" active onPress={() => { setKpiFilter("all"); setFollowupView("active"); setPriorityFilter("all"); setCategoryFilter("all"); setTierFilter("all"); setOwnerFilter("all"); }} /> : null}
+        </View>
+      </Panel>
+
+      {selectedIds.size > 0 ? <BulkActionBar count={selectedIds.size} assignees={assignees} onClear={clearSelection} onSnooze={bulkSnooze} onComplete={bulkComplete} onAssign={bulkAssign} /> : null}
+    </>
+  );
+
+  const renderFollowupList = (phone = false) => (
+    <SectionList
+      sections={visibleSections}
+      keyExtractor={(item) => item.id}
+      scrollEnabled={phone}
+      stickySectionHeadersEnabled={false}
+      style={phone ? { flex: 1 } : undefined}
+      refreshControl={phone ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} /> : undefined}
+      contentContainerStyle={phone ? { paddingBottom: 132 } : { gap: spacing.sm, paddingBottom: spacing.sm }}
+      ListHeaderComponent={phone ? <View style={{ padding: pagePad, gap: spacing.md }}>{workspaceAndFilters}</View> : undefined}
+      ListEmptyComponent={loading ? (
+        <View style={{ paddingHorizontal: phone ? pagePad : 0, gap: spacing.md }}><Skeleton w="30%" h={16} radius={radius.sm} /><SkeletonList rows={4} /></View>
+      ) : (
+        <View style={{ paddingHorizontal: phone ? pagePad : 0 }}><Card><EmptyState icon="check-circle" tone="brand" title="You're all caught up." subtitle="Nothing requires attention. Automated follow-ups will appear here the moment a quotation, payment or purchase needs you." action={<Button label="New Follow-up" icon="plus" variant="primary" onPress={() => setNewSheet(true)} />} /></Card></View>
+      )}
+      ListFooterComponent={phone ? <View style={{ height: spacing.md }} /> : undefined}
+      renderSectionHeader={({ section }) => {
+        const meta = BUCKET_META[section.bucket];
+        const isCollapsed = followupView === "active" && collapsed.has(section.bucket);
+        const label = followupView === "won" ? "Won orders" : followupView === "lost" ? "Loss" : meta.label;
+        const icon: FeatherName = followupView === "won" ? "shopping-bag" : followupView === "lost" ? "user-x" : meta.icon;
+        return <Pressable onPress={() => followupView === "active" && toggleSection(section.bucket)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 4, paddingHorizontal: phone ? pagePad : 0, backgroundColor: colors.surface }}>
+          <Feather name={icon} size={14} color={colors.onSurfaceSecondary} /><Text style={type.overline}>{label}</Text><Badge label={String(section.itemCount)} tone="neutral" size="sm" /><View style={{ flex: 1 }} />{followupView === "active" ? <Feather name={isCollapsed ? "chevron-down" : "chevron-up"} size={16} color={colors.onSurfaceMuted} /> : null}
+        </Pressable>;
+      }}
+      renderItem={({ item: f }) => <View style={{ paddingHorizontal: phone ? pagePad : 0, marginBottom: spacing.sm }}><MemoFollowupCard f={f} active={f.id === selectedId} assignees={assignees} rank={rankMap.get(f.id)} checked={selectedIds.has(f.id)} onToggleSelect={toggleSelect} onPress={selectCard} onCall={contact} onWhatsApp={contact} onEmail={contact} onComplete={completeFollowup} onSnooze={snoozeFollowup} onCustomSnooze={setCustomSnoozeFor} onPushDays={pushDue} onAssign={assignFollowup} onNote={setNoteFor} onMarkLost={(item) => { setLossActionFor(item); setCallOutcomeFor(item); }} onDismiss={dismissFollowup} canDelete={!!staff && MANAGER_ROLES.includes(staff.role)} onDelete={setDeleteTarget} onOpenDoc={openRelatedDocument} /></View>}
+    />
+  );
   // ═══════════════════════════════════════════════════════════════════════
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
@@ -715,10 +869,12 @@ export default function FollowupsScreen() {
         }
       />
 
+      {isPhone ? renderFollowupList(true) : (
       <ScrollView
         contentContainerStyle={{ padding: pagePad, gap: isPhone ? spacing.md : spacing.lg, paddingBottom: isPhone ? 132 : spacing.xxxl }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
+        {followupViewControl}
         {hasTileFollowupWorkspaces ? (
           <SegmentedControl
             value={workspace}
@@ -835,7 +991,7 @@ export default function FollowupsScreen() {
               <Chip
                 label="Clear filters ✕"
                 active
-                onPress={() => { setKpiFilter("all"); setPriorityFilter("all"); setCategoryFilter("all"); setTierFilter("all"); setOwnerFilter("all"); }}
+                onPress={() => { setKpiFilter("all"); setFollowupView("active"); setPriorityFilter("all"); setCategoryFilter("all"); setTierFilter("all"); setOwnerFilter("all"); }}
               />
             ) : null}
           </View>
@@ -882,14 +1038,16 @@ export default function FollowupsScreen() {
                 stickySectionHeadersEnabled={false}
                 renderSectionHeader={({ section }) => {
                   const meta = BUCKET_META[section.bucket];
-                  const isCollapsed = collapsed.has(section.bucket);
+                  const isCollapsed = followupView === "active" && collapsed.has(section.bucket);
+                  const label = followupView === "won" ? "Won orders" : followupView === "lost" ? "Loss" : meta.label;
+                  const icon: FeatherName = followupView === "won" ? "shopping-bag" : followupView === "lost" ? "user-x" : meta.icon;
                   return (
-                    <Pressable onPress={() => toggleSection(section.bucket)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 4, backgroundColor: colors.surface }}>
-                      <Feather name={meta.icon} size={14} color={colors.onSurfaceSecondary} />
-                      <Text style={type.overline}>{meta.label}</Text>
+                    <Pressable onPress={() => followupView === "active" && toggleSection(section.bucket)} style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: 4, backgroundColor: colors.surface }}>
+                      <Feather name={icon} size={14} color={colors.onSurfaceSecondary} />
+                      <Text style={type.overline}>{label}</Text>
                       <Badge label={String(section.itemCount)} tone="neutral" size="sm" />
                       <View style={{ flex: 1 }} />
-                      <Feather name={isCollapsed ? "chevron-down" : "chevron-up"} size={16} color={colors.onSurfaceMuted} />
+                      {followupView === "active" ? <Feather name={isCollapsed ? "chevron-down" : "chevron-up"} size={16} color={colors.onSurfaceMuted} /> : null}
                     </Pressable>
                   );
                 }}
@@ -911,6 +1069,7 @@ export default function FollowupsScreen() {
                     onPushDays={pushDue}
                     onAssign={assignFollowup}
                     onNote={setNoteFor}
+                    onMarkLost={(f) => { setLossActionFor(f); setCallOutcomeFor(f); }}
                     onDismiss={dismissFollowup}
                     canDelete={!!staff && MANAGER_ROLES.includes(staff.role)}
                     onDelete={setDeleteTarget}
@@ -929,6 +1088,7 @@ export default function FollowupsScreen() {
           ) : null}
         </View>
       </ScrollView>
+      )}
 
       {/* Mobile: floating quick-contact for the #1 priority item */}
       {!isDesktop && !isPhone && topPriorityOpen ? (
@@ -958,12 +1118,12 @@ export default function FollowupsScreen() {
         title={detail?.customer?.company || detail?.customer?.name || "Customer"}
         subtitle={detail?.followup?.reason}
       >
-        <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.md, paddingBottom: 120 }}>
+        <ScrollView style={styles.mobileDetailScroll} contentContainerStyle={styles.mobileDetailContent}>
           {detail?.followup && detail.followup.status === "open" ? (
             <View style={styles.mobileCustomerActions}>
               <Text style={type.overline}>NEXT ACTION</Text>
               <Text style={type.bodySm} numberOfLines={2}>{detail.followup.next_action}</Text>
-              <View style={{ flexDirection: "row", gap: spacing.sm }}>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
                 <Button label="Call" icon="phone" variant="primary" size="sm" onPress={() => contact(detail.followup, "call")} />
                 <IconButton icon="message-circle" tone="surface" size={44} accessibilityLabel="WhatsApp customer" onPress={() => contact(detail.followup, "whatsapp")} />
                 <IconButton icon="check" tone="surface" size={44} accessibilityLabel="Mark follow-up complete" onPress={() => completeFollowup(detail.followup)} />
@@ -982,7 +1142,7 @@ export default function FollowupsScreen() {
         </ScrollView>
       </Sheet>
 
-      <CallOutcomeSheet visible={!!callOutcomeFor} f={callOutcomeFor} onClose={() => setCallOutcomeFor(null)} onSubmit={logCallOutcome} />
+      <CallOutcomeSheet visible={!!callOutcomeFor} f={callOutcomeFor} initialOutcome={lossActionFor?.id === callOutcomeFor?.id ? "lost" : undefined} onClose={() => { setCallOutcomeFor(null); setLossActionFor(null); }} onSubmit={logCallOutcome} />
       <NewFollowupSheet
         visible={newSheet} onClose={() => setNewSheet(false)} customers={customers} assignees={assignees}
         defaultAssignee={staff?.id} onCreate={createFollowup}
@@ -1328,13 +1488,13 @@ function IconMenuButton({ icon, tone = "surface", accessibilityLabel, items, tes
 // ─────────────────────────────────────────────────────────────────────────────
 function FollowupCard({
   f, active, assignees, rank, checked, onToggleSelect,
-  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onDismiss, canDelete, onDelete, onOpenDoc,
+  onPress, onCall, onWhatsApp, onEmail, onComplete, onSnooze, onCustomSnooze, onPushDays, onAssign, onNote, onMarkLost, onDismiss, canDelete, onDelete, onOpenDoc,
 }: {
   f: Followup; active: boolean; assignees: Assignee[]; rank?: number; checked: boolean; onToggleSelect: (id: string) => void;
   onPress: (f: Followup) => void; onCall: (f: Followup, channel: Channel) => void; onWhatsApp: (f: Followup, channel: Channel) => void; onEmail: (f: Followup, channel: Channel) => void;
   onComplete: (f: Followup) => void; onSnooze: (f: Followup, preset: "15m" | "1h" | "tomorrow" | "next_week") => void;
   onCustomSnooze: (f: Followup) => void; onPushDays: (f: Followup, days: number) => void;
-  onAssign: (f: Followup, userId: string) => void; onNote: (f: Followup) => void; onDismiss: (f: Followup) => void; canDelete: boolean; onDelete: (f: Followup) => void; onOpenDoc?: (f: Followup) => void;
+  onAssign: (f: Followup, userId: string) => void; onNote: (f: Followup) => void; onMarkLost: (f: Followup) => void; onDismiss: (f: Followup) => void; canDelete: boolean; onDelete: (f: Followup) => void; onOpenDoc?: (f: Followup) => void;
 }) {
   const { isPhone } = useBp();
   const level = f.manual_priority_override || f.priority_level;
@@ -1378,7 +1538,7 @@ function FollowupCard({
             </Text>
           </View>
           {!isResolved ? <ScoreBadge score={f.priority_score} level={level} /> : (
-            <Badge label={f.status === "dismissed" ? "Dismissed" : (f.completed_outcome || "Done")} tone={f.status === "dismissed" ? "neutral" : "success"} size="sm" />
+            <Badge label={f.completed_outcome === "lost" ? "Lost" : isWonOrderFollowup(f) ? "Won order" : f.status === "dismissed" ? "Dismissed" : (f.completed_outcome || "Done")} tone={f.completed_outcome === "lost" || f.status === "dismissed" ? "neutral" : "success"} size="sm" />
           )}
         </View>
 
@@ -1450,6 +1610,7 @@ function FollowupCard({
                 { label: "WhatsApp", icon: "message-circle", onPress: () => onWhatsApp(f, "whatsapp") },
                 { label: "Snooze 1 hour", icon: "clock", onPress: () => onSnooze(f, "1h") },
                 { label: "Add note", icon: "edit-3", onPress: () => onNote(f) },
+                { label: "Mark as lost…", icon: "user-x", tone: "danger" as const, onPress: () => onMarkLost(f) },
               ]}
             />
           </View>
@@ -1493,6 +1654,7 @@ function FollowupCard({
               items={[
                 { label: "Email", icon: "mail", onPress: () => onEmail(f, "email") },
                 { label: "Add note", icon: "edit-3", onPress: () => onNote(f) },
+                { label: "Mark as lost…", icon: "user-x", tone: "danger" as const, onPress: () => onMarkLost(f) },
                 { label: "Dismiss", icon: "x-circle", tone: "danger" as const, onPress: () => onDismiss(f) },
               ]}
             />
@@ -1588,7 +1750,7 @@ function ContextPanel({ detail, loading, embedded, compact }: { detail: Detail |
         </View>
       </Panel>
 
-      <View style={{ flexDirection: "row", gap: spacing.sm, flexWrap: "wrap" }}>
+      <View style={[styles.contextStats, compact && styles.contextStatsMobile]}>
         <StatTile dense label="Lifetime Revenue" value={moneyShort(stats.lifetime_revenue)} icon="trending-up" tone="brand" style={compact ? styles.contextStatMobile : undefined} />
         <StatTile dense label="Outstanding" value={moneyShort(stats.outstanding_total)} icon="alert-circle" tone={stats.outstanding_total > 0 ? "danger" : "success"} style={compact ? styles.contextStatMobile : undefined} />
         <StatTile dense label="Conversion Rate" value={`${stats.conversion_rate}%`} icon="percent" tone="neutral" style={compact ? styles.contextStatMobile : undefined} />
@@ -1643,13 +1805,13 @@ const OUTCOMES: { value: string; label: string; icon: FeatherName; tone: "succes
   { value: "won", label: "Won", icon: "award", tone: "success" },
   { value: "converted", label: "Converted", icon: "award", tone: "success" },
 ];
-function CallOutcomeSheet({ visible, f, onClose, onSubmit }: {
-  visible: boolean; f: Followup | null; onClose: () => void; onSubmit: (f: Followup, outcome: string, notes?: string, nextFollowupAt?: string) => void;
+function CallOutcomeSheet({ visible, f, initialOutcome, onClose, onSubmit }: {
+  visible: boolean; f: Followup | null; initialOutcome?: string; onClose: () => void; onSubmit: (f: Followup, outcome: string, notes?: string, nextFollowupAt?: string) => void;
 }) {
   const [outcome, setOutcome] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [nextFollowupAt, setNextFollowupAt] = useState("");
-  useEffect(() => { if (visible) { setOutcome(null); setNotes(""); setNextFollowupAt(""); } }, [visible]);
+  useEffect(() => { if (visible) { setOutcome(initialOutcome || null); setNotes(""); setNextFollowupAt(""); } }, [visible, initialOutcome]);
   if (!f) return null;
   const notesRequired = outcome === "lost";
   const pending = outcome === "pending";
@@ -1996,8 +2158,29 @@ const styles = StyleSheet.create({
     color: colors.brand,
   },
   contextStatMobile: {
+    flex: 0,
     minWidth: 0,
-    flexBasis: "47%",
-    flexGrow: 1,
+    flexBasis: "48%",
+    maxWidth: "48%",
+    flexShrink: 1,
+  },
+  contextStats: {
+    width: "100%",
+    flexDirection: "row",
+    gap: spacing.sm,
+    flexWrap: "wrap",
+  },
+  contextStatsMobile: {
+    width: "100%",
+  },
+  mobileDetailScroll: {
+    flex: 1,
+    width: "100%",
+  },
+  mobileDetailContent: {
+    width: "100%",
+    padding: spacing.lg,
+    gap: spacing.md,
+    paddingBottom: 120,
   },
 });

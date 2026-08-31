@@ -6,7 +6,7 @@
 // this screen untouched changes nothing about existing PDFs.
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { ScrollView, Switch, Text, View } from "react-native";
+import { Switch, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
@@ -54,7 +54,7 @@ export default function SettingsPDF() {
 
   return (
     <AdminPage title="PDF branding" subtitle={canEdit ? "Footer and terms shown on every quotation PDF" : "View only -- admin role required to edit"} back={() => router.back()}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: spacing.lg }}>
+      <View style={{ gap: spacing.lg }}>
         <Card style={{ gap: spacing.md }}>
           <Text style={type.overline}>Footer</Text>
           <TextField testID="pdf-footer-name-input" label="Company name" value={form.footer_company_name} onChangeText={set("footer_company_name")} editable={canEdit} />
@@ -87,7 +87,7 @@ export default function SettingsPDF() {
         {canEdit ? (
           <Button testID="save-pdf-settings-btn" label="Save changes" icon="check" loading={saving} onPress={save} fullWidth />
         ) : null}
-      </ScrollView>
+      </View>
     </AdminPage>
   );
 }

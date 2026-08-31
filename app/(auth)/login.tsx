@@ -26,7 +26,6 @@ export default function Login() {
   const compactPhone = isPhone && height < 700;
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const showDemoAccount = process.env.NODE_ENV !== "production" && process.env.EXPO_PUBLIC_ENABLE_DEMO_AUTH === "true";
 
   const [mode, setMode] = useState<Mode>("staff");
   const [email, setEmail] = useState("");
@@ -55,12 +54,6 @@ export default function Login() {
       setError(e?.message === "Invalid credentials" ? "That email and password don't match." : e?.message || "Sign-in failed. Try again.");
       setBusy(false);
     }
-  };
-
-  const fillDemo = () => {
-    if (mode === "staff") { setEmail("owner@forge.app"); setPassword("Forge@2026"); }
-    else { setEmail("customer@forge.app"); setPassword("Forge@2026"); }
-    setError(null);
   };
 
   const form = (
@@ -107,12 +100,7 @@ export default function Login() {
         <Button testID="login-submit" label="Sign in" size="lg" full onPress={submit} loading={busy} />
       </View>
 
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: space.x1 }}>
-        {showDemoAccount ? (
-          <Pressable onPress={fillDemo} hitSlop={8}>
-            <Text style={{ fontFamily: font.medium, fontSize: 13, color: color.inkSoft }}>Use demo account</Text>
-          </Pressable>
-        ) : <View />}
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", marginTop: space.x1 }}>
         <Pressable
           testID="toggle-portal"
           onPress={() => { setMode((m) => (m === "staff" ? "customer" : "staff")); setError(null); setEmail(""); setPassword(""); }}

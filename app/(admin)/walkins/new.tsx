@@ -16,6 +16,7 @@ import {
   Avatar, Button, Card, Chip, ListRow, PageHeader, SearchField, Sheet, TextField,
 } from "@/src/components/ui";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
+import { useBp } from "@/src/design/responsive";
 import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
@@ -23,6 +24,7 @@ type Assignee = { id: string; full_name: string; role: string };
 
 export default function NewWalkIn() {
   const router = useRouter();
+  const { isPhone } = useBp();
   const { floor_id: routeFloorId } = useLocalSearchParams<{ floor_id?: string }>();
   const { staff } = useAuth();
   const { floors, selectedFloorId } = useFloorAccess();
@@ -161,7 +163,7 @@ export default function NewWalkIn() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1 }} edges={isPhone ? [] : ["top"]}>
       <PageHeader title="Log Walk-in" overline="CRM" back={() => router.back()} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: spacing.xxl, gap: spacing.md }} keyboardShouldPersistTaps="handled">

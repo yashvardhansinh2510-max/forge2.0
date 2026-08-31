@@ -45,7 +45,7 @@ export function useSpring(active: boolean, from = 1, to = 0.97) {
   const anim = useRef(new Animated.Value(from)).current;
   Animated.spring(anim, {
     toValue: active ? to : from,
-    useNativeDriver: true,
+    useNativeDriver: Platform.OS !== "web",
     damping: 22,
     stiffness: 320,
     mass: 0.6,
@@ -381,8 +381,8 @@ export function Skeleton({ w = "100%", h = 14, style, radius: r }: { w?: number 
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.5, duration: 900, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 900, useNativeDriver: Platform.OS !== "web" }),
+        Animated.timing(pulse, { toValue: 0.5, duration: 900, useNativeDriver: Platform.OS !== "web" }),
       ]),
     );
     loop.start();

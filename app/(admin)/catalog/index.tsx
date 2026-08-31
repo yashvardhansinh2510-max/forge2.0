@@ -284,7 +284,7 @@ export default function Catalog() {
         setLoadingMore(false);
       }
     }
-  }, [q, cat, brandId, subcat, series, families, hasMore, mode, products, total]);
+  }, [q, cat, brandId, subcat, series, families, hasMore, mode, products, selectedFloorId, total]);
 
   const brandById: Record<string, string> = useMemo(
     () => Object.fromEntries(brands.map((b) => [b.id, b.name])), [brands],

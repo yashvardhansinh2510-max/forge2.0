@@ -174,7 +174,7 @@ const GROUND_FLOOR = { floorId: TILES_FLOOR_ID } as const;
 
 export const tileOrdersApi = {
   // ---- Customer tab ----
-  listCustomerOrders: (params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string }) =>
+  listCustomerOrders: (params?: { page?: number; page_size?: number; sort?: string; status?: string; search?: string; customer_id?: string }) =>
     api.get<{ orders: CustomerOrderCard[] } & PageMeta>(
       `/tile-orders/customer-orders${toQuery(params)}`, GROUND_FLOOR,
     ),

@@ -10,7 +10,9 @@ import { RefreshControl, ScrollView, Text, View } from "react-native";
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
 import { Card, Skeleton } from "@/src/components/ui";
+import { useBp } from "@/src/design/responsive";
 import { colors, spacing, type } from "@/src/theme/tokens";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Health = {
   backend: string; version: string;
@@ -29,6 +31,8 @@ function StatusDot({ ok }: { ok: boolean }) {
 
 export default function SettingsSystem() {
   const router = useRouter();
+  const { gutter, isPhone } = useBp();
+  const insets = useSafeAreaInsets();
   const [health, setHealth] = useState<Health | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -38,11 +42,17 @@ export default function SettingsSystem() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   return (
-    <AdminPage title="System" subtitle="Live diagnostics — no configuration here, read-only" back={() => router.back()}>
+    <AdminPage title="System" subtitle="Live diagnostics — no configuration here, read-only" back={() => router.back()} scroll={false}>
       <ScrollView
+        style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
-        contentContainerStyle={{ gap: spacing.lg }}
+        contentContainerStyle={{
+          gap: spacing.lg,
+          paddingHorizontal: gutter,
+          paddingTop: isPhone ? spacing.md : spacing.xl,
+          paddingBottom: isPhone ? 132 + insets.bottom : spacing.xxxl,
+        }}
       >
         {!health ? (
           <Card style={{ gap: 12 }}>

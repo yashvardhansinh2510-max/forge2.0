@@ -886,7 +886,7 @@ export function Accordion({
       toValue: open ? 1 : 0,
       duration: motion.hover.duration,
       easing: Easing.inOut(Easing.ease),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== "web",
     }).start();
   }, [open, rotate]);
 

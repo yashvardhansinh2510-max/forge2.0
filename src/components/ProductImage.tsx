@@ -19,7 +19,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image as ExpoImage, ImageContentFit } from "expo-image";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, PixelRatio, StyleSheet, Text, View, ViewStyle } from "react-native";
+import { Animated, Easing, PixelRatio, Platform, StyleSheet, Text, View, ViewStyle } from "react-native";
 
 import { colors, radius, spacing } from "@/src/theme/tokens";
 
@@ -202,8 +202,8 @@ function Skeleton() {
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(opacity, { toValue: 0.7, duration: 700, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
-        Animated.timing(opacity, { toValue: 0.35, duration: 700, useNativeDriver: true, easing: Easing.inOut(Easing.ease) }),
+        Animated.timing(opacity, { toValue: 0.7, duration: 700, useNativeDriver: Platform.OS !== "web", easing: Easing.inOut(Easing.ease) }),
+        Animated.timing(opacity, { toValue: 0.35, duration: 700, useNativeDriver: Platform.OS !== "web", easing: Easing.inOut(Easing.ease) }),
       ]),
     );
     loop.start();

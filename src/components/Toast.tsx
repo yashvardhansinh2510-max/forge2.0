@@ -56,7 +56,14 @@ export function ToastHost() {
         }]}
       >
         <Feather name={icon as any} size={15} color={iconColor} />
-        <Text style={styles.text} numberOfLines={2}>{ev.text}</Text>
+        <Text
+          accessibilityRole={ev.kind === "error" ? "alert" : "text"}
+          accessibilityLiveRegion={ev.kind === "error" ? "assertive" : "polite"}
+          style={styles.text}
+          numberOfLines={2}
+        >
+          {ev.text}
+        </Text>
       </Animated.View>
     </View>
   );

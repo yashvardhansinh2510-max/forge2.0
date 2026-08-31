@@ -135,11 +135,14 @@ export function ProductEditor({
         </>
       ) : undefined}
     >
-      <View style={styles.tabs}>
+      <View style={styles.tabs} accessibilityRole="tablist">
         {TABS.map((t) => (
           <Pressable
             key={t} onPress={() => setTab(t)}
             style={[styles.tab, tab === t && styles.tabActive]}
+            accessibilityRole="tab"
+            accessibilityLabel={`${t} tab`}
+            accessibilityState={{ selected: tab === t }}
             testID={`product-editor-tab-${t.toLowerCase()}`}
           >
             <Text style={[styles.tabLabel, tab === t && styles.tabLabelActive]}>{t}</Text>

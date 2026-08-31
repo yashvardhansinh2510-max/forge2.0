@@ -5,7 +5,7 @@ import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
-import { Image, ScrollView, Text, View } from "react-native";
+import { Image, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
@@ -64,7 +64,7 @@ export default function SettingsCompany() {
 
   return (
     <AdminPage title="Company" subtitle={canEdit ? undefined : "View only -- admin role required to edit"} back={() => router.back()}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: spacing.lg }}>
+      <View style={{ gap: spacing.lg }}>
         <Card style={{ alignItems: "center", gap: spacing.sm }}>
           {form.logo_base64 ? (
             <Image source={{ uri: form.logo_base64 }} style={{ width: 160, height: 54, borderRadius: radius.sm }} resizeMode="contain" />
@@ -91,7 +91,7 @@ export default function SettingsCompany() {
         {canEdit ? (
           <Button testID="save-company-btn" label="Save changes" icon="check" loading={saving} onPress={save} fullWidth />
         ) : null}
-      </ScrollView>
+      </View>
     </AdminPage>
   );
 }

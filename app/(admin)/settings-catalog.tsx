@@ -5,7 +5,7 @@
 // honestly below instead of faking a button that does nothing safe.
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { ScrollView, Text } from "react-native";
+import { Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { Button, Card } from "@/src/components/ui";
@@ -24,7 +24,7 @@ export default function SettingsCatalog() {
 
   return (
     <AdminPage title="Catalog tools" subtitle="Import, export & backup" back={() => router.back()}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: spacing.lg }}>
+      <View style={{ gap: spacing.lg }}>
         <Card style={{ gap: spacing.sm }}>
           <Text style={type.overline}>Import</Text>
           <Text style={type.bodyMuted}>Bulk-add or update products from a spreadsheet, with a review step before anything goes live.</Text>
@@ -47,7 +47,7 @@ export default function SettingsCatalog() {
           <Text style={type.overline}>Restore</Text>
           <Text style={type.bodyMuted}>Not available in-app. A bad restore could overwrite live data — if you ever need to recover from a backup file, that&apos;s a hands-on job, not a self-serve button.</Text>
         </Card>
-      </ScrollView>
+      </View>
     </AdminPage>
   );
 }

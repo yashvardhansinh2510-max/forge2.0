@@ -17,11 +17,12 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { useRoles } from "@/src/hooks/use-roles";
 import { useAuth } from "@/src/state/auth";
+import { AccessProfile, PROFILE_PROVISIONING } from "@/src/access-profiles";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type Staff = {
   id: string; full_name: string; email: string; role: string;
-  phone?: string | null; active: boolean; floor_ids?: string[];
+  phone?: string | null; active: boolean; floor_ids?: string[]; access_profile?: AccessProfile | null;
 };
 type Floor = { id: string; name: string; slug: string };
 
@@ -124,6 +125,7 @@ function AddStaffSheet({ visible, floors, onClose, onCreated }: { visible: boole
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<string>("");
   const [floorIds, setFloorIds] = useState<string[]>([]);
+  const [accessProfile, setAccessProfile] = useState<AccessProfile | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -133,17 +135,20 @@ function AddStaffSheet({ visible, floors, onClose, onCreated }: { visible: boole
     if (!role && roles.length > 0) setRole(roles[roles.length - 1].role);
   }, [roles, role]);
 
-  const reset = () => { setFullName(""); setEmail(""); setPhone(""); setPassword(""); setFloorIds([]); setError(null); };
+  const reset = () => { setFullName(""); setEmail(""); setPhone(""); setPassword(""); setFloorIds([]); setAccessProfile(null); setError(null); };
 
   const save = async () => {
     if (!fullName.trim()) { setError("Full name is required"); return; }
     if (!email.trim()) { setError("Email is required"); return; }
-    if (password.length < 8) { setError("Password must be at least 8 characters"); return; }
+    if (password.length < 12) { setError("Initial password must be at least 12 characters"); return; }
     if (!role) { setError("Select a role"); return; }
+    if (!accessProfile && !["owner", "manager"].includes(role) && floorIds.length === 0) {
+      setError("Assign at least one floor for a non-owner/non-manager account"); return;
+    }
     setSaving(true);
     try {
-      await api.post("/team", { full_name: fullName.trim(), email: email.trim(), phone: phone.trim() || null, password, role, floor_ids: floorIds });
-      toast.success("Team member added");
+      await api.post("/team", { full_name: fullName.trim(), email: email.trim(), phone: phone.trim() || null, password, role, floor_ids: floorIds, access_profile: accessProfile });
+      toast.success("Team member added — they must set their own password on first sign-in");
       reset();
       onCreated();
       onClose();
@@ -161,7 +166,15 @@ function AddStaffSheet({ visible, floors, onClose, onCreated }: { visible: boole
           <TextField testID="add-staff-name" label="Full name" value={fullName} onChangeText={setFullName} placeholder="e.g. Priya Sharma" autoFocus />
           <TextField testID="add-staff-email" label="Email" value={email} onChangeText={setEmail} placeholder="name@company.com" autoCapitalize="none" keyboardType="email-address" />
           <TextField testID="add-staff-phone" label="Phone" value={phone} onChangeText={setPhone} placeholder="Optional" keyboardType="phone-pad" />
-          <TextField testID="add-staff-password" label="Initial password" value={password} onChangeText={setPassword} placeholder="At least 8 characters" secureTextEntry autoCapitalize="none" helper="They'll be asked to set their own password on first login." error={error} />
+          <TextField testID="add-staff-password" label="Initial password" value={password} onChangeText={setPassword} placeholder="At least 12 characters" secureTextEntry autoCapitalize="none" helper="They'll be asked to set their own password on first login." error={error} />
+          <ProfileProvisioner value={accessProfile} onChange={(profile) => {
+            setAccessProfile(profile);
+            if (profile) {
+              const provision = PROFILE_PROVISIONING[profile];
+              setFloorIds([provision.floorId]);
+              setRole(provision.minimumRole);
+            }
+          }} />
           <View style={{ gap: 6 }}>
             <Text style={type.label}>Role</Text>
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
@@ -170,7 +183,7 @@ function AddStaffSheet({ visible, floors, onClose, onCreated }: { visible: boole
               ))}
             </View>
           </View>
-          <FloorPicker floors={floors} value={floorIds} onChange={setFloorIds} hint="Owners and managers automatically see every floor." />
+          <FloorPicker floors={floors} value={floorIds} onChange={setFloorIds} hint={accessProfile ? "This profile is safely pinned to its required floor." : "Owners and managers automatically see every floor. Other accounts require at least one floor."} disabled={!!accessProfile} />
           <Button testID="add-staff-save" label={saving ? "Adding…" : "Add staff member"} variant="primary" size="lg" icon="check" disabled={saving} onPress={save} fullWidth />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -197,6 +210,7 @@ function EditStaffSheet({
   const [role, setRole] = useState("");
   const [active, setActive] = useState(true);
   const [floorIds, setFloorIds] = useState<string[]>([]);
+  const [accessProfile, setAccessProfile] = useState<AccessProfile | null>(null);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
 
@@ -207,6 +221,7 @@ function EditStaffSheet({
       setRole(staff.role);
       setActive(staff.active);
       setFloorIds(staff.floor_ids || []);
+      setAccessProfile(staff.access_profile || null);
     }
   }, [staff]);
 
@@ -218,7 +233,13 @@ function EditStaffSheet({
     try {
       const patch: Record<string, any> = { full_name: fullName.trim(), phone: phone.trim() || null };
       if (!isSelf) { patch.role = role; patch.active = active; }
-      if (!isSelf) patch.floor_ids = floorIds;
+      if (!isSelf) {
+        if (!accessProfile && !["owner", "manager"].includes(role) && floorIds.length === 0) {
+          toast.error("Assign at least one floor for a non-owner/non-manager account"); return;
+        }
+        patch.floor_ids = floorIds;
+        patch.access_profile = accessProfile;
+      }
       await api.patch(`/team/${staff.id}`, patch);
       toast.success("Team member updated");
       onSaved();
@@ -273,7 +294,16 @@ function EditStaffSheet({
             <Switch testID="edit-staff-active-switch" value={active} onValueChange={setActive} disabled={isSelf} />
           </View>
 
-          <FloorPicker floors={floors} value={floorIds} onChange={setFloorIds} hint="Owners and managers automatically see every floor." disabled={isSelf} />
+          {!isSelf ? <ProfileProvisioner value={accessProfile} onChange={(profile) => {
+            setAccessProfile(profile);
+            if (profile) {
+              const provision = PROFILE_PROVISIONING[profile];
+              setFloorIds([provision.floorId]);
+              setRole(provision.minimumRole);
+            }
+          }} /> : null}
+
+          <FloorPicker floors={floors} value={floorIds} onChange={setFloorIds} hint={accessProfile ? "This profile is safely pinned to its required floor." : "Owners and managers automatically see every floor. Other accounts require at least one floor."} disabled={isSelf || !!accessProfile} />
 
           <Button testID="edit-staff-save" label={saving ? "Saving…" : "Save changes"} variant="primary" icon="check" disabled={saving} onPress={save} fullWidth />
 
@@ -297,6 +327,22 @@ function EditStaffSheet({
       </KeyboardAvoidingView>
     </Sheet>
   );
+}
+
+function ProfileProvisioner({ value, onChange }: { value: AccessProfile | null; onChange: (profile: AccessProfile | null) => void }) {
+  return <View style={{ gap: 6 }}>
+    <Text style={type.label}>Access profile</Text>
+    <Text style={type.caption}>Profiles set the minimum role and exact floor automatically. Clear a profile to manage role and floors manually.</Text>
+    <View style={{ gap: spacing.xs }}>
+      <Chip label="No profile (manual access)" active={!value} onPress={() => onChange(null)} testID="staff-profile-none" />
+      {(Object.entries(PROFILE_PROVISIONING) as [AccessProfile, typeof PROFILE_PROVISIONING[AccessProfile]][]).map(([profile, item]) => (
+        <View key={profile} style={{ gap: 2 }}>
+          <Chip label={item.label} active={value === profile} onPress={() => onChange(profile)} testID={`staff-profile-${profile}`} />
+          {value === profile ? <Text style={type.caption}>{item.description}</Text> : null}
+        </View>
+      ))}
+    </View>
+  </View>;
 }
 
 function FloorPicker({ floors, value, onChange, hint, disabled }: { floors: Floor[]; value: string[]; onChange: (ids: string[]) => void; hint: string; disabled?: boolean }) {

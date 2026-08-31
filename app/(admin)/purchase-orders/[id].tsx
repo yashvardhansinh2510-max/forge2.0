@@ -492,7 +492,7 @@ export default function PurchaseOrderDetail() {
 
   if (loading && (!po || !config)) {
     return (
-      <SafeAreaView style={styles.centeredState} edges={["top"]}>
+      <SafeAreaView style={styles.centeredState} edges={isPhone ? [] : ["top"]}>
         <LoadingState label="Loading purchase order…" />
       </SafeAreaView>
     );
@@ -500,7 +500,7 @@ export default function PurchaseOrderDetail() {
 
   if (loadError || !po || !config) {
     return (
-      <SafeAreaView style={styles.centeredState} edges={["top"]}>
+      <SafeAreaView style={styles.centeredState} edges={isPhone ? [] : ["top"]}>
         <ErrorState title="Could not load purchase order" subtitle={loadError || "Purchase order not found"} onRetry={load} />
         <Button label="Back to Purchases" icon="arrow-left" variant="ghost" onPress={() => router.back()} />
       </SafeAreaView>
@@ -510,7 +510,7 @@ export default function PurchaseOrderDetail() {
   const hasRemainingChalanQty = Object.values(po.remaining_qty_by_item || {}).some((qty) => qty > 1e-6);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <View style={styles.topbar}>
         <Pressable testID="back-btn" onPress={() => router.back()} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
           <Feather name="chevron-left" size={18} color={colors.onSurface} />

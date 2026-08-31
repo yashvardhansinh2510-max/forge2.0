@@ -9,6 +9,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { walkinsApi, type WalkIn } from "@/src/api/walkins";
 import { toast } from "@/src/components/Toast";
+import { useBp } from "@/src/design/responsive";
 import { Avatar, Button, Card, ListRow, PageHeader, SearchField, Sheet, Skeleton, TextField } from "@/src/components/ui";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
@@ -30,6 +31,7 @@ const NEXT_STATUS: Record<string, { value: string; label: string }[]> = {
 export default function WalkInDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { isPhone } = useBp();
   const [w, setW] = useState<WalkIn | null>(null);
   const [timeline, setTimeline] = useState<Record<string, any>[]>([]);
   const [notes, setNotes] = useState("");
@@ -106,7 +108,7 @@ export default function WalkInDetail() {
 
   if (!w) {
     return (
-      <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+      <SafeAreaView style={{ flex: 1 }} edges={isPhone ? [] : ["top"]}>
         <PageHeader title="Walk-in" back={() => router.back()} />
         <View style={{ padding: spacing.xl }}><Skeleton h={120} /></View>
       </SafeAreaView>
@@ -114,7 +116,7 @@ export default function WalkInDetail() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1 }} edges={["top"]}>
+    <SafeAreaView style={{ flex: 1 }} edges={isPhone ? [] : ["top"]}>
       <PageHeader title={w.customer_name} overline={w.number} back={() => router.back()} />
       <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.md }}>
         <Card variant="outlined" style={{ gap: 4 }}>
