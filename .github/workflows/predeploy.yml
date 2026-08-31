@@ -18,7 +18,7 @@ jobs:
       - name: Backend tests and dependency audit
         working-directory: backend
         run: |
-          pip install -r requirements-prod.txt pip-audit pytest
+          pip install -r requirements-prod.txt pip-audit pytest pytest-asyncio
           pip-audit -r requirements-prod.txt
           python -m pytest tests/unit -q
       - name: Frontend checks, tests, build and bundle budget

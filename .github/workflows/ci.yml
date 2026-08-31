@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install runtime dependencies
-        run: pip install -r requirements-prod.txt pyflakes pytest
+        run: pip install -r requirements-prod.txt pyflakes pytest pytest-asyncio
       - name: Dependency vulnerability scan (pip-audit)
         run: |
           pip install pip-audit
