@@ -76,11 +76,11 @@ def test_three_products_in_one_room_share_a_single_detail_page():
     assert len(pages) == 2  # cover + one room-detail page
     detail_text = pages[1].extract_text() or ""
     assert all(item["sku"] in detail_text for item in items)
-    assert pdf_generator._max_item_rows_per_page() == 17
+    assert pdf_generator._max_item_rows_per_page() == 9
 
 
-def test_sanitary_detail_pages_hold_seventeen_products_and_start_next_area_on_page_four():
-    """A room continuation consumes page three; a new area never shares it."""
+def test_sanitary_detail_pages_hold_nine_products_and_start_next_area_on_page_five():
+    """A room continuation consumes its own pages; a new area never shares one."""
     primary_area = [
         {"sku": f"BATH-1-{index:02}", "name": f"Bathroom One Product {index}", "room": "Bathroom One", "qty": 1, "unit_price": 1000}
         for index in range(1, 21)
@@ -94,44 +94,43 @@ def test_sanitary_detail_pages_hold_seventeen_products_and_start_next_area_on_pa
     pages = PdfReader(BytesIO(pdf_generator.build_quotation_pdf(quotation, {"name": "Seventeen Per Page"}))).pages
     page_text = [page.extract_text() or "" for page in pages]
 
-    assert len(pages) == 4  # summary + 17 items + 3-item continuation + next area
-    assert all(item["sku"] in page_text[1] for item in primary_area[:17])
-    assert all(item["sku"] not in page_text[1] for item in primary_area[17:])
-    assert all(item["sku"] in page_text[2] for item in primary_area[17:])
-    assert "AREA 1: Bathroom One" in page_text[2]
-    assert "(continued)" in page_text[2]
-    assert "AREA 2: Bathroom Two" in page_text[3]
-    assert "BATH-2-01" in page_text[3]
+    assert len(pages) == 5  # summary + 9 + 9 + 2-item continuation + next area
+    assert all(item["sku"] in page_text[1] for item in primary_area[:9])
+    assert all(item["sku"] not in page_text[1] for item in primary_area[9:])
+    assert all(item["sku"] in page_text[2] for item in primary_area[9:18])
+    assert all(item["sku"] in page_text[3] for item in primary_area[18:])
+    assert "AREA 1: Bathroom One" in page_text[3]
+    assert "(continued)" in page_text[3]
+    assert "AREA 2: Bathroom Two" in page_text[4]
+    assert "BATH-2-01" in page_text[4]
 
 
-def test_pdf_image_bytes_rotate_portrait_sources_to_horizontal_product_media():
+def test_pdf_image_bytes_keep_portrait_sources_upright():
     source = _png_bytes(60, 120)
 
     assert callable(getattr(pdf_generator, "_prepare_image_bytes", None))
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (96, 60)
+        assert image.size == (60, 120)
 
 
-def test_pdf_image_bytes_force_rotates_an_old_landscape_padded_asset():
-    # An older asset can already be landscape at the file boundary while its
-    # actual product remains portrait. The tile size rule must still rotate it.
+def test_pdf_image_bytes_never_force_rotates_an_old_landscape_asset():
     source = _png_bytes(192, 120)
 
     prepared = pdf_generator._prepare_image_bytes(source, force_landscape=True)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size[0] > image.size[1]
+        assert image.size == (192, 120)
 
 
-def test_pdf_img_uses_a_horizontal_canvas_for_portrait_source(monkeypatch):
+def test_pdf_img_contains_and_centers_a_portrait_source(monkeypatch):
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
 
     image = pdf_generator._img("https://example.test/product.png")
 
     assert image.drawHeight == (pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM - 2.5) * pdf_generator.mm
-    assert image.drawWidth == (pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM - 2.5) * (16 / 10) * pdf_generator.mm
+    assert image.drawWidth == (pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM - 2.5) / 2 * pdf_generator.mm
     assert image.hAlign == "CENTER"
 
 
@@ -141,7 +140,7 @@ def test_exif_orientation_six_is_honored_once():
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (96, 60)
+        assert image.size == (120, 60)
 
 
 def test_exif_orientation_eight_is_honored_once():
@@ -150,11 +149,11 @@ def test_exif_orientation_eight_is_honored_once():
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (96, 60)
+        assert image.size == (120, 60)
 
 
-def test_standard_selection_and_tiles_quotation_pdfs_use_horizontal_product_images(monkeypatch):
-    """Every PDF variant receives a 16:10 horizontal image, centered in its cell."""
+def test_standard_selection_and_tiles_quotation_pdfs_contain_upright_product_images(monkeypatch):
+    """Every PDF variant preserves orientation and contains images in its cell."""
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
     original_img = pdf_generator._img
     rendered_sizes: list[tuple[float, float]] = []
@@ -190,7 +189,9 @@ def test_standard_selection_and_tiles_quotation_pdfs_use_horizontal_product_imag
         (pdf_tiles.QUOTATION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.QUOTATION_PRODUCT_IMAGE_HEIGHT_MM),
     ]
     assert all(width / height == pdf_generator.PRODUCT_IMAGE_ASPECT_RATIO for width, height in requested_boxes)
-    assert all(width > height for width, height in rendered_sizes)
+    assert all(width > 0 and height > 0 for width, height in rendered_sizes)
+    assert all(width <= box_width * pdf_generator.mm and height <= box_height * pdf_generator.mm
+               for (width, height), (box_width, box_height) in zip(rendered_sizes, requested_boxes, strict=True))
 
 
 def test_every_quotation_pdf_is_landscape_a4(monkeypatch):

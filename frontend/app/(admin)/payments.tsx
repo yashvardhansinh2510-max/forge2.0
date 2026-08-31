@@ -15,6 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { useBp } from "@/src/design/responsive";
+import { TILES_FLOOR_ID } from "@/src/constants/floors";
 import { toast } from "@/src/components/Toast";
 import {
   Alert as UIAlert,
@@ -62,7 +63,8 @@ type OrderDetail = {
   };
   customer_name: string; confirmed_at: string; notes?: string | null;
   project_name?: string | null;
-  mrp: number; discounted_rate: number; grand_total: number;
+  floor_id: string; mrp: number; discounted_rate: number;
+  quotation_total: number; manual_extra_amount: number; grand_total: number;
   paid: number; outstanding: number; percent_collected: number;
   payment_status: "paid" | "partial" | "due";
   payments: PaymentEntry[];
@@ -149,6 +151,7 @@ export default function PaymentsScreen() {
   const [q, setQ] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<OrderDetail | null>(null);
+  const isGroundFloorOrder = detail?.floor_id === TILES_FLOOR_ID;
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [waLoading, setWaLoading] = useState(false);
@@ -159,6 +162,8 @@ export default function PaymentsScreen() {
   const [mode, setMode] = useState<PayMode>("cash");
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState(false);
+  const [manualExtra, setManualExtra] = useState("");
+  const [savingManualExtra, setSavingManualExtra] = useState(false);
 
   // ── Payment History state ────────────────────────────────────────────────
   const [floors, setFloors] = useState<FloorOpt[]>([]);
@@ -200,6 +205,7 @@ export default function PaymentsScreen() {
       const d = await api.get<OrderDetail>(`/payments/orders/${id}`);
       setDetail(d);
       setAmount(d.outstanding > 0 ? String(Math.round(d.outstanding)) : "");
+      setManualExtra(d.manual_extra_amount ? String(d.manual_extra_amount) : "");
     } catch (e: any) {
       toast.error(e?.detail || "Could not load order details");
       setDetail(null);
@@ -238,6 +244,37 @@ export default function PaymentsScreen() {
     } catch (e: any) {
       toast.error(e?.detail || "Save failed");
     } finally { setSaving(false); }
+  };
+
+  const saveManualExtra = async () => {
+    if (!detail || !isGroundFloorOrder) return;
+    const parsed = Number((manualExtra || "").replace(/[^0-9.]/g, ""));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      toast.error("Enter a valid extra cost");
+      return;
+    }
+    setSavingManualExtra(true);
+    try {
+      const updated = await api.patch<{ quotation_total: number; manual_extra_amount: number; grand_total: number }>(
+        `/payments/orders/${detail.id}/manual-extra`, { amount: parsed || 0 },
+      );
+      setDetail((current) => current ? {
+        ...current,
+        ...updated,
+        outstanding: Math.max(0, updated.grand_total - current.paid),
+        percent_collected: updated.grand_total > 0
+          ? Math.min(100, Math.round(current.paid / updated.grand_total * 100)) : 0,
+        payment_status: current.paid >= updated.grand_total && updated.grand_total > 0
+          ? "paid" : current.paid > 0 ? "partial" : "due",
+      } : current);
+      setManualExtra(updated.manual_extra_amount ? String(updated.manual_extra_amount) : "");
+      toast.success("Extra cost updated");
+      await Promise.all([loadStats(), loadOrders(q)]);
+    } catch (e: any) {
+      toast.error(e?.detail || "Could not update extra cost");
+    } finally {
+      setSavingManualExtra(false);
+    }
   };
 
   const sendWhatsAppReminder = async () => {
@@ -479,17 +516,49 @@ export default function PaymentsScreen() {
 
                 {/* Metrics */}
                 <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
-                  <StatTile dense label="MRP" value={money(detail.mrp)}
-                    sub="Catalog price" tone="neutral" />
-                  <StatTile dense label="Discounted" value={money(detail.discounted_rate)}
-                    sub={detail.mrp > detail.discounted_rate ? `Save ${moneyShort(detail.mrp - detail.discounted_rate)}` : "No discount"}
-                    tone="brand" />
+                  {isGroundFloorOrder ? (
+                    <StatTile dense label="Quotation price" value={money(detail.quotation_total)}
+                      sub="Original quotation" tone="brand" />
+                  ) : (
+                    <>
+                      <StatTile dense label="MRP" value={money(detail.mrp)} sub="Catalog price" tone="neutral" />
+                      <StatTile dense label="Discounted" value={money(detail.discounted_rate)}
+                        sub={detail.mrp > detail.discounted_rate ? `Save ${moneyShort(detail.mrp - detail.discounted_rate)}` : "No discount"}
+                        tone="brand" />
+                    </>
+                  )}
+                  {isGroundFloorOrder && detail.manual_extra_amount > 0 ? (
+                    <StatTile dense label="Additional cost" value={money(detail.manual_extra_amount)}
+                      sub="Labour or other cost" tone="neutral" />
+                  ) : null}
                   <StatTile dense label="Paid" value={money(detail.paid)}
                     sub={`${detail.percent_collected}% of order`} tone="success" />
                   <StatTile dense label="Outstanding" value={money(detail.outstanding)}
                     sub={detail.outstanding > 0 ? "Remaining balance" : "Fully paid"}
                     tone={detail.outstanding > 0 ? "danger" : "success"} />
                 </View>
+
+                {isGroundFloorOrder ? (
+                  <Panel title="Additional cost" overline="GROUND FLOOR" padding={spacing.lg}>
+                    <Text style={[type.body, { color: colors.onSurfaceMuted, marginBottom: spacing.md }]}>Add labour or other agreed costs to the payment total. The original quotation price remains unchanged.</Text>
+                    <View style={{ flexDirection: isPhone ? "column" : "row", gap: spacing.sm, alignItems: isPhone ? "stretch" : "flex-end" }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[type.caption, { marginBottom: 6 }]}>Extra cost (₹)</Text>
+                        <TextInput
+                          testID="ground-floor-manual-extra"
+                          value={manualExtra}
+                          onChangeText={setManualExtra}
+                          keyboardType="decimal-pad"
+                          placeholder="0"
+                          placeholderTextColor={colors.onSurfaceMuted}
+                          style={styles.dateInput}
+                        />
+                      </View>
+                      <Button label="Update total" icon="plus" variant="secondary" loading={savingManualExtra}
+                        onPress={saveManualExtra} testID="save-ground-floor-manual-extra" />
+                    </View>
+                  </Panel>
+                ) : null}
 
                 {/* Progress */}
                 <Panel padding={spacing.lg}>

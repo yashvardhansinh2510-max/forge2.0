@@ -5,6 +5,13 @@ Follows the dependency-injection pattern from test_sales_performance_routes.py
 """
 from __future__ import annotations
 
+import asyncio
+import io
+
+import openpyxl
+
+from models import UserPublic
+from routes import sales_breakdown_routes as breakdowns
 from routes.sales_breakdown_routes import CACHED_SURFACES, router
 
 
@@ -25,6 +32,38 @@ def test_all_four_launch_breakdowns_are_exposed():
         "/analytics/best-selling-products",
         "/analytics/recent-orders",
     }
+
+
+def test_sales_records_export_is_available_from_the_filtered_recent_orders_endpoint():
+    """The dashboard's Export Excel control uses the same secured endpoint
+    and filter contract as the on-screen recent-orders table.  The route's
+    `format` query parameter is intentionally optional so normal reads keep
+    their JSON response while `format=xlsx` produces the workbook."""
+    route = next(route for route in router.routes if route.path == "/analytics/recent-orders")
+    assert "format" in {param.name for param in route.dependant.query_params}
+
+
+def test_sales_records_xlsx_export_contains_every_filtered_row_not_the_screen_limit(monkeypatch):
+    async def rows(*_args):
+        return [
+            {"number": "SO-1", "customer_name": "Amit", "grand_total": 1000},
+            {"number": "SO-2", "customer_name": "Priya", "grand_total": 2000},
+        ]
+
+    async def collect(response):
+        return b"".join([chunk async for chunk in response.body_iterator])
+
+    monkeypatch.setattr(breakdowns, "_recent_order_rows", rows)
+    response = asyncio.run(breakdowns.recent_orders(
+        floor_id="ground-floor", preset="all", date_from=None, date_to=None,
+        limit=1, format="xlsx",
+        user=UserPublic(id="owner", email="owner@example.com", full_name="Owner", role="owner"),
+    ))
+    workbook = openpyxl.load_workbook(io.BytesIO(asyncio.run(collect(response))))
+    sheet = workbook.active
+
+    assert response.headers["content-disposition"] == 'attachment; filename="sales-data.xlsx"'
+    assert [sheet.cell(row=row, column=1).value for row in (2, 3)] == ["SO-1", "SO-2"]
 
 
 def test_every_cached_metric_declares_the_collections_it_reads():

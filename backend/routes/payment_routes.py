@@ -21,7 +21,7 @@ from auth import (
     get_current_user, get_floor_scoped_or_404, require_min_role,
 )
 from db import client, db
-from models import Payment, PaymentCreate, UserPublic
+from models import Payment, PaymentCreate, PaymentOrderExtraUpdate, UserPublic
 from services.activity_log import log_event
 from services.analytics import cache
 from services.export import export_response
@@ -115,12 +115,25 @@ def _payment_status(paid: float, grand: float) -> str:
     return "due"
 
 
+def _collection_total(quotation: dict) -> float:
+    """Amount due in Collections, including a Ground Floor manual charge.
+
+    The original quotation total is deliberately not overwritten: the charge
+    is entered after quotation approval for labour/other collection costs.
+    """
+    return round(
+        float(quotation.get("grand_total") or 0)
+        + float(quotation.get("payment_extra_amount") or 0),
+        2,
+    )
+
+
 def _fully_paid_order_ids(orders: list[dict], paid_by_order: dict[str, float]) -> list[str]:
     """Return non-zero orders whose completed payments cover the total."""
     return [
         order["id"] for order in orders
-        if float(order.get("grand_total") or 0) > 0
-        and paid_by_order.get(order["id"], 0.0) + 1e-6 >= float(order.get("grand_total") or 0)
+        if _collection_total(order) > 0
+        and paid_by_order.get(order["id"], 0.0) + 1e-6 >= _collection_total(order)
     ]
 
 
@@ -147,7 +160,7 @@ async def payment_stats(user: UserPublic = Depends(get_current_user)):
     """Four KPIs: Total Outstanding · Collected This Month · Active Orders · Fully Paid."""
     orders = await db.quotations.find(
         _payment_scope_query(user, {"status": {"$in": list(ORDER_STATUSES)}}),
-        {"_id": 0, "id": 1, "grand_total": 1},
+        {"_id": 0, "id": 1, "grand_total": 1, "payment_extra_amount": 1},
     ).to_list(2000)
     ids = [o["id"] for o in orders]
     paid_map = await _paid_by_quotation(ids)
@@ -156,7 +169,7 @@ async def payment_stats(user: UserPublic = Depends(get_current_user)):
     active_orders = 0
     fully_paid = 0
     for o in orders:
-        grand = float(o.get("grand_total") or 0)
+        grand = _collection_total(o)
         paid = paid_map.get(o["id"], 0.0)
         status = _payment_status(paid, grand)
         if status == "paid":
@@ -206,7 +219,7 @@ async def list_orders(
 
     docs = await db.quotations.find(
         _payment_scope_query(user, query), {"_id": 0, "id": 1, "number": 1, "customer_id": 1, "customer_name": 1,
-                "grand_total": 1, "status": 1, "updated_at": 1, "created_at": 1, "notes": 1},
+                "grand_total": 1, "payment_extra_amount": 1, "status": 1, "updated_at": 1, "created_at": 1, "notes": 1},
     ).sort("updated_at", -1).to_list(limit * 2)
 
     ids = [d["id"] for d in docs]
@@ -214,7 +227,7 @@ async def list_orders(
 
     out = []
     for d in docs:
-        grand = float(d.get("grand_total") or 0)
+        grand = _collection_total(d)
         paid = paid_map.get(d["id"], 0.0)
         outstanding = max(0.0, grand - paid)
         pay_status = _payment_status(paid, grand)
@@ -255,7 +268,9 @@ async def order_detail(order_id: str, user: UserPublic = Depends(get_current_use
     floor_id = doc.get("floor_id")
     paid_map = await _paid_by_quotation([order_id], floor_id=floor_id)
     paid = paid_map.get(order_id, 0.0)
-    grand = float(doc.get("grand_total") or 0)
+    quotation_total = float(doc.get("grand_total") or 0)
+    manual_extra_amount = float(doc.get("payment_extra_amount") or 0)
+    grand = _collection_total(doc)
     mrp = await _mrp_for_quotation(doc)
     outstanding = max(0.0, grand - paid)
 
@@ -271,6 +286,7 @@ async def order_detail(order_id: str, user: UserPublic = Depends(get_current_use
 
     return {
         "id": doc["id"],
+        "floor_id": floor_id,
         "number": doc.get("number"),
         "status": doc.get("status"),
         "customer": {
@@ -287,13 +303,60 @@ async def order_detail(order_id: str, user: UserPublic = Depends(get_current_use
         "notes": doc.get("notes"),
         "project_name": None,
         "mrp": round(mrp, 2),
-        "discounted_rate": round(grand, 2),
+        "discounted_rate": round(quotation_total, 2),
+        "quotation_total": round(quotation_total, 2),
+        "manual_extra_amount": round(manual_extra_amount, 2),
         "grand_total": round(grand, 2),
         "paid": round(paid, 2),
         "outstanding": round(outstanding, 2),
         "percent_collected": 0 if grand <= 0 else min(100, int(round(paid / grand * 100))),
         "payment_status": _payment_status(paid, grand),
         "payments": payments,
+    }
+
+
+@router.patch("/orders/{order_id}/manual-extra")
+async def update_ground_floor_manual_extra(
+    order_id: str,
+    body: PaymentOrderExtraUpdate,
+    user: UserPublic = Depends(require_min_role("accounts")),
+):
+    """Persist a labour/other charge without changing the original quotation.
+
+    This control belongs solely to Ground Floor collections.  Sanitary orders
+    continue to collect precisely their printed quotation total.
+    """
+    # Start with the user's normal floor scope, then explicitly include the
+    # Ground Floor collections surface for staff who are permitted to use it.
+    # Keeping the floor_query call here makes this id-addressed mutation's
+    # cross-business-unit boundary explicit rather than hiding it in a helper.
+    scope = floor_query(user, {"id": order_id})
+    allowed = accessible_floor_ids(user)
+    if user.role in ("owner", "manager") or (allowed and TILES_FLOOR_ID in allowed):
+        scope = {"$or": [scope, {"floor_id": TILES_FLOOR_ID, "id": order_id}]}
+    quotation = await db.quotations.find_one(
+        scope, {"_id": 0, "id": 1, "floor_id": 1, "grand_total": 1, "status": 1},
+    )
+    if not quotation:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if quotation.get("floor_id") != TILES_FLOOR_ID:
+        raise HTTPException(status_code=400, detail="Manual extra costs are available for Ground Floor orders only")
+    if quotation.get("status") not in ORDER_STATUSES:
+        raise HTTPException(status_code=400, detail="Quotation is not a confirmed order yet")
+
+    extra = round(float(body.amount), 2)
+    await db.quotations.update_one(
+        {"id": order_id, "floor_id": TILES_FLOOR_ID},
+        {"$set": {"payment_extra_amount": extra, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    try:
+        await cache.bump("payments")
+    except Exception:
+        logger.exception("cache bump failed after manual extra update for %s", order_id)
+    return {
+        "quotation_total": round(float(quotation.get("grand_total") or 0), 2),
+        "manual_extra_amount": extra,
+        "grand_total": round(float(quotation.get("grand_total") or 0) + extra, 2),
     }
 
 
@@ -346,8 +409,12 @@ async def create_payment(
             existing = await db.payments.find_one({"idempotency_key": idempotency_key}, {"_id": 0}, session=session)
             if existing:
                 return existing
-        quot_now = await db.quotations.find_one({"id": body.quotation_id}, {"_id": 0, "grand_total": 1, "number": 1}, session=session)
-        grand = float((quot_now or {}).get("grand_total") or 0)
+        quot_now = await db.quotations.find_one(
+            {"id": body.quotation_id},
+            {"_id": 0, "grand_total": 1, "payment_extra_amount": 1, "number": 1},
+            session=session,
+        )
+        grand = _collection_total(quot_now or {})
         paid_rows = await db.payments.aggregate([
             {"$match": {"quotation_id": body.quotation_id, "status": "completed"}},
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
@@ -416,7 +483,7 @@ async def create_payment(
     # it was already an ordered/won-tracked order; otherwise we leave it as-is.
     paid_map = await _paid_by_quotation([body.quotation_id])
     total_paid = paid_map.get(body.quotation_id, 0.0)
-    grand = float(quot.get("grand_total") or 0)
+    grand = _collection_total(quot)
     fully_paid = total_paid + 1e-6 >= grand
 
     await log_event(
@@ -488,7 +555,7 @@ async def completed_payment_list(
 ):
     """Return payment rows only for orders that are fully paid (100%)."""
     order_query = _payment_scope_query(user, {"status": {"$in": list(ORDER_STATUSES)}})
-    orders = await db.quotations.find(order_query, {"_id": 0, "id": 1, "grand_total": 1}).to_list(5000)
+    orders = await db.quotations.find(order_query, {"_id": 0, "id": 1, "grand_total": 1, "payment_extra_amount": 1}).to_list(5000)
     paid_by_order = await _paid_by_quotation([order["id"] for order in orders])
     fully_paid_ids = _fully_paid_order_ids(orders, paid_by_order)
     floor_ids = _resolve_history_floor_ids(user, business_unit)
@@ -576,7 +643,7 @@ async def _enrich_history_rows(docs: list[dict]) -> list[dict]:
     before/after — all derived, nothing stored twice."""
     qids = list({d["quotation_id"] for d in docs if d.get("quotation_id")})
     quotations = await db.quotations.find(
-        {"id": {"$in": qids}}, {"_id": 0, "id": 1, "number": 1, "doc_number": 1, "grand_total": 1},
+        {"id": {"$in": qids}}, {"_id": 0, "id": 1, "number": 1, "doc_number": 1, "grand_total": 1, "payment_extra_amount": 1},
     ).to_list(len(qids) + 5) if qids else []
     quot_by_id = {qq["id"]: qq for qq in quotations}
 
@@ -593,7 +660,7 @@ async def _enrich_history_rows(docs: list[dict]) -> list[dict]:
     outstanding_by_payment_id: dict[str, tuple[float, float]] = {}
     for qid, pmts in by_qid.items():
         pmts.sort(key=lambda p: (p.get("paid_at") or p.get("created_at") or "", p.get("id") or ""))
-        grand = float((quot_by_id.get(qid) or {}).get("grand_total") or 0)
+        grand = _collection_total(quot_by_id.get(qid) or {})
         running = 0.0
         for p in pmts:
             before = round(grand - running, 2)
@@ -718,7 +785,7 @@ async def whatsapp_reminder(order_id: str, user: UserPublic = Depends(get_curren
     customer = await db.customers.find_one({"id": doc["customer_id"], "floor_id": floor_id}, {"_id": 0}) or {}
     paid_map = await _paid_by_quotation([order_id], floor_id=floor_id)
     paid = paid_map.get(order_id, 0.0)
-    grand = float(doc.get("grand_total") or 0)
+    grand = _collection_total(doc)
     outstanding = max(0.0, grand - paid)
 
     phone = _clean_phone(customer.get("phone"))

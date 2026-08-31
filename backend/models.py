@@ -596,6 +596,10 @@ class Quotation(TimestampedModel):
     # Ground Floor Tiles only. Kept on the quotation aggregate so it is
     # persisted, recalculated, rendered in the PDF, and survives reloads.
     transportation_fee: float = Field(default=0, ge=0)
+    # Ground Floor collections-only addition (labour or other agreed costs).
+    # Kept separate from grand_total so the original printed quotation remains
+    # intact and is what the payment screen presents as the quotation price.
+    payment_extra_amount: float = Field(default=0, ge=0)
     notes: Optional[str] = None
     valid_until: Optional[str] = None
     created_by: str                      # user id
@@ -1025,6 +1029,16 @@ class PaymentCreate(BaseModel):
     note: Optional[str] = None
     paid_at: Optional[str] = None
     idempotency_key: Optional[str] = None
+
+
+class PaymentOrderExtraUpdate(BaseModel):
+    """A Ground Floor-only charge added to the amount to be collected.
+
+    This intentionally lives on the quotation, rather than being represented
+    as a negative payment: it is an amount the customer owes (for labour,
+    delivery, etc.), not money that has been received.
+    """
+    amount: float = Field(ge=0)
 
 
 # ---------- Follow-ups (Sales Command Center) ----------

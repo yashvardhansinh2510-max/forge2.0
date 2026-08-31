@@ -230,8 +230,13 @@ async def recent_orders(
     period = _period_of(f)
     try:
         if format:
+            # The Sales Data screen uses this as its single, complete sales
+            # export.  `_recent_order_rows` intentionally returns the whole
+            # filtered result set (the `limit` below is presentation-only),
+            # so an exported workbook never silently contains just the ten
+            # rows visible in the dashboard.
             rows = await _recent_order_rows(f, floors, period)
-            return export.export_response(rows, _ORDER_COLUMNS, "recent-orders", format)
+            return export.export_response(rows, _ORDER_COLUMNS, "sales-data", format)
         rows = await cache.cached(
             "recent_orders", CACHED_SURFACES["recent_orders"],
             f"{filter_signature(f)}:{limit}", floors,

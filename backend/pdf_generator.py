@@ -69,18 +69,15 @@ TOP_MARGIN_MM = 13.0
 BOTTOM_MARGIN_MM = 22.0
 AREA_HEADER_BLOCK_MM = 25.75    # brand/area title block + rule + spacers above the table
 ITEM_HEADER_ROW_MM = 10.0
-# Sanitary selection sheets need exactly 17 product slots on each detail page.
-# The image is deliberately a compact 16:10 thumbnail: at 10.4 x 6.5 mm it
-# remains legible in its wide table column while fitting inside a 7.7 mm row
-# with the table's vertical padding. Never size it from the column width --
-# that would make every row far too tall and break the 17-product contract.
+# Detail pages deliberately hold at most nine products.  The available table
+# height is shared by the real rows on a page, so an eight-product bathroom
+# sheet fills its page without an empty ninth product cell.
 PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10
-STANDARD_PRODUCT_IMAGE_WIDTH_MM = 10.4
+STANDARD_PRODUCT_IMAGE_WIDTH_MM = 16.0
 STANDARD_PRODUCT_IMAGE_HEIGHT_MM = STANDARD_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
-# Keep this in sync with the compact item-cell styles below. The available
-# landscape-A4 detail area is 131.25 mm, so 17 x 7.7 mm rows fit while an 18th
-# row cannot. Fixed row heights preserve the 17-product page contract.
-ITEM_ROW_MM = 7.7
+# This is the minimum row height used for capacity calculation.  Actual rows
+# are expanded per page to occupy all usable space.
+ITEM_ROW_MM = 14.0
 ITEM_TOTAL_ROW_MM = 8.0
 SUMMARY_HEADER_ROW_MM = 7.0
 SUMMARY_ROW_MM = 5.6
@@ -89,7 +86,7 @@ SUMMARY_TOTAL_ROW_MM = 6.2
 
 def _max_item_rows_per_page() -> int:
     available = PAGE_H_MM - TOP_MARGIN_MM - BOTTOM_MARGIN_MM - AREA_HEADER_BLOCK_MM - ITEM_HEADER_ROW_MM - ITEM_TOTAL_ROW_MM
-    return min(17, max(1, int(available // ITEM_ROW_MM)))
+    return min(9, max(1, int(available // ITEM_ROW_MM)))
 
 
 def _money(value: float) -> str:
@@ -124,23 +121,32 @@ def _remote_image_bytes(url: str) -> bytes | None:
 
 
 def _prepare_image_bytes(data: bytes, *, force_landscape: bool = False) -> bytes:
-    """Apply the persisted 16:10 product-image contract to PDF inputs too.
+    """Bake EXIF orientation without rotating, cropping, or stretching media.
 
-    Old quotation snapshots can still reference pre-canonical assets, so PDF
-    rendering defensively repeats the lossless-or-padding normalization. This
-    keeps them horizontal and centered without stretching or cropping.
+    ``force_landscape`` is retained only as a backwards-compatible keyword for
+    callers saved before the orientation fix.  PDF rendering must never infer
+    rotation from a product's physical dimensions: a portrait basin and a
+    portrait tile are both valid portrait photographs.
     """
     from PIL import Image as PILImage
-    from services.product_image_normalizer import normalize_product_image
+    from PIL import ImageOps
 
     try:
-        img = PILImage.open(BytesIO(data))
-        fmt = img.format or "PNG"
-        mime = {"JPEG": "image/jpeg", "JPG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp", "GIF": "image/gif"}.get(fmt.upper())
-        if not mime:
+        with PILImage.open(BytesIO(data)) as opened:
+            # Animated GIFs cannot be safely re-encoded without discarding
+            # frames, and ReportLab will use the first frame as before.
+            if (opened.format or "").upper() == "GIF":
+                return data
+            image = ImageOps.exif_transpose(opened)
+            image.load()
+            fmt = (opened.format or "PNG").upper()
+        output_format = {"JPG": "JPEG", "JPEG": "JPEG", "PNG": "PNG", "WEBP": "WEBP"}.get(fmt)
+        if not output_format:
             return data
-        normalized, _ = normalize_product_image(data, mime, force_landscape=force_landscape)
-        return normalized
+        out = BytesIO()
+        save_image = image.convert("RGB") if output_format == "JPEG" and image.mode not in ("RGB", "L") else image
+        save_image.save(out, format=output_format)
+        return out.getvalue()
     except Exception:
         return data
 
@@ -197,9 +203,8 @@ def _img(
 ) -> Flowable:
     """Render the supplied product image inside the quotation image cell.
 
-    Sized to the largest centered contain box that fits inside a 16:10
-    landscape cell without stretching, cropping, or changing the product's
-    orientation.
+    Sized to the largest centered contain box that fits inside its cell
+    without stretching, cropping, or changing the product's orientation.
     """
     if url and str(url).startswith(("https://", "http://")):
         data = _remote_image_bytes(str(url))
@@ -590,7 +595,15 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             total_row[total_label_col] = Paragraph("<b>TOTAL</b>", styles["cellCenter"])
             total_row[last_col] = Paragraph(f"<b>{_money(block_net)}</b>", styles["cellCenter"])
             rows.append(total_row)
-            row_heights = [ITEM_HEADER_ROW_MM * mm] + [ITEM_ROW_MM * mm] * n_data_rows + [ITEM_TOTAL_ROW_MM * mm]
+            # A detail page has no reserved/filler product rows.  Expand the
+            # real rows into the available print area so eight products use
+            # the full page just as nine products do.
+            usable_rows_mm = (
+                PAGE_H_MM - TOP_MARGIN_MM - BOTTOM_MARGIN_MM
+                - AREA_HEADER_BLOCK_MM - ITEM_HEADER_ROW_MM - ITEM_TOTAL_ROW_MM
+            )
+            item_row_mm = usable_rows_mm / max(1, n_data_rows)
+            row_heights = [ITEM_HEADER_ROW_MM * mm] + [item_row_mm * mm] * n_data_rows + [ITEM_TOTAL_ROW_MM * mm]
             numeric_col_start = 4  # MRP/RATE column onward — center-aligned per the print spec
             item_style_cmds = [
                 ("GRID", (0, 0), (-1, -1), 0.3, GRID), ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),

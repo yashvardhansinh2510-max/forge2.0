@@ -64,8 +64,27 @@ def test_tiles_pdf_renders_piece_as_the_quantity_unit():
         "grand_total": 900,
     })
 
-    assert "1 PC" in text
-    assert "— 900.00" in text
+    assert "1 PIECE" in text
+    assert "N/A 900.00" in text
+
+
+def test_tiles_pdf_normalizes_legacy_lowercase_piece_unit():
+    text = _pdf_text({
+        "customer_name": "Legacy Piece Contract",
+        "items": [{
+            "qty": 2,
+            "unit_price": 900,
+            "quantity_unit": "piece",
+            "pcs_per_box": "4",
+            "name": "Basin",
+            "room": "Bath",
+        }],
+        "subtotal": 1800,
+        "grand_total": 1800,
+    })
+
+    assert "TOTAL QUANTITY 2 PIECES" in text
+    assert "2 PIECES N/A 1,800.00" in text
 
 
 def test_tiles_quotation_keeps_the_cover_on_page_one_and_starts_details_on_page_two():

@@ -24,26 +24,26 @@ def _size(data: bytes) -> tuple[int, int]:
         return image.size
 
 
-def test_portrait_image_is_rotated_into_horizontal_product_media():
+def test_portrait_image_keeps_its_native_orientation_and_framing():
     source = _image_bytes((60, 120))
     data, mime = normalize_product_image(source, "image/png")
     assert mime == "image/png"
-    assert data != source
+    assert data == source
     data, mime = normalize_product_image(_image_bytes((60, 120)), "image/png")
-    assert _size(data) == (96, 60)
+    assert _size(data) == (60, 120)
 
 
-def test_square_and_wide_sources_are_stored_on_the_canonical_16_by_10_canvas():
+def test_square_and_wide_sources_keep_their_native_aspect_ratio():
     square, _ = normalize_product_image(_image_bytes((100, 100)), "image/png")
     landscape, _ = normalize_product_image(_image_bytes((320, 200)), "image/png")
-    assert _size(square) == (100, 62)
+    assert _size(square) == (100, 100)
     assert _size(landscape) == (320, 200)
 
 
-def test_exif_orientation_is_applied_before_landscape_padding():
+def test_exif_orientation_is_baked_without_a_landscape_crop():
     data, mime = normalize_product_image(_image_bytes((60, 120), fmt="JPEG", exif_orientation=6), "image/jpeg")
     assert mime == "image/jpeg"
-    assert _size(data) == (96, 60)
+    assert _size(data) == (120, 60)
 
 
 def test_gif_bytes_are_not_reencoded():
@@ -89,6 +89,6 @@ def test_media_service_stores_normalized_bytes_and_dimensions(monkeypatch):
         floor_id="first-floor", source_type="manufacturer", role="gallery",
     ))
 
-    assert _size(uploaded["data"]) == (80, 50)
+    assert _size(uploaded["data"]) == (50, 100)
     assert uploaded["content_type"] == "image/png"
-    assert (result.width, result.height) == (80, 50)
+    assert (result.width, result.height) == (50, 100)
