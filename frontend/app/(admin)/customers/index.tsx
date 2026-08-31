@@ -43,6 +43,7 @@ export default function Customers() {
   const router = useRouter();
   const { isDesktop, isPhone } = useBp();
   const { staff } = useAuth();
+  const isTileDeliveryLookup = staff?.access_profile === "ground_tile_quotations_followups";
 
   const [items, setItems] = useState<Customer[] | null>(null);
   const [q, setQ] = useState("");
@@ -93,10 +94,10 @@ export default function Customers() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
-        title="Customers"
-        subtitle={items ? `${items.length} accounts · Trade, VIP & retail buyers` : "Loading customers…"}
-        overline="CRM"
-        actions={
+        title={isTileDeliveryLookup ? "Customer delivery lookup" : "Customers"}
+        subtitle={items ? (isTileDeliveryLookup ? "Choose a customer to view their Ground Floor tile order and dispatch status." : `${items.length} accounts · Trade, VIP & retail buyers`) : "Loading customers…"}
+        overline={isTileDeliveryLookup ? "GROUND FLOOR · READ ONLY" : "CRM"}
+        actions={!isTileDeliveryLookup ? (
           <Button
             icon="plus"
             label="Add Customer"
@@ -104,7 +105,7 @@ export default function Customers() {
             size="md"
             onPress={() => router.push("/(admin)/customers/new" as any)}
           />
-        }
+        ) : undefined}
       />
 
       <ScrollView contentContainerStyle={[styles.content, isPhone && styles.contentPhone]}>
@@ -215,7 +216,11 @@ export default function Customers() {
               <Pressable
                 key={c.id}
                 testID={`customer-${c.id}`}
-                onPress={() => router.push(`/(admin)/customers/${c.id}` as any)}
+                onPress={() => router.push((
+                  isTileDeliveryLookup
+                    ? `/(admin)/tiles/orders?tab=customer&customer_id=${encodeURIComponent(c.id)}`
+                    : `/(admin)/customers/${c.id}`
+                ) as any)}
                 style={({ pressed, hovered }: any) => [
                   styles.card,
                   !isDesktop && styles.cardMobile,
@@ -242,9 +247,9 @@ export default function Customers() {
                   </View>
                 </View>
                 </View>
-                <View style={[{ alignItems: "flex-end", gap: spacing.sm, flexShrink: 0 }, !isDesktop && styles.customerActionsMobile]}>
-                  <Badge label={c.tier.toUpperCase()} tone={tierTone[c.tier]} size="sm" />
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+                  <View style={[{ alignItems: "flex-end", gap: spacing.sm, flexShrink: 0 }, !isDesktop && styles.customerActionsMobile]}>
+                    <Badge label={c.tier.toUpperCase()} tone={tierTone[c.tier]} size="sm" />
+                  {!isTileDeliveryLookup ? <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                     <IconButton
                       icon="edit-2"
                       onPress={() => router.push(`/(admin)/customers/${c.id}/edit` as any)}
@@ -263,7 +268,7 @@ export default function Customers() {
                       />
                     ) : null}
                     <Feather name="chevron-right" size={iconSize.md} color={colors.onSurfaceMuted} />
-                  </View>
+                  </View> : null}
                 </View>
               </Pressable>
             ))}

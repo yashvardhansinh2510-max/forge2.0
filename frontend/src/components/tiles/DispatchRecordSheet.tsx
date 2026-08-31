@@ -109,8 +109,8 @@ export function ChalanPreviewSheet({ chalanId, onClose }: { chalanId: string; on
 }
 
 export function DispatchRecordSheet({
-  dispatchId, onClose, onChanged,
-}: { dispatchId: string; onClose: () => void; onChanged?: () => void }) {
+  dispatchId, onClose, onChanged, readOnly = false,
+}: { dispatchId: string; onClose: () => void; onChanged?: () => void; readOnly?: boolean }) {
   const [detail, setDetail] = useState<DispatchDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -189,7 +189,7 @@ export function DispatchRecordSheet({
                 ))}
               </View>
 
-              {editing ? (
+              {editing && !readOnly ? (
                 <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
                   {([
                     ["vehicle_number", "Vehicle number"], ["driver_name", "Driver name"],
@@ -225,13 +225,13 @@ export function DispatchRecordSheet({
                   <Pressable testID="tile-dispatch-print" onPress={() => openChalanPdf(detail.chalan.id, "print")} style={styles.outlineAction}>
                     <Text style={styles.outlineActionText}>Print</Text>
                   </Pressable>
-                  <Pressable testID="tile-dispatch-edit" onPress={() => setEditing(true)} style={styles.outlineAction}>
+                  {!readOnly ? <Pressable testID="tile-dispatch-edit" onPress={() => setEditing(true)} style={styles.outlineAction}>
                     <Text style={styles.outlineActionText}>Edit dispatch</Text>
-                  </Pressable>
+                  </Pressable> : null}
                 </View>
               )}
 
-              {dispatch.delivered_at ? null : (
+              {dispatch.delivered_at || readOnly ? null : (
                 <View style={{ gap: spacing.sm, marginTop: spacing.md, borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: spacing.md }}>
                   <Text style={type.bodyStrong}>Close out</Text>
                   {dispatch.destination_type === "Godown" && !dispatch.godown_received_at ? (

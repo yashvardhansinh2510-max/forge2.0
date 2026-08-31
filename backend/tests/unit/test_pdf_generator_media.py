@@ -44,8 +44,8 @@ def test_sanitary_pdf_filename_uses_the_customer_name():
 def test_standard_item_tables_fill_the_landscape_printable_width():
     source = Path(pdf_generator.__file__).read_text()
 
-    assert "item_widths = [12 * mm, 68 * mm, 34 * mm, 42 * mm, 24 * mm, 12 * mm, 25 * mm, 25 * mm, 25 * mm]" in source
-    assert "item_widths = [12 * mm, 75 * mm, 38 * mm, 62 * mm, 28 * mm, 12 * mm, 40 * mm]" in source
+    assert "item_widths = [12 * mm, 20 * mm, 36 * mm, 88 * mm, 24 * mm, 12 * mm, 25 * mm, 25 * mm, 25 * mm]" in source
+    assert "item_widths = [12 * mm, 20 * mm, 38 * mm, 117 * mm, 28 * mm, 12 * mm, 40 * mm]" in source
 
 
 def test_standard_pdf_keeps_full_width_terms_care_and_signature_on_page_one():
@@ -61,6 +61,47 @@ def test_standard_pdf_keeps_full_width_terms_care_and_signature_on_page_one():
     assert "TERMS & CONDITIONS" in first_page_text
     assert "CUSTOMER CARE" in first_page_text
     assert "CUSTOMER SIGNATURE & DATE" in first_page_text
+
+
+def test_three_products_in_one_room_share_a_single_detail_page():
+    """The compact image frame keeps a typical three-item room together."""
+    items = [
+        {"sku": f"MB-{index}", "name": f"Master Bathroom Product {index}", "room": "Master Bathroom", "qty": 1, "unit_price": 1000}
+        for index in range(1, 4)
+    ]
+    quotation = {"customer_name": "Master Bath", "items": items, "rooms": ["Master Bathroom"], "subtotal": 3000, "grand_total": 3000}
+
+    pages = PdfReader(BytesIO(pdf_generator.build_quotation_pdf(quotation, {"name": "Master Bath"}))).pages
+
+    assert len(pages) == 2  # cover + one room-detail page
+    detail_text = pages[1].extract_text() or ""
+    assert all(item["sku"] in detail_text for item in items)
+    assert pdf_generator._max_item_rows_per_page() == 17
+
+
+def test_sanitary_detail_pages_hold_seventeen_products_and_start_next_area_on_page_four():
+    """A room continuation consumes page three; a new area never shares it."""
+    primary_area = [
+        {"sku": f"BATH-1-{index:02}", "name": f"Bathroom One Product {index}", "room": "Bathroom One", "qty": 1, "unit_price": 1000}
+        for index in range(1, 21)
+    ]
+    next_area = [{"sku": "BATH-2-01", "name": "Bathroom Two Product", "room": "Bathroom Two", "qty": 1, "unit_price": 1000}]
+    quotation = {
+        "customer_name": "Seventeen Per Page", "items": primary_area + next_area,
+        "rooms": ["Bathroom One", "Bathroom Two"], "subtotal": 21000, "grand_total": 21000,
+    }
+
+    pages = PdfReader(BytesIO(pdf_generator.build_quotation_pdf(quotation, {"name": "Seventeen Per Page"}))).pages
+    page_text = [page.extract_text() or "" for page in pages]
+
+    assert len(pages) == 4  # summary + 17 items + 3-item continuation + next area
+    assert all(item["sku"] in page_text[1] for item in primary_area[:17])
+    assert all(item["sku"] not in page_text[1] for item in primary_area[17:])
+    assert all(item["sku"] in page_text[2] for item in primary_area[17:])
+    assert "AREA 1: Bathroom One" in page_text[2]
+    assert "(continued)" in page_text[2]
+    assert "AREA 2: Bathroom Two" in page_text[3]
+    assert "BATH-2-01" in page_text[3]
 
 
 def test_pdf_image_bytes_rotate_portrait_sources_to_horizontal_product_media():

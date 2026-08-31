@@ -52,16 +52,35 @@ def _dispatch_surface(method: str, path: str) -> bool:
     return path.startswith("/api/tile-orders/")
 
 
+def _tile_customer_tracking(method: str, path: str) -> bool:
+    """Read-only order-status lookup for the tile sales workspace.
+
+    Sales staff need to answer a customer's "has my order been dispatched?"
+    question, but must not receive dispatch, godown, or payment permissions.
+    Keep this deliberately limited to the customer-order list, detail and
+    timeline routes used by the delivery lookup.
+    """
+    return method == "GET" and bool(
+        fullmatch(r"/api/tile-orders/customer-orders", path)
+        or fullmatch(r"/api/tile-orders/customer-orders/[^/]+", path)
+        or fullmatch(r"/api/tile-orders/customer-orders/[^/]+/timeline", path)
+    )
+
+
 def profile_allows_request(profile: str | None, method: str, path: str) -> bool:
     """Fail-closed API allow-list. No profile preserves existing staff access."""
     if not profile:
         return True
     method = method.upper()
+    # Starlette provides `request.url.path` at runtime, but normalizing keeps
+    # this policy helper correct and directly testable with complete URLs.
+    path = path.split("?", 1)[0]
     if (method, path) in _COMMON or (method == "DELETE" and fullmatch(r"/api/auth/sessions/[^/]+", path)):
         return True
     if profile in {GROUND_TILE_QUOTATIONS_FOLLOWUPS, SANITARY_QUOTATIONS_FOLLOWUPS}:
         return (path.startswith("/api/quotations") or path.startswith("/api/followups")
                 or _customer_for_quotation(method, path) or _catalog_read(method, path)
+                or (profile == GROUND_TILE_QUOTATIONS_FOLLOWUPS and _tile_customer_tracking(method, path))
                 or (method in {"GET", "POST"} and path == "/api/referrers")
                 or (method == "POST" and path == "/api/products/custom")
                 or (method == "POST" and path == "/api/downloads/token"))

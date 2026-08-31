@@ -13,6 +13,10 @@ export type Product = {
   id: string; name: string; sku: string; price: number; mrp: number;
   finish?: string | null; size?: string | null; images: string[]; category_id: string; brand_id: string;
   variants?: ProductVariant[];
+  /** Server-derived, family-level tile sizing metadata. Unlike `variants`,
+   * this is complete even when the compact sibling preview is capped. */
+  available_sizes?: string[];
+  size_count?: number;
   // Real media pipeline fields (Supabase-backed) — `images` above is kept in
   // sync with these server-side, but components should prefer
   // `productImageList()` which reads all three consistently.

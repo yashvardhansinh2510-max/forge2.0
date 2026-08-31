@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import floor_for_write, floor_inherit, floor_query, floor_scope_ids, get_current_user, get_floor_scoped_or_404, require_min_role
 from db import db, strip_ids
-from models import Brand, BrandCreate, Category, CategoryCreate, Product, ProductCreate, ProductPatch, UserPublic
+from models import Brand, BrandCreate, Category, CategoryCreate, Product, ProductCreate, ProductPatch, SizeVariantResolution, UserPublic
 from services import catalog_service, media_service
 from services.activity_log import log_event
 
@@ -361,6 +361,34 @@ async def frequent_products(
     return await catalog_service.recent_or_frequent_products(
         user.id, limit=limit, recent=False, floor_ids=floor_scope_ids(user),
     )
+
+
+@router.get("/products/{product_id}/size-variants", response_model=SizeVariantResolution)
+async def resolve_product_size_variant(
+    product_id: str,
+    size: Optional[str] = Query(None, min_length=1, max_length=120, description="Nominal size returned by available_sizes"),
+    user: UserPublic = Depends(get_current_user),
+):
+    """Discover or resolve a size selection on the source product's floor.
+
+    Omit ``size`` to fetch the selected SKU plus its full size metadata. When
+    supplied, clients replace their selection with the returned ``product``;
+    it carries the sibling's own price, SKU, stock, specifications and media.
+    """
+    source = await get_floor_scoped_or_404(
+        db.products, product_id, user, not_found="Product not found",
+        projection={"_id": 0, "id": 1, "floor_id": 1},
+    )
+    # FastAPI supplies ``None`` for an omitted query argument.  Treating the
+    # default Query object the same way also keeps direct route calls (unit
+    # tests and internal callers) on the discoverability path.
+    requested_size = size if isinstance(size, str) else None
+    result = await catalog_service.resolve_size_variant(
+        product_id, requested_size, floor_ids=[floor_inherit(source)],
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Size variant not found")
+    return result
 
 
 @router.get("/products/{product_id}")

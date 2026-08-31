@@ -299,11 +299,11 @@ def _brand_terms_signature_block(styles: dict, branding: dict) -> list:
     return flow
 
 
-def _price_summary_table(total_boxes: float, subtotal: float, transportation_fee: float, total_quote: float, styles: dict) -> Table:
-    """Quotation-only PRICE SUMMARY box on page 1 — TOTAL BOX / SUBTOTAL /
+def _price_summary_table(total_quantity: str, subtotal: float, transportation_fee: float, total_quote: float, styles: dict) -> Table:
+    """Quotation-only PRICE SUMMARY box on page 1 — TOTAL QUANTITY / SUBTOTAL /
     TRANSPORTATION / TOTAL QUOTE."""
     rows = [
-        [Paragraph("TOTAL BOX", styles["sumLabel"]), Paragraph(f"{total_boxes:g}" if total_boxes else "", styles["sumValue"])],
+        [Paragraph("TOTAL QUANTITY", styles["sumLabel"]), Paragraph(total_quantity, styles["sumValue"])],
         [Paragraph("SUBTOTAL (Rs.)", styles["sumLabel"]), Paragraph(_rupee(subtotal), styles["sumValue"])],
         [Paragraph("TRANSPORTATION", styles["sumLabel"]), Paragraph(_rupee(transportation_fee), styles["sumValue"])],
         [Paragraph("TOTAL QUOTE (Rs.)", styles["sumRed"]), Paragraph(_rupee(total_quote), styles["sumRed"])],
@@ -428,7 +428,14 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
     styles = _tiles_styles()
     items = quotation.get("items") or []
 
-    total_boxes = sum(float(item.get("qty") or 0) for item in items)
+    quantity_totals = {
+        "Box": sum(float(item.get("qty") or 0) for item in items if (item.get("quantity_unit") or "Box") != "Pieces"),
+        "Pieces": sum(float(item.get("qty") or 0) for item in items if (item.get("quantity_unit") or "Box") == "Pieces"),
+    }
+    total_quantity = " · ".join(
+        f"{value:g} {'PC' if unit == 'Pieces' else 'BOX'}"
+        for unit, value in quantity_totals.items() if value
+    )
     item_subtotal = float(quotation.get("subtotal") or sum(float(item.get("net_amount") or 0) for item in items))
     transportation_fee = float(quotation.get("transportation_fee") or 0)
     subtotal = item_subtotal
@@ -448,7 +455,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
         Spacer(1, 2 * mm),
         Paragraph("PRICE SUMMARY", styles["sectionTitle"]),
         Spacer(1, 1 * mm),
-        _price_summary_table(total_boxes, subtotal, transportation_fee, total_quote, styles),
+        _price_summary_table(total_quantity, subtotal, transportation_fee, total_quote, styles),
         Spacer(1, 2 * mm),
     ]
     story.extend(_brand_terms_signature_block(styles, b))
@@ -462,8 +469,8 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
         Paragraph("SR.<br/>NO.", styles["colHead"]), Paragraph("PRODUCT IMAGE", styles["colHead"]),
         Paragraph("AREA", styles["colHead"]), Paragraph("PRODUCT DETAIL", styles["colHead"]),
         Paragraph("SIZE", styles["colHead"]), Paragraph("RATE/<br/>SQ.FT", styles["colHeadRed"]),
-        Paragraph("OFFER<br/>RATE", styles["colHead"]), Paragraph("RATE/<br/>BOX", styles["colHead"]),
-        Paragraph("TOTAL<br/>BOX", styles["colHead"]), Paragraph("PCS/<br/>BOX", styles["colHead"]),
+        Paragraph("OFFER<br/>RATE", styles["colHead"]), Paragraph("RATE/<br/>UNIT", styles["colHead"]),
+        Paragraph("QUANTITY", styles["colHead"]), Paragraph("PCS/<br/>BOX", styles["colHead"]),
         Paragraph("TOTAL<br/>(Rs.)", styles["colHead"]),
     ]
     rows: list[list[object]] = [head]
@@ -488,36 +495,48 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
             Paragraph(rate_sqft_text, styles["cellRed"]),
             Paragraph(_money(offer_rate) if offer_rate else "", styles["cellOffer"]),
             Paragraph(_money(rate_box) if rate_box else "", styles["cell"]),
-            Paragraph(f"{qty:g} {quantity_unit}" if qty else "", styles["cellBold"]),
-            Paragraph("PIECE" if quantity_unit == "Pieces" else "BOX", styles["cellBold"]),
+            Paragraph(f"{qty:g} {'PC' if quantity_unit == 'Pieces' else 'BOX'}" if qty else "", styles["cellBold"]),
+            Paragraph("—" if quantity_unit == "Pieces" else _escape(item.get("pcs_per_box") or ""), styles["cellBold"]),
             Paragraph(_money(line_total) if line_total else "", styles["cell"]),
         ])
+    # Keep the grand total out of the flowing product table.  When a table
+    # splits immediately before its final row, ReportLab repeats the column
+    # header on the new page even though that page contains only the total.
+    # Rendering the total as its own table leaves an overflow page clean.
     total_row = ["" for _ in head]
     total_row[3] = Paragraph("<b>TOTAL</b>", styles["cell"])
     total_row[-1] = Paragraph(f"<b>{_money(item_subtotal)}</b>", styles["cell"])
-    rows.append(total_row)
-
     style_cmds = [
         ("GRID", (0, 0), (-1, -1), 0.7, GRID),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
-        ("BACKGROUND", (0, -1), (-1, -1), HEADER_GREY),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
         ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
-    for r in range(2, len(rows) - 1, 2):  # zebra every 2nd item row (not the trailing TOTAL row)
+    for r in range(2, len(rows), 2):  # zebra every 2nd item row
         style_cmds.append(("BACKGROUND", (0, r), (-1, r), ZEBRA))
     table = Table(
         rows,
         colWidths=_QUO_COLS,
         # 28.75 mm image + 8 mm of cell padding must fit inside every row.
         # The former 33 mm height let image content bleed into the next row.
-        rowHeights=[9 * mm] + [37 * mm] * len(items) + [8 * mm],
+        rowHeights=[9 * mm] + [37 * mm] * len(items),
         repeatRows=1,
     )
     table.setStyle(TableStyle(style_cmds))
     story.append(table)
+
+    total_table = Table([total_row], colWidths=_QUO_COLS, rowHeights=[8 * mm])
+    total_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.7, GRID),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("BACKGROUND", (0, 0), (-1, -1), HEADER_GREY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(total_table)
 
     doc.build(
         story,

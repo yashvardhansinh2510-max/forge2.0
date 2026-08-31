@@ -6,7 +6,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Slot, useRouter, useSegments } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import {
@@ -634,6 +634,45 @@ function PhoneBar() {
 }
 
 // ── Layout root ─────────────────────────────────────────────────────────────
+function FloorAccessGate({ children }: { children: React.ReactNode }) {
+  const { access, floors, selectedFloorId, loading, error, retry } = useFloorAccess();
+  const { logout } = useAuth();
+  const router = useRouter();
+
+  // Never mount business screens before a concrete, server-authorized floor
+  // is known. Besides making loading/error states explicit, this closes the
+  // brief window where an inherited local-storage selection could be sent as
+  // an X-Floor-Id for a different staff account.
+  if (loading) {
+    return <View testID="floor-access-loading" accessibilityLiveRegion="polite" style={styles.floorAccessState}>
+      <ActivityIndicator color={color.brass} />
+      <Text style={styles.floorAccessTitle}>Loading your workspace…</Text>
+      <Text style={styles.floorAccessCopy}>Checking the floors assigned to your account.</Text>
+    </View>;
+  }
+  if (error) {
+    return <View testID="floor-access-error" accessibilityLiveRegion="assertive" style={styles.floorAccessState}>
+      <Feather name="wifi-off" size={28} color={color.risk} />
+      <Text style={styles.floorAccessTitle}>Workspace access unavailable</Text>
+      <Text style={styles.floorAccessCopy}>{error}</Text>
+      <Pressable testID="floor-access-retry" accessibilityRole="button" accessibilityLabel="Retry loading workspace access" onPress={() => { void retry(); }} style={styles.floorAccessButton}>
+        <Text style={styles.floorAccessButtonText}>Try again</Text>
+      </Pressable>
+    </View>;
+  }
+  if (!access || floors.length === 0 || !selectedFloorId) {
+    return <View testID="floor-access-empty" accessibilityLiveRegion="assertive" style={styles.floorAccessState}>
+      <Feather name="lock" size={28} color={color.inkSoft} />
+      <Text style={styles.floorAccessTitle}>No floor access assigned</Text>
+      <Text style={styles.floorAccessCopy}>Your account has no workspace assigned. Ask an owner or manager to assign a floor, then sign in again.</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Sign out" onPress={async () => { await logout(); router.replace("/(auth)/login"); }} style={styles.floorAccessButton}>
+        <Text style={styles.floorAccessButtonText}>Sign out</Text>
+      </Pressable>
+    </View>;
+  }
+  return <>{children}</>;
+}
+
 export default function AdminLayout() {
   const { isPhone, isTablet } = useBp();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -660,7 +699,7 @@ export default function AdminLayout() {
           style={{ backgroundColor: color.canvas }}
           bottomNavigation={<PhoneBar />}
         >
-          <Slot />
+          <FloorAccessGate><Slot /></FloorAccessGate>
         </AppScaffold>
       </PaletteProvider>
     );
@@ -677,7 +716,7 @@ export default function AdminLayout() {
           {isTablet ? <Rail /> : <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />}
         </View>
         <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-          <Slot />
+          <FloorAccessGate><Slot /></FloorAccessGate>
         </View>
       </View>
     </PaletteProvider>
@@ -685,6 +724,11 @@ export default function AdminLayout() {
 }
 
 const styles = StyleSheet.create({
+  floorAccessState: { flex: 1, alignItems: "center", justifyContent: "center", padding: space.x6, gap: space.x3, backgroundColor: color.canvas },
+  floorAccessTitle: { fontFamily: font.semibold, fontWeight: "600", fontSize: 17, color: color.ink, textAlign: "center" },
+  floorAccessCopy: { fontFamily: font.regular, fontSize: 13, lineHeight: 19, color: color.inkSoft, textAlign: "center", maxWidth: 360 },
+  floorAccessButton: { minHeight: 44, paddingHorizontal: space.x4, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: color.ink, marginTop: space.x1 },
+  floorAccessButtonText: { fontFamily: font.medium, fontWeight: "500", fontSize: 13, color: color.onAction },
   sidebar: { flex: 1, backgroundColor: color.canvas },
   rail: { flex: 1, backgroundColor: color.canvas },
   monogram: {

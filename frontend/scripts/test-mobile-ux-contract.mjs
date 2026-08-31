@@ -28,6 +28,9 @@ const followups = read("../app/(admin)/followups.tsx");
 assert.match(followups, /isPhone \? renderFollowupList\(true\)/);
 assert.match(followups, /ListHeaderComponent=\{phone/);
 assert.match(followups, /scrollEnabled=\{phone\}/);
+assert.match(followups, /style=\{styles\.mobileDetailScroll\} contentContainerStyle=\{styles\.mobileDetailContent\}/);
+assert.match(followups, /flexBasis: "48%"/);
+assert.match(followups, /maxWidth: "48%"/);
 
 const legacyBottomSheet = read("../src/components/BottomSheet.tsx");
 assert.match(legacyBottomSheet, /import \{ Sheet \} from "@\/src\/design\/components"/);

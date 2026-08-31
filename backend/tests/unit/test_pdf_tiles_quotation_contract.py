@@ -37,9 +37,10 @@ def test_tiles_pdf_uses_rate_per_sqft_offer_rate_and_quantity_unit():
     })
 
     assert "70 70.00" in text
-    assert "2 Box" in text
+    assert "2 BOX" in text
     assert "PCS/ BOX" in text
-    assert "BOX 4,340.00" in text
+    assert "3 4,340.00" in text
+    assert "TOTAL QUANTITY 2 BOX" in text
     assert "₹ 4,340.00" in text
     assert "₹ 100.00" in text
     assert "₹ 4,440.00" in text
@@ -63,8 +64,8 @@ def test_tiles_pdf_renders_piece_as_the_quantity_unit():
         "grand_total": 900,
     })
 
-    assert "1 Pieces" in text
-    assert "PIECE 900.00" in text
+    assert "1 PC" in text
+    assert "— 900.00" in text
 
 
 def test_tiles_quotation_keeps_the_cover_on_page_one_and_starts_details_on_page_two():
@@ -93,3 +94,33 @@ def test_tiles_quotation_keeps_the_cover_on_page_one_and_starts_details_on_page_
     assert "PRODUCT DETAILS" in (pages[1].extract_text() or "")
     assert sum(width / pdf_tiles.mm for width in pdf_tiles._QUO_COLS) == 281
     assert pdf_tiles.QUOTATION_PRODUCT_IMAGE_WIDTH_MM == 46
+
+
+def test_tiles_quotation_does_not_repeat_detail_columns_before_an_overflow_total():
+    """A page containing only the trailing total must not show product columns."""
+    items = [
+        {
+            "qty": 10,
+            "unit_price": 11160,
+            "rate_sqft": 360,
+            "offer_rate": 360,
+            "rate_box": 11160,
+            "quantity_unit": "Box",
+            "pcs_per_box": "3",
+            "name": f"Tile {index}",
+            "room": "Living",
+            "size": "1200X2400",
+        }
+        for index in range(1, 5)
+    ]
+    total = sum(item["qty"] * item["unit_price"] for item in items)
+    pages = PdfReader(BytesIO(build_tiles_quotation_pdf({
+        "customer_name": "Overflow Contract",
+        "items": items,
+        "subtotal": total,
+        "grand_total": total,
+    }, {"name": "Overflow Contract"}))).pages
+
+    final_page = pages[-1].extract_text() or ""
+    assert "TOTAL" in final_page
+    assert "PRODUCT IMAGE" not in final_page

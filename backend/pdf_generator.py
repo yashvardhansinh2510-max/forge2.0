@@ -67,19 +67,20 @@ def brand_partners_table(base_cell_style: ParagraphStyle, col_width_mm: float = 
 PAGE_H_MM = 210.0  # A4 landscape
 TOP_MARGIN_MM = 13.0
 BOTTOM_MARGIN_MM = 22.0
-AREA_HEADER_BLOCK_MM = 21.0     # brand/area title block + rule + spacers above the table
+AREA_HEADER_BLOCK_MM = 25.75    # brand/area title block + rule + spacers above the table
 ITEM_HEADER_ROW_MM = 10.0
-# The regular quotation image column is 75 mm wide, leaving a 69 mm drawable
-# image box after table padding. Keep every product-image target at 16:10 and
-# leave enough row height for that box plus vertical padding. Source images
-# are still contained inside this target, never cropped or rotated to fill it.
+# Sanitary selection sheets need exactly 17 product slots on each detail page.
+# The image is deliberately a compact 16:10 thumbnail: at 10.4 x 6.5 mm it
+# remains legible in its wide table column while fitting inside a 7.7 mm row
+# with the table's vertical padding. Never size it from the column width --
+# that would make every row far too tall and break the 17-product contract.
 PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10
-STANDARD_PRODUCT_IMAGE_WIDTH_MM = 69.0
+STANDARD_PRODUCT_IMAGE_WIDTH_MM = 10.4
 STANDARD_PRODUCT_IMAGE_HEIGHT_MM = STANDARD_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
-# Used for pagination planning. The table itself still measures wrapped
-# descriptions dynamically, but the larger image box needs this conservative
-# minimum so a row never paints into the next row or page.
-ITEM_ROW_MM = 47.0
+# Keep this in sync with the compact item-cell styles below. The available
+# landscape-A4 detail area is 131.25 mm, so 17 x 7.7 mm rows fit while an 18th
+# row cannot. Fixed row heights preserve the 17-product page contract.
+ITEM_ROW_MM = 7.7
 ITEM_TOTAL_ROW_MM = 8.0
 SUMMARY_HEADER_ROW_MM = 7.0
 SUMMARY_ROW_MM = 5.6
@@ -88,7 +89,7 @@ SUMMARY_TOTAL_ROW_MM = 6.2
 
 def _max_item_rows_per_page() -> int:
     available = PAGE_H_MM - TOP_MARGIN_MM - BOTTOM_MARGIN_MM - AREA_HEADER_BLOCK_MM - ITEM_HEADER_ROW_MM - ITEM_TOTAL_ROW_MM
-    return max(1, int(available // ITEM_ROW_MM))
+    return min(17, max(1, int(available // ITEM_ROW_MM)))
 
 
 def _money(value: float) -> str:
@@ -350,6 +351,8 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         "small": ParagraphStyle("small", parent=base["Normal"], fontName="Helvetica", fontSize=6.7, leading=8, textColor=INK),
         "terms": ParagraphStyle("terms", parent=base["Normal"], fontName="Helvetica", fontSize=6.1, leading=7.0, textColor=INK),
         "tiny": ParagraphStyle("tiny", parent=base["Normal"], fontName="Helvetica", fontSize=7.2, leading=8.8, textColor=INK, alignment=1),
+        "itemText": ParagraphStyle("itemText", parent=base["Normal"], fontName="Helvetica", fontSize=5.2, leading=5.2, textColor=INK, alignment=1),
+        "itemCenter": ParagraphStyle("itemCenter", parent=base["Normal"], fontName="Helvetica", fontSize=5.4, leading=5.4, textColor=INK, alignment=1),
         "section": ParagraphStyle("section", parent=base["Normal"], fontName="Helvetica-Bold", fontSize=10, leading=12, textColor=INK),
         "cell": ParagraphStyle("cell", parent=base["Normal"], fontName="Helvetica", fontSize=7.4, leading=9, textColor=INK, alignment=1),
         "cellRight": ParagraphStyle("cellRight", parent=base["Normal"], fontName="Helvetica", fontSize=7.4, leading=9, textColor=INK, alignment=2),
@@ -523,7 +526,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             Paragraph("MRP<br/>TOTAL (Rs.)", styles["tableHead"]),
             Paragraph("OFFER<br/>RATE", styles["tableHead"]), Paragraph("OFFER<br/>TOTAL (Rs.)", styles["tableHead"]),
         ]
-        item_widths = [12 * mm, 68 * mm, 34 * mm, 42 * mm, 24 * mm, 12 * mm, 25 * mm, 25 * mm, 25 * mm]
+        item_widths = [12 * mm, 20 * mm, 36 * mm, 88 * mm, 24 * mm, 12 * mm, 25 * mm, 25 * mm, 25 * mm]
     else:
         item_header = [
             Paragraph("SR.<br/>NO.", styles["tableHead"]), Paragraph("PRODUCT IMAGE", styles["tableHead"]),
@@ -531,7 +534,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             Paragraph("RATE<br/>(Rs.)", styles["tableHead"]), Paragraph("QTY", styles["tableHead"]),
             Paragraph("TOTAL<br/>(Rs.)", styles["tableHead"]),
         ]
-        item_widths = [12 * mm, 75 * mm, 38 * mm, 62 * mm, 28 * mm, 12 * mm, 40 * mm]
+        item_widths = [12 * mm, 20 * mm, 38 * mm, 117 * mm, 28 * mm, 12 * mm, 40 * mm]
     max_rows = _max_item_rows_per_page()
     for area_index, room in enumerate(room_order, 1):
         room_items = grouped.get(room, [])
@@ -559,18 +562,22 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                     description += f"<br/><font color='#737373'>Finish: {_escape(finish)}</font>"
                 if has_discount:
                     rows.append([
-                        Paragraph(str(sr_no), styles["cellCenter"]), _img(item.get("image"), width_mm=62.0),
-                        Paragraph(_escape(item.get("sku")), styles["cell"]), Paragraph(description, styles["tiny"]),
-                        Paragraph(_money(listed_mrp), styles["cellCenter"]), Paragraph(f"{qty:g}", styles["cellCenter"]),
-                        Paragraph(_money(qty * listed_mrp), styles["cellCenter"]),
-                        Paragraph(_money(offer_rate), styles["cellCenter"]), Paragraph(_money(line_total), styles["cellCenter"]),
+                        Paragraph(str(sr_no), styles["cellCenter"]), _img(
+                            item.get("image"),
+                            width_mm=STANDARD_PRODUCT_IMAGE_WIDTH_MM,
+                            height_mm=STANDARD_PRODUCT_IMAGE_HEIGHT_MM,
+                        ),
+                        Paragraph(_escape(item.get("sku")), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
+                        Paragraph(_money(listed_mrp), styles["itemCenter"]), Paragraph(f"{qty:g}", styles["itemCenter"]),
+                        Paragraph(_money(qty * listed_mrp), styles["itemCenter"]),
+                        Paragraph(_money(offer_rate), styles["itemCenter"]), Paragraph(_money(line_total), styles["itemCenter"]),
                     ])
                 else:
                     rows.append([
                         Paragraph(str(sr_no), styles["cellCenter"]), _img(item.get("image")),
-                        Paragraph(_escape(item.get("sku")), styles["cell"]), Paragraph(description, styles["tiny"]),
-                        Paragraph(_money(base_rate), styles["cellCenter"]), Paragraph(f"{qty:g}", styles["cellCenter"]),
-                        Paragraph(_money(qty * base_rate), styles["cellCenter"]),
+                        Paragraph(_escape(item.get("sku")), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
+                        Paragraph(_money(base_rate), styles["itemCenter"]), Paragraph(f"{qty:g}", styles["itemCenter"]),
+                        Paragraph(_money(qty * base_rate), styles["itemCenter"]),
                     ])
             block_net = sum(
                 float(item.get("qty") or 0) * float(item.get("unit_price") or 0) * (1 - float(item.get("discount_pct") or 0) / 100)
@@ -583,16 +590,16 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             total_row[total_label_col] = Paragraph("<b>TOTAL</b>", styles["cellCenter"])
             total_row[last_col] = Paragraph(f"<b>{_money(block_net)}</b>", styles["cellCenter"])
             rows.append(total_row)
-            # Measure wrapped descriptions rather than forcing 21 mm rows;
-            # fixed rows allowed long product text to paint into the next row.
-            row_heights = [ITEM_HEADER_ROW_MM * mm] + [None] * n_data_rows + [ITEM_TOTAL_ROW_MM * mm]
+            row_heights = [ITEM_HEADER_ROW_MM * mm] + [ITEM_ROW_MM * mm] * n_data_rows + [ITEM_TOTAL_ROW_MM * mm]
             numeric_col_start = 4  # MRP/RATE column onward — center-aligned per the print spec
             item_style_cmds = [
                 ("GRID", (0, 0), (-1, -1), 0.3, GRID), ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
                 ("BACKGROUND", (0, -1), (-1, -1), HEADER_GREY), ("ALIGN", (0, 1), (0, -1), "CENTER"),
                 ("ALIGN", (numeric_col_start, 1), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 1), (-1, -2), 0.5 * mm), ("BOTTOMPADDING", (0, 1), (-1, -2), 0.5 * mm),
+                ("TOPPADDING", (0, 0), (-1, 0), 2), ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
+                ("TOPPADDING", (0, -1), (-1, -1), 2), ("BOTTOMPADDING", (0, -1), (-1, -1), 2),
             ]
             for r in range(2, n_data_rows + 1, 2):  # zebra every 2nd item row
                 item_style_cmds.append(("BACKGROUND", (0, r), (-1, r), ZEBRA))

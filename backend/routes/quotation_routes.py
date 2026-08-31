@@ -376,6 +376,46 @@ def _ordered_at_patch(doc: dict, new_status: str) -> dict:
     return {}
 
 
+async def _complete_pre_confirmation_followups(
+    quotation_id: str,
+    quotation_number: str | None,
+    *,
+    session=None,
+) -> int:
+    """Close reminders that existed before this quotation became an order.
+
+    The order-confirmed Operations handoff is deliberately excluded: it is
+    created *after* this transition and remains actionable until Operations
+    starts releasing material.  All other open or snoozed cards linked to the
+    quotation (including staff-created reminders) are sales follow-ups whose
+    purpose has been fulfilled by the confirmation.
+    """
+    completed_at = now_iso()
+    result = await db.followups.update_many(
+        {
+            "quotation_id": quotation_id,
+            "status": {"$in": ["open", "snoozed"]},
+            "rule_type": {"$ne": "order_confirmed_ops"},
+        },
+        {"$set": {
+            "status": "done",
+            "auto_resolved": True,
+            "completed_at": completed_at,
+            # An order placed from a quotation is a won sale, not merely a
+            # converted task. This outcome powers the dedicated Won orders
+            # view in Follow-ups and is written only by the order transition.
+            "completed_outcome": "won",
+            "snoozed_until": None,
+            "resolution_note": (
+                f"Completed automatically — order {quotation_number or quotation_id} was confirmed."
+            ),
+            "updated_at": completed_at,
+        }},
+        session=session,
+    )
+    return int(result.modified_count)
+
+
 def _stamped_items_for_update(
     update: dict,
     doc: dict,
@@ -614,6 +654,11 @@ async def update_quotation(
 
     fresh = await db.quotations.find_one({"id": quotation_id}, {"_id": 0})
     if "status" in update:
+        # A repeated PATCH of an already-confirmed quotation is an edit, not a
+        # new confirmation.  Do not close a legitimate follow-up created
+        # after the order was placed.
+        if update["status"] == "ordered" and doc.get("status") != "ordered":
+            await _complete_pre_confirmation_followups(quotation_id, doc.get("number"))
         # Event-triggered (not cron) reconciliation — a status change is
         # exactly the moment quotation-stage follow-ups should refresh/close.
         asyncio.create_task(reconcile_followups())
@@ -1097,6 +1142,9 @@ async def place_order_confirm(quotation_id: str, body: PlaceOrderConfirmPayload,
                         {"id": quotation_id},
                         {"$set": {"status": "ordered", "updated_at": now_iso(), **_ordered_at_patch(doc, "ordered")}},
                         session=session,
+                    )
+                    await _complete_pre_confirmation_followups(
+                        quotation_id, doc.get("number"), session=session,
                     )
                     event = await enqueue_after_primary_commit(
                         event_type=EVENT_ORDER_PLACED,

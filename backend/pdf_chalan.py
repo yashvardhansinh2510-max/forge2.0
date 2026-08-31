@@ -340,18 +340,6 @@ def build_tile_chalan_pdf(chalan: dict, branding: dict | None = None) -> bytes:
         ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
     flow.append(product_table)
-    labor_cost = _decimal(chalan.get("labor_cost")) or Decimal("0")
-    labor_table = Table(
-        [[Paragraph("Labour cost", cell_right), Paragraph(_rupee(labor_cost), cell_right)]],
-        colWidths=[200 * mm, 33 * mm], hAlign="RIGHT",
-    )
-    labor_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F2F2F2")),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    flow.append(labor_table)
     flow.append(Spacer(1, 8 * mm))
 
     signature_table = Table([

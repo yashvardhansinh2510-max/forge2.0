@@ -1331,12 +1331,23 @@ async def supplier_analytics(supplier_id: str, user: UserPublic = Depends(requir
 @router.get("/customer-orders")
 async def list_customer_orders(
     page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=100), sort: str = "waiting_desc",
-    status: Optional[str] = None, search: Optional[str] = None,
+    status: Optional[str] = None, search: Optional[str] = None, customer_id: Optional[str] = None,
     user: UserPublic = Depends(require_min_role("sales")),
 ):
     page = page if isinstance(page, int) else 1
     page_size = page_size if isinstance(page_size, int) else 30
-    filters: dict = {"is_deleted": False}
+    # The Customer tab is the active fulfilment queue. Once every ordered box
+    # has been dispatched, the dispatch records (and their Chalans) are the
+    # operational source of truth, so a completed order must leave this list
+    # instead of being shown alongside customers still awaiting fulfilment.
+    # Every dispatch write path refreshes this field transactionally through
+    # _sync_customer_order_brand_status().
+    filters: dict = {"is_deleted": False, "completion_percentage": {"$lt": 100}}
+    # A Customer delivery lookup must use the stable customer id rather than
+    # name search: names can be duplicated and a partial search could show a
+    # different customer's dispatch status.
+    if customer_id:
+        filters["customer_id"] = customer_id
     if status:
         filters["overall_status"] = status
     if search:

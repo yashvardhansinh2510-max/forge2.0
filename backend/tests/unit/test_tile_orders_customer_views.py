@@ -19,7 +19,7 @@ def _iso_days_ago(n: int) -> str:
 def _match_value(doc_value, cond) -> bool:
     """Evaluate a single field condition against a document's value for that
     field. Supports the handful of Mongo operators this codebase actually
-    uses ($ne, $in, $regex/$options); anything else falls back to plain
+    uses ($ne, $in, $lt, $regex/$options); anything else falls back to plain
     equality."""
     if isinstance(cond, dict):
         ok = True
@@ -28,6 +28,8 @@ def _match_value(doc_value, cond) -> bool:
                 ok = ok and (doc_value != val)
             elif op == "$in":
                 ok = ok and (doc_value in val)
+            elif op == "$lt":
+                ok = ok and (doc_value is not None and doc_value < val)
             elif op == "$regex":
                 flags = re.IGNORECASE if cond.get("$options") == "i" else 0
                 ok = ok and bool(re.search(val, doc_value or "", flags))
@@ -85,8 +87,8 @@ class _FakeDb:
 
 def test_list_customer_orders_sorted_oldest_first(monkeypatch):
     fake_db = _FakeDb([
-        {"id": "co-1", "number": "TORD-2026-0001", "customer_name": "A", "created_at": _iso_days_ago(2), "is_deleted": False, "brands": [], "overall_status": "Pending", "floor_id": "ground-floor"},
-        {"id": "co-2", "number": "TORD-2026-0002", "customer_name": "B", "created_at": _iso_days_ago(16), "is_deleted": False, "brands": [], "overall_status": "Ready", "floor_id": "ground-floor"},
+        {"id": "co-1", "number": "TORD-2026-0001", "customer_name": "A", "created_at": _iso_days_ago(2), "is_deleted": False, "brands": [], "overall_status": "Pending", "completion_percentage": 0, "floor_id": "ground-floor"},
+        {"id": "co-2", "number": "TORD-2026-0002", "customer_name": "B", "created_at": _iso_days_ago(16), "is_deleted": False, "brands": [], "overall_status": "Ready", "completion_percentage": 50, "floor_id": "ground-floor"},
     ], [])
     monkeypatch.setattr(router_module, "db", fake_db)
 
@@ -94,6 +96,23 @@ def test_list_customer_orders_sorted_oldest_first(monkeypatch):
 
     assert [o["number"] for o in result["orders"]] == ["TORD-2026-0002", "TORD-2026-0001"]
     assert result["orders"][0]["ageing_band"] == "red"
+
+
+def test_list_customer_orders_excludes_fully_dispatched_orders(monkeypatch):
+    """A 100%-complete tile order is handled from Dispatch List, not the
+    Customer fulfilment queue. The cutoff is intentionally based on the
+    shared completion metric rather than the delivery acknowledgement,
+    because delivery is a later, separate workflow step."""
+    fake_db = _FakeDb([
+        {"id": "co-active", "number": "TORD-2026-0001", "customer_name": "Active", "created_at": _iso_days_ago(2), "is_deleted": False, "brands": [], "overall_status": "Partially Dispatched", "completion_percentage": 99.9, "floor_id": "ground-floor"},
+        {"id": "co-complete", "number": "TORD-2026-0002", "customer_name": "Complete", "created_at": _iso_days_ago(1), "is_deleted": False, "brands": [], "overall_status": "Dispatched", "completion_percentage": 100, "floor_id": "ground-floor"},
+    ], [])
+    monkeypatch.setattr(router_module, "db", fake_db)
+
+    result = asyncio.run(router_module.list_customer_orders(user=_user()))
+
+    assert result["total"] == 1
+    assert [order["id"] for order in result["orders"]] == ["co-active"]
 
 
 def test_customer_order_detail_groups_by_supplier(monkeypatch):

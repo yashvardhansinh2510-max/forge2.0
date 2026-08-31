@@ -330,6 +330,66 @@ def _primary_product_image(snapshot: CatalogSnapshot, product_id: str, family_ke
     return None
 
 
+def _normalise_size(value: object) -> str:
+    """Compare supplier size strings without making their display text lossy.
+
+    Supplier files variously use ``600 X 1200``, ``600x1200`` and
+    ``600×1200`` for the same nominal tile.  The catalog returns the original
+    (first-seen) label, but uses this canonical key when grouping/resolving a
+    size selection.
+    """
+    return re.sub(r"\s+", "", str(value or "").strip().lower()).replace("×", "x")
+
+
+def _product_size(product: dict) -> Optional[str]:
+    value = product.get("size") or product.get("dimensions")
+    text = str(value or "").strip()
+    return text or None
+
+
+def _size_metadata_for_products(products: list[dict]) -> dict:
+    """Expose the distinct selectable sizes for one product style.
+
+    A style is a ``family_key`` on one floor.  A selector is useful only when
+    at least two distinct nominal sizes exist; a one-SKU/one-size product is
+    deliberately reported as non-switchable rather than pretending it has a
+    variant control.
+    """
+    labels: dict[str, str] = {}
+    for sibling in products:
+        label = _product_size(sibling)
+        key = _normalise_size(label)
+        if label and key:
+            labels.setdefault(key, label)
+    # Nominal tile dimensions should read naturally (600x600 before
+    # 600x1200), rather than lexicographically (where "1200" sorts first).
+    available_sizes = [
+        label for _, label in sorted(
+            labels.items(),
+            key=lambda item: (
+                tuple(int(part) for part in re.findall(r"\d+", item[1])),
+                item[0],
+            ),
+        )
+    ]
+    return {
+        "available_sizes": available_sizes,
+        "size_count": len(available_sizes),
+        "size_switchable": len(available_sizes) > 1,
+    }
+
+
+def _size_metadata(product: dict, snapshot: CatalogSnapshot) -> dict:
+    if product.get("family_key"):
+        siblings = [
+            row for row in snapshot.products_by_family.get(product["family_key"], ())
+            if row.get("floor_id") == product.get("floor_id")
+        ]
+    else:
+        siblings = [product]
+    return _size_metadata_for_products(siblings)
+
+
 def _hydrate_variants(product: dict, snapshot: CatalogSnapshot, limit: int = 8) -> None:
     if product.get("variants") or not product.get("family_key"):
         return
@@ -341,6 +401,7 @@ def _hydrate_variants(product: dict, snapshot: CatalogSnapshot, limit: int = 8) 
             "id": sibling["id"],
             "sku": sibling["sku"],
             "finish": sibling.get("finish"),
+            "size": _product_size(sibling),
             "color": sibling.get("colour") or sibling.get("color"),
             "price": float(sibling.get("price") or 0),
             "mrp": float(sibling.get("mrp") or sibling.get("price") or 0),
@@ -351,10 +412,41 @@ def _hydrate_variants(product: dict, snapshot: CatalogSnapshot, limit: int = 8) 
         product["variants"] = variants[:limit]
 
 
+def _family_variants(product: dict, snapshot: CatalogSnapshot) -> list[dict]:
+    """Complete, same-floor family membership for size-aware clients.
+
+    ``variants`` is an older, display-oriented sibling preview (and remains
+    capped for backwards compatibility).  This separate contract includes the
+    current product and every active sibling, so a client never infers size
+    availability from a truncated preview.
+    """
+    if product.get("family_key"):
+        rows = [
+            row for row in snapshot.products_by_family.get(product["family_key"], ())
+            if row.get("floor_id") == product.get("floor_id")
+        ]
+    else:
+        rows = [product]
+    return [
+        {
+            "id": row["id"], "sku": row.get("sku"), "size": _product_size(row),
+            "finish": row.get("finish"), "finish_code": row.get("finish_code"),
+            "colour": row.get("colour"), "variant_label": row.get("variant_label"),
+            "price": row.get("price"), "mrp": row.get("mrp"),
+            "stock": row.get("stock", 0), "dimensions": row.get("dimensions"),
+            "material": row.get("material"), "specs": row.get("specs") or {},
+            "image": _primary_product_image(snapshot, row["id"], row.get("family_key")),
+        }
+        for row in sorted(rows, key=lambda item: (item.get("sku") or "", item.get("id") or ""))
+    ]
+
+
 def hydrate_product(product: dict, snapshot: CatalogSnapshot) -> dict:
     out = copy.deepcopy(product)
     _apply_media(out, snapshot)
     _hydrate_variants(out, snapshot)
+    out.update(_size_metadata(product, snapshot))
+    out["family_variants"] = _family_variants(product, snapshot)
     return out
 
 
@@ -537,6 +629,72 @@ async def product_by_id(product_id: str, floor_ids: Optional[list[str]] = None) 
     return hydrate_product(product, snapshot) if product else None
 
 
+async def resolve_size_variant(
+    product_id: str, size: Optional[str] = None, floor_ids: Optional[list[str]] = None,
+) -> dict | None:
+    """Resolve a requested size to an actual sibling SKU, never a patch.
+
+    The returned ``product`` is the complete hydrated catalog row for the
+    resolved SKU, so quotation/tile-selection callers replace their selected
+    product wholesale and naturally receive that SKU's price, stock, media and
+    specifications.  We prefer a sibling with matching finish/colour metadata
+    and make any remaining tie deterministic by SKU then id.
+    """
+    snapshot = await get_catalog_snapshot()
+    source = snapshot.product_by_id.get(product_id)
+    if not source or (floor_ids is not None and source.get("floor_id") not in floor_ids):
+        return None
+
+    metadata = _size_metadata(source, snapshot)
+    # This doubles as the discoverability endpoint: a client can fetch one
+    # canonical product plus the complete size metadata before it chooses a
+    # target.  It is also useful for one-size styles.
+    if size is None:
+        return {
+            "source_product_id": source["id"],
+            "requested_size": None,
+            "resolved_product_id": source["id"],
+            **metadata,
+            "product": hydrate_product(source, snapshot),
+        }
+    requested_key = _normalise_size(size)
+    if not requested_key:
+        return None
+
+    if source.get("family_key"):
+        siblings = [
+            row for row in snapshot.products_by_family.get(source["family_key"], ())
+            if row.get("floor_id") == source.get("floor_id")
+        ]
+    else:
+        siblings = [source]
+    candidates = [row for row in siblings if _normalise_size(_product_size(row)) == requested_key]
+    if not candidates:
+        return None
+
+    # A family may contain finishes/colours as well as sizes.  Selecting a
+    # size should retain the closest equivalent of the currently selected
+    # finish when available, but must still resolve an existing SKU when that
+    # finish is not offered in the requested size.
+    preference_fields = ("finish", "finish_code", "colour", "variant_label")
+    candidates.sort(key=lambda row: (
+        -sum(
+            1 for field in preference_fields
+            if source.get(field) not in (None, "") and row.get(field) == source.get(field)
+        ),
+        row.get("sku") or "",
+        row.get("id") or "",
+    ))
+    resolved = candidates[0]
+    return {
+        "source_product_id": source["id"],
+        "requested_size": size,
+        "resolved_product_id": resolved["id"],
+        **metadata,
+        "product": hydrate_product(resolved, snapshot),
+    }
+
+
 async def hierarchy_rows(floor_ids: Optional[list[str]] = None) -> tuple[list[dict], dict[str, dict], dict[str, dict]]:
     snapshot = await get_catalog_snapshot()
     groups: dict[tuple, dict] = {}
@@ -588,11 +746,13 @@ async def list_family_groups(
     products.sort(key=lambda row: (
         row.get("family_name") or "", row.get("colour") or "", row.get("sku") or "",
     ))
-    groups: dict[str, dict] = {}
+    groups: dict[tuple[str, str | None], dict] = {}
     for product in products:
-        key = product["family_key"]
+        # ``family_key`` is supplier-owned text, not a global database key;
+        # keep all-floor views from merging styles across business units.
+        key = (product["family_key"], product.get("floor_id"))
         group = groups.setdefault(key, {
-            "family_key": key,
+            "family_key": product["family_key"],
             "family_name": product.get("family_name"),
             "brand_id": product.get("brand_id"),
             "category_id": product.get("category_id"),
@@ -622,6 +782,12 @@ async def list_family_groups(
     ordered = sorted(groups.values(), key=lambda row: row.get("family_name") or "")
     page = copy.deepcopy(ordered[skip:skip + limit])
     for group in page:
+        family_products = [
+            product for product in getattr(snapshot, "products_by_family", {}).get(group["family_key"], products)
+            if product.get("floor_id") == group.get("floor_id")
+            and product.get("family_key") == group.get("family_key")
+        ]
+        group.update(_size_metadata_for_products(family_products))
         sample_id = (group.get("variants") or [{}])[0].get("id")
         media = (
             snapshot.media_rows_by_family.get(group.get("family_key"), ())
@@ -729,16 +895,17 @@ async def search_catalog(
         items = [hydrate_product(row, snapshot) for row in docs[:limit]]
         return {"query": query, "total": total_matches, "grouped": False, "items": items}
 
-    groups: dict[str, dict] = {}
-    order: list[str] = []
+    groups: dict[tuple[str, str | None], dict] = {}
+    order: list[tuple[str, str | None]] = []
     for product in docs:
-        key = product.get("family_key") or f"solo:{product['id']}"
+        key = (product.get("family_key") or f"solo:{product['id']}", product.get("floor_id"))
         if key not in groups:
             groups[key] = {
                 "family_key": product.get("family_key"),
                 "family_name": product.get("family_name") or product.get("name"),
                 "brand_id": product.get("brand_id"), "category_id": product.get("category_id"),
                 "subcategory": product.get("subcategory"), "series": product.get("series"),
+                "floor_id": product.get("floor_id"),
                 "score": score(product) if query else 0,
                 "product_count": 0, "min_price": product.get("price"),
                 "max_price": product.get("price"), "variants": [],
@@ -751,11 +918,21 @@ async def search_catalog(
         family["max_price"] = max(family["max_price"], product.get("price") or family["max_price"])
         family["variants"].append({
             "id": product["id"], "sku": product["sku"], "colour": product.get("colour"),
-            "finish": product.get("finish"), "price": product.get("price"),
+            "finish": product.get("finish"), "size": _product_size(product),
+            "price": product.get("price"),
         })
 
     grouped = [groups[key] for key in order][:limit]
     for family in grouped:
+        if family.get("family_key"):
+            family_products = [
+                row for row in snapshot.products_by_family.get(family["family_key"], ())
+                if row.get("floor_id") == family.get("floor_id")
+            ]
+        else:
+            sample = snapshot.product_by_id.get(family["sample_product_id"])
+            family_products = [sample] if sample else []
+        family.update(_size_metadata_for_products(family_products))
         media = ()
         if family.get("family_key"):
             media = snapshot.media_rows_by_family.get(family["family_key"], ())
@@ -810,6 +987,7 @@ async def family_detail(family_key: str, floor_ids: Optional[list[str]] = None) 
             "finish_code": product.get("finish_code"), "variant_label": product.get("variant_label"),
             "price": product.get("price"), "mrp": product.get("mrp"),
             "stock": product.get("stock", 0), "dimensions": product.get("dimensions"),
+            "size": _product_size(product),
             "material": product.get("material"), "warranty": product.get("warranty"),
             "specs": product.get("specs") or {},
             "hero_image": _primary_product_image(snapshot, product["id"], family_key),
@@ -825,6 +1003,7 @@ async def family_detail(family_key: str, floor_ids: Optional[list[str]] = None) 
         "min_price": min(product.get("price", 0) for product in products),
         "max_price": max(product.get("price", 0) for product in products),
         "variant_count": len(products), "variants": variants, "gallery": gallery,
+        **_size_metadata_for_products(products),
         "specs_union": specs_union,
         "hero_image_url": next(
             (item["url"] for item in gallery if item.get("is_primary")),

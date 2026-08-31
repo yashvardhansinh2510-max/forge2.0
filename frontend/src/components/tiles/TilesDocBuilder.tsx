@@ -38,7 +38,7 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ViewStyle,
+  ActivityIndicator, Alert as RNAlert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type ViewStyle,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -123,6 +123,9 @@ type TileRow = {
   quantityUnit: "Box" | "Pieces";
   total: string;
   totalEdited: boolean;
+  // Transient catalog data for a size picker. It is deliberately not sent in
+  // quotation items: the selected sibling product is the persisted truth.
+  availableSizes?: string[];
 };
 
 type TilesHeader = {
@@ -179,6 +182,10 @@ function emptyRow(): TileRow {
     totalBox: "", pcsBox: "", quantityUnit: "Box", total: "",
     totalEdited: false,
   };
+}
+
+function validTileSizes(sizes: unknown): string[] {
+  return [...new Set(Array.isArray(sizes) ? sizes.map((size) => String(size || "").trim()).filter(Boolean) : [])];
 }
 
 const num = (text: string): number => {
@@ -359,6 +366,19 @@ function useTilesDoc(docType: TilesDocType) {
     markDirty();
   }, [markDirty]);
 
+  const loadRowSizes = useCallback(async (key: string, productId: string) => {
+    try {
+      const result = await api.get<{ available_sizes?: string[] }>(`/products/${productId}/size-variants`, { floorId: TILES_FLOOR_ID });
+      const availableSizes = validTileSizes(result.available_sizes);
+      setRows((current) => current.map((row) => row.key === key && row.productId === productId ? { ...row, availableSizes } : row));
+    } catch {
+      // A missing/legacy family endpoint means this is simply not a
+      // size-switchable style. The row remains read-only until a real size
+      // list is available; linked catalog sizes must not become free text.
+      setRows((current) => current.map((row) => row.key === key && row.productId === productId ? { ...row, availableSizes: [] } : row));
+    }
+  }, []);
+
   const applyProduct = useCallback((key: string, product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null; box_sqft?: number | null }) => {
     const image = productImageList(product)[0] || null;
     const specs = product.specs || {};
@@ -379,11 +399,13 @@ function useTilesDoc(docType: TilesDocType) {
     setRows((cur) => cur.map((row) => {
       if (row.key !== key) return row;
       const isPerPiece = String((specs as any).price_unit || "").trim().toLowerCase() === "per piece";
-      const boxSqft = isPerPiece ? "" : (history?.box_sqft != null ? String(history.box_sqft) : (specNum("sqft_per_box", "box_sqft") || row.boxSqft));
-      const rateSqft = isPerPiece ? "" : (history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : row.rateSqft));
+      // Size siblings are separate catalog products. Do not carry coverage,
+      // rate or box metadata across a change: the selected sibling owns it.
+      const boxSqft = isPerPiece ? "" : (history?.box_sqft != null ? String(history.box_sqft) : specNum("sqft_per_box", "box_sqft"));
+      const rateSqft = isPerPiece ? "" : (history?.rate_sqft != null ? String(history.rate_sqft) : (product.price ? String(product.price) : ""));
       const derivedRateBox = num(rateSqft) > 0 && num(boxSqft) > 0
         ? String(Math.round(num(rateSqft) * num(boxSqft) * 100) / 100)
-        : row.rateBox;
+        : "";
       const next: TileRow = {
         ...row,
         productId: product.id,
@@ -395,19 +417,36 @@ function useTilesDoc(docType: TilesDocType) {
         size: history?.size || product.size || product.dimensions || row.size,
         rateSqft,
         boxSqft,
-        rateBox: isPerPiece ? String(product.price || product.mrp || 0) : (history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || row.rateBox || derivedRateBox)),
+        rateBox: isPerPiece ? String(product.price || product.mrp || 0) : (history?.rate_box != null ? String(history.rate_box) : (specNum("rate_per_box", "rate_box", "box_rate") || derivedRateBox)),
         offerRate: isPerPiece ? String(product.price || product.mrp || 0) : (history?.rate_sqft != null ? String(history.rate_sqft) : rateSqft),
         offerRateIsFallback: true,
-        pcsBox: isPerPiece ? "" : (history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs") || row.pcsBox),
+        pcsBox: isPerPiece ? "" : (history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs")),
         totalBox: row.totalBox || "1",
-        quantityUnit: isPerPiece ? "Pieces" : row.quantityUnit,
+        quantityUnit: isPerPiece ? "Pieces" : "Box",
         totalEdited: false,
+        availableSizes: validTileSizes(product.available_sizes),
       };
       return next;
     }));
     if (history) toast.show(`Used ${customerId ? "this customer's" : ""} last rate for ${product.name}`.replace("  ", " "));
     markDirty();
-  }, [markDirty, customerId]);
+    // The full product response may already include the metadata; querying
+    // this canonical endpoint also covers catalog pages that omit it.
+    if (!validTileSizes(product.available_sizes).length) void loadRowSizes(key, product.id);
+  }, [markDirty, customerId, loadRowSizes]);
+
+  const selectRowSize = useCallback(async (key: string, size: string) => {
+    const row = rows.find((item) => item.key === key);
+    if (!row?.productId || size === row.size) return;
+    try {
+      // Resolve by size on the backend so the current style/finish rules are
+      // applied consistently. The returned sibling is a complete product.
+      const resolution = await api.get<{ product: Product }>(`/products/${row.productId}/size-variants?size=${encodeURIComponent(size)}`, { floorId: TILES_FLOOR_ID });
+      applyProduct(key, resolution.product);
+    } catch (e: any) {
+      toast.error(e?.detail || "Couldn't change tile size");
+    }
+  }, [applyProduct, rows]);
 
   // ---- Persistence -------------------------------------------------------
   const buildItems = useCallback(() => {
@@ -665,7 +704,7 @@ function useTilesDoc(docType: TilesDocType) {
 
   return {
     docId, docNumberServer, loading, header, setHeaderField, rows,
-    updateRow, addRow, removeRow, applyProduct,
+    updateRow, addRow, removeRow, applyProduct, selectRowSize, loadRowSizes,
     customers, customerId, pickCustomer, setCustomerId,
     saveState, busy, generatePdf, print, placeOrder, serverTotals, previewTotals,
     status, stage: tilesStage(docType, status), workflowAction, runWorkflowAction, workflowError, deleteDocument,
@@ -701,6 +740,84 @@ function CellInput({
     />
   );
 }
+
+function TileSizeField({
+  row, onChangeText, onSelect, onLoad, testID, mobile = false,
+}: {
+  row: TileRow; onChangeText: (value: string) => void; onSelect: (size: string) => void;
+  onLoad: () => void; testID: string; mobile?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const sizes = row.availableSizes;
+  useEffect(() => {
+    if (row.productId && sizes === undefined) onLoad();
+  }, [onLoad, row.productId, sizes]);
+
+  // Unlinked/custom rows retain the legacy editable field. Once a catalog
+  // product has been chosen, size is an attribute of that product and is
+  // shown read-only unless the style has genuine alternate sizes.
+  if (!row.productId) {
+    return mobile
+      ? <TextField label="Size" value={row.size} onChangeText={onChangeText} testID={testID} />
+      : <CellInput value={row.size} onChangeText={onChangeText} bold testID={testID} />;
+  }
+  if (sizes === undefined) return <Text style={mobile ? mobileStyles.sizeLoading : sizeStyles.loading}>Loading…</Text>;
+  if (sizes.length < 2) return <Text style={mobile ? mobileStyles.sizeValue : sizeStyles.value}>{row.size || "—"}</Text>;
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        style={mobile ? mobileStyles.sizeButton : sizeStyles.button}
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityLabel={`Change size. ${sizes.length} sizes available. Current size ${row.size || "not selected"}`}
+      >
+        <Text style={mobile ? mobileStyles.sizeButtonText : sizeStyles.buttonText} numberOfLines={1}>{row.size || "Choose size"}</Text>
+        <Feather name="chevron-down" size={mobile ? 15 : 11} color={mobile ? colors.brand : "#444"} />
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={sizeStyles.backdrop} onPress={() => setOpen(false)}>
+          <Pressable style={sizeStyles.sheet} onPress={(event) => event.stopPropagation()} accessibilityViewIsModal>
+            <Text style={sizeStyles.sheetTitle}>Choose tile size</Text>
+            <Text style={sizeStyles.sheetHint}>{sizes.length} sizes available for this style</Text>
+            {sizes.map((size) => {
+              const selected = size === row.size;
+              return (
+                <Pressable
+                  key={size}
+                  onPress={() => { setOpen(false); onSelect(size); }}
+                  style={[sizeStyles.option, selected && sizeStyles.optionSelected]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  testID={`${testID}-${size}`}
+                >
+                  <Text style={[sizeStyles.optionText, selected && sizeStyles.optionTextSelected]}>{size}</Text>
+                  {selected ? <Feather name="check" size={16} color={colors.onBrand} /> : null}
+                </Pressable>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
+const sizeStyles = StyleSheet.create({
+  loading: { fontSize: 10, color: "#666", textAlign: "center" },
+  value: { fontSize: 12, color: "#111", textAlign: "center" },
+  button: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 2, maxWidth: "100%", paddingVertical: 3 },
+  buttonText: { flexShrink: 1, fontSize: 11, color: "#111", fontWeight: "700", textAlign: "center" },
+  backdrop: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.lg, backgroundColor: "rgba(0,0,0,0.4)" },
+  sheet: { width: "100%", maxWidth: 360, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surface },
+  sheetTitle: { fontSize: 17, fontWeight: "700", color: colors.onSurface },
+  sheetHint: { fontSize: 12, color: colors.onSurfaceSecondary, marginBottom: spacing.xs },
+  option: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary },
+  optionSelected: { backgroundColor: colors.brand },
+  optionText: { fontSize: 14, fontWeight: "600", color: colors.onSurface },
+  optionTextSelected: { color: colors.onBrand },
+});
 
 const cellStyles = StyleSheet.create({
   input: {
@@ -1009,7 +1126,7 @@ function PriceSummary({ totals, doc }: { totals: { boxes: number; subtotal: numb
       <Text style={sectionStyles.title}>PRICE SUMMARY</Text>
       <View style={priceStyles.table}>
         <View style={priceStyles.row}>
-          <Text style={priceStyles.label}>TOTAL BOX</Text>
+          <Text style={priceStyles.label}>TOTAL QUANTITY</Text>
           <Text style={priceStyles.value}>{totals.boxes ? `${Math.round(totals.boxes * 100) / 100}` : ""}</Text>
         </View>
         <View style={priceStyles.row}>
@@ -1156,7 +1273,13 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
               />
             </View>
             <View style={[selStyles.td, flex(4)]}>
-              <CellInput value={row.size} onChangeText={(t) => doc.updateRow(row.key, { size: t })} testID={`tiles-size-${index}`} />
+              <TileSizeField
+                row={row}
+                onChangeText={(size) => doc.updateRow(row.key, { size })}
+                onSelect={(size) => void doc.selectRowSize(row.key, size)}
+                onLoad={() => void doc.loadRowSizes(row.key, row.productId!)}
+                testID={`tiles-size-${index}`}
+              />
             </View>
             <View style={[selStyles.td, flex(5), { borderRightWidth: 0 }]}>
               <CellInput value={row.rateSqft} onChangeText={(t) => doc.updateRow(row.key, { rateSqft: t })} red bold testID={`tiles-rate-${index}`} />
@@ -1278,7 +1401,13 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
               />
             </View>
             <View style={[quoStyles.td, flex(4)]}>
-              <CellInput value={row.size} onChangeText={(t) => doc.updateRow(row.key, { size: t })} bold testID={`tiles-size-${index}`} />
+              <TileSizeField
+                row={row}
+                onChangeText={(size) => doc.updateRow(row.key, { size })}
+                onSelect={(size) => void doc.selectRowSize(row.key, size)}
+                onLoad={() => void doc.loadRowSizes(row.key, row.productId!)}
+                testID={`tiles-size-${index}`}
+              />
             </View>
             <View style={[quoStyles.td, flex(5)]}>
               <CellInput value={row.rateSqft} onChangeText={(t) => doc.updateRow(row.key, { rateSqft: t })} red bold testID={`tiles-rate-sqft-${index}`} />
@@ -1291,9 +1420,6 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
             </View>
             <View style={[quoStyles.td, flex(8)]}>
               <CellInput value={row.totalBox} onChangeText={(t) => doc.updateRow(row.key, { totalBox: t })} bold testID={`tiles-total-box-${index}`} />
-            </View>
-            <View style={[quoStyles.td, flex(9)]}>
-              <Text style={{ fontSize: 11, fontWeight: "700" }}>{quantityUnitLabel(row.quantityUnit).toUpperCase()}</Text>
               <Dropdown
                 label={quantityUnitLabel(row.quantityUnit)}
                 variant="ghost"
@@ -1303,6 +1429,11 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
                   { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
                 ]}
               />
+            </View>
+            <View style={[quoStyles.td, flex(9)]}>
+              {row.quantityUnit === "Box" ? (
+                <CellInput value={row.pcsBox} onChangeText={(t) => doc.updateRow(row.key, { pcsBox: t })} placeholder="PCS" testID={`tiles-pcs-box-${index}`} />
+              ) : <Text style={{ fontSize: 11, fontWeight: "700" }}>—</Text>}
             </View>
             <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
               <CellInput value={lineTotalInputValue(row)} onChangeText={(t) => doc.updateRow(row.key, { total: t })} testID={`tiles-total-${index}`} />
@@ -1391,7 +1522,7 @@ const MOBILE_FIELDS: Record<TilesDocType, MobileFieldDef[]> = {
     { key: "offerRate", label: "Offer Rate", numeric: true },
     { key: "rateBox", label: "Rate / Unit", numeric: true },
     { key: "totalBox", label: "Quantity", numeric: true },
-    { key: "pcsBox", label: "Pcs / Box" },
+    { key: "pcsBox", label: "Pieces per box" },
     { key: "total", label: "Line Total (Rs.)", numeric: true },
   ],
 };
@@ -1467,16 +1598,27 @@ function MobileRowCard({
       </View>
 
       <View style={mobileStyles.fieldStack}>
-        {fields.map((f) => (
+        {fields.filter((f) => f.key !== "pcsBox" || row.quantityUnit === "Box").map((f) => (
           <View key={f.key} style={mobileStyles.fieldFull}>
-            <TextField
-              label={f.key === "rateBox" ? `Rate / ${quantityUnitLabel(row.quantityUnit)}` : f.key === "totalBox" ? `Qty (${row.quantityUnit === "Pieces" ? "Pieces" : "Boxes"})` : f.label}
-              value={f.key === "total" ? lineTotalInputValue(row) : (row as any)[f.key]}
-              onChangeText={(t: string) => doc.updateRow(row.key, { [f.key]: t } as Partial<TileRow>)}
-              keyboardType={f.numeric ? "decimal-pad" : "default"}
-              testID={`mobile-${f.key}-${index}`}
-              helper={f.suffix}
-            />
+            {f.key === "size" ? (
+              <TileSizeField
+                row={row}
+                onChangeText={(size) => doc.updateRow(row.key, { size })}
+                onSelect={(size) => void doc.selectRowSize(row.key, size)}
+                onLoad={() => void doc.loadRowSizes(row.key, row.productId!)}
+                testID={`mobile-${f.key}-${index}`}
+                mobile
+              />
+            ) : (
+              <TextField
+                label={f.key === "rateBox" ? `Rate / ${quantityUnitLabel(row.quantityUnit)}` : f.key === "totalBox" ? `Qty (${row.quantityUnit === "Pieces" ? "Pieces" : "Boxes"})` : f.label}
+                value={f.key === "total" ? lineTotalInputValue(row) : (row as any)[f.key]}
+                onChangeText={(t: string) => doc.updateRow(row.key, { [f.key]: t } as Partial<TileRow>)}
+                keyboardType={f.numeric ? "decimal-pad" : "default"}
+                testID={`mobile-${f.key}-${index}`}
+                helper={f.suffix}
+              />
+            )}
           </View>
         ))}
         <View style={mobileStyles.fieldFull}>
@@ -1702,6 +1844,10 @@ const mobileStyles = StyleSheet.create({
   savePillText: { fontSize: 12, fontFamily: type.body.fontFamily, fontWeight: "600" },
   fieldStack: { gap: spacing.sm },
   fieldFull: { width: "100%" },
+  sizeLoading: { minHeight: 46, paddingHorizontal: spacing.md, paddingVertical: 14, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, color: colors.onSurfaceMuted, fontSize: 13 },
+  sizeValue: { minHeight: 46, paddingHorizontal: spacing.md, paddingVertical: 14, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, color: colors.onSurface, fontSize: 14 },
+  sizeButton: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.md, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.brand, backgroundColor: colors.brandTint },
+  sizeButtonText: { flex: 1, minWidth: 0, color: colors.onSurface, fontSize: 14, fontWeight: "600" },
   rowCard: {
     backgroundColor: colors.surface, borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,

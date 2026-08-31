@@ -28,13 +28,16 @@ const TOKEN_KIND_KEY = "forge.jwt.kind"; // "staff" | "customer"
 const REQUEST_TIMEOUT_MS = 30_000;
 const inflightGets = new Map<string, Promise<unknown>>();
 const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
+const activeRequests = new Set<AbortController>();
 let tokenCache: string | null | undefined;
 let tokenKindCache: TokenKind | null | undefined;
 let floorCache: string | null | undefined;
+let requestContextVersion = 0;
 
 export type TokenKind = "staff" | "customer";
 
 export async function setToken(token: string, kind: TokenKind) {
+  invalidateApiRequests();
   tokenCache = token;
   tokenKindCache = kind;
   await storage.secureSet(TOKEN_KEY, token);
@@ -42,6 +45,7 @@ export async function setToken(token: string, kind: TokenKind) {
 }
 
 export async function clearToken() {
+  invalidateApiRequests();
   tokenCache = null;
   tokenKindCache = null;
   responseCache.clear();
@@ -64,12 +68,23 @@ export async function getTokenKind(): Promise<TokenKind | null> {
 
 /** Publish the active floor synchronously so requests never wait on storage. */
 export function setRequestFloorId(floorId: string) {
-  if (floorCache !== floorId) responseCache.clear();
+  // Hydration's first storage read establishes the context; it is not a
+  // workspace switch and must not cancel the concurrent floor-access call.
+  if (floorCache !== undefined && floorCache !== floorId) invalidateApiRequests();
   floorCache = floorId;
 }
 
 export function clearApiResponseCache() {
   responseCache.clear();
+}
+
+/** Abort work from the previous identity/workspace before it can update UI. */
+export function invalidateApiRequests() {
+  requestContextVersion += 1;
+  responseCache.clear();
+  inflightGets.clear();
+  activeRequests.forEach((controller) => controller.abort());
+  activeRequests.clear();
 }
 
 export function csrfHeaders(): Record<string, string> { return {}; }
@@ -89,13 +104,19 @@ export class ApiError extends Error {
 type RequestOptions = { floorId?: string; signal?: AbortSignal; cacheMs?: number };
 
 async function request<T>(method: string, path: string, body?: any, opts?: RequestOptions): Promise<T> {
+  const contextVersion = requestContextVersion;
+  const controller = new AbortController();
+  activeRequests.add(controller);
   const token = await getToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   const floorId = opts?.floorId ?? (await getRequestFloorId());
   if (floorId) headers["X-Floor-Id"] = floorId;
 
-  const controller = new AbortController();
+  if (contextVersion !== requestContextVersion) {
+    activeRequests.delete(controller);
+    throw new DOMException("Request cancelled because the signed-in account or workspace changed.", "AbortError");
+  }
   let timedOut = false;
   const timeoutId = setTimeout(() => {
     timedOut = true;
@@ -130,6 +151,9 @@ async function request<T>(method: string, path: string, body?: any, opts?: Reque
         : text || `HTTP ${res.status}`;
       throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
     }
+    if (contextVersion !== requestContextVersion) {
+      throw new DOMException("Request cancelled because the signed-in account or workspace changed.", "AbortError");
+    }
     return data as T;
   } catch (error) {
     if (timedOut) {
@@ -143,6 +167,7 @@ async function request<T>(method: string, path: string, body?: any, opts?: Reque
     }
     throw error;
   } finally {
+    activeRequests.delete(controller);
     clearTimeout(timeoutId);
     opts?.signal?.removeEventListener("abort", abortFromCaller);
   }

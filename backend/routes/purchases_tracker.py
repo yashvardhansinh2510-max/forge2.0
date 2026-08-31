@@ -597,7 +597,7 @@ async def customer_workspace(
         key=lambda x: x["expected_delivery_at"],
     )
 
-    return {
+    response = {
         "customer": {
             "id": customer["id"], "name": customer.get("name"), "company": customer.get("company"),
             "tier": customer.get("tier"), "email": customer.get("email"), "phone": customer.get("phone"),

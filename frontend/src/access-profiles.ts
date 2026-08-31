@@ -37,7 +37,9 @@ export const PROFILE_PROVISIONING: Record<AccessProfile, {
 };
 
 export const PROFILE_MODULES: Record<AccessProfile, Set<string>> = {
-  ground_tile_quotations_followups: new Set(["tiles", "followups"]),
+  // Customer delivery lookup is read-only and routes directly to that
+  // customer's Ground Floor order statuses. It is not general CRM access.
+  ground_tile_quotations_followups: new Set(["tiles", "followups", "customers"]),
   ground_payments_dispatches: new Set(["payments", "orders"]),
   sanitary_quotations_followups: new Set(["quotations", "followups"]),
   sanitary_purchases: new Set(["purchases"]),

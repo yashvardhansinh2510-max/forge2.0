@@ -432,6 +432,22 @@ class ProductPatch(BaseModel):
     specs: Optional[dict] = None
 
 
+class SizeVariantResolution(BaseModel):
+    """Read-model contract for changing a catalog style's nominal size.
+
+    ``product`` is intentionally a complete hydrated product dictionary rather
+    than a partial price patch: callers must replace their selected SKU with
+    this row so its price and all SKU-specific attributes stay in sync.
+    """
+    source_product_id: str
+    requested_size: Optional[str] = None
+    resolved_product_id: str
+    available_sizes: list[str] = []
+    size_count: int = 0
+    size_switchable: bool = False
+    product: dict[str, Any]
+
+
 # ---------- Quotations ----------
 class QuotationLineItem(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))

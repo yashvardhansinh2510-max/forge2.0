@@ -45,6 +45,6 @@ def test_build_tile_chalan_pdf_produces_bytes():
     assert "Piece" in text
     assert "SKU" not in text
     assert "SKU-1" not in text
-    assert "Labour cost" in text
-    assert "450.00" in text
+    assert "Labour cost" not in text
+    assert "450.00" not in text
     assert "Unit" not in text

@@ -44,6 +44,7 @@ import {
 } from "@/src/components/tiles/TileTable";
 import { Sheet } from "@/src/components/ui";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
+import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 type TabKey = "customer" | "brands" | "history" | "inventory" | "dispatch-list" | "material-register";
@@ -92,12 +93,14 @@ function quantityLabel(value: number | string, unit?: "Box" | "Pieces") {
 
 export default function TileOrdersScreen() {
   useRequireFloorAccess("ground-floor");
+  const { staff } = useAuth();
+  const readOnlyDeliveryLookup = staff?.access_profile === "ground_tile_quotations_followups";
   const router = useRouter();
   // Deep-link params let the Customer workspace jump straight here with the
   // right tab already selected and pre-filtered to that order — "View
   // Register"/"View Dispatches" on a customer order are navigations INTO
   // this screen, not separate screens.
-  const params = useLocalSearchParams<{ tab?: string; search?: string }>();
+  const params = useLocalSearchParams<{ tab?: string; search?: string; customer_id?: string }>();
   const initialTab = (TABS.find(([key]) => key === params.tab)?.[0] as TabKey | undefined) ?? "customer";
 
   const [tab, setTab] = useState<TabKey>(initialTab);
@@ -136,7 +139,9 @@ export default function TileOrdersScreen() {
     setLoadError(null);
     try {
       if (tab === "customer") {
-        const result = await tileOrdersApi.listCustomerOrders({ page: nextPage, page_size: 30 });
+        const result = await tileOrdersApi.listCustomerOrders({
+          page: nextPage, page_size: 30, customer_id: params.customer_id,
+        });
         if (currentRequest !== requestId.current) return;
         setCustomerOrders((previous) => nextPage === 1 ? result.orders : [...previous, ...result.orders]);
         setHasMore(result.has_more);
@@ -184,7 +189,7 @@ export default function TileOrdersScreen() {
     } finally {
       if (currentRequest === requestId.current) setLoading(false);
     }
-  }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch]);
+  }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch, params.customer_id]);
 
   // The customer-order screen can mutate go-down stock while this tab stays
   // mounted in the navigation stack. Re-fetch whenever the screen becomes
@@ -567,14 +572,14 @@ export default function TileOrdersScreen() {
                   onPress={() => setDispatchStatus(status)}
                 />
               ))}
-              actions={
+              actions={!readOnlyDeliveryLookup ? (
                 <Button
                   label="Create dispatch"
                   variant="primary"
                   testID="tile-orders-create-dispatch"
                   onPress={() => setCreatingDispatch(true)}
                 />
-              }
+              ) : undefined}
             />
           ) : null}
 
@@ -626,6 +631,7 @@ export default function TileOrdersScreen() {
           dispatchId={openDispatchId}
           onClose={() => setOpenDispatchId(null)}
           onChanged={() => load()}
+          readOnly={readOnlyDeliveryLookup}
         />
       ) : null}
 

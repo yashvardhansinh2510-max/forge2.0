@@ -165,9 +165,16 @@ def test_place_order_confirm_updates_cross_floor_quotation(monkeypatch):
     async def _fake_reconcile(*args, **kwargs):
         return None
 
+    completed_followups = []
+
+    async def _fake_complete_pre_confirmation_followups(quotation_id, quotation_number, *, session=None):
+        completed_followups.append((quotation_id, quotation_number, session))
+        return 0
+
     monkeypatch.setattr(quotation_routes, "enqueue_after_primary_commit", _fake_enqueue)
     monkeypatch.setattr(quotation_routes, "dispatch_event", _fake_dispatch)
     monkeypatch.setattr(quotation_routes, "reconcile_followups", _fake_reconcile)
+    monkeypatch.setattr(quotation_routes, "_complete_pre_confirmation_followups", _fake_complete_pre_confirmation_followups)
 
     # Call place_order_confirm with a quotation on a different floor (ground-floor)
     # but with a user whose ambient active floor is first-floor
@@ -186,6 +193,7 @@ def test_place_order_confirm_updates_cross_floor_quotation(monkeypatch):
     assert len(update_calls) == 1, f"Expected 1 update_one call, got {len(update_calls)}"
     # The assertion inside update_one checks the filter is bare {"id": ...}
     # If we got here without raising, the fix is working
+    assert completed_followups and completed_followups[0][:2] == ("q1", "FQ-2026-0001")
 
 
 def test_update_quotation_works_cross_floor(monkeypatch):
