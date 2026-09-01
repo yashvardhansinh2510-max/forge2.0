@@ -7,6 +7,12 @@ const scaffold = read("../src/components/mobile/AppScaffold.tsx");
 assert.match(scaffold, /edges=\{\["top", "left", "right"\]\}/);
 assert.match(scaffold, /edges=\{\["bottom"\]\}/);
 
+const adminShell = read("../app/(admin)/_layout.tsx");
+assert.match(adminShell, /if \(contextualNotebookTabs\)/);
+assert.match(adminShell, /styles\.notebookPhoneBar/);
+assert.match(adminShell, /bottom-nav-notebook-workspace/);
+assert.doesNotMatch(adminShell, /bottom-fab-new-quotation[\s\S]{0,600}contextualNotebookTabs/);
+
 const phoneSafeAreaRoutes = [
   "../app/(admin)/payments.tsx",
   "../app/(admin)/payments-list.tsx",
@@ -36,6 +42,17 @@ const legacyBottomSheet = read("../src/components/BottomSheet.tsx");
 assert.match(legacyBottomSheet, /import \{ Sheet \} from "@\/src\/design\/components"/);
 assert.doesNotMatch(legacyBottomSheet, /\bModal\b/);
 
+const tileMovementSheets = read("../src/components/tiles/TileMovementSheets.tsx");
+assert.match(tileMovementSheets, /import \{ Sheet \} from "@\/src\/design\/components"/);
+assert.doesNotMatch(tileMovementSheets, /\bModal\b/);
+assert.match(tileMovementSheets, /footer=\{<SheetFooter/);
+assert.match(tileMovementSheets, /accessibilityLabel=\{`Enter quantity for \$\{name\}`\}/);
+
+const purchases = read("../app/(admin)/purchases.tsx");
+assert.match(purchases, /import \{ Sheet \} from "@\/src\/design\/components"/);
+assert.doesNotMatch(purchases, /\bModal\b/);
+assert.match(purchases, /accessibilityRole="button"/);
+
 const productImages = read("../src/components/catalog/ProductImageManager.tsx");
 assert.match(productImages, /const \{ isPhone \} = useBp\(\)/);
 assert.doesNotMatch(productImages, /winW >= 640/);
@@ -50,4 +67,4 @@ const systemSettings = read("../app/(admin)/settings-system.tsx");
 assert.match(systemSettings, /scroll=\{false\}/);
 assert.match(systemSettings, /<ScrollView/);
 
-console.log("mobile shell, sheet, safe-area, and list ownership contracts: 26 assertions passed");
+console.log("mobile shell, sheet, safe-area, list ownership, and notebook navigation contracts: 30 assertions passed");

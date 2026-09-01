@@ -5,6 +5,7 @@ from services.followup_notebook import (
     NOTEBOOK_FIELDS,
     QUOTATION_FIELDS,
     NotebookValidationError,
+    NotebookConflictError,
     convert_notebook_row,
     normalize_mobile,
     notebook_query,
@@ -136,6 +137,13 @@ def test_quotation_fields_are_rejected_before_conversion():
     assert QUOTATION_FIELDS == {"quotation_price", "estimated_value", "quotation_date"}
 
 
+def test_quotation_date_must_be_a_real_calendar_date():
+    with pytest.raises(NotebookValidationError, match="quotation_date"):
+        validate_notebook_patch(
+            {"quotation_date": "31/02/2026"}, converted=True, current={}, floor_id="third-floor",
+        )
+
+
 def test_lost_requires_notes():
     with pytest.raises(NotebookValidationError, match="Notes"):
         validate_notebook_patch({"notebook_status": "lost"}, converted=False, current={"notes": ""})
@@ -180,6 +188,8 @@ def test_notebook_query_is_pinned_to_the_url_floor_not_the_active_floor():
 def test_timeline_event_names_are_stable():
     assert timeline_event_for_field("notebook_status", "new", "won")[0] == "project_followup.status_changed"
     assert timeline_event_for_field("quotation_price", None, 100)[0] == "project_followup.quotation_updated"
+    assert timeline_event_for_field("customer_name", "A", "B")[0] == "project_followup.customer_updated"
+    assert timeline_event_for_field("notes", "A", "B")[0] == "project_followup.edited"
 
 
 class _ChainCursor(_Cursor):
@@ -272,6 +282,57 @@ async def test_patch_notebook_row_updates_only_one_field_and_revision(monkeypatc
     assert row["notes"] == "Call tomorrow"
     assert db.followups.rows[0]["customer_name"] == "A"
     assert db.followups.rows[0]["updated_at"] != "v1"
+
+
+@pytest.mark.asyncio
+async def test_furniture_patch_conflict_identifies_the_cell_to_reload_and_highlight():
+    db = _Db(followups=[{
+        "id": "furniture-1", "floor_id": "third-floor", "notebook_key": "third-floor:c1",
+        "customer_name": "A", "customer_phone": "9909906652", "notebook_status": "pending",
+        "notes": "Current server note", "updated_at": "v2", "is_converted": False,
+    }])
+    with pytest.raises(NotebookConflictError) as error:
+        await patch_notebook_row(
+            db, user=object(), floor_id="third-floor", row_id="furniture-1",
+            patch={"notes": "Stale client note"}, expected_updated_at="v1",
+        )
+    assert error.value.row["notes"] == "Current server note"
+    assert error.value.changed_fields == ["notes"]
+
+
+@pytest.mark.asyncio
+async def test_furniture_customer_edit_emits_the_customer_updated_audit_event(monkeypatch):
+    from models import NotebookCellPatchPayload
+    from routes import followup_routes
+
+    db = _Db(followups=[{
+        "id": "furniture-1", "floor_id": "third-floor", "notebook_key": "third-floor:c1",
+        "customer_id": "c1", "customer_name": "Before", "customer_phone": "9909906652",
+        "notebook_status": "new", "notes": "", "updated_at": "v1", "is_converted": False,
+    }])
+    events = []
+
+    async def _log_event(**event):
+        events.append(event)
+
+    monkeypatch.setattr(followup_routes, "db", db)
+    monkeypatch.setattr(followup_routes, "log_event", _log_event)
+    user = SimpleNamespace(active_floor_id="third-floor", floor_ids=["third-floor"], role="sales")
+    await followup_routes.patch_notebook(
+        "third-floor", "furniture-1",
+        NotebookCellPatchPayload(field="customer_name", value="After", updated_at="v1"), user,
+    )
+    assert events[0]["event_type"] == "project_followup.customer_updated"
+    assert events[0]["floor_id"] == "third-floor"
+
+
+def test_invalid_notebook_cursor_is_a_client_error_not_an_internal_error():
+    from fastapi import HTTPException
+    from routes.followup_routes import _decode_notebook_cursor
+
+    with pytest.raises(HTTPException) as error:
+        _decode_notebook_cursor("not-a-base64-cursor")
+    assert error.value.status_code == 400
 
 
 @pytest.mark.asyncio

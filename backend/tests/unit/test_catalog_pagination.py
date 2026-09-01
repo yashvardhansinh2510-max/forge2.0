@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from routes.catalog_routes import _usage_ranked_product_page
+from services.pagination import normalize_pagination, validate_pagination
 
 
 class Cursor:
@@ -72,3 +73,10 @@ def test_usage_ranked_pages_are_stable_and_complete(monkeypatch, skip, expected)
         limit=3,
     ))
     assert [row["id"] for row in result] == expected
+
+
+def test_catalog_pagination_rejects_negative_skip_and_caps_limit():
+    with pytest.raises(ValueError):
+        validate_pagination(-1, 20)
+
+    assert normalize_pagination(0, 101) == (0, 100)

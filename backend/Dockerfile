@@ -26,6 +26,21 @@ COPY migrations ./migrations
 COPY media_storage ./media_storage
 COPY routes ./routes
 COPY services ./services
+COPY catalog_pipeline ./catalog_pipeline
+
+# Build-time smoke check: use deliberately non-production configuration and
+# import the ASGI entrypoint. This catches omissions in the runtime allowlist
+# before a deployment reaches its boot command.
+RUN MONGO_URL='mongodb://127.0.0.1:27017' \
+    DB_NAME='forge_image_smoke' \
+    JWT_SECRET='image-smoke-test-secret-that-is-not-for-runtime' \
+    SUPABASE_URL='https://image-smoke.supabase.co' \
+    SUPABASE_SERVICE_ROLE_KEY='image-smoke-service-role-key' \
+    SUPABASE_ANON_KEY='image-smoke-anon-key' \
+    SUPABASE_PUBLIC_BUCKET='forge-products' \
+    SUPABASE_PRIVATE_BUCKET='forge-private' \
+    ENVIRONMENT='development' \
+    python -c 'import server; assert server.app'
 
 RUN useradd --create-home forge && chown -R forge:forge /app
 USER forge

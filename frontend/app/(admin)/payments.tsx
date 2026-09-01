@@ -51,7 +51,7 @@ type OrderRow = {
 
 type PaymentEntry = {
   id: string; amount: number; mode: PayMode;
-  reference?: string | null; note?: string | null;
+  reference?: string | null; note?: string | null; label?: string | null;
   paid_at?: string | null; created_at?: string; recorded_by_name?: string | null;
 };
 
@@ -82,15 +82,25 @@ function money(n: number): string {
 }
 
 function paymentHistoryCopy(payment: PaymentEntry): { title: string; subtitle: string } {
+  // Dispatches now write a structured payment label. Prefer it over text
+  // parsing so every new dispatch appears under the exact, stable label.
+  if (payment.label?.trim()) {
+    return {
+      title: payment.label.trim(),
+      subtitle: payment.note || `Recorded by ${payment.recorded_by_name || "—"}`,
+    };
+  }
   // Dispatch labor charges are persisted by the backend as a pending ledger
   // row. Promote that human-readable charge to the main line and leave the
   // dispatch number as supporting context rather than burying the charge in
   // the generic bank-transfer label.
-  const laborMatch = payment.note?.match(/^(₹[\d,]+(?:\.\d{1,2})?) labor cost added(?: via dispatch (.+))?$/);
+  const laborMatch = payment.note?.match(/^(₹[\d,]+(?:\.\d{1,2})?)\s+labou?r cost added(?: via dispatch (.+))?$/i);
   if (laborMatch) {
     return {
-      title: `${laborMatch[1]} labor cost added`,
-      subtitle: laborMatch[2] ? `Dispatch ${laborMatch[2]}` : `Recorded by ${payment.recorded_by_name || "—"}`,
+      title: "labor cost",
+      subtitle: laborMatch[2]
+        ? `${laborMatch[1]} · Dispatch ${laborMatch[2]}`
+        : `${laborMatch[1]} · Recorded by ${payment.recorded_by_name || "—"}`,
     };
   }
   return {
@@ -126,7 +136,7 @@ type HistoryRow = {
   paid_at?: string | null; amount: number; mode: PayMode;
   reference?: string | null; recorded_by_name?: string | null;
   outstanding_before: number | null; outstanding_after: number | null;
-  status: "pending" | "completed" | "failed"; note?: string | null;
+  status: "pending" | "completed" | "failed"; note?: string | null; label?: string | null;
   quotation_id?: string | null;
 };
 
@@ -393,7 +403,7 @@ export default function PaymentsScreen() {
         )}
       />
 
-      <View style={{ paddingHorizontal: spacing.xl }}>
+      <View style={{ paddingHorizontal: isPhone ? spacing.lg : spacing.xl }}>
         <Tabs
           testID="payments-tabs"
           value={tab}
@@ -406,7 +416,7 @@ export default function PaymentsScreen() {
       </View>
 
       {tab === "collections" ? (
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
+      <ScrollView contentContainerStyle={{ padding: isPhone ? spacing.lg : spacing.xl, gap: spacing.lg, paddingBottom: isPhone ? 132 : spacing.xxxl }}>
         {/* Hero — white card with brand icon tile */}
         <HeroCard
           overline="THIS MONTH"
@@ -724,6 +734,7 @@ function PaymentHistoryTab(props: {
   onOpenCustomer: (customerId: string) => void;
   onOpenOrder: (quotationId: string) => void;
 }) {
+  const { isPhone } = useBp();
   const {
     rows, total, loading, error, onRetry, page, pageSize, onPageChange,
     q, onQChange, unit, onUnitChange, floors,
@@ -783,12 +794,12 @@ function PaymentHistoryTab(props: {
     },
     {
       key: "notes", label: "NOTES", grow: 1, minWidth: 160,
-      render: (r) => <CellText muted>{r.note || "—"}</CellText>,
+      render: (r) => <CellText muted>{r.label ? `${r.label}${r.note ? ` · ${r.note}` : ""}` : r.note || "—"}</CellText>,
     },
   ];
 
   return (
-    <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}>
+    <ScrollView contentContainerStyle={{ padding: isPhone ? spacing.lg : spacing.xl, gap: spacing.lg, paddingBottom: isPhone ? 132 : spacing.xxxl }}>
       <Card padding={spacing.md} style={{ gap: spacing.md }}>
         <SearchField
           testID="history-search"

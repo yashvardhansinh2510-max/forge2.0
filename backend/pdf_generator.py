@@ -210,7 +210,13 @@ def contain_box(
 
 
 class _CoverImage(Flowable):
-    """An aspect-preserving product image clipped to fill its whole cell."""
+    """A centered, aspect-preserving product image that fills its whole cell.
+
+    The image is clipped at the cell boundary when its source ratio differs
+    from the document's image frame.  That gives every selected product the
+    same clear, full-size visual treatment in the PDF instead of leaving a
+    small, differently-sized thumbnail in the middle of the image column.
+    """
 
     def __init__(self, data: bytes, width_mm: float, height_mm: float):
         super().__init__()
@@ -252,15 +258,17 @@ def _img(
 ) -> Flowable:
     """Render the supplied product image inside the quotation image cell.
 
-    Preserve the full image in a centered contain box. Product imagery is a
-    product-selection aid, so it must never be cropped merely to fill a table
-    cell; blank space is preferable to hiding the item being quoted.
+    ``cover=True`` fills the designated image frame, centering and clipping
+    excess edges while preserving aspect ratio.  The default remains a
+    centered contain box for callers that explicitly need the entire source.
     """
     if url and str(url).startswith(("https://", "http://")):
         data = _remote_image_bytes(str(url))
         if data:
             try:
                 prepared = _prepare_image_bytes(data, force_landscape=force_landscape)
+                if cover:
+                    return _CoverImage(prepared, width_mm, height_mm)
                 reader = ImageReader(BytesIO(prepared))
                 source_width, source_height = reader.getSize()
                 _, _, image_width, image_height = contain_box(
@@ -635,6 +643,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                         Paragraph(str(sr_no), styles["cellCenter"]), _img(
                             item.get("image"),
                             width_mm=image_width_mm, height_mm=image_height_mm,
+                            cover=True,
                         ),
                         Paragraph(_ellipsize(item.get("sku"), 20), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
                         Paragraph(_money(listed_mrp), styles["itemCenter"]), Paragraph(f"{qty:g}", styles["itemCenter"]),
@@ -644,7 +653,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                 else:
                     rows.append([
                         Paragraph(str(sr_no), styles["cellCenter"]), _img(
-                            item.get("image"), width_mm=image_width_mm, height_mm=image_height_mm,
+                            item.get("image"), width_mm=image_width_mm, height_mm=image_height_mm, cover=True,
                         ),
                         Paragraph(_ellipsize(item.get("sku"), 20), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
                         Paragraph(_money(base_rate), styles["itemCenter"]), Paragraph(f"{qty:g}", styles["itemCenter"]),

@@ -2,7 +2,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -31,6 +31,7 @@ from services.domain_outbox import (
 )
 from services.followup_engine import reconcile_followups
 from services.pricing import _resolve_line_rows, net_amount_list, normalize_tile_line_item, per_line_net_amounts, stamp_net_amounts
+from services.pagination import MAX_PAGE_LIMIT, normalize_pagination
 from services.pricing import recalc_quotation_totals as _recalc
 from services.sequence import next_number
 from services.tiles_stage import can_move_to_quotation, can_place_order
@@ -60,7 +61,7 @@ async def _canonicalize_item_images(items) -> list[dict]:
     product media, while retaining a valid snapshot as a fallback. The PDF
     image pipeline normalizes old portrait assets before placing them.
     """
-    raw_items = [item.dict() if isinstance(item, QuotationLineItem) else dict(item) for item in (items or [])]
+    raw_items = [item.model_dump() if isinstance(item, QuotationLineItem) else dict(item) for item in (items or [])]
     product_ids = {str(item.get("product_id")) for item in raw_items if item.get("product_id")}
     if not product_ids:
         return raw_items
@@ -193,8 +194,11 @@ def _referrer_fields(referrer_type: str | None, referrer_doc: dict | None) -> di
 @router.get("")
 async def list_quotations(
     doc_type: str | None = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1),
     user: UserPublic = Depends(get_current_user),
 ):
+    skip, limit = normalize_pagination(skip, limit)
     query: dict = {}
     if doc_type == "standard":
         # `doc_type` was added with the Tiles module; every quotation created
@@ -209,7 +213,7 @@ async def list_quotations(
     # Asking for a tile document type is a Ground Floor request by
     # definition — never scope those by the caller's ambient floor.
     scoped = tiles_floor_query(user, query) if doc_type in TILES_DOC_TYPES else floor_query(user, query)
-    docs = await db.quotations.find(scoped, {"_id": 0}).sort("created_at", -1).to_list(500)
+    docs = await db.quotations.find(scoped, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     return docs
 
 
@@ -331,7 +335,7 @@ async def create_quotation(
         ),
         **totals,
     )
-    await db.quotations.insert_one(quot.dict())
+    await db.quotations.insert_one(quot.model_dump())
     await _track_product_usage(user.id, [it.product_id for it in items])
     await log_event(
         event_type="quotation.created",
@@ -469,7 +473,7 @@ async def update_quotation(
 
     if body.items is not None:
         items_typed = [
-            QuotationLineItem(**i.dict()) if not isinstance(i, dict) else QuotationLineItem(**i)
+            QuotationLineItem(**i.model_dump()) if not isinstance(i, dict) else QuotationLineItem(**i)
             for i in body.items
         ]
         # Backfill category_id and ensure replacement lines stay in the
@@ -486,7 +490,7 @@ async def update_quotation(
             if not it.category_id:
                 it.category_id = p.get("category_id")
         canonical_items = await _canonicalize_item_images(items_typed)
-        update["items"] = [i.dict() for i in _normalize_tile_items(
+        update["items"] = [i.model_dump() for i in _normalize_tile_items(
             [QuotationLineItem(**item) for item in canonical_items], doc.get("doc_type", "standard")
         )]
         await _track_product_usage(user.id, [it.product_id for it in items_typed])
@@ -504,7 +508,7 @@ async def update_quotation(
     if body.category_discounts is not None:
         update["category_discounts"] = body.category_discounts
     if body.room_discounts is not None:
-        update["room_discounts"] = {k: v.dict() for k, v in body.room_discounts.items()}
+        update["room_discounts"] = {k: v.model_dump() for k, v in body.room_discounts.items()}
     if body.status is not None:
         requested_status = body.status
         doc_type = doc.get("doc_type", "standard")
@@ -553,7 +557,7 @@ async def update_quotation(
         items_for_calc = _normalize_tile_items([
             QuotationLineItem(**i) for i in update.get("items", doc.get("items", []))
         ], doc.get("doc_type", "standard"))
-        update["items"] = [i.dict() for i in items_for_calc]
+        update["items"] = [i.model_dump() for i in items_for_calc]
         project_discount_pct_for_calc = update.get("project_discount_pct", doc.get("project_discount_pct", 0))
         category_discounts_for_calc = update.get("category_discounts", doc.get("category_discounts", {}))
         room_discounts_for_calc = {
@@ -586,7 +590,7 @@ async def update_quotation(
                 "category_discounts", "room_discounts", "customer_id", "customer_name", "transportation_fee",
             )},
         )
-        update["revisions"] = revisions + [rev.dict()]
+        update["revisions"] = revisions + [rev.model_dump()]
 
     update["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.quotations.update_one({"id": quotation_id}, {"$set": update})
@@ -992,7 +996,7 @@ async def portal_pdf(quotation_id: str, cust: CustomerPublic = Depends(get_curre
     if not doc:
         raise HTTPException(status_code=404, detail="Quotation not found")
     pdf_doc = {**doc, "items": await _pdf_items(doc)}
-    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
+    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.model_dump(), await _pdf_branding())
     filename = quotation_pdf_filename(doc.get("customer_name") or cust.name)
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
@@ -1023,7 +1027,7 @@ async def portal_pdf_revision(
         room_discs,
     )
     pdf_doc = {**merged, **totals, "items": await _pdf_items(merged)}
-    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
+    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.model_dump(), await _pdf_branding())
     filename = quotation_pdf_filename(doc.get("customer_name") or cust.name)
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 
@@ -1062,7 +1066,7 @@ async def portal_pdf_brand(
     )
     filtered_doc = {**doc, "items": filtered}
     pdf_doc = {**filtered_doc, **totals, "items": await _pdf_items(filtered_doc)}
-    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.dict(), await _pdf_branding())
+    pdf_bytes = await _render_pdf(build_quotation_pdf, pdf_doc, cust.model_dump(), await _pdf_branding())
     filename = quotation_pdf_filename(doc.get("customer_name") or cust.name)
     return StreamingResponse(iter([pdf_bytes]), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{filename}"'})
 

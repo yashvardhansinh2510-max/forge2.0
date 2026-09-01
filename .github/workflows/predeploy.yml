@@ -17,6 +17,22 @@ jobs:
           node-version: "20"
       - name: Backend tests and dependency audit
         working-directory: backend
+        # Unit tests stay hermetic; production secrets are used only by the
+        # explicit read-only gate below.
+        env:
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME: forge_predeploy_unit_tests
+          JWT_SECRET: predeploy-unit-test-secret-not-a-real-secret-32chars
+          JWT_ALGORITHM: HS256
+          JWT_EXP_MINUTES: "43200"
+          MEDIA_STORAGE_DRIVER: supabase
+          SUPABASE_URL: https://ci-placeholder.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-not-real
+          SUPABASE_ANON_KEY: ci-placeholder-not-real
+          SUPABASE_PUBLIC_BUCKET: forge-products
+          SUPABASE_PRIVATE_BUCKET: forge-private
+          FORGE_ALLOW_DEMO_SEED: "false"
+          ENVIRONMENT: production
         run: |
           pip install -r requirements-prod.txt pip-audit pytest pytest-asyncio
           pip-audit -r requirements-prod.txt
@@ -28,7 +44,7 @@ jobs:
           npm audit --audit-level=high
           npx tsc --noEmit
           npx expo lint -- --max-warnings 0
-          npm run test:quotation-media && npm run test:quotation-contract && npm run test:notebook && npm run test:mobile-ux
+          npm run test:quotation-media && npm run test:quotation-contract && npm run test:notebook && npm run test:mobile-ux && npm run test:api-client && npm run test:api-proxy
           npx expo export --platform web
           npm run test:mobile-budget
       - name: Live MongoDB, Supabase and required-index check (read-only)

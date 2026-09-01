@@ -17,7 +17,7 @@ import { useBp } from "@/src/design/responsive";
 import { color, font, layout, radius, space } from "@/src/design/tokens";
 import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
-import { useModuleAccess } from "@/src/hooks/use-permissions";
+import { useModuleAccess, usePermissionMatrix } from "@/src/hooks/use-permissions";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { AppScaffold } from "@/src/components/mobile/AppScaffold";
 import { storage } from "@/src/utils/storage";
@@ -461,9 +461,19 @@ function PhoneBar() {
   const hasAccess = useModuleAccess();
   const palette = usePalette();
   const tilesNav = useTilesNav();
-  const { selectedFloorId } = useFloorAccess();
+  const { access, selectedFloorId, loading: floorLoading } = useFloorAccess();
+  const { data: permissionMatrix, loading: permissionsLoading } = usePermissionMatrix();
   const [moreOpen, setMoreOpen] = useState(false);
   const isActive = (item: NavItem) => isNavActive(item, segments);
+  // The footer is part of the application shell, so it must obey the same
+  // readiness boundary as the routed screen. Rendering its real destinations
+  // before the signed-in user's floor and permission matrix resolve made the
+  // icons visibly change (and briefly exposed a wrong-floor destination) on
+  // cold starts. A fixed, inert placeholder preserves the layout until the
+  // authoritative shell state is available.
+  const shellReady = Boolean(staff && access && selectedFloorId && !floorLoading && !permissionsLoading && permissionMatrix);
+  if (!shellReady) return <PhoneBarSkeleton />;
+
   const visibleMore = visible(MORE_ITEMS);
   const moreActive = visibleMore.some(isActive);
   // The left tab slot is Quotes on Sanitary Bathroom. On Ground Floor that
@@ -533,6 +543,32 @@ function PhoneBar() {
       </Pressable>
     );
   };
+
+  // Kitchen and Furniture are intentionally compact, two-view workspaces.
+  // The generic phone footer previously left an empty FAB well between the
+  // two notebook tabs and duplicated both destinations again under More.
+  if (contextualNotebookTabs) {
+    const notebookLabel = selectedFloorId === KITCHEN_FLOOR_ID ? "Kitchen" : "Furniture";
+    const notebookMoreLabel = `${notebookLabel} workspace`;
+    return <>
+      <View style={styles.notebookPhoneBar}>
+        <Tab item={contextualNotebookTabs.primary} />
+        <Tab item={contextualNotebookTabs.secondary} />
+        <Pressable testID="bottom-nav-notebook-workspace" onPress={() => setMoreOpen(true)} accessibilityRole="button" accessibilityLabel={`Open ${notebookMoreLabel} menu`} style={styles.notebookWorkspaceTab}>
+          <View style={styles.tabIconWrap}><Feather name="layers" size={19} color={color.inkFaint} /></View>
+          <Text style={styles.tabLabel}>Workspace</Text>
+        </Pressable>
+      </View>
+      <Sheet open={moreOpen} onClose={() => setMoreOpen(false)} title={notebookMoreLabel}>
+        <View style={{ paddingVertical: 6 }}><FloorSwitcher /></View>
+        <Hairline style={{ marginVertical: 6 }} />
+        <Pressable onPress={async () => { setMoreOpen(false); await logout(); router.replace("/(auth)/login"); }} accessibilityRole="button" accessibilityLabel="Sign out" style={styles.moreRow}>
+          <Feather name="log-out" size={17} color={color.risk} />
+          <Text style={[styles.moreLabel, { color: color.risk }]}>Sign out</Text>
+        </Pressable>
+      </Sheet>
+    </>;
+  }
 
   return (
     <>
@@ -630,6 +666,19 @@ function PhoneBar() {
         </View>
       </Sheet>
     </>
+  );
+}
+
+function PhoneBarSkeleton() {
+  return (
+    <View testID="bottom-nav-loading" accessibilityLabel="Loading navigation" accessibilityLiveRegion="polite" style={styles.phoneBar}>
+      {[0, 1, 2, 3, 4].map((slot) => (
+        <View key={slot} style={slot === 2 ? styles.navLoadingFabSlot : styles.navLoadingSlot}>
+          <View style={[styles.navLoadingIcon, slot === 2 && styles.navLoadingFab]} />
+          {slot !== 2 ? <View style={styles.navLoadingLabel} /> : null}
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -771,6 +820,11 @@ const styles = StyleSheet.create({
     height: layout.bottomBar, flexDirection: "row", alignItems: "center",
     paddingHorizontal: space.x2,
   },
+  notebookPhoneBar: {
+    minHeight: layout.bottomBar, flexDirection: "row", alignItems: "center",
+    paddingHorizontal: space.x3, gap: space.x2,
+  },
+  notebookWorkspaceTab: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6, gap: 3 },
   tab: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 6, gap: 3 },
   tabIconWrap: {
     width: 40, height: 26, borderRadius: radius.md, alignItems: "center", justifyContent: "center",
@@ -785,6 +839,11 @@ const styles = StyleSheet.create({
     borderWidth: 4, borderColor: color.canvas,
   },
   actionLabel: { marginTop: -2, fontFamily: font.medium, fontSize: 10.5, color: color.inkFaint },
+  navLoadingSlot: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6 },
+  navLoadingFabSlot: { width: 68, alignItems: "center", justifyContent: "center" },
+  navLoadingIcon: { width: 20, height: 20, borderRadius: 10, backgroundColor: color.sunken },
+  navLoadingFab: { width: 44, height: 44, borderRadius: 22, marginTop: -16 },
+  navLoadingLabel: { width: 26, height: 7, borderRadius: 4, backgroundColor: color.sunken },
   moreRow: {
     flexDirection: "row", alignItems: "center", gap: 12,
     height: 48, paddingHorizontal: 4,

@@ -178,6 +178,24 @@ def _normalize_family_base(description: str) -> str:
     return slug[:80] or "misc"
 
 
+def family_key_from_sku(category: str, sku: str, description: str) -> str:
+    """Return Grohe's stable colour-variant family key.
+
+    Grohe article numbers use the final three characters as the finish/colour
+    discriminator.  Consequently ``12345000`` and ``12345001`` are the same
+    product in different finishes, while their common prefix (``12345``) is
+    the product identity that the catalogue should group under one card.
+
+    Supplier workbooks occasionally contain non-standard or short article
+    values.  Keep the existing description-based key for those rows rather
+    than guessing a relationship from an invalid code.
+    """
+    normalized_sku = re.sub(r"\s+", "", str(sku or ""))
+    if len(normalized_sku) > 3 and re.fullmatch(r"[A-Za-z0-9]+", normalized_sku):
+        return f"grohe:sku:{normalized_sku[:-3].lower()}"
+    return f"grohe:{category.lower().replace(' ', '-')}:{_normalize_family_base(description)}"
+
+
 def _convert_emf_to_png(raw: bytes, fmt: str) -> Optional[bytes]:
     """EMF/WMF -> PNG, then auto-trim the surrounding white canvas
     (lossless — removes blank margin only, alters zero pixels of the
@@ -362,7 +380,7 @@ def extract_file(category: str, path: str, original_filename: Optional[str] = No
         finish_hint = str(finish_hint).strip() if finish_hint not in (None, "") else None
 
         finish = _detect_finish(description) or _finish_from_sku_tail(sku)
-        family_key = f"grohe:{category.lower().replace(' ', '-')}:{_normalize_family_base(description)}"
+        family_key = family_key_from_sku(category, sku, description)
 
         dup_key = hashlib.sha1(f"{sku}|{description}|{mrp}".encode()).hexdigest()
         duplicate_of = None

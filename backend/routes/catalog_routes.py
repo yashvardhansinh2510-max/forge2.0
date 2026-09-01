@@ -10,8 +10,22 @@ from db import db, strip_ids
 from models import Brand, BrandCreate, Category, CategoryCreate, Product, ProductCreate, ProductPatch, SizeVariantResolution, UserPublic
 from services import catalog_service, media_service
 from services.activity_log import log_event
+from services.pagination import MAX_PAGE_LIMIT, normalize_pagination
 
 router = APIRouter(tags=["catalog"])
+
+
+async def _require_product_relations_on_floor(brand_id: str, category_id: str, floor_id: str) -> None:
+    """Keep a product's denormalized catalog hierarchy within one floor."""
+    brand, category = await asyncio.gather(
+        db.brands.find_one({"id": brand_id, "floor_id": floor_id}, {"_id": 0, "id": 1}),
+        db.categories.find_one({"id": category_id, "floor_id": floor_id}, {"_id": 0, "id": 1}),
+    )
+    if not brand or not category:
+        raise HTTPException(
+            status_code=400,
+            detail="Product brand_id and category_id must belong to the same floor as the product.",
+        )
 
 
 # ---------- Brands ----------
@@ -44,10 +58,10 @@ async def create_brand(
 ):
     if await db.brands.find_one({"slug": body.slug, "floor_id": floor_for_write(user)}):
         raise HTTPException(status_code=409, detail="A brand with this slug already exists")
-    payload = body.dict()
+    payload = body.model_dump()
     payload["floor_id"] = floor_for_write(user)
     brand = Brand(**payload)
-    await db.brands.insert_one(brand.dict())
+    await db.brands.insert_one(brand.model_dump())
     catalog_service.schedule_catalog_refresh()
     return brand
 
@@ -59,10 +73,10 @@ async def create_category(
 ):
     if await db.categories.find_one({"slug": body.slug, "floor_id": floor_for_write(user)}):
         raise HTTPException(status_code=409, detail="A category with this slug already exists")
-    payload = body.dict()
+    payload = body.model_dump()
     payload["floor_id"] = floor_for_write(user)
     category = Category(**payload)
-    await db.categories.insert_one(category.dict())
+    await db.categories.insert_one(category.model_dump())
     catalog_service.schedule_catalog_refresh()
     return category
 
@@ -126,10 +140,11 @@ async def list_products(
     finish: Optional[str] = None,
     colour: Optional[str] = None,
     sort: str = Query("popular", description="popular | recent | price_asc | price_desc | name"),
-    limit: int = 60,
-    skip: int = 0,
+    limit: int = Query(60, ge=1),
+    skip: int = Query(0, ge=0),
     user: UserPublic = Depends(get_current_user),
 ):
+    skip, limit = normalize_pagination(skip, limit)
     return await catalog_service.list_products_page(
         user_id=user.id,
         q=q,
@@ -252,13 +267,14 @@ async def list_families(
     subcategory: Optional[str] = None,
     series: Optional[str] = None,
     q: Optional[str] = None,
-    limit: int = 60,
-    skip: int = 0,
+    limit: int = Query(60, ge=1),
+    skip: int = Query(0, ge=0),
     user: UserPublic = Depends(get_current_user),
 ):
     """Return products grouped by family_key — one card per family, variants
     collapsed underneath. Ideal for the premium grouped catalog view.
     """
+    skip, limit = normalize_pagination(skip, limit)
     return await catalog_service.list_family_groups(
         brand_id=brand_id,
         category_id=category_id,
@@ -453,6 +469,7 @@ async def create_custom_product(
     rejection.
     """
     floor_id = floor_for_write(user)
+    await _require_product_relations_on_floor(body.brand_id, body.category_id, floor_id)
     sku = body.sku or f"CUSTOM-{datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')}"
     if body.is_custom:
         # Auto-uniquify — never fail because the user typed the same SKU twice.
@@ -464,12 +481,12 @@ async def create_custom_product(
     elif await db.products.find_one({"sku": sku, "floor_id": floor_id, "brand_id": body.brand_id}):
         raise HTTPException(status_code=409, detail="SKU already exists")
 
-    payload = body.dict()
+    payload = body.model_dump()
     payload["sku"] = sku
     payload["tags"] = list(set([*(payload.get("tags") or []), "custom"]))
     payload["floor_id"] = floor_id
     prod = Product(**payload)
-    await db.products.insert_one(prod.dict())
+    await db.products.insert_one(prod.model_dump())
     catalog_service.schedule_catalog_refresh()
     return prod
 
@@ -480,12 +497,13 @@ async def create_product(
     user: UserPublic = Depends(require_min_role("purchase")),
 ):
     floor_id = floor_for_write(user)
+    await _require_product_relations_on_floor(body.brand_id, body.category_id, floor_id)
     if await db.products.find_one({"sku": body.sku, "floor_id": floor_id, "brand_id": body.brand_id}):
         raise HTTPException(status_code=409, detail="SKU already exists")
-    payload = body.dict()
+    payload = body.model_dump()
     payload["floor_id"] = floor_id
     prod = Product(**payload)
-    await db.products.insert_one(prod.dict())
+    await db.products.insert_one(prod.model_dump())
     catalog_service.schedule_catalog_refresh()
     return prod
 
@@ -514,12 +532,13 @@ async def update_product(
     if not existing:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    updates = body.dict(exclude_unset=True)
+    updates = body.model_dump(exclude_unset=True)
     if not updates:
         return Product(**existing)
 
     new_sku = updates.get("sku", existing.get("sku"))
     new_brand_id = updates.get("brand_id", existing.get("brand_id"))
+    new_category_id = updates.get("category_id", existing.get("category_id"))
     sku_changing = "sku" in updates and new_sku != existing.get("sku")
     brand_changing = "brand_id" in updates and new_brand_id != existing.get("brand_id")
     if sku_changing or brand_changing:
@@ -530,6 +549,11 @@ async def update_product(
             "id": {"$ne": product_id},
         }):
             raise HTTPException(status_code=409, detail="SKU already exists")
+
+    if "brand_id" in updates or "category_id" in updates:
+        await _require_product_relations_on_floor(
+            new_brand_id, new_category_id, existing.get("floor_id"),
+        )
 
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.products.update_one(floor_query(user, {"id": product_id}), {"$set": updates})
@@ -546,7 +570,7 @@ async def update_product(
     )
 
     updated = await catalog_service.product_by_id(product_id, floor_ids=floor_scope_ids(user))
-    return Product(**{k: v for k, v in updated.items() if k in Product.__fields__})
+    return Product(**{k: v for k, v in updated.items() if k in Product.model_fields})
 
 
 # ---------- Catalog import (AI-assisted scaffold) ----------

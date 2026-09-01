@@ -128,8 +128,8 @@ async def gather_attention(db, f: AnalyticsFilter, accessible_floors, window, th
         # Ready/unreleased material lives in the tile-orders collections; the
         # Operations workspace (Phase 5) owns their full aggregation. Phase 1
         # reads only what the two rules need.
-        ready_items=await _ready_items(db, accessible_floors),
-        unreleased_items=await _unreleased_items(db, accessible_floors),
+        ready_items=await _ready_items(db, f, accessible_floors),
+        unreleased_items=await _unreleased_items(db, f, accessible_floors),
         salespeople=salespeople,
         purchase_orders=purchase_orders,
         brands=[],      # comparison rules need a prior window; wired in Phase 3
@@ -137,10 +137,13 @@ async def gather_attention(db, f: AnalyticsFilter, accessible_floors, window, th
     )
 
 
-async def _ready_items(db, accessible_floors) -> list[dict]:
-    match: dict = {"is_deleted": False, "boxes_ready": {"$gt": 0}}
-    if accessible_floors is not None:
-        match["floor_id"] = {"$in": list(accessible_floors)}
+async def _ready_items(db, f: AnalyticsFilter, accessible_floors) -> list[dict]:
+    """Ready tile batches, constrained to both caller access and selected floor."""
+    match = {
+        **build_match(AnalyticsFilter(floor_id=f.floor_id, status="any"), accessible_floors, (None, None)),
+        "is_deleted": False,
+        "boxes_ready": {"$gt": 0},
+    }
     rows = await db.ready_batches.find(
         match,
         {"_id": 0, "id": 1, "purchase_order_id": 1, "customer_order_id": 1, "customer_name": 1,
@@ -149,10 +152,13 @@ async def _ready_items(db, accessible_floors) -> list[dict]:
     return [{**r, "ready_at": r.get("created_at")} for r in rows]
 
 
-async def _unreleased_items(db, accessible_floors) -> list[dict]:
-    match: dict = {"is_deleted": False, "boxes_pending": {"$gt": 0}}
-    if accessible_floors is not None:
-        match["floor_id"] = {"$in": list(accessible_floors)}
+async def _unreleased_items(db, f: AnalyticsFilter, accessible_floors) -> list[dict]:
+    """Unreleased tile material, constrained to both caller access and selected floor."""
+    match = {
+        **build_match(AnalyticsFilter(floor_id=f.floor_id, status="any"), accessible_floors, (None, None)),
+        "is_deleted": False,
+        "boxes_pending": {"$gt": 0},
+    }
     return await db.purchase_orders.find(
         match,
         {"_id": 0, "id": 1, "purchase_order_id": 1, "brand_name": 1, "boxes_pending": 1,
@@ -292,7 +298,7 @@ async def gather_health_signals(db, f: AnalyticsFilter, accessible_floors, windo
     # afternoon. See is_overdue() for what day-granularity cost here.
     not_overdue = [f_ for f_ in followups if not is_overdue(f_.get("due_at"), now)]
 
-    ready = await _ready_items(db, accessible_floors)
+    ready = await _ready_items(db, f, accessible_floors)
     dispatched_in_time = [
         r for r in ready if (age_days(r.get("ready_at"), now) or 0) <= THRESHOLDS["DISPATCH_WAITING_DAYS"]
     ]

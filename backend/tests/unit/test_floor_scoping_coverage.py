@@ -99,6 +99,19 @@ ALLOWLIST: dict[str, str] = {
         "hold floor_ids on either or both business units, not to a single floor, and the "
         "route is already require_min_role('admin')-gated."
     ),
+    "create_access_grant": (
+        "access_grants_routes.py creates a staff-account authorization row, not a business "
+        "record: the target is resolved from db.users by id and may deliberately be assigned "
+        "to multiple floors. Its optional floor_id is independently validated against the "
+        "active floor registry before persistence, and the route is require_min_role('admin') "
+        "gated, so no cross-business record is read or mutated."
+    ),
+    "delete_access_grant": (
+        "access_grants_routes.py removes a staff-account authorization row by both grant id "
+        "and target user id. Access grants define a person's permitted floor set rather than "
+        "belonging to a single business record; the target is admin-authorized and session "
+        "revocation follows the deletion."
+    ),
 
     # --- Scoped indirectly: the handler delegates to a helper that floor-scopes the lookup ---
     "send_customer_invite": (

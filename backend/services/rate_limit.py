@@ -79,15 +79,24 @@ def _check_memory(limits: list[tuple[str, int]]) -> None:
             raise _TOO_MANY
 
 
-def _record_memory(keys: list[str]) -> None:
+def _record_memory(keys: list[str], limits: list[int] | None = None) -> None:
     now = monotonic()
+    # This function has no await points, so checking and recording together is
+    # atomic within the asyncio event loop just like the Redis Lua path.
+    if limits is not None:
+        for key, limit in zip(keys, limits):
+            if len(_prune(key, now)) >= limit:
+                raise _TOO_MANY
     for key in keys:
-        if len(_attempts) >= _MAX_TRACKED_KEYS:
-            # Cheap bound on unbounded growth from a distributed spray attack
-            # — drop the oldest-looking entries rather than tracking forever.
-            stale = [k for k, hits in _attempts.items() if not hits or hits[-1] < now - _WINDOW_SECONDS]
-            for k in stale[: len(stale) // 2 or 1]:
-                _attempts.pop(k, None)
+        if key not in _attempts and len(_attempts) >= _MAX_TRACKED_KEYS:
+            # Keep a strict cap even during a continuous distributed spray.
+            # Prefer expired keys; if all entries are live, evict the least
+            # recently failed bucket so this fallback cannot grow unbounded.
+            oldest = min(
+                _attempts,
+                key=lambda candidate: _attempts[candidate][-1] if _attempts[candidate] else float("-inf"),
+            )
+            _attempts.pop(oldest, None)
         _attempts.setdefault(key, []).append(now)
 
 
@@ -133,27 +142,31 @@ async def _check_redis(r, limits: list[tuple[str, int]]) -> None:
             raise _TOO_MANY
 
 
-async def _record_redis(r, keys: list[str]) -> None:
+async def _record_redis(r, keys: list[str], limits: list[int]) -> None:
     try:
-        pipe = r.pipeline()
-        for key in keys:
-            pipe.incr(key)
-        results = await pipe.execute()
-        # Only set the TTL the first time a key is created in this window —
-        # if EXPIRE were reset on every increment, a slow steady drip of
-        # attempts below the per-request threshold would keep the window
-        # open forever instead of resetting 15 minutes after the first hit.
-        expire_pipe = r.pipeline()
-        any_new = False
-        for key, count in zip(keys, results):
-            if count == 1:
-                expire_pipe.expire(key, _WINDOW_SECONDS)
-                any_new = True
-        if any_new:
-            await expire_pipe.execute()
+        # Check-and-increment is one Redis operation.  A separate MGET before
+        # INCR permits simultaneous failed logins to all pass the check.
+        script = """
+        local ttl = tonumber(ARGV[#ARGV])
+        for i = 1, #KEYS do
+            if tonumber(redis.call('GET', KEYS[i]) or '0') >= tonumber(ARGV[i]) then
+                return 0
+            end
+        end
+        for i = 1, #KEYS do
+            local count = redis.call('INCR', KEYS[i])
+            if count == 1 then redis.call('EXPIRE', KEYS[i], ttl) end
+        end
+        return 1
+        """
+        accepted = await r.eval(script, len(keys), *keys, *limits, _WINDOW_SECONDS)
+        if not accepted:
+            raise _TOO_MANY
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001 — best-effort; a Redis outage must not break login
         logger.warning("Redis unavailable for rate-limit record; using bounded local fallback: %s", exc)
-        _record_memory(keys)
+        _record_memory(keys, limits)
 
 
 async def _clear_redis(r, keys: list[str]) -> None:
@@ -184,11 +197,12 @@ async def check_login_rate_limit(ip: str | None, identifier: str) -> None:
 async def record_login_failure(ip: str | None, identifier: str) -> None:
     key, ip_key, email_key = _keys(ip, identifier)
     keys = [key, ip_key, email_key]
+    limits = [_PER_KEY_LIMIT, _PER_IP_LIMIT, _PER_EMAIL_LIMIT]
     r = _redis_client()
     if r is not None:
-        await _record_redis(r, keys)
+        await _record_redis(r, keys, limits)
     else:
-        _record_memory(keys)
+        _record_memory(keys, limits)
 
 
 async def clear_login_attempts(ip: str | None, identifier: str) -> None:

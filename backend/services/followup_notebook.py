@@ -7,6 +7,7 @@ and automation fields carried by :class:`models.Followup`.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -164,7 +165,10 @@ def validate_notebook_patch(
                 raise NotebookValidationError(f"{field} must be a number")
     if "quotation_date" in clean and clean["quotation_date"]:
         date_value = str(clean["quotation_date"])
-        if not re.fullmatch(r"(?:\d{2}/\d{2}/\d{4}|\d{4}-\d{2}-\d{2})", date_value):
+        date_format = "%d/%m/%Y" if re.fullmatch(r"\d{2}/\d{2}/\d{4}", date_value) else "%Y-%m-%d"
+        try:
+            datetime.strptime(date_value, date_format)
+        except ValueError:
             raise NotebookValidationError("quotation_date must be dd/mm/yyyy")
     return clean
 
@@ -173,8 +177,6 @@ def timeline_event_for_field(field: str, old_value: Any, new_value: Any) -> tupl
     if field == "notebook_status":
         status = str(new_value or "").replace("_", " ").title()
         return "project_followup.status_changed", f"Status changed to {status}"
-    if field == "notes" and str(new_value or "").strip():
-        return "project_followup.lost_note" if str(new_value) and old_value != new_value else "project_followup.edited", "Lost note recorded" if str(new_value) and old_value != new_value else "Notes updated"
     if field in QUOTATION_FIELDS:
         return "project_followup.quotation_updated", f"{field.replace('_', ' ').title()} updated"
     if field in {"customer_name", "customer_phone", "address"}:
@@ -257,7 +259,9 @@ async def patch_notebook_row(
     if not current:
         raise KeyError("Notebook row not found")
     if current.get("updated_at") != expected_updated_at:
-        raise NotebookConflictError(serialize_notebook_row(current))
+        # A cell patch touches exactly one field, so the client can safely
+        # highlight that cell after refreshing the current server row.
+        raise NotebookConflictError(serialize_notebook_row(current), changed_fields=list(patch))
     clean = validate_notebook_patch(
         patch, converted=bool(current.get("is_converted")), current=current, floor_id=floor_id,
     )
@@ -270,7 +274,7 @@ async def patch_notebook_row(
     )
     if not result.matched_count:
         changed = await db.followups.find_one(query, {"_id": 0})
-        raise NotebookConflictError(serialize_notebook_row(changed or current))
+        raise NotebookConflictError(serialize_notebook_row(changed or current), changed_fields=list(patch))
     updated = await db.followups.find_one(query, {"_id": 0})
     return serialize_notebook_row(updated)
 
@@ -286,7 +290,9 @@ async def convert_notebook_row(
     if current.get("is_converted"):
         return serialize_notebook_row(current)
     if current.get("updated_at") != expected_updated_at:
-        raise NotebookConflictError(serialize_notebook_row(current))
+        raise NotebookConflictError(
+            serialize_notebook_row(current), changed_fields=[*patch.keys(), "is_converted"],
+        )
     clean = validate_notebook_patch(patch, converted=True, current=current, floor_id=floor_id)
     now = now_iso()
     result = await db.followups.update_one(
@@ -295,6 +301,8 @@ async def convert_notebook_row(
     )
     if not result.matched_count:
         changed = await db.followups.find_one(query, {"_id": 0})
-        raise NotebookConflictError(serialize_notebook_row(changed or current))
+        raise NotebookConflictError(
+            serialize_notebook_row(changed or current), changed_fields=[*patch.keys(), "is_converted"],
+        )
     updated = await db.followups.find_one(query, {"_id": 0})
     return serialize_notebook_row(updated)

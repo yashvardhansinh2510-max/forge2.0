@@ -556,6 +556,14 @@ async def _apply_dispatch_labor_cost(po: dict, dispatch: dict, labor_cost: float
         floor_id=po.get("floor_id", TILES_FLOOR_ID),
     ).dict()
     payment.pop("idempotency_key", None)
+    # ``Payment`` is intentionally a general-purpose collection record, so
+    # retain a small, structured display label alongside the audit note.  The
+    # Payments screen can now identify this as a charge (rather than an
+    # incoming bank payment) without parsing a human-written string.
+    #
+    # Keep this exact lower-case value stable: it is the customer-facing label
+    # requested for every labour charge created at dispatch completion.
+    payment["label"] = "labor cost"
     payment["automation_key"] = f"dispatch:{dispatch['id']}:labor_cost"
     await db.payments.update_one(
         {"automation_key": payment["automation_key"]}, {"$setOnInsert": payment}, upsert=True, session=session,

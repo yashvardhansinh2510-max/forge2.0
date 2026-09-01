@@ -213,7 +213,7 @@ function resolvedLineTotal(row: TileRow): number {
   const manualTotal = num(row.total);
   if (row.totalEdited && manualTotal > 0) return manualTotal;
 
-  const quantity = num(row.totalBox) || 1;
+  const quantity = num(row.totalBox);
   const unitRate = (derivedTileBoxRate(row) ?? num(row.rateBox)) || effectiveTileRate(row);
   return quantity * unitRate;
 }
@@ -421,7 +421,9 @@ function useTilesDoc(docType: TilesDocType) {
         offerRate: isPerPiece ? String(product.price || product.mrp || 0) : (history?.rate_sqft != null ? String(history.rate_sqft) : rateSqft),
         offerRateIsFallback: true,
         pcsBox: isPerPiece ? "" : (history?.pcs_per_box || specText("pcs_per_box", "pcs_box", "pcs")),
-        totalBox: row.totalBox || "1",
+        // A newly selected product starts at one unit, but a user-cleared
+        // quantity must stay blank until they enter their intended amount.
+        totalBox: row.totalBox === "" ? "1" : row.totalBox,
         quantityUnit: isPerPiece ? "Pieces" : "Box",
         totalEdited: false,
         availableSizes: validTileSizes(product.available_sizes),
@@ -453,7 +455,7 @@ function useTilesDoc(docType: TilesDocType) {
     return rows
       .filter((row) => row.productId && row.name.trim())
       .map((row, index) => {
-        const qty = num(row.totalBox) || 1;
+        const qty = num(row.totalBox);
         const manualTotal = num(row.total);
         const derivedRateBox = derivedTileBoxRate(row);
         const baseRateBox = (derivedRateBox ?? num(row.rateBox)) || effectiveTileRate(row);
@@ -508,6 +510,13 @@ function useTilesDoc(docType: TilesDocType) {
       }
       if (docType === "tiles_quotation" && !header.address.trim()) {
         toast.show("Enter the address before saving or generating the quotation");
+        return null;
+      }
+      const hasInvalidQuantity = rows.some((row) => row.productId && (!Number.isFinite(Number(row.totalBox)) || Number(row.totalBox) <= 0));
+      if (hasInvalidQuantity) {
+        // Do not silently convert a cleared/zero quantity into one box. This
+        // preserves the user's input and makes Box/Piece quantities explicit.
+        if (!silent) toast.show("Enter a quantity greater than zero for every product.");
         return null;
       }
       setSaveState("saving");
@@ -594,7 +603,7 @@ function useTilesDoc(docType: TilesDocType) {
       }
     };
     return enqueueQuotationPersist(persistQueue, run);
-  }, [header, customerId, customerSnapshot, docId, docType, buildItems, router]);
+  }, [header, customerId, customerSnapshot, docId, docType, buildItems, router, rows]);
   persistRef.current = () => persist({ silent: true });
 
   // Autosave: create the document on the first meaningful edit, then silently
@@ -1561,7 +1570,7 @@ function MobileRowCard({
     <View style={mobileStyles.rowCard} testID={`mobile-row-${index}`}>
       <Pressable onPress={onOpenPicker} style={mobileStyles.productImage} testID={`mobile-thumb-${index}`} accessibilityLabel={row.productId ? "Change product image" : "Select product image"}>
           {row.image ? (
-            <ProductImage source={row.image} contentFit="contain" frameInset={spacing.s4} borderRadius={radius.md} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
+            <ProductImage source={row.image} contentFit="cover" frameInset={0} borderRadius={radius.md} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
           ) : (
             <Feather name="image" size={18} color={colors.onSurfaceMuted} />
           )}

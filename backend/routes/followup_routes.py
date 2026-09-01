@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import csv
 import io
 import json
@@ -46,7 +47,7 @@ from services.followup_engine import (
 from services.followup_notebook import (
     NotebookConflictError, NotebookValidationError, convert_notebook_row,
     notebook_query, notebook_search_query, normalize_mobile, patch_notebook_row,
-    serialize_notebook_row, validate_notebook_patch, resolve_or_create_customer,
+    serialize_notebook_row, timeline_event_for_field, validate_notebook_patch, resolve_or_create_customer,
 )
 
 router = APIRouter(prefix="/followups", tags=["followups"])
@@ -104,7 +105,7 @@ def _decode_notebook_cursor(cursor: str) -> dict:
         if not value.get("updated_at") or not value.get("id"):
             raise ValueError
         return value
-    except (ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError, binascii.Error, json.JSONDecodeError):
         raise HTTPException(status_code=400, detail="Invalid notebook cursor")
 
 
@@ -581,8 +582,7 @@ async def patch_notebook(
         raise _notebook_conflict(error)
     except NotebookValidationError as error:
         raise HTTPException(status_code=422, detail=str(error))
-    event_type = "project_followup.status_changed" if field == "notebook_status" else "project_followup.edited"
-    summary = f"{field.replace('_', ' ').title()} updated"
+    event_type, summary = timeline_event_for_field(field, before.get(field), value)
     if field == "notebook_status" and value == "won":
         event_type, summary = "project_followup.won", "Won"
     elif field == "notebook_status" and value == "lost":

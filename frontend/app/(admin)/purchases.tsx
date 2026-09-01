@@ -10,7 +10,7 @@ import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, FlatList, Linking, Modal, Platform, Pressable,
+  ActivityIndicator, FlatList, Linking, Platform, Pressable,
   ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -18,6 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { api } from "@/src/api/client";
 import { cancelPurchaseItem, getPurchaseCustomers, getPurchasesPage, type PurchaseCustomer, type PurchaseItem, type PurchasesPage } from "@/src/api/purchases";
 import { useBp } from "@/src/design/responsive";
+import { Sheet } from "@/src/design/components";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
 import { colors, PRODUCT_IMAGE_ASPECT_RATIO, radius, shadow, spacing, type } from "@/src/theme/tokens";
@@ -798,25 +799,19 @@ function MobilePurchaseCard({ item, selected, onSelect, onMove, onTransfer, onHi
         <Text style={styles.mobileCardPo} numberOfLines={1}>{item.po_number || "No PO"}</Text>
         {item.blocked ? <View style={styles.mobileBlockedPill}><Text style={styles.mobileBlockedText}>Blocked</Text></View> : null}
       </View>
-      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
-        <Pressable style={styles.mobileSheetBackdrop} onPress={() => setMenuOpen(false)}>
-          <Pressable style={styles.mobileSheet} onPress={(event) => event.stopPropagation()}>
-            <Text style={styles.mobileSheetTitle} numberOfLines={2}>{item.name}</Text>
+      <Sheet open={menuOpen} onClose={() => setMenuOpen(false)} title={item.name} footer={<Pressable accessibilityRole="button" accessibilityLabel="Cancel purchase actions" onPress={() => setMenuOpen(false)} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Cancel</Text></Pressable>}>
             <SheetAction icon="repeat" label="Move material" onPress={() => { setMenuOpen(false); onMove(); }} />
             <SheetAction icon="shuffle" label="Transfer customer" onPress={() => { setMenuOpen(false); onTransfer(); }} />
             <SheetAction icon="clock" label="Movement history" onPress={() => { setMenuOpen(false); onHistory(); }} />
             <SheetAction icon="file-text" label="Open purchase order" onPress={() => { setMenuOpen(false); onOpenPo(); }} />
             {item.stage !== "delivered" ? <SheetAction icon="trash-2" label="Remove from active purchases" onPress={() => { setMenuOpen(false); onCancel(); }} /> : null}
-            <Pressable onPress={() => setMenuOpen(false)} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Cancel</Text></Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      </Sheet>
     </View>
   );
 }
 
 function SheetAction({ icon, label, onPress }: { icon: keyof typeof Feather.glyphMap; label: string; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={({ pressed }) => [styles.mobileSheetAction, pressed && { backgroundColor: colors.surfaceTertiary }]}><Feather name={icon} size={19} color={colors.onSurface} /><Text style={styles.mobileSheetActionText}>{label}</Text><Feather name="chevron-right" size={18} color={colors.onSurfaceMuted} /></Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [styles.mobileSheetAction, pressed && { backgroundColor: colors.surfaceTertiary }]}><Feather name={icon} size={19} color={colors.onSurface} /><Text style={styles.mobileSheetActionText}>{label}</Text><Feather name="chevron-right" size={18} color={colors.onSurfaceMuted} /></Pressable>;
 }
 
 function MobileFiltersSheet({ visible, brands, stages, brand, stage, onBrand, onStage, onClose }: {
@@ -824,11 +819,7 @@ function MobileFiltersSheet({ visible, brands, stages, brand, stage, onBrand, on
   onBrand: (value: string) => void; onStage: (value: Stage | "") => void; onClose: () => void;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.mobileSheetBackdrop} onPress={onClose}>
-        <Pressable style={[styles.mobileSheet, { maxHeight: "82%" }]} onPress={(event) => event.stopPropagation()}>
-          <View style={styles.mobileSheetHeader}><Text style={styles.mobileSheetTitle}>Filter purchases</Text><Pressable accessibilityLabel="Close filters" onPress={onClose} style={styles.mobileIconButton}><Feather name="x" size={20} color={colors.onSurface} /></Pressable></View>
-          <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>
+    <Sheet open={visible} onClose={onClose} title="Filter purchases" footer={<Pressable accessibilityRole="button" accessibilityLabel="Show filtered purchases" testID="apply-purchase-filters" onPress={onClose} style={styles.mobileApplyButton}><Text style={styles.mobileApplyText}>Show results</Text></Pressable>}>
             <Text style={styles.sectionLabel}>BRAND</Text>
             <View style={styles.mobileFilterOptions}>
               <FilterOption label="All brands" active={brand === "all"} onPress={() => onBrand("all")} />
@@ -839,20 +830,16 @@ function MobileFiltersSheet({ visible, brands, stages, brand, stage, onBrand, on
               <FilterOption label="All stages" active={!stage} onPress={() => onStage("")} />
               {stages.map((entry) => <FilterOption key={entry.key} label={`${entry.label} (${entry.count})`} active={stage === entry.key} onPress={() => onStage(entry.key)} />)}
             </View>
-          </ScrollView>
-          <Pressable testID="apply-purchase-filters" onPress={onClose} style={styles.mobileApplyButton}><Text style={styles.mobileApplyText}>Show results</Text></Pressable>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
 function FilterOption({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={[styles.mobileFilterOption, active && styles.mobileFilterOptionActive]}><Text style={[styles.mobileFilterOptionText, active && { color: colors.brand, fontWeight: "700" }]} numberOfLines={2}>{label}</Text>{active ? <Feather name="check" size={18} color={colors.brand} /> : null}</Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }} onPress={onPress} style={[styles.mobileFilterOption, active && styles.mobileFilterOptionActive]}><Text style={[styles.mobileFilterOptionText, active && { color: colors.brand, fontWeight: "700" }]} numberOfLines={2}>{label}</Text>{active ? <Feather name="check" size={18} color={colors.brand} /> : null}</Pressable>;
 }
 
 function MobileActionsSheet({ visible, shortages, onClose, onExport, onShortages, onSettings }: { visible: boolean; shortages: number; onClose: () => void; onExport: () => void; onShortages: () => void; onSettings: () => void }) {
-  return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.mobileSheetBackdrop} onPress={onClose}><Pressable style={styles.mobileSheet} onPress={(event) => event.stopPropagation()}><Text style={styles.mobileSheetTitle}>Purchase actions</Text><SheetAction icon="download" label="Export Excel" onPress={onExport} />{shortages > 0 ? <SheetAction icon="alert-triangle" label={`${shortages} awaiting reorder`} onPress={onShortages} /> : null}<SheetAction icon="settings" label="Tracker settings" onPress={onSettings} /><Pressable onPress={onClose} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Cancel</Text></Pressable></Pressable></Pressable></Modal>;
+  return <Sheet open={visible} onClose={onClose} title="Purchase actions" footer={<Pressable accessibilityRole="button" accessibilityLabel="Cancel purchase actions" onPress={onClose} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Cancel</Text></Pressable>}><SheetAction icon="download" label="Export Excel" onPress={onExport} />{shortages > 0 ? <SheetAction icon="alert-triangle" label={`${shortages} awaiting reorder`} onPress={onShortages} /> : null}<SheetAction icon="settings" label="Tracker settings" onPress={onSettings} /></Sheet>;
 }
 
 // -----------------------------------------------------------------------------
@@ -1181,7 +1168,7 @@ function StageBadge({ stage, tone, label }: { stage: Stage; tone: { bg: string; 
 
 function BulkChk({ checked, onToggle }: { checked: boolean; onToggle: () => void }) {
   return (
-    <Pressable onPress={onToggle} hitSlop={8} style={[styles.chk, checked && styles.chkOn]}>
+    <Pressable accessibilityRole="checkbox" accessibilityLabel="Select purchase" accessibilityState={{ checked }} onPress={onToggle} hitSlop={8} style={[styles.chk, checked && styles.chkOn]}>
       {checked ? <Feather name="check" size={11} color="#fff" /> : null}
     </Pressable>
   );
@@ -1200,22 +1187,13 @@ function CancelPurchaseModal({ item, onClose, onConfirm }: {
     finally { setBusy(false); }
   };
   return (
-    <Modal visible={!!item} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.modalBackdrop} onPress={busy ? undefined : onClose}>
-        <Pressable style={styles.settingsCard} onPress={(event) => event.stopPropagation()}>
-          <Text style={type.titleMd}>Remove active purchase?</Text>
+    <Sheet open={!!item} onClose={onClose} title="Remove active purchase?" footer={<View style={{ flexDirection: "row", gap: 8 }}><Pressable accessibilityRole="button" accessibilityLabel="Keep product" onPress={onClose} disabled={busy} style={[styles.cancelBtn, { flex: 1, opacity: busy ? 0.6 : 1 }]}><Text style={{ color: colors.onSurface, fontWeight: "600" }}>Keep product</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Remove product" testID={`confirm-cancel-${item?.item_id || "item"}`} onPress={confirm} disabled={busy} style={[styles.removePurchaseBtn, { flex: 1, opacity: busy ? 0.6 : 1 }]}>{busy ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.removePurchaseText}>Remove product</Text>}</Pressable></View>}>
           <Text style={[type.caption, { marginTop: 6 }]}>{item?.name} will be removed from active tracking. This keeps its cancellation history and cannot be undone here.</Text>
           <View style={{ marginTop: 14 }}>
             <Text style={styles.fieldLabel}>REASON (OPTIONAL)</Text>
-            <TextInput value={reason} onChangeText={setReason} placeholder="Why is this product being removed?" placeholderTextColor={colors.onSurfaceMuted} style={styles.input} editable={!busy} multiline />
+            <TextInput accessibilityLabel="Reason for removing purchase" value={reason} onChangeText={setReason} placeholder="Why is this product being removed?" placeholderTextColor={colors.onSurfaceMuted} style={styles.input} editable={!busy} multiline />
           </View>
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
-            <Pressable onPress={onClose} disabled={busy} style={[styles.cancelBtn, { flex: 1, opacity: busy ? 0.6 : 1 }]}><Text style={{ color: colors.onSurface, fontWeight: "600" }}>Keep product</Text></Pressable>
-            <Pressable testID={`confirm-cancel-${item?.item_id || "item"}`} onPress={confirm} disabled={busy} style={[styles.removePurchaseBtn, { flex: 1, opacity: busy ? 0.6 : 1 }]}>{busy ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.removePurchaseText}>Remove product</Text>}</Pressable>
-          </View>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
@@ -1227,10 +1205,7 @@ function MoveMenu({ visible, stages, onClose, onPick, title, currentStage, busy 
   onPick: (s: Stage) => void; title: string; currentStage?: Stage; busy?: boolean;
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.modalBackdrop} onPress={onClose}>
-        <View style={styles.menuCard}>
-          <Text style={{ fontSize: 14, fontWeight: "700", marginBottom: 4 }}>{title}</Text>
+    <Sheet open={visible} onClose={onClose} title={title}>
           <Text style={type.caption}>{busy ? "Moving selected items…" : "Move to any stage"}</Text>
           <View style={{ marginTop: 10, gap: 4 }}>
             {stages.map((s) => (
@@ -1261,9 +1236,7 @@ function MoveMenu({ visible, stages, onClose, onPick, title, currentStage, busy 
               <Text style={{ fontSize: 13, color: colors.brand, fontWeight: "700" }}>Move to Last Stage (Delivered)</Text>
             </Pressable>
           </View>
-        </View>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
@@ -1285,14 +1258,12 @@ function SettingsModal({ visible, currentSla, onClose, onSaved }: {
     finally { setBusy(false); }
   };
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.modalBackdrop} onPress={onClose}>
-        <View style={styles.settingsCard}>
-          <Text style={type.titleMd}>Purchases Settings</Text>
+    <Sheet open={visible} onClose={onClose} title="Purchases Settings" footer={<View style={{ flexDirection: "row", gap: 8 }}><Pressable accessibilityRole="button" accessibilityLabel="Cancel settings" onPress={onClose} style={[styles.cancelBtn, { flex: 1 }]}><Text style={{ color: colors.onSurface, fontWeight: "600" }}>Cancel</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Save purchase settings" testID="sla-save" onPress={save} disabled={busy} style={[styles.transferPrimary, { flex: 1 }]}>{busy ? <ActivityIndicator size="small" color={colors.onBrand} /> : <Text style={{ color: colors.onBrand, fontWeight: "700" }}>Save</Text>}</Pressable></View>}>
           <Text style={[type.caption, { marginTop: 2 }]}>Items in early stages beyond the SLA are flagged as blocked.</Text>
           <View style={{ marginTop: 12 }}>
             <Text style={styles.fieldLabel}>BLOCKED SLA (days)</Text>
             <TextInput
+              accessibilityLabel="Blocked SLA days"
               testID="sla-input"
               value={val} onChangeText={(v) => setVal(v.replace(/[^0-9]/g, ""))}
               keyboardType="numeric"
@@ -1302,17 +1273,7 @@ function SettingsModal({ visible, currentSla, onClose, onSaved }: {
               Any item stuck in Order in Company / Company Billing / In Box for longer than this is shown in the Today view.
             </Text>
           </View>
-          <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
-            <Pressable onPress={onClose} style={[styles.cancelBtn, { flex: 1 }]}>
-              <Text style={{ color: colors.onSurface, fontWeight: "600" }}>Cancel</Text>
-            </Pressable>
-            <Pressable testID="sla-save" onPress={save} disabled={busy} style={[styles.transferPrimary, { flex: 1 }]}>
-              {busy ? <ActivityIndicator size="small" color={colors.onBrand} /> : <Text style={{ color: colors.onBrand, fontWeight: "700" }}>Save</Text>}
-            </Pressable>
-          </View>
-        </View>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 
@@ -1342,15 +1303,8 @@ function ShortagesModal({ visible, shortages, onClose, onChanged }: {
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.modalBackdrop} onPress={onClose}>
-        <Pressable style={[styles.settingsCard, { width: 520, maxWidth: "100%" }]} onPress={() => {}}>
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={type.titleMd}>Awaiting Reorder</Text>
-            <Pressable onPress={onClose} hitSlop={8}><Feather name="x" size={16} color={colors.onSurfaceMuted} /></Pressable>
-          </View>
+    <Sheet open={visible} onClose={onClose} title="Awaiting Reorder" width={520} footer={<Pressable accessibilityRole="button" accessibilityLabel="Close awaiting reorder" onPress={onClose} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Close</Text></Pressable>}>
           <Text style={[type.caption, { marginTop: 2, marginBottom: 10 }]}>Opened automatically when a transfer leaves a customer’s original order short.</Text>
-          <ScrollView style={{ maxHeight: 420 }}>
             {shortages.length === 0 ? (
               <Text style={type.caption}>Nothing outstanding — nice.</Text>
             ) : shortages.map((s) => (
@@ -1382,10 +1336,7 @@ function ShortagesModal({ visible, shortages, onClose, onChanged }: {
                 </View>
               </View>
             ))}
-          </ScrollView>
-        </Pressable>
-      </Pressable>
-    </Modal>
+    </Sheet>
   );
 }
 

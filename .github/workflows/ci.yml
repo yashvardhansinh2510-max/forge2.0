@@ -77,6 +77,9 @@ jobs:
           npm run test:quotation-media
           npm run test:quotation-contract
           npm run test:notebook
+          npm run test:mobile-ux
+          npm run test:api-client
+          npm run test:api-proxy
       - name: Tile Orders workflow route contract
         run: node scripts/verify-tile-orders-contract.mjs
       - name: Lint

@@ -259,8 +259,8 @@ def test_exif_orientation_eight_is_honored_once():
         assert image.size == (120, 60)
 
 
-def test_standard_selection_and_tiles_quotation_pdfs_contain_upright_product_images(monkeypatch):
-    """Every PDF variant preserves orientation and contains images in its cell."""
+def test_standard_selection_and_tiles_quotation_pdfs_fill_centered_product_image_frames(monkeypatch):
+    """Every PDF variant uses a centered, full-size product image frame."""
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
     original_img = pdf_generator._img
     rendered_sizes: list[tuple[float, float]] = []
@@ -298,13 +298,11 @@ def test_standard_selection_and_tiles_quotation_pdfs_contain_upright_product_ima
         (pdf_tiles.QUOTATION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.QUOTATION_PRODUCT_IMAGE_HEIGHT_MM),
     ]
     assert all(width > 0 and height > 0 for width, height in rendered_sizes)
-    # Every quotation generator contains instead of crops product imagery.
-    assert cover_values == [False, False, False]
-    assert rendered_sizes[0][0] < requested_boxes[0][0] * pdf_generator.mm
-    assert rendered_sizes[0][0] <= (requested_boxes[0][0] - 2.5) * pdf_generator.mm
-    assert rendered_sizes[0][1] <= (requested_boxes[0][1] - 2.5) * pdf_generator.mm
-    assert all(width <= box_width * pdf_generator.mm and height <= box_height * pdf_generator.mm
-               for (width, height), (box_width, box_height) in zip(rendered_sizes[1:], requested_boxes[1:], strict=True))
+    assert cover_values == [True, True, True]
+    assert all(
+        (width, height) == (box_width * pdf_generator.mm, box_height * pdf_generator.mm)
+        for (width, height), (box_width, box_height) in zip(rendered_sizes, requested_boxes, strict=True)
+    )
 
 
 def test_every_quotation_pdf_is_landscape_a4(monkeypatch):

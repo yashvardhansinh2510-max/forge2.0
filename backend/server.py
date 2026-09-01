@@ -40,8 +40,13 @@ from routes.followup_routes import router as followup_router  # noqa: E402
 from routes.settings_routes import router as settings_router  # noqa: E402
 from routes.roles_routes import router as roles_router  # noqa: E402
 from routes.permissions_routes import router as permissions_router  # noqa: E402
+from routes.access_grants_routes import router as access_grants_router  # noqa: E402
 from access_profiles import profile_allows_request  # noqa: E402
 from auth import decode_token  # noqa: E402
+from services.access_grants import (  # noqa: E402
+    CUSTOM_ACCESS_COMMON_PATHS, action_for_http_method, ensure_access_grant_indexes,
+    grants_allow, grants_for_user, resource_for_api_path,
+)
 from routes.referrer_routes import router as referrer_router  # noqa: E402
 from routes.sales_data_routes import router as sales_data_router  # noqa: E402
 from routes.executive_analytics_routes import router as executive_analytics_router  # noqa: E402
@@ -89,14 +94,8 @@ async def _seed_automation_rules() -> None:
     from services.automation_rules import ensure_seeded
     await ensure_seeded()
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Own startup/shutdown work in one lifecycle boundary.
-
-    Keeping cleanup in ``finally`` is important when any readiness step fails:
-    an outbox worker or media client created before a later failure is not left
-    running in a half-started process.
-    """
+async def _startup(app: FastAPI) -> None:
+    """Run readiness work that must finish before accepting requests."""
     preflight = await run_bootstrap(enforce_indexes=False)
     preflight.require_healthy()
 
@@ -128,6 +127,7 @@ async def lifespan(app: FastAPI):
     await ensure_tile_order_indexes()
     await ensure_transfer_indexes()
     await ensure_download_token_indexes()
+    await ensure_access_grant_indexes(db)
     await dispatch_pending()
     app.state.outbox_worker = asyncio.create_task(outbox_worker())
     snapshot = await catalog_service.refresh_catalog_snapshot()
@@ -138,29 +138,43 @@ async def lifespan(app: FastAPI):
     ]
     logger.info("Forge API ready; infrastructure preflight passed.")
     logger.info("Monitoring status: sentry=%s", _monitoring_status["sentry"])
+
+
+async def _shutdown_resources(app: FastAPI) -> None:
+    """Release resources created during startup, including partial startup."""
+    worker = getattr(app.state, "outbox_worker", None)
+    if worker:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+    for task in getattr(app.state, "optional_startup_tasks", []):
+        task.cancel()
+    for task in getattr(app.state, "optional_startup_tasks", []):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    storage = get_media_storage()
+    close_storage = getattr(storage, "close", None)
+    if close_storage:
+        await close_storage()
+    client.close()
+    logger.info("Forge API shutting down.")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Own startup/shutdown work in one lifecycle boundary.
+
+    Cleanup also runs if readiness fails before reaching ``yield``.
+    """
     try:
+        await _startup(app)
         yield
     finally:
-        worker = getattr(app.state, "outbox_worker", None)
-        if worker:
-            worker.cancel()
-            try:
-                await worker
-            except asyncio.CancelledError:
-                pass
-        for task in getattr(app.state, "optional_startup_tasks", []):
-            task.cancel()
-        for task in getattr(app.state, "optional_startup_tasks", []):
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        storage = get_media_storage()
-        close_storage = getattr(storage, "close", None)
-        if close_storage:
-            await close_storage()
-        client.close()
-        logger.info("Forge API shutting down.")
+        await _shutdown_resources(app)
 
 
 app = FastAPI(title="Forge API", version="0.1.0", lifespan=lifespan)
@@ -215,6 +229,20 @@ async def enforce_access_profile(request: Request, call_next):
         token.get("access_profile"), request.method, request.url.path,
     ):
         return JSONResponse(status_code=403, content={"detail": "This account is not permitted to use this function"})
+    if token.get("kind") == "staff" and token.get("custom_access"):
+        path = request.url.path
+        if path not in CUSTOM_ACCESS_COMMON_PATHS:
+            resource = resource_for_api_path(path)
+            action = action_for_http_method(request.method)
+            # A floor-specific grant needs a concrete explicit workspace. A
+            # missing header cannot be guessed from an old device selection.
+            floor_id = request.headers.get("x-floor-id")
+            grants = await grants_for_user(db, token.get("sub", ""))
+            if not resource or not action or not grants_allow(
+                grants, user_id=token.get("sub", ""), resource=resource,
+                action=action, floor_id=floor_id,
+            ):
+                return JSONResponse(status_code=403, content={"detail": "This account is not permitted to use this function"})
     return await call_next(request)
 
 # TTL-cached demo-account detection for /api/health — reuses the same
@@ -310,6 +338,7 @@ api.include_router(followup_router)
 api.include_router(settings_router)
 api.include_router(roles_router)
 api.include_router(permissions_router)
+api.include_router(access_grants_router)
 api.include_router(referrer_router)
 api.include_router(sales_data_router)
 api.include_router(executive_analytics_router)

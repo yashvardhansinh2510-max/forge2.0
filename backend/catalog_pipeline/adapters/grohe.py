@@ -52,6 +52,19 @@ def _sniff_series(text: str, series_pool: list[str]) -> str:
     return MISSING
 
 
+def _family_key_from_sku(sku: str, fallback: str) -> str:
+    """Group Grohe finish variants using the article number prefix.
+
+    The final three article-number characters distinguish the finish/colour;
+    the preceding characters identify the underlying product.  Retain the
+    description-derived fallback only for malformed values.
+    """
+    normalized = re.sub(r"\s+", "", sku or "")
+    if len(normalized) > 3 and re.fullmatch(r"[A-Za-z0-9]+", normalized):
+        return f"grohe:sku:{normalized[:-3].lower()}"
+    return fallback
+
+
 class GroheAdapter(BrandAdapter):
     brand = "Grohe"
     supported_extensions = (".pdf",)
@@ -143,7 +156,8 @@ class GroheAdapter(BrandAdapter):
                     base = SIZE_RE.sub("", name)
                     for t in FINISH_TOKENS:
                         base = re.sub(re.escape(t), "", base, flags=re.IGNORECASE)
-                    family_key = f"grohe:{(series or MISSING).lower()}:{re.sub(r'[^a-z0-9]+', '-', base.lower()).strip('-')[:60]}"
+                    fallback_family_key = f"grohe:{(series or MISSING).lower()}:{re.sub(r'[^a-z0-9]+', '-', base.lower()).strip('-')[:60]}"
+                    family_key = _family_key_from_sku(sku, fallback_family_key)
 
                     pr = ProductRow(
                         brand=self.brand, name=name, sku=sku,

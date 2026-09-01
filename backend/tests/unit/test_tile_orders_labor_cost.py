@@ -46,6 +46,7 @@ def test_labor_cost_creates_a_visible_idempotent_pending_payment(monkeypatch):
     payment = payment_update["$setOnInsert"]
     assert payment["amount"] == 3000.0
     assert payment["status"] == "pending"
+    assert payment["label"] == "labor cost"
     assert payment["note"] == "₹3,000 labor cost added via dispatch DSP-0001"
     assert "idempotency_key" not in payment
 

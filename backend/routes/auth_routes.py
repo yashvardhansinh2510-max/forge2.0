@@ -66,6 +66,7 @@ async def staff_login(body: LoginPayload, request: Request):
     sid = await create_session("staff", doc["id"], request, login_method="password")
     token = create_token(doc["id"], "staff", {
         "role": doc["role"], "session_id": sid, "access_profile": doc.get("access_profile"),
+        "custom_access": bool(doc.get("custom_access")),
     })
     doc.pop("password_hash", None)
     await log_event(

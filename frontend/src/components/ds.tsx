@@ -41,6 +41,7 @@ import {
   colors, elevation, icon as iconSize, motion,
   radius, spacing, statusMeta, type,
 } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 // Re-export every existing primitive from ui.tsx.
 // Screens should import from "@/src/components/ds" going forward.
@@ -117,6 +118,7 @@ export function HeroCard({
   style?: StyleProp<ViewStyle>;
   metaRow?: React.ReactNode;
 }) {
+  const { isPhone } = useBp();
   const iconMap = {
     brand:   { bg: colors.brandTint,       fg: colors.brand },
     success: { bg: colors.successBg,       fg: colors.success },
@@ -134,7 +136,7 @@ export function HeroCard({
       borderColor: colors.border,
       gap: spacing.md,
     }, elevation.low, style]}>
-      <View style={{ flexDirection: "row", gap: spacing.lg, alignItems: "flex-start" }}>
+      <View style={{ flexDirection: isPhone ? "column" : "row", gap: spacing.lg, alignItems: "flex-start" }}>
         {icon ? (
           <View style={{
             width: 48, height: 48, borderRadius: radius.md,
@@ -151,7 +153,7 @@ export function HeroCard({
           {subtitle ? <Text style={[type.bodyMuted, { maxWidth: 640 }]}>{subtitle}</Text> : null}
         </View>
         {actions ? (
-          <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexShrink: 0 }}>
+          <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexShrink: 0, flexWrap: "wrap", width: isPhone ? "100%" : undefined }}>
             {actions}
           </View>
         ) : null}
@@ -178,6 +180,7 @@ export function Panel({
   padding?: number;
   testID?: string;
 }) {
+  const { isPhone } = useBp();
   return (
     <View testID={testID} style={[{
       borderRadius: radius.md,
@@ -188,8 +191,8 @@ export function Panel({
     }, elevation.low, style]}>
       {(title || actions) ? (
         <View style={{
-          flexDirection: "row",
-          alignItems: "center",
+          flexDirection: isPhone ? "column" : "row",
+          alignItems: isPhone ? "stretch" : "center",
           justifyContent: "space-between",
           paddingHorizontal: p,
           paddingTop: p,
@@ -202,7 +205,7 @@ export function Panel({
             {subtitle ? <Text style={[type.bodySm, { color: colors.onSurfaceMuted, marginTop: 2 }]} numberOfLines={2}>{subtitle}</Text> : null}
           </View>
           {actions ? (
-            <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}>{actions}</View>
+            <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: "wrap" }}>{actions}</View>
           ) : null}
         </View>
       ) : null}
@@ -225,6 +228,7 @@ export function FilterBar<T extends string>({
   label?: string;
   testID?: string;
 }) {
+  const { isPhone } = useBp();
   return (
     <View style={{ gap: spacing.sm }}>
       {label ? <Text style={type.overline}>{label}</Text> : null}
@@ -245,7 +249,7 @@ export function FilterBar<T extends string>({
               onPress={() => onChange(o.value)}
               style={({ pressed, hovered }: any) => ({
                 paddingHorizontal: spacing.md,
-                height: 34,
+                minHeight: isPhone ? 44 : 34,
                 borderRadius: radius.pill,
                 borderWidth: StyleSheet.hairlineWidth,
                 borderColor: on ? colors.brand : hovered ? colors.borderStrong : colors.border,
@@ -809,7 +813,7 @@ export function Dropdown({
         testID={testID}
         onPress={openMenu}
         style={({ pressed, hovered }: any) => ({
-          height: 40,
+          minHeight: 44,
           paddingHorizontal: spacing.md,
           borderRadius: radius.md,
           backgroundColor: btnBg,

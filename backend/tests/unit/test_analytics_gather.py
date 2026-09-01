@@ -3,6 +3,7 @@ ordered_at date field are never re-implemented per surface."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from services.analytics import gather
 from services.analytics.filters import AnalyticsFilter
@@ -103,6 +104,49 @@ def test_an_unrestricted_caller_gets_no_floor_clause():
     db = _empty_db()
     asyncio.run(gather.gather_attention(db, AnalyticsFilter(floor_id="all"), None, WINDOW, {}))
     assert all("floor_id" not in q for q in db.quotations.queries)
+
+
+def test_explicit_floor_scopes_tile_operational_reads_for_an_unrestricted_user():
+    """A manager selecting one floor must not see the other floor's dispatch state."""
+    db = _FakeDb(
+        ready_batches=[
+            {"id": "ground-ready", "floor_id": "ground-floor", "is_deleted": False, "boxes_ready": 1},
+            {"id": "first-ready", "floor_id": "first-floor", "is_deleted": False, "boxes_ready": 1},
+        ],
+        purchase_orders=[
+            {"id": "ground-po", "floor_id": "ground-floor", "is_deleted": False, "boxes_pending": 1},
+            {"id": "first-po", "floor_id": "first-floor", "is_deleted": False, "boxes_pending": 1},
+        ],
+    )
+
+    result = asyncio.run(gather.gather_attention(
+        db, AnalyticsFilter(floor_id="ground-floor"), None, WINDOW, {},
+    ))
+
+    assert [row["id"] for row in result.ready_items] == ["ground-ready"]
+    assert [row["id"] for row in result.unreleased_items] == ["ground-po"]
+    assert db.ready_batches.queries[-1]["floor_id"] == {"$in": ["ground-floor"]}
+    assert db.purchase_orders.queries[-1]["floor_id"] == {"$in": ["ground-floor"]}
+
+
+def test_health_dispatch_signal_honors_the_selected_floor():
+    now = datetime.now(timezone.utc).isoformat()
+    db = _FakeDb(
+        ready_batches=[
+            {"id": "ground-ready", "floor_id": "ground-floor", "is_deleted": False,
+             "boxes_ready": 1, "created_at": now},
+            {"id": "first-ready", "floor_id": "first-floor", "is_deleted": False,
+             "boxes_ready": 1, "created_at": "2026-01-01T00:00:00+00:00"},
+        ],
+    )
+
+    from models import AnalyticsTargets
+    signals = asyncio.run(gather.gather_health_signals(
+        db, AnalyticsFilter(floor_id="ground-floor"), None, WINDOW, AnalyticsTargets(),
+    ))
+
+    assert signals["dispatch_health"] == 100.0
+    assert db.ready_batches.queries[-1]["floor_id"] == {"$in": ["ground-floor"]}
 
 
 def test_open_quotations_are_fetched_by_status_not_by_dropping_the_floor_clause():

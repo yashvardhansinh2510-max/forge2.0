@@ -8,6 +8,7 @@ import asyncio
 
 from models import UserPublic
 import routes.quotation_routes as quotation_routes
+import pytest
 
 
 def _user() -> UserPublic:
@@ -24,6 +25,13 @@ class _Cursor:
     def sort(self, *_a, **_kw):
         return self
 
+    def skip(self, *_a, **_kw):
+        return self
+
+    def limit(self, value, *_a, **_kw):
+        self.limit_value = value
+        return self
+
     async def to_list(self, _n):
         return self._rows
 
@@ -34,7 +42,8 @@ class _Recorder:
 
     def find(self, query, *_a, **_kw):
         self.last_query = query
-        return _Cursor([])
+        self.cursor = _Cursor([])
+        return self.cursor
 
 
 class _FakeDb:
@@ -93,3 +102,14 @@ def test_standard_filter_includes_legacy_quotations_without_doc_type(monkeypatch
     asyncio.run(quotation_routes.list_quotations(doc_type="standard", user=_user()))
 
     assert _flatten(fake_db.quotations.last_query)["doc_type"] == {"$in": ["standard", None]}
+
+
+def test_quotation_list_rejects_negative_skip_and_caps_limit(monkeypatch):
+    fake_db = _FakeDb()
+    monkeypatch.setattr(quotation_routes, "db", fake_db)
+
+    with pytest.raises(ValueError):
+        asyncio.run(quotation_routes.list_quotations(skip=-1, limit=20, user=_user()))
+
+    asyncio.run(quotation_routes.list_quotations(skip=0, limit=101, user=_user()))
+    assert fake_db.quotations.cursor.limit_value == 100

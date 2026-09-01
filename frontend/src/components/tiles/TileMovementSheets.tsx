@@ -9,10 +9,11 @@
 // Replaces src/components/tiles/ReadyDispatchSheets.tsx (MarkReadySheet /
 // DispatchSheet), which conflated all of this into one Brand-owned action.
 import { useState } from "react";
-import { ActivityIndicator, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View, type ViewStyle } from "react-native";
+import { ActivityIndicator, Linking, Platform, Pressable, Text, TextInput, View } from "react-native";
 
 import { tileOrdersApi, type CustomerOrderItem, type DispatchDestinationOverride, type PurchaseOrderItemDetail } from "@/src/api/tileOrders";
 import { toast } from "@/src/components/Toast";
+import { Sheet } from "@/src/design/components";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 import { tileIdentityMeta } from "@/src/components/tiles/tilePresentation";
 
@@ -25,26 +26,13 @@ async function openPdf(url: string) {
   }
 }
 
-function Sheet({ title, children, onClose, maxHeight = "80%" }: { title: string; children: React.ReactNode; onClose: () => void; maxHeight?: ViewStyle["maxHeight"] }) {
-  return (
-    <Modal transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: colors.overlay, justifyContent: "flex-end" }}>
-        <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl, maxHeight }}>
-          <Text style={type.titleMd}>{title}</Text>
-          {children}
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
 function SheetFooter({ onCancel, onConfirm, confirmLabel, busy }: { onCancel: () => void; onConfirm: () => void; confirmLabel: string; busy: boolean }) {
   return (
     <View style={{ flexDirection: "row", gap: spacing.sm }}>
-      <Pressable disabled={busy} onPress={onCancel} style={{ flex: 1, padding: spacing.md, alignItems: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, opacity: busy ? 0.5 : 1 }}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Cancel" disabled={busy} onPress={onCancel} style={{ flex: 1, padding: spacing.md, alignItems: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, opacity: busy ? 0.5 : 1 }}>
         <Text style={type.bodyStrong}>Cancel</Text>
       </Pressable>
-      <Pressable disabled={busy} onPress={onConfirm} style={{ flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: spacing.xs, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brand, opacity: busy ? 0.85 : 1 }}>
+      <Pressable accessibilityRole="button" accessibilityLabel={confirmLabel} disabled={busy} onPress={onConfirm} style={{ flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: spacing.xs, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brand, opacity: busy ? 0.85 : 1 }}>
         {busy ? <ActivityIndicator size="small" color={colors.onBrand} /> : null}
         <Text style={[type.bodyStrong, { color: colors.onBrand }]}>{busy ? "Processing…" : confirmLabel}</Text>
       </Pressable>
@@ -58,6 +46,7 @@ function QtyRow({ name, hint, value, onChange }: { name: string; hint: string; v
       <Text style={type.bodyStrong}>{name}</Text>
       <Text style={type.bodyMuted}>{hint}</Text>
       <TextInput
+        accessibilityLabel={`Enter quantity for ${name}`}
         keyboardType="numeric" placeholder="Boxes"
         value={value} onChangeText={onChange}
         style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, marginTop: spacing.xs }}
@@ -110,16 +99,15 @@ export function ReleaseMaterialSheet({ poId, items, onClose, onDone }: { poId: s
   };
 
   return (
-    <Sheet title="Release Material" onClose={onClose}>
-      <ScrollView style={{ marginVertical: spacing.md }}>
+    <Sheet open onClose={onClose} title="Release Material" footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Release" busy={busy} />}>
+      <View style={{ marginVertical: spacing.md }}>
         {items.filter((item) => item.boxes_pending > 0).map((item) => (
           <QtyRow
             key={item.id} name={item.name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${item.boxes_pending} ${qtyUnit(item.quantity_unit)} remaining`}
             value={qtyByItem[item.id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.id]: v }))}
           />
         ))}
-      </ScrollView>
-      <SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Release" busy={busy} />
+      </View>
     </Sheet>
   );
 }
@@ -150,16 +138,15 @@ export function MoveToGodownSheet({ poId, items, onClose, onDone }: { poId: stri
   };
 
   return (
-    <Sheet title="Move to Godown" onClose={onClose}>
-      <ScrollView style={{ marginVertical: spacing.md }}>
+    <Sheet open onClose={onClose} title="Move to Godown" footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Move" busy={busy} />}>
+      <View style={{ marginVertical: spacing.md }}>
         {items.filter((item) => item.boxes_ready > 0).map((item) => (
           <QtyRow
             key={item.po_item_id} name={item.tile_name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${item.boxes_ready} ${qtyUnit(item.quantity_unit)} Released`}
             value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))}
           />
         ))}
-      </ScrollView>
-      <SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Move" busy={busy} />
+      </View>
     </Sheet>
   );
 }
@@ -176,6 +163,7 @@ function TransportFields({ value, onChange }: { value: TransportDetails; onChang
     <View style={{ flex: 1, minWidth: 150 }}>
       <Text style={type.caption}>{label}</Text>
       <TextInput
+        accessibilityLabel={label}
         testID={`tile-dispatch-${key.replace(/_/g, "-")}`}
         keyboardType={key === "labor_cost" ? "decimal-pad" : "default"}
         value={value[key]} onChangeText={(v) => onChange({ ...value, [key]: v })} placeholder={placeholder}
@@ -269,8 +257,8 @@ function DispatchSheet({
   };
 
   return (
-    <Sheet title={title} onClose={onClose}>
-      <ScrollView style={{ marginVertical: spacing.md }}>
+    <Sheet open onClose={onClose} title={title} footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Dispatch" busy={busy} />}>
+      <View style={{ marginVertical: spacing.md }}>
         {items.filter((item) => available(item) > 0).map((item) => (
           <QtyRow
             key={item.po_item_id} name={item.tile_name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${available(item)} ${qtyUnit(item.quantity_unit)} available`}
@@ -278,9 +266,8 @@ function DispatchSheet({
           />
         ))}
         <TransportFields value={transport} onChange={setTransport} />
-      </ScrollView>
+      </View>
       <Text style={[type.bodyMuted, { marginBottom: spacing.sm }]}>Creates a Dispatch, generates a Chalan, and opens the PDF.</Text>
-      <SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Dispatch" busy={busy} />
     </Sheet>
   );
 }

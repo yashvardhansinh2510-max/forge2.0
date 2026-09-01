@@ -111,6 +111,7 @@ FINISH_ALIASES: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\bbrushed\s*black\s*chrome\b", re.I),   "Brushed Black Chrome", "BBC"),
     (re.compile(r"\bblack\s*chrome\b", re.I),             "Black Chrome",     "BC"),
     (re.compile(r"\bbrushed\s*bronze\b|\bbbr\b", re.I),   "Brushed Bronze",   "BBR"),
+    (re.compile(r"\bbrushed\s*brass\b", re.I),              "Brushed Brass",    "BR"),
     (re.compile(r"\bpolished\s*bronze\b|\bpbb\b", re.I),  "Polished Bronze",  "PBB"),
     (re.compile(r"\bbrushed\s*nickel\b|\bbn\b", re.I),    "Brushed Nickel",   "BN"),
     (re.compile(r"\bpolished\s*nickel\b|\bpn\b", re.I),   "Polished Nickel",  "PN"),

@@ -75,6 +75,16 @@ class _FakeProducts:
 class _FakeDb:
     def __init__(self, docs=None):
         self.products = _FakeProducts(docs)
+        self.brands = _FakeProducts([
+            {"id": "brand-tile", "floor_id": "ground-floor"},
+            {"id": "brand-sanitary", "floor_id": "first-floor"},
+            {"id": "brand-A", "floor_id": "first-floor"},
+            {"id": "brand-B", "floor_id": "first-floor"},
+        ])
+        self.categories = _FakeProducts([
+            {"id": "cat-1", "floor_id": "ground-floor"},
+            {"id": "cat-1", "floor_id": "first-floor"},
+        ])
 
 
 def _product_body(**overrides) -> ProductCreate:
