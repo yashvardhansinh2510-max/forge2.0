@@ -99,18 +99,21 @@ async def create_access_grant(
     await _assert_can_manage_target(actor, target)
     actions = _validate_input(body)
     await _validate_floor(body.floor_id)
+    existing = await db.access_grants.find_one(
+        {"user_id": user_id, "resource": body.resource, "floor_id": body.floor_id}, {"_id": 0},
+    )
     grant = build_grant(
         user_id=user_id, resource=body.resource, actions=actions, floor_id=body.floor_id,
         expires_at=body.expires_at, actor_id=actor.id, actor_name=actor.full_name,
+        grant_id=(existing or {}).get("id"), created_at=(existing or {}).get("created_at"),
     )
-    try:
+    if existing:
+        for key in ("created_by", "created_by_name"):
+            if key in existing:
+                grant[key] = existing[key]
+        await db.access_grants.update_one({"id": grant["id"]}, {"$set": grant})
+    else:
         await db.access_grants.insert_one(grant)
-    except Exception as exc:
-        # The unique index is an operational invariant. Avoid leaking driver
-        # details and make duplicate grants an actionable client error.
-        if "duplicate" in str(exc).lower() or "e11000" in str(exc).lower():
-            raise HTTPException(status_code=409, detail="A grant already exists for this resource and floor") from exc
-        raise
     # A user with one or more grants is deliberately in custom-access mode.
     # Their next sign-in token carries this state and the server middleware
     # applies the grants as a default-deny allow-list.
