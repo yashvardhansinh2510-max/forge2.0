@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 
 import { api, clearToken, getToken, getTokenKind, setToken, TokenKind } from "@/src/api/client";
 import { getFloorAccess, getSelectedFloorId, resetFloorAccess, setSelectedFloorId } from "@/src/hooks/use-floor-access";
-import type { AccessProfile } from "@/src/access-profiles";
+import type { AccessProfile, PersonalGrant } from "@/src/access-profiles";
 
 export type StaffUser = {
   id: string;
@@ -17,6 +17,8 @@ export type StaffUser = {
   must_change_password?: boolean;
   floor_ids: string[];
   access_profile?: AccessProfile | null;
+  custom_access?: boolean;
+  access_grants?: PersonalGrant[];
 };
 
 export type CustomerUser = {
@@ -61,6 +63,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setKind(k);
       if (k === "staff") {
         const me = await api.get<StaffUser>("/auth/me");
+        if (me.custom_access) {
+          const access = await api.get<{ grants: PersonalGrant[] }>("/settings/access-grants/me");
+          me.access_grants = access.grants;
+        }
         setStaff(me);
       } else {
         const me = await api.get<CustomerUser>("/auth/customer/me");
@@ -102,6 +108,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const activeFloor = assignedFloors.includes(savedFloor) ? savedFloor : assignedFloors[0];
     if (activeFloor && activeFloor !== savedFloor) await setSelectedFloorId(activeFloor);
+    if (res.user.custom_access) {
+      const access = await api.get<{ grants: PersonalGrant[] }>("/settings/access-grants/me");
+      res.user.access_grants = access.grants;
+    }
     setKind("staff"); setStaff(res.user); setCustomer(null);
   }, []);
 

@@ -26,6 +26,7 @@ RESOURCE_REGISTRY: dict[str, dict[str, str]] = {
     "orders": {"label": "Tile orders & dispatches"},
     "walkins": {"label": "Walk-ins"},
     "reports": {"label": "Reports"},
+    "notifications": {"label": "Notifications"},
 }
 
 ACTIONS = frozenset({"view", "create", "update", "delete", "export"})
@@ -42,6 +43,7 @@ CUSTOM_ACCESS_COMMON_PATHS = frozenset({
     "/api/auth/me", "/api/auth/logout", "/api/auth/change-password",
     "/api/auth/sessions", "/api/settings/floor-access", "/api/settings/floors",
     "/api/settings/permission-matrix", "/api/roles", "/api/downloads/token",
+    "/api/settings/access-grants/me",
 })
 
 
@@ -55,6 +57,7 @@ def resource_for_api_path(path: str) -> str | None:
     """
     path = path.split("?", 1)[0]
     for prefix, resource in (
+        ("/api/dashboard", "dashboard"),
         ("/api/payments", "payments"),
         ("/api/quotations", "quotations"),
         ("/api/catalog", "catalog"), ("/api/products", "catalog"),
@@ -62,6 +65,7 @@ def resource_for_api_path(path: str) -> str | None:
         ("/api/customers", "customers"),
         ("/api/purchases", "purchases"), ("/api/purchase-orders", "purchases"),
         ("/api/suppliers", "purchases"), ("/api/followups", "followups"),
+        ("/api/notifications", "notifications"),
         ("/api/tile-orders", "orders"), ("/api/walkins", "walkins"),
         ("/api/reports", "reports"),
     ):

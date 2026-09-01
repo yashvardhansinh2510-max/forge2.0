@@ -62,6 +62,7 @@ class UserBase(BaseModel):
     floor_ids: list[str] = Field(default_factory=list)
     # An optional profile only narrows the normal role's access.
     access_profile: Optional[AccessProfile] = None
+    custom_access: bool = False
 
 
 class UserCreate(UserBase):

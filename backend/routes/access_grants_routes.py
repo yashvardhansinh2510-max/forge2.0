@@ -11,12 +11,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from auth import invalidate_principal_cache, require_min_role, revoke_all_sessions
+from auth import get_current_user, invalidate_principal_cache, require_min_role, revoke_all_sessions
 from db import db
 from models import UserPublic
 from services.access_grants import (
     ACTIONS, RESOURCE_REGISTRY, build_grant, grants_for_user, is_expired,
-    is_valid_resource, normalized_actions,
+    is_valid_resource, normalized_actions, utc_now_iso,
 )
 
 router = APIRouter(prefix="/settings/access-grants", tags=["settings", "access grants"])
@@ -76,6 +76,12 @@ async def list_grant_resources(_: UserPublic = Depends(require_min_role("admin")
             for key, value in RESOURCE_REGISTRY.items()
         ],
     }
+
+
+@router.get("/me")
+async def my_access_grants(user: UserPublic = Depends(get_current_user)):
+    """The caller's grants, for an honest client shell; API enforcement remains server-side."""
+    return {"user_id": user.id, "grants": await grants_for_user(db, user.id)}
 
 
 @router.get("/{user_id}")

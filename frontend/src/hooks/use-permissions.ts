@@ -10,6 +10,12 @@ import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
 import { PROFILE_MODULES } from "@/src/access-profiles";
 
+const MODULE_GRANT_RESOURCE: Record<string, string> = {
+  dashboard: "dashboard", quotations: "quotations", catalog: "catalog", customers: "customers",
+  purchases: "purchases", payments: "payments", followups: "followups", notifications: "notifications",
+  orders: "orders", walkins: "walkins", reports: "reports",
+};
+
 export type ModuleInfo = { key: string; label: string };
 export type MatrixRoleInfo = { role: string; label: string; level: number };
 export type PermissionMatrixResponse = {
@@ -74,6 +80,10 @@ export function useModuleAccess() {
   return useCallback(
     (moduleKey: string) => {
       if (!staff || !data) return true;
+      if (staff.custom_access) {
+        const resource = MODULE_GRANT_RESOURCE[moduleKey];
+        return Boolean(resource && staff.access_grants?.some((grant) => grant.resource === resource && grant.actions.includes("view")));
+      }
       const profileModules = staff.access_profile ? PROFILE_MODULES[staff.access_profile] : undefined;
       if (profileModules) return profileModules.has(moduleKey);
       const row = data.matrix[staff.role];
