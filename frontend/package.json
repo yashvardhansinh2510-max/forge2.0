@@ -16,6 +16,7 @@
     "test:notebook": "node --experimental-strip-types --no-warnings scripts/test-notebook.mjs",
     "test:mobile-ux": "node scripts/test-mobile-ux-contract.mjs",
     "test:mobile-budget": "node scripts/check-web-budget.mjs",
+    "test:api-proxy": "node --no-warnings scripts/test-api-proxy.mjs",
     "test:e2e:profiles": "playwright test --config playwright.config.ts"
   },
   "dependencies": {

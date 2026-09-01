@@ -18,7 +18,14 @@ RUN apt-get update \
 COPY requirements-prod.txt .
 RUN pip install -r requirements-prod.txt
 
-COPY . .
+# Allowlist runtime code and assets.  Do not copy the build context wholesale:
+# local environments, reports and credentials must never enter an image layer.
+COPY access_profiles.py auth.py bootstrap.py db.py middleware.py models.py models_tile_orders.py models_walkins.py pdf_chalan.py pdf_generator.py pdf_tiles.py seed.py server.py settings.py ./
+COPY buildcon_logo.png ./
+COPY migrations ./migrations
+COPY media_storage ./media_storage
+COPY routes ./routes
+COPY services ./services
 
 RUN useradd --create-home forge && chown -R forge:forge /app
 USER forge

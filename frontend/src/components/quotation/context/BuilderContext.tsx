@@ -38,6 +38,36 @@ const LOCAL_SNAPSHOT_KEY = "forge.builder.snapshot.v4";
 
 type SortKey = "popular" | "recent" | "price_asc" | "price_desc" | "name";
 
+type CatalogFamily = {
+  family_key?: string | null; family_name?: string | null; brand_id: string; category_id: string;
+  min_price?: number; max_price?: number; sample_image?: string | null;
+  variants: (ProductVariant & { colour?: string | null; variant_label?: string | null })[];
+};
+
+// The catalog family endpoint deliberately returns one record per product
+// family. Adapt that compact API shape at the boundary so every picker, modal
+// and variant chip still works with the existing Product contract.
+function familyCardToProduct(family: CatalogFamily): Product | null {
+  const variants = family.variants.map((variant) => ({
+    ...variant,
+    color: variant.color ?? variant.colour ?? null,
+  }));
+  const representative = variants[0];
+  if (!representative?.id || !representative.sku) return null;
+  return {
+    id: representative.id,
+    sku: representative.sku,
+    name: family.family_name || representative.sku,
+    price: Number(representative.price ?? family.min_price ?? 0),
+    mrp: Number(representative.mrp ?? representative.price ?? family.min_price ?? 0),
+    category_id: family.category_id,
+    brand_id: family.brand_id,
+    family_key: family.family_key || null,
+    images: family.sample_image ? [family.sample_image] : representative.image ? [representative.image] : [],
+    variants,
+  };
+}
+
 // -----------------------------------------------------------------------------
 // Assistant selection — which line/product is currently focused in the right pane.
 // -----------------------------------------------------------------------------
@@ -468,11 +498,11 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       // upstream (network, backend) genuinely stalls. 12s is generous.
       const safety = setTimeout(() => { if (!cancelled) setProductLoading(false); }, 12000);
       try {
-        const res = await fetchCatalogPage<Product>({
-          q, brandId: selectedBrandId, categoryId: selectedCategoryId, sort: sortKey,
+        const res = await fetchCatalogPage<CatalogFamily>({
+          mode: "families", q, brandId: selectedBrandId, categoryId: selectedCategoryId, sort: sortKey,
         }, 0, CATALOG_PAGE_SIZE, { floorId: activeFloorId, signal: controller.signal });
         if (cancelled || generation !== productRequestGeneration.current) return;
-        const items = res.items || [];
+        const items = (res.items || []).map(familyCardToProduct).filter((item): item is Product => item !== null);
         setProducts(items);
         setProductTotal(res.total || 0);
         setProductHasMore(items.length < (res.total || 0));
@@ -506,11 +536,11 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     loadMoreController.current = controller;
     (async () => {
       try {
-        const res = await fetchCatalogPage<Product>({
-          q, brandId: selectedBrandId, categoryId: selectedCategoryId, sort: sortKey,
+        const res = await fetchCatalogPage<CatalogFamily>({
+          mode: "families", q, brandId: selectedBrandId, categoryId: selectedCategoryId, sort: sortKey,
         }, skipAt, CATALOG_PAGE_SIZE, { floorId: activeFloorId, signal: controller.signal });
         if (controller.signal.aborted || generation !== productRequestGeneration.current) return;
-        const items = res.items || [];
+        const items = (res.items || []).map(familyCardToProduct).filter((item): item is Product => item !== null);
         setProducts((cur) => {
           const seen = new Set(cur.map((p) => p.id));
           return [...cur, ...items.filter((p) => !seen.has(p.id))];
@@ -865,6 +895,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     Haptics.selectionAsync();
     playAddProductSound();
     history.apply((cur) => {
+      const selectedProductId = variant?.id ?? p.id;
       const sku = variant?.sku ?? p.sku;
       const idx = cur.lines.findIndex((l) => l.sku === sku && l.room === cur.activeRoom);
       if (idx >= 0) {
@@ -878,9 +909,12 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       return {
         ...cur,
         lines: [...cur.lines, {
-          id: `${p.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          product_id: p.id, sku,
-          name: displayName, image: variant?.image ?? productImageList(p)[0] ?? null,
+          id: `${selectedProductId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          // A family card is merely a representative.  The quotation must
+          // retain the SKU the salesperson actually chose so persistence and
+          // PDF canonicalisation resolve that exact variant's media.
+          product_id: selectedProductId, sku,
+          name: displayName, image: variant ? variant.image ?? null : productImageList(p)[0] ?? null,
           category_id: p.category_id, room: cur.activeRoom,
           qty: 1, unit_price: variant?.price ?? p.price, mrp: variant?.mrp ?? p.mrp,
           discount_pct: null, finish,
@@ -1080,12 +1114,15 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         ? `${target.name} · ${variant.finish || variant.color || variant.size}`
         : target.name;
       const next = [...c.lines];
+      const selectedProductId = variant?.id ?? target.id;
       next[idx] = {
         ...src,
-        product_id: target.id,
+        product_id: selectedProductId,
         sku: variant?.sku ?? target.sku,
         name: displayName,
-        image: variant?.image ?? productImageList(target)[0] ?? src.image,
+        // Do not retain the old line image or the representative card image
+        // when a selected variant has no own media.
+        image: variant ? variant.image ?? null : productImageList(target)[0] ?? null,
         category_id: target.category_id,
         unit_price: variant?.price ?? target.price,
         mrp: variant?.mrp ?? target.mrp,

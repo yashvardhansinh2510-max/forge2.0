@@ -1,6 +1,7 @@
 """Forge backend entrypoint. Wires routes and boots demo data on first run."""
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from time import monotonic
 from typing import Any
@@ -58,7 +59,7 @@ from services.domain_outbox import dispatch_pending, ensure_outbox_indexes, outb
 from services.transfer_workflow import ensure_transfer_indexes  # noqa: E402
 from services.download_tokens import ensure_download_token_indexes  # noqa: E402
 from services.tile_order_indexes import ensure_tile_order_indexes  # noqa: E402
-from migrations.runner import run_migrations  # noqa: E402
+from migrations.runner import pending_migrations, run_migrations  # noqa: E402
 from services.followup_engine import reconcile_followups  # noqa: E402
 from services.floor_scope import ensure_floor_scope  # noqa: E402
 
@@ -69,6 +70,24 @@ logger = logging.getLogger("forge")
 # are set (see services/monitoring.py + backend/.env.example). Called before app
 # construction so an unhandled exception anywhere downstream is captured.
 _monitoring_status = init_monitoring()
+
+
+async def _run_optional_startup_task(name: str, operation) -> None:
+    """Run reconciliation after readiness without making boot availability depend on it."""
+    await asyncio.sleep(0)
+    try:
+        await operation()
+        logger.info("Optional startup task completed: %s", name)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — reconciliation must not take down the API
+        logger.warning("Optional startup task failed (%s): %s", name, exc)
+
+
+async def _seed_automation_rules() -> None:
+    # Keep even an optional-module import out of the readiness critical path.
+    from services.automation_rules import ensure_seeded
+    await ensure_seeded()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -81,9 +100,23 @@ async def lifespan(app: FastAPI):
     preflight = await run_bootstrap(enforce_indexes=False)
     preflight.require_healthy()
 
-    applied = await run_migrations(db)
-    if applied:
-        logger.info("Applied %d migration(s) on startup: %s", len(applied), ", ".join(applied))
+    # Automatic production migrations can turn one duplicate/index conflict
+    # into a crash loop on every replica restart. Operators run the preflight
+    # and migration job deliberately; an explicit one-replica opt-in remains.
+    auto_migrate = settings.environment != "production" or os.environ.get("FORGE_RUN_STARTUP_MIGRATIONS", "").lower() == "true"
+    pending = await pending_migrations(db)
+    app.state.pending_migrations = pending
+    if auto_migrate:
+        applied = await run_migrations(db)
+        app.state.pending_migrations = []
+        if applied:
+            logger.info("Applied %d migration(s) on startup: %s", len(applied), ", ".join(applied))
+    elif pending:
+        logger.critical(
+            "Pending migrations (%s); production startup will not apply them automatically. "
+            "Run the controlled migration preflight/job in OPERATOR_CHECKLIST.md.",
+            ", ".join(pending),
+        )
 
     preflight = await run_bootstrap()
     preflight.require_healthy()
@@ -99,15 +132,10 @@ async def lifespan(app: FastAPI):
     app.state.outbox_worker = asyncio.create_task(outbox_worker())
     snapshot = await catalog_service.refresh_catalog_snapshot()
     logger.info("Catalog read model ready: %d products.", len(snapshot.products))
-    try:
-        from services.automation_rules import ensure_seeded
-        await ensure_seeded()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Automation rules seed skipped: %s", e)
-    try:
-        await reconcile_followups()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Initial follow-up reconciliation skipped: %s", e)
+    app.state.optional_startup_tasks = [
+        asyncio.create_task(_run_optional_startup_task("automation-rule seed", _seed_automation_rules)),
+        asyncio.create_task(_run_optional_startup_task("follow-up reconciliation", reconcile_followups)),
+    ]
     logger.info("Forge API ready; infrastructure preflight passed.")
     logger.info("Monitoring status: sentry=%s", _monitoring_status["sentry"])
     try:
@@ -118,6 +146,13 @@ async def lifespan(app: FastAPI):
             worker.cancel()
             try:
                 await worker
+            except asyncio.CancelledError:
+                pass
+        for task in getattr(app.state, "optional_startup_tasks", []):
+            task.cancel()
+        for task in getattr(app.state, "optional_startup_tasks", []):
+            try:
+                await task
             except asyncio.CancelledError:
                 pass
         storage = get_media_storage()
@@ -245,6 +280,9 @@ async def readiness():
     unhealthy.  Keep the warning on ``/health`` and make the container probe
     depend only on the datastore it needs to serve traffic.
     """
+    pending = getattr(app.state, "pending_migrations", [])
+    if pending:
+        return JSONResponse(status_code=503, content={"status": "error", "detail": "pending migrations", "migrations": pending})
     try:
         await db.command("ping")
         from media_storage.supabase_driver import supabase_ready
@@ -324,4 +362,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-

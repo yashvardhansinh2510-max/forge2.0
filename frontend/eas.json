@@ -8,16 +8,10 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal",
-      "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://buildcon-backend-production.up.railway.app"
-      }
+      "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true,
-      "env": {
-        "EXPO_PUBLIC_BACKEND_URL": "https://buildcon-backend-production.up.railway.app"
-      }
+      "autoIncrement": true
     }
   },
   "submit": {

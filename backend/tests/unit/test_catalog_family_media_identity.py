@@ -1,0 +1,82 @@
+"""Family cards must retain product-specific media and namespace identity."""
+from __future__ import annotations
+
+import asyncio
+
+from services.catalog_service import _build_snapshot, hydrate_product, list_family_groups
+import services.catalog_service as catalog_service
+
+
+def _product(product_id: str, *, floor_id="first-floor", brand_id="brand-a", category_id="cat-a") -> dict:
+    return {
+        "id": product_id, "sku": f"SKU-{product_id}", "name": "Basin Family",
+        "family_key": "supplier:shared-family", "family_name": "Basin Family",
+        "floor_id": floor_id, "brand_id": brand_id, "category_id": category_id,
+        "price": 100 if product_id == "a" else 200, "mrp": 150 if product_id == "a" else 250,
+        "finish": "White" if product_id == "a" else "Black", "images": [],
+    }
+
+
+def _media(product_id: str, floor_id="first-floor") -> dict:
+    return {
+        "id": f"media-{product_id}", "product_id": product_id, "family_key": "supplier:shared-family",
+        "floor_id": floor_id, "brand_id": "brand-a", "source_type": "supplier", "role": "hero",
+        "bucket": "products", "storage_key": f"{product_id}.jpg", "public_url": f"https://cdn.test/{product_id}.jpg",
+        "quality": "good", "sha1": f"sha-{product_id}", "is_primary": True, "sort_order": 0,
+    }
+
+
+def test_family_card_variants_and_sample_use_each_products_own_primary_media(monkeypatch):
+    a, b = _product("a"), _product("b")
+    snapshot = _build_snapshot([a, b], [_media("a"), _media("b")], [], [], [])
+
+    async def fake_snapshot():
+        return snapshot
+
+    monkeypatch.setattr(catalog_service, "get_catalog_snapshot", fake_snapshot)
+    result = asyncio.run(list_family_groups(
+        brand_id=None, category_id=None, subcategory=None, series=None, q=None,
+        limit=10, skip=0,
+    ))
+
+    family = result["items"][0]
+    assert family["sample_product_id"] == "a"
+    assert family["sample_image"] == "https://cdn.test/a.jpg"
+    assert {item["id"]: item["image"] for item in family["variants"]} == {
+        "a": "https://cdn.test/a.jpg", "b": "https://cdn.test/b.jpg",
+    }
+
+
+def test_variant_hydration_never_crosses_a_floor_or_catalog_namespace():
+    a = _product("a")
+    same = _product("b")
+    other_floor = _product("ground", floor_id="ground-floor")
+    other_brand = _product("other-brand", brand_id="brand-b")
+    other_category = _product("other-category", category_id="cat-b")
+    snapshot = _build_snapshot(
+        [a, same, other_floor, other_brand, other_category],
+        [_media("a"), _media("b"), _media("ground", "ground-floor"), _media("other-brand"), _media("other-category")],
+        [], [], [],
+    )
+
+    hydrated = hydrate_product(a, snapshot)
+    assert [variant["id"] for variant in hydrated["variants"]] == ["b"]
+    assert [variant["id"] for variant in hydrated["family_variants"]] == ["a", "b"]
+
+
+def test_same_supplier_key_does_not_merge_family_cards_across_floor_brand_or_category(monkeypatch):
+    products = [
+        _product("floor-a"), _product("floor-b", floor_id="ground-floor"),
+        _product("brand-b", brand_id="brand-b"), _product("category-b", category_id="cat-b"),
+    ]
+    snapshot = _build_snapshot(products, [_media(product["id"], product["floor_id"]) for product in products], [], [], [])
+
+    async def fake_snapshot():
+        return snapshot
+
+    monkeypatch.setattr(catalog_service, "get_catalog_snapshot", fake_snapshot)
+    result = asyncio.run(list_family_groups(
+        brand_id=None, category_id=None, subcategory=None, series=None, q=None,
+        limit=10, skip=0,
+    ))
+    assert result["total"] == 4

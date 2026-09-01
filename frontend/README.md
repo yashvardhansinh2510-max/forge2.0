@@ -4,6 +4,12 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 
 ## Get started
 
+## Deployment configuration
+
+The web build and Vercel API proxy require `BACKEND_URL`, a server-side absolute HTTPS URL with no embedded credentials. Set it in the deployment provider's encrypted environment settings; the build intentionally fails when it is absent or invalid. Browser production traffic uses the same-origin `/api` proxy and must not receive this value.
+
+Native EAS preview and production environments must separately provide `EXPO_PUBLIC_BACKEND_URL` as an HTTPS URL through EAS environment variables or secrets. It is intentionally not stored in `eas.json`.
+
 1. Install dependencies
 
    ```bash

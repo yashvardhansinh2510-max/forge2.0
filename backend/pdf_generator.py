@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 import functools
-from functools import lru_cache
 from io import BytesIO
+import logging
 from pathlib import Path
+from time import monotonic
 from typing import Iterable
 
-import httpx
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -22,6 +21,9 @@ from reportlab.platypus import (
     Flowable, HRFlowable, Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate,
     Spacer, Table, TableStyle,
 )
+from services.pdf_image_loader import image_loader_metrics, prefetch_urls, remote_image_bytes
+
+logger = logging.getLogger("forge.pdf")
 
 BLUE = colors.HexColor("#1D5D98")
 INK = colors.HexColor("#111111")
@@ -69,9 +71,10 @@ TOP_MARGIN_MM = 13.0
 BOTTOM_MARGIN_MM = 22.0
 AREA_HEADER_BLOCK_MM = 25.75    # brand/area title block + rule + spacers above the table
 ITEM_HEADER_ROW_MM = 10.0
-# Detail pages deliberately hold at most nine products.  The available table
-# height is shared by the real rows on a page, so an eight-product bathroom
-# sheet fills its page without an empty ninth product cell.
+# A sanitary bathroom detail page can hold up to seventeen products. The
+# available table height is shared by only the real rows on a page, so an
+# eight- or ten-product sheet fills the page without blank product rows.
+MAX_ITEM_ROWS_PER_PAGE = 17
 PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10
 STANDARD_PRODUCT_IMAGE_WIDTH_MM = 16.0
 STANDARD_PRODUCT_IMAGE_HEIGHT_MM = STANDARD_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
@@ -85,8 +88,15 @@ SUMMARY_TOTAL_ROW_MM = 6.2
 
 
 def _max_item_rows_per_page() -> int:
-    available = PAGE_H_MM - TOP_MARGIN_MM - BOTTOM_MARGIN_MM - AREA_HEADER_BLOCK_MM - ITEM_HEADER_ROW_MM - ITEM_TOTAL_ROW_MM
-    return min(9, max(1, int(available // ITEM_ROW_MM)))
+    # Row height is allocated dynamically by `_item_row_height_mm`; capacity
+    # is therefore the business/print limit, not a stale minimum-row division.
+    return MAX_ITEM_ROWS_PER_PAGE
+
+
+def _item_row_height_mm(item_count: int) -> float:
+    """Height assigned to each real product row on one sanitary detail page."""
+    usable = PAGE_H_MM - TOP_MARGIN_MM - BOTTOM_MARGIN_MM - AREA_HEADER_BLOCK_MM - ITEM_HEADER_ROW_MM - ITEM_TOTAL_ROW_MM
+    return usable / max(1, item_count)
 
 
 def _money(value: float) -> str:
@@ -95,6 +105,20 @@ def _money(value: float) -> str:
 
 def _escape(value: object) -> str:
     return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _ellipsize(value: object, limit: int) -> str:
+    """Escape a bounded, table-safe representation of user-provided text.
+
+    Detail rows have an intentionally fixed maximum height so a full 17-row
+    page remains printable.  Paragraphs otherwise overflow the row for a
+    very long SKU/name/finish; ellipsizing preserves the useful prefix and
+    makes that capacity explicit instead of allowing drawing over grid lines.
+    """
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        text = text[: max(0, limit - 1)].rstrip() + "…"
+    return _escape(text)
 
 
 def quotation_pdf_filename(customer_name: object) -> str:
@@ -110,14 +134,9 @@ def quotation_pdf_filename(customer_name: object) -> str:
     return f"{safe or 'Customer'}.pdf"
 
 
-@lru_cache(maxsize=512)
-def _remote_image_bytes(url: str) -> bytes | None:
-    try:
-        response = httpx.get(url, timeout=6.0, follow_redirects=True)
-        response.raise_for_status()
-        return response.content if response.content else None
-    except Exception:
-        return None
+# Kept as a local alias so quotation/PDF callers and existing tests can
+# instrument image loading without importing the security implementation.
+_remote_image_bytes = remote_image_bytes
 
 
 def _prepare_image_bytes(data: bytes, *, force_landscape: bool = False) -> bytes:
@@ -164,12 +183,7 @@ def prefetch_product_images(items: Iterable[dict], *, workers: int = 6, timeout:
     ))
     if not urls:
         return
-    executor = ThreadPoolExecutor(max_workers=max(1, min(workers, 8)), thread_name_prefix="quotation-image")
-    futures = [executor.submit(_remote_image_bytes, url) for url in urls]
-    _, pending = wait(futures, timeout=max(0.1, timeout))
-    for future in pending:
-        future.cancel()
-    executor.shutdown(wait=False, cancel_futures=True)
+    prefetch_urls(urls, _remote_image_bytes, workers=workers, timeout=timeout)
 
 
 def contain_box(
@@ -195,16 +209,52 @@ def contain_box(
     )
 
 
+class _CoverImage(Flowable):
+    """An aspect-preserving product image clipped to fill its whole cell."""
+
+    def __init__(self, data: bytes, width_mm: float, height_mm: float):
+        super().__init__()
+        self.reader = ImageReader(BytesIO(data))
+        self.width = width_mm * mm
+        self.height = height_mm * mm
+        # Match ReportLab Image's public geometry attributes so instrumentation
+        # and layout checks can inspect every image flowable consistently.
+        self.drawWidth = self.width
+        self.drawHeight = self.height
+        self.source_width, self.source_height = self.reader.getSize()
+
+    def wrap(self, avail_width, avail_height):
+        return self.width, self.height
+
+    def draw(self):
+        if self.source_width <= 0 or self.source_height <= 0:
+            return
+        scale = max(self.width / self.source_width, self.height / self.source_height)
+        drawn_width = self.source_width * scale
+        drawn_height = self.source_height * scale
+        path = self.canv.beginPath()
+        path.rect(0, 0, self.width, self.height)
+        self.canv.saveState()
+        self.canv.clipPath(path, stroke=0, fill=0)
+        self.canv.drawImage(
+            self.reader, (self.width - drawn_width) / 2, (self.height - drawn_height) / 2,
+            width=drawn_width, height=drawn_height, mask="auto",
+        )
+        self.canv.restoreState()
+
+
 def _img(
     url: str | None,
     width_mm: float = STANDARD_PRODUCT_IMAGE_WIDTH_MM,
     height_mm: float = STANDARD_PRODUCT_IMAGE_HEIGHT_MM,
     force_landscape: bool = False,
+    cover: bool = False,
 ) -> Flowable:
     """Render the supplied product image inside the quotation image cell.
 
-    Sized to the largest centered contain box that fits inside its cell
-    without stretching, cropping, or changing the product's orientation.
+    Preserve the full image in a centered contain box. Product imagery is a
+    product-selection aid, so it must never be cropped merely to fill a table
+    cell; blank space is preferable to hiding the item being quoted.
     """
     if url and str(url).startswith(("https://", "http://")):
         data = _remote_image_bytes(str(url))
@@ -248,30 +298,34 @@ def _draw_footer(cv, doc, branding: dict | None = None) -> None:
     cv.restoreState()
 
 
+def watermark_geometry(page_width: float, page_height: float) -> tuple[float, float, float, float]:
+    """Return the full-page logo placement (x, y, width, height)."""
+    height = page_height
+    width = height * LOGO_RATIO
+    return (page_width - width) / 2, 0, width, height
+
+
 def _draw_room_watermark(cv, doc, branding: dict | None = None) -> None:
-    _draw_footer(cv, doc, branding)
     b = branding or {}
     if not b.get("show_watermark", True):
         return
     if not LOGO_PATH.exists():
         return
     cv.saveState()
+    # Cover the entire landscape sheet while retaining the logo's aspect
+    # ratio.  ReportLab clips the oversized image to the media box.
     if hasattr(cv, "setFillAlpha"):
-        cv.setFillAlpha(0.10)
-    cv.translate(LANDSCAPE_A4[0] / 2, LANDSCAPE_A4[1] / 2 - 8 * mm)
-    cv.rotate(26)
-    watermark_w = 87 * mm
-    watermark_h = watermark_w / LOGO_RATIO
-    cv.drawImage(str(LOGO_PATH), -watermark_w / 2, -watermark_h / 2, width=watermark_w, height=watermark_h, mask="auto")
+        cv.setFillAlpha(0.055)
+    page_width, page_height = LANDSCAPE_A4
+    watermark_x, watermark_y, watermark_w, watermark_h = watermark_geometry(page_width, page_height)
+    cv.drawImage(str(LOGO_PATH), watermark_x, watermark_y, width=watermark_w, height=watermark_h, mask="auto")
     cv.restoreState()
 
 
 def _draw_quotation_page_chrome(cv, doc, branding: dict | None = None) -> None:
     """Shared footer/watermark chrome for the summary and area pages."""
-    if doc.page == 1:
-        _draw_footer(cv, doc, branding)
-    else:
-        _draw_room_watermark(cv, doc, branding)
+    _draw_room_watermark(cv, doc, branding)
+    _draw_footer(cv, doc, branding)
 
 
 def _brand_header(right_title: str, styles: dict, style_key: str = "titleRight") -> Table:
@@ -338,6 +392,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     was hardcoded here before Settings > PDF existed, so passing None (or a
     partial dict) renders the same document as before.
     """
+    started_at = monotonic()
     b = branding or {}
     prefetch_product_images(quotation.get("items") or [])
     buf = BytesIO()
@@ -433,12 +488,12 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         gross, _, net = _room_totals(grouped.get(room, []))
         if has_discount:
             summary_rows.append([
-                Paragraph(str(index + 1), styles["cellCenter"]), Paragraph(_escape(room), styles["cell"]),
+                Paragraph(str(index + 1), styles["cellCenter"]), Paragraph(_ellipsize(room, 180), styles["cell"]),
                 Paragraph(_money(gross), styles["cellCenter"]), Paragraph(_money(net), styles["cellCenter"]),
             ])
         else:
             summary_rows.append([
-                Paragraph(str(index + 1), styles["cellCenter"]), Paragraph(_escape(room), styles["cell"]),
+                Paragraph(str(index + 1), styles["cellCenter"]), Paragraph(_ellipsize(room, 180), styles["cell"]),
                 Paragraph(_money(net), styles["cellCenter"]),
             ])
     if has_discount:
@@ -491,7 +546,10 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     terms_table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.2),
+        # Keep the contractual block together on page one even when an
+        # address/reference adds metadata rows. The previous 12 mm of table
+        # padding forced only the signature into an otherwise blank page two.
+        ("TOPPADDING", (0, 0), (-1, -1), 0.4), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.4),
     ]))
     care_entries = [
         ("GEBERIT", "1800 102 4323"), ("GROHE", "1800 102 4475"), ("HANSGROHE", "1800 209 3246"), ("VITRA", "70451 32132"), ("OYSTER", "1800 120 8999"),
@@ -547,11 +605,18 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         sr_offset = 0
         for block_index, block in enumerate(blocks):
             story.append(PageBreak())
-            area_label = f"AREA {area_index}: <u>{_escape(room)}</u>"
+            # The large area title has a fixed vertical band above a 17-row
+            # table; one line is required to retain that capacity.
+            area_label = f"AREA {area_index}: <u>{_ellipsize(room, 24)}</u>"
             if block_index:
                 area_label += " <font size='9'>(continued)</font>"
             story.append(_brand_header(area_label, styles, style_key="areaTitle"))
             story.extend([Spacer(1, 4 * mm), HRFlowable(width="100%", thickness=1.25, color=BLUE), Spacer(1, 3 * mm)])
+            n_data_rows = len(block)
+            item_row_mm = _item_row_height_mm(n_data_rows)
+            # Table padding consumes 3 mm on each side of the image column.
+            image_width_mm = item_widths[1] / mm - 6
+            image_height_mm = max(2.0, item_row_mm - 1.0)
             rows: list[list[object]] = [item_header]
             for offset_in_block, item in enumerate(block):
                 sr_no = sr_offset + offset_in_block + 1
@@ -561,26 +626,27 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                 offer_rate = base_rate * (1 - pct / 100)   # discounted per-unit rate
                 line_total = qty * offer_rate
                 listed_mrp = float(item.get("mrp") or base_rate)
-                description = _escape(item.get("description") or item.get("name"))
+                description = _ellipsize(item.get("description") or item.get("name"), 40)
                 finish = item.get("finish") or item.get("colour") or ""
                 if finish:
-                    description += f"<br/><font color='#737373'>Finish: {_escape(finish)}</font>"
+                    description += f"<br/><font color='#737373'>Finish: {_ellipsize(finish, 12)}</font>"
                 if has_discount:
                     rows.append([
                         Paragraph(str(sr_no), styles["cellCenter"]), _img(
                             item.get("image"),
-                            width_mm=STANDARD_PRODUCT_IMAGE_WIDTH_MM,
-                            height_mm=STANDARD_PRODUCT_IMAGE_HEIGHT_MM,
+                            width_mm=image_width_mm, height_mm=image_height_mm,
                         ),
-                        Paragraph(_escape(item.get("sku")), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
+                        Paragraph(_ellipsize(item.get("sku"), 20), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
                         Paragraph(_money(listed_mrp), styles["itemCenter"]), Paragraph(f"{qty:g}", styles["itemCenter"]),
                         Paragraph(_money(qty * listed_mrp), styles["itemCenter"]),
                         Paragraph(_money(offer_rate), styles["itemCenter"]), Paragraph(_money(line_total), styles["itemCenter"]),
                     ])
                 else:
                     rows.append([
-                        Paragraph(str(sr_no), styles["cellCenter"]), _img(item.get("image")),
-                        Paragraph(_escape(item.get("sku")), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
+                        Paragraph(str(sr_no), styles["cellCenter"]), _img(
+                            item.get("image"), width_mm=image_width_mm, height_mm=image_height_mm,
+                        ),
+                        Paragraph(_ellipsize(item.get("sku"), 20), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
                         Paragraph(_money(base_rate), styles["itemCenter"]), Paragraph(f"{qty:g}", styles["itemCenter"]),
                         Paragraph(_money(qty * base_rate), styles["itemCenter"]),
                     ])
@@ -588,21 +654,15 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                 float(item.get("qty") or 0) * float(item.get("unit_price") or 0) * (1 - float(item.get("discount_pct") or 0) / 100)
                 for item in block
             )
-            n_data_rows = len(block)
             total_label_col = 3  # DESCRIPTION column — same position in both layouts
             last_col = len(item_header) - 1
             total_row: list[object] = ["" for _ in item_header]
             total_row[total_label_col] = Paragraph("<b>TOTAL</b>", styles["cellCenter"])
             total_row[last_col] = Paragraph(f"<b>{_money(block_net)}</b>", styles["cellCenter"])
             rows.append(total_row)
-            # A detail page has no reserved/filler product rows.  Expand the
-            # real rows into the available print area so eight products use
-            # the full page just as nine products do.
-            usable_rows_mm = (
-                PAGE_H_MM - TOP_MARGIN_MM - BOTTOM_MARGIN_MM
-                - AREA_HEADER_BLOCK_MM - ITEM_HEADER_ROW_MM - ITEM_TOTAL_ROW_MM
-            )
-            item_row_mm = usable_rows_mm / max(1, n_data_rows)
+            # A detail page has no reserved/filler product rows. Expand the
+            # real rows into the available print area so 8, 10, or 17 items
+            # use the full page while the eighteenth starts a continuation.
             row_heights = [ITEM_HEADER_ROW_MM * mm] + [item_row_mm * mm] * n_data_rows + [ITEM_TOTAL_ROW_MM * mm]
             numeric_col_start = 4  # MRP/RATE column onward — center-aligned per the print spec
             item_style_cmds = [
@@ -626,4 +686,11 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         onFirstPage=functools.partial(_draw_quotation_page_chrome, branding=b),
         onLaterPages=functools.partial(_draw_quotation_page_chrome, branding=b),
     )
-    return buf.getvalue()
+    rendered = buf.getvalue()
+    logger.info(
+        "quotation_pdf_complete duration_ms=%.1f bytes=%d image_loader=%s",
+        (monotonic() - started_at) * 1000,
+        len(rendered),
+        image_loader_metrics(),
+    )
+    return rendered
