@@ -18,6 +18,7 @@ import { color, font, layout, radius, space } from "@/src/design/tokens";
 import { BuildConLogo } from "@/src/design/BrandLogo";
 import { useAuth } from "@/src/state/auth";
 import { useModuleAccess, usePermissionMatrix } from "@/src/hooks/use-permissions";
+import { staffLandingPath } from "@/src/access-profiles";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { AppScaffold } from "@/src/components/mobile/AppScaffold";
 import { storage } from "@/src/utils/storage";
@@ -722,6 +723,33 @@ function FloorAccessGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function CustomAccessRouteGate({ children }: { children: React.ReactNode }) {
+  const { staff } = useAuth();
+  const hasAccess = useModuleAccess();
+  const segments = useSegments() as string[];
+  const router = useRouter();
+  const module = segments.includes("payments") ? "payments"
+    : segments.includes("quotations") ? "quotations"
+    : segments.includes("catalog") ? "catalog"
+    : segments.includes("customers") ? "customers"
+    : segments.includes("purchases") || segments.includes("purchase-orders") ? "purchases"
+    : segments.includes("followups") ? "followups"
+    : segments.includes("notifications") ? "notifications"
+    : segments.includes("walkins") ? "walkins"
+    : segments.includes("orders") ? "orders"
+    : segments.includes("dashboard") ? "dashboard"
+    : null;
+
+  useEffect(() => {
+    if (staff?.custom_access && module && !hasAccess(module)) {
+      router.replace(staffLandingPath(staff.access_profile, staff.access_grants) as any);
+    }
+  }, [staff, module, hasAccess, router]);
+
+  if (staff?.custom_access && module && !hasAccess(module)) return null;
+  return <>{children}</>;
+}
+
 export default function AdminLayout() {
   const { isPhone, isTablet } = useBp();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -748,7 +776,7 @@ export default function AdminLayout() {
           style={{ backgroundColor: color.canvas }}
           bottomNavigation={<PhoneBar />}
         >
-          <FloorAccessGate><Slot /></FloorAccessGate>
+          <FloorAccessGate><CustomAccessRouteGate><Slot /></CustomAccessRouteGate></FloorAccessGate>
         </AppScaffold>
       </PaletteProvider>
     );
@@ -765,7 +793,7 @@ export default function AdminLayout() {
           {isTablet ? <Rail /> : <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />}
         </View>
         <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-          <FloorAccessGate><Slot /></FloorAccessGate>
+          <FloorAccessGate><CustomAccessRouteGate><Slot /></CustomAccessRouteGate></FloorAccessGate>
         </View>
       </View>
     </PaletteProvider>

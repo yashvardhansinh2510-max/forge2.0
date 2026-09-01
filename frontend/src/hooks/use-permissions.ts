@@ -79,11 +79,12 @@ export function useModuleAccess() {
   const { data } = usePermissionMatrix();
   return useCallback(
     (moduleKey: string) => {
-      if (!staff || !data) return true;
+      if (!staff) return true;
       if (staff.custom_access) {
         const resource = MODULE_GRANT_RESOURCE[moduleKey];
         return Boolean(resource && staff.access_grants?.some((grant) => grant.resource === resource && grant.actions.includes("view")));
       }
+      if (!data) return true;
       const profileModules = staff.access_profile ? PROFILE_MODULES[staff.access_profile] : undefined;
       if (profileModules) return profileModules.has(moduleKey);
       const row = data.matrix[staff.role];
