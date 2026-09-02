@@ -161,14 +161,14 @@ def test_seventeen_long_products_are_bounded_to_one_detail_page_without_overflow
     assert "…" in text
 
 
-def test_watermark_geometry_covers_the_full_landscape_page():
+def test_watermark_geometry_fits_the_complete_original_logo_on_landscape_page():
     page_width, page_height = pdf_generator.LANDSCAPE_A4
     x, y, width, height = pdf_generator.watermark_geometry(page_width, page_height)
 
-    assert height == page_height
-    assert width >= page_width
-    assert x <= 0 and x + width >= page_width
-    assert y <= 0 and y + height >= page_height
+    assert width == page_width * pdf_generator.WATERMARK_MAX_PAGE_WIDTH
+    assert height == pytest.approx(width / pdf_generator.LOGO_RATIO)
+    assert x > 0 and x + width < page_width
+    assert y > 0 and y + height < page_height
 
 
 def test_watermark_is_drawn_on_the_first_and_detail_pages():
@@ -184,18 +184,31 @@ def test_watermark_is_drawn_on_the_first_and_detail_pages():
     assert all(b"/FormXob" in page.get_contents().get_data() for page in pages)
 
 
-def test_sanitary_detail_page_expands_eight_or_ten_products_without_padding_rows():
-    for count in (8, 10):
-        items = [
-            {"sku": f"FILL-{count}-{index}", "name": "Bathroom Product", "room": "Bath", "qty": 1, "unit_price": 1000}
-            for index in range(count)
-        ]
-        pages = PdfReader(BytesIO(pdf_generator.build_quotation_pdf(
-            {"customer_name": "Adaptive layout", "items": items, "rooms": ["Bath"], "subtotal": count * 1000, "grand_total": count * 1000},
-            {"name": "Adaptive layout"},
-        ))).pages
-        assert len(pages) == 2
-        assert pdf_generator._item_row_height_mm(count) > pdf_generator._item_row_height_mm(17)
+@pytest.mark.parametrize("count", range(1, 18))
+def test_sanitary_detail_page_expands_every_sparse_count_without_padding_rows(count):
+    """Every count through the 17-product limit remains one detail page."""
+    items = [
+        {"sku": f"FILL-{count}-{index}", "name": "Bathroom Product", "room": "Bath", "qty": 1, "unit_price": 1000}
+        for index in range(count)
+    ]
+    pages = PdfReader(BytesIO(pdf_generator.build_quotation_pdf(
+        {"customer_name": "Adaptive layout", "items": items, "rooms": ["Bath"], "subtotal": count * 1000, "grand_total": count * 1000},
+        {"name": "Adaptive layout"},
+    ))).pages
+    assert len(pages) == 2
+    assert pdf_generator._item_row_height_mm(count) >= pdf_generator._item_row_height_mm(17)
+
+
+def test_two_product_sanitary_page_uses_compact_rows_not_a_full_page_layout():
+    row_height = pdf_generator._item_row_height_mm(2)
+    usable = (
+        pdf_generator.PAGE_H_MM - pdf_generator.TOP_MARGIN_MM
+        - pdf_generator.BOTTOM_MARGIN_MM - pdf_generator.AREA_HEADER_BLOCK_MM
+        - pdf_generator.ITEM_HEADER_ROW_MM - pdf_generator.ITEM_TOTAL_ROW_MM
+    )
+
+    assert row_height == pdf_generator.COMPACT_SPARSE_ITEM_ROW_MM
+    assert 2 * row_height < usable
 
 
 @pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="Poppler pdftoppm is required for PDF raster regression testing")
@@ -309,7 +322,7 @@ def test_standard_selection_and_tiles_quotation_pdfs_use_their_intended_image_tr
     assert pdf_tiles.build_tiles_quotation_pdf(tiles, {"name": "PDF Test"}).startswith(b"%PDF-")
     assert len(rendered_sizes) == 3
     assert requested_boxes == [
-        (14.0, pdf_generator.MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM),
+        (18.0, pdf_generator.MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM),
         (pdf_tiles.SELECTION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.SELECTION_PRODUCT_IMAGE_HEIGHT_MM),
         (pdf_tiles.QUOTATION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.QUOTATION_PRODUCT_IMAGE_HEIGHT_MM),
     ]
@@ -325,7 +338,7 @@ def test_standard_selection_and_tiles_quotation_pdfs_use_their_intended_image_tr
     )
 
 
-@pytest.mark.parametrize("count", [2, 3])
+@pytest.mark.parametrize("count", range(1, 17))
 def test_sparse_sanitary_pages_cap_and_contain_product_images(monkeypatch, count):
     """A large sparse-row box must never crop a product into a thin strip."""
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(140, 80))
@@ -348,11 +361,14 @@ def test_sparse_sanitary_pages_cap_and_contain_product_images(monkeypatch, count
     )
 
     assert len(images) == count
-    expected_height = pdf_generator.MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM
+    expected_height = min(
+        pdf_generator.MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM,
+        max(2.0, pdf_generator._item_row_height_mm(count) - 1.0),
+    )
     for image, kwargs in images:
         assert kwargs["cover"] is False
         assert kwargs["height_mm"] == expected_height
-        assert image.drawWidth < 14 * pdf_generator.mm
+        assert image.drawWidth < 18 * pdf_generator.mm
         assert image.drawHeight < expected_height * pdf_generator.mm
 
 

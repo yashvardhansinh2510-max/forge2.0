@@ -78,12 +78,14 @@ MAX_ITEM_ROWS_PER_PAGE = 17
 PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10
 STANDARD_PRODUCT_IMAGE_WIDTH_MM = 16.0
 STANDARD_PRODUCT_IMAGE_HEIGHT_MM = STANDARD_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
-# Sparse detail pages deliberately stretch their *rows* to use the available
-# print space.  Their image column must not follow suit: a two-item page would
-# otherwise turn a 14 mm-wide image frame into a ~65 mm tall crop, leaving
-# landscape products as an unrecognisable sliver.  This is a display cap, not
-# a pagination constraint; the table row still owns the full page height.
+# Sparse detail pages use compact rows instead of expanding one or two
+# products into a full-page table. Their image column must not follow the
+# remaining white space: a two-item page would otherwise turn a 14 mm-wide
+# image frame into a ~65 mm tall crop, leaving landscape products as an
+# unrecognisable sliver. This is a display cap, not a pagination constraint.
 MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM = 18.0
+COMPACT_SPARSE_ITEM_LIMIT = 5
+COMPACT_SPARSE_ITEM_ROW_MM = 24.0
 # This is the minimum row height used for capacity calculation.  Actual rows
 # are expanded per page to occupy all usable space.
 ITEM_ROW_MM = 14.0
@@ -102,7 +104,9 @@ def _max_item_rows_per_page() -> int:
 def _item_row_height_mm(item_count: int) -> float:
     """Height assigned to each real product row on one sanitary detail page."""
     usable = PAGE_H_MM - TOP_MARGIN_MM - BOTTOM_MARGIN_MM - AREA_HEADER_BLOCK_MM - ITEM_HEADER_ROW_MM - ITEM_TOTAL_ROW_MM
-    return usable / max(1, item_count)
+    if item_count <= COMPACT_SPARSE_ITEM_LIMIT:
+        return COMPACT_SPARSE_ITEM_ROW_MM
+    return usable / item_count
 
 
 def _money(value: float) -> str:
@@ -312,11 +316,19 @@ def _draw_footer(cv, doc, branding: dict | None = None) -> None:
     cv.restoreState()
 
 
+WATERMARK_MAX_PAGE_WIDTH = 0.82
+
+
 def watermark_geometry(page_width: float, page_height: float) -> tuple[float, float, float, float]:
-    """Return the full-page logo placement (x, y, width, height)."""
-    height = page_height
-    width = height * LOGO_RATIO
-    return (page_width - width) / 2, 0, width, height
+    """Return a centred, unclipped placement for the original house logo.
+
+    The logo is intentionally a wide lock-up.  Sizing it from page height
+    makes it wider than landscape A4 and causes ReportLab to clip its sides,
+    so use the available page width as the limiting dimension instead.
+    """
+    width = page_width * WATERMARK_MAX_PAGE_WIDTH
+    height = width / LOGO_RATIO
+    return (page_width - width) / 2, (page_height - height) / 2, width, height
 
 
 def _draw_room_watermark(cv, doc, branding: dict | None = None) -> None:
@@ -326,8 +338,8 @@ def _draw_room_watermark(cv, doc, branding: dict | None = None) -> None:
     if not LOGO_PATH.exists():
         return
     cv.saveState()
-    # Cover the entire landscape sheet while retaining the logo's aspect
-    # ratio.  ReportLab clips the oversized image to the media box.
+    # Keep the complete original logo inside the landscape sheet.  This is a
+    # watermark, not a cover image: clipping any edge changes the logo.
     if hasattr(cv, "setFillAlpha"):
         cv.setFillAlpha(0.055)
     page_width, page_height = LANDSCAPE_A4
@@ -644,8 +656,10 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             story.extend([Spacer(1, 4 * mm), HRFlowable(width="100%", thickness=1.25, color=BLUE), Spacer(1, 3 * mm)])
             n_data_rows = len(block)
             item_row_mm = _item_row_height_mm(n_data_rows)
-            # Table padding consumes 3 mm on each side of the image column.
-            image_width_mm = item_widths[1] / mm - 6
+            # Reserve only a 1 mm gutter on either side of the image column.
+            # The image itself uses the full remaining column width; `_img`
+            # applies an aspect-preserving contain formula, never a crop.
+            image_width_mm = item_widths[1] / mm - 2
             # Keep the entire product visible and centre it inside a bounded
             # frame.  The old `cover=True` frame grew with sparse rows, which
             # aggressively cropped both portrait and landscape products when
@@ -698,9 +712,10 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             total_row[total_label_col] = Paragraph("<b>TOTAL</b>", styles["cellCenter"])
             total_row[last_col] = Paragraph(f"<b>{_money(block_net)}</b>", styles["cellCenter"])
             rows.append(total_row)
-            # A detail page has no reserved/filler product rows. Expand the
-            # real rows into the available print area so 8, 10, or 17 items
-            # use the full page while the eighteenth starts a continuation.
+            # A detail page has no filler product rows. Very sparse pages use
+            # compact rows, retaining ordinary image frames and white space
+            # below the table; larger selections use the available height
+            # while the eighteenth item starts a continuation.
             row_heights = [ITEM_HEADER_ROW_MM * mm] + [item_row_mm * mm] * n_data_rows + [ITEM_TOTAL_ROW_MM * mm]
             numeric_col_start = 4  # MRP/RATE column onward — center-aligned per the print spec
             item_style_cmds = [
@@ -708,6 +723,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                 ("BACKGROUND", (0, -1), (-1, -1), HEADER_GREY), ("ALIGN", (0, 1), (0, -1), "CENTER"),
                 ("ALIGN", (numeric_col_start, 1), (-1, -1), "CENTER"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (1, 1), (1, -2), 1), ("RIGHTPADDING", (1, 1), (1, -2), 1),
                 ("TOPPADDING", (0, 1), (-1, -2), 0.5 * mm), ("BOTTOMPADDING", (0, 1), (-1, -2), 0.5 * mm),
                 ("TOPPADDING", (0, 0), (-1, 0), 2), ("BOTTOMPADDING", (0, 0), (-1, 0), 2),
                 ("TOPPADDING", (0, -1), (-1, -1), 2), ("BOTTOMPADDING", (0, -1), (-1, -1), 2),
