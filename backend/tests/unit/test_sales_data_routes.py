@@ -1,4 +1,4 @@
-"""Sales Data dashboard aggregation — computed in Python over already-`won`
+"""Sales Data dashboard aggregation — computed in Python over confirmed
 quotations, matching the existing dashboard_routes.py convention. These
 tests exercise the computation directly against a fake db, same pattern as
 test_dashboard_floor_scoping.py."""
@@ -34,12 +34,15 @@ class _Collection:
     def find(self, query, *_a, **_kw):
         self.last_query = query
         docs = self._docs
-        # Minimal real filtering — just enough to prove _won_quotations'
-        # {"status": "won"} clause actually excludes non-won docs. Not a
-        # general Mongo query engine: floor_id/updated_at are recorded into
-        # last_query for assertion but not filtered on here.
+        # Minimal real filtering — just enough to prove confirmed-order
+        # queries exclude drafts. Not a general Mongo query engine:
+        # floor/date clauses are recorded into last_query for assertion.
         if query and "status" in query:
-            docs = [d for d in docs if d.get("status") == query["status"]]
+            expected = query["status"]
+            if isinstance(expected, dict) and "$in" in expected:
+                docs = [d for d in docs if d.get("status") in expected["$in"]]
+            else:
+                docs = [d for d in docs if d.get("status") == expected]
         return _Cursor(docs)
 
 
@@ -81,7 +84,7 @@ def test_resolve_floor_ids_admin_cannot_request_a_floor_outside_their_access():
     assert exc.value.status_code == 403
 
 
-def test_won_quotations_query_always_filters_status_won(monkeypatch):
+def test_confirmed_quotations_query_includes_current_and_legacy_completed_states(monkeypatch):
     fake_db = _FakeDb([])
     monkeypatch.setattr(sd, "db", fake_db)
 
@@ -90,10 +93,10 @@ def test_won_quotations_query_always_filters_status_won(monkeypatch):
         granularity="month", user=_owner(),
     ))
 
-    assert fake_db.quotations.last_query["status"] == "won"
+    assert fake_db.quotations.last_query["status"] == {"$in": ["ordered", "won"]}
 
 
-def test_won_quotations_query_includes_floor_scoping(monkeypatch):
+def test_confirmed_quotations_query_includes_floor_scoping(monkeypatch):
     """An explicit floor filter is always pushed into the Mongo query.
 
     The Sales Data screens now default that filter to the business unit
@@ -115,7 +118,7 @@ def test_won_quotations_query_includes_floor_scoping(monkeypatch):
     assert fake_db.quotations.last_query["floor_id"] == {"$in": ["ground-floor"]}
 
 
-def test_won_quotations_query_unrestricted_only_when_no_floor_filter(monkeypatch):
+def test_confirmed_quotations_query_unrestricted_only_when_no_floor_filter(monkeypatch):
     fake_db = _FakeDb([])
     monkeypatch.setattr(sd, "db", fake_db)
 
@@ -127,7 +130,7 @@ def test_won_quotations_query_unrestricted_only_when_no_floor_filter(monkeypatch
     assert "floor_id" not in fake_db.quotations.last_query
 
 
-def test_won_quotations_query_includes_date_range(monkeypatch):
+def test_confirmed_quotations_query_dates_current_orders_by_ordered_at(monkeypatch):
     fake_db = _FakeDb([])
     monkeypatch.setattr(sd, "db", fake_db)
 
@@ -136,12 +139,16 @@ def test_won_quotations_query_includes_date_range(monkeypatch):
         granularity="month", user=_owner(),
     ))
 
-    assert fake_db.quotations.last_query["updated_at"] == {"$gte": "2026-01-01", "$lte": "2026-12-31"}
+    assert fake_db.quotations.last_query["$or"] == [
+        {"status": "ordered", "ordered_at": {"$gte": "2026-01-01", "$lte": "2026-12-31"}},
+        {"status": "won", "updated_at": {"$gte": "2026-01-01", "$lte": "2026-12-31"}},
+    ]
 
 
-def test_won_quotations_excludes_non_won_docs(monkeypatch):
+def test_confirmed_quotations_excludes_drafts_and_counts_current_orders(monkeypatch):
     fake_db = _FakeDb([
         {"status": "won", "floor_id": "first-floor", "grand_total": 100, "updated_at": "2026-07-01T00:00:00+00:00"},
+        {"status": "ordered", "floor_id": "ground-floor", "grand_total": 250, "ordered_at": "2026-07-02T00:00:00+00:00", "updated_at": "2020-01-01T00:00:00+00:00"},
         {"status": "draft", "floor_id": "first-floor", "grand_total": 999999, "updated_at": "2026-07-01T00:00:00+00:00"},
     ])
     monkeypatch.setattr(sd, "db", fake_db)
@@ -151,8 +158,9 @@ def test_won_quotations_excludes_non_won_docs(monkeypatch):
         granularity="month", user=_owner(),
     ))
 
-    assert result["total_revenue"] == 100
-    assert result["quotation_count"] == 1
+    assert result["total_revenue"] == 350
+    assert result["quotation_count"] == 2
+    assert result["trend"] == [{"bucket": "2026-07", "revenue": 350.0}]
 
 
 def test_overview_totals_revenue_and_splits_by_floor(monkeypatch):

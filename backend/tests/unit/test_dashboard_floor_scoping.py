@@ -99,3 +99,32 @@ def test_product_count_scopes_to_the_active_floor(monkeypatch):
     # (base is non-empty here) — not at the query's top level.
     base_clause = next(c for c in query["$and"] if "floor_id" not in c)
     assert base_clause.get("active") is True
+
+
+def test_monthly_revenue_uses_ordered_at_for_current_orders_and_keeps_legacy_history(monkeypatch):
+    fake_db = _FakeDb()
+    monkeypatch.setattr(dashboard_routes, "db", fake_db)
+
+    asyncio.run(dashboard_routes.dashboard_stats(user=_user("ground-floor")))
+
+    facets = fake_db.quotations.last_aggregate_pipeline[1]["$facet"]
+    match = facets["revenue_month"][0]["$match"]["$or"]
+    assert match[0]["status"] == "ordered"
+    assert "ordered_at" in match[0]
+    assert "updated_at" not in match[0]
+    assert match[1]["status"] == "won"
+    assert "updated_at" in match[1]
+
+
+def test_top_products_excludes_unconfirmed_quotations(monkeypatch):
+    fake_db = _FakeDb()
+    monkeypatch.setattr(dashboard_routes, "db", fake_db)
+
+    asyncio.run(dashboard_routes.dashboard_stats(user=_user("ground-floor")))
+
+    facets = fake_db.quotations.last_aggregate_pipeline[1]["$facet"]
+    assert facets["top_products"][0] == {"$match": {"status": {"$in": ["ordered", "won"]}}}
+    group = facets["top_products"][2]["$group"]
+    assert group["revenue"]["$sum"] == {
+        "$ifNull": ["$items.net_amount", {"$multiply": ["$items.qty", "$items.unit_price"]}],
+    }

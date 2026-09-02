@@ -26,7 +26,13 @@ async def dashboard_stats(user: UserPublic = Depends(get_current_user)):
             {"$match": floor_query(user, {})},
             {"$facet": {
                 "revenue_month": [
-                    {"$match": {"status": "won", "updated_at": {"$gte": month_start}}},
+                    {"$match": {"$or": [
+                        {"status": "ordered", "ordered_at": {"$gte": month_start}},
+                        # Historic records may still carry the legacy won
+                        # state and no ordered_at; preserve their reporting
+                        # history until a dedicated backfill is run.
+                        {"status": "won", "updated_at": {"$gte": month_start}},
+                    ]}},
                     {"$group": {"_id": None, "value": {"$sum": "$grand_total"}}},
                 ],
                 "pipeline": [
@@ -46,11 +52,17 @@ async def dashboard_stats(user: UserPublic = Depends(get_current_user)):
                     {"$project": {"_id": 0, "id": 1, "number": 1, "customer_name": 1, "status": 1, "grand_total": 1, "updated_at": 1}},
                 ],
                 "top_products": [
+                    # Product rankings are revenue, not quote popularity:
+                    # never let draft/rejected/lost documents influence them.
+                    {"$match": {"status": {"$in": ["ordered", "won"]}}},
                     {"$unwind": "$items"},
                     {"$group": {
                         "_id": "$items.product_id", "name": {"$first": "$items.name"}, "sku": {"$first": "$items.sku"},
                         "image": {"$first": "$items.image"}, "qty": {"$sum": "$items.qty"},
-                        "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}},
+                        # Quotation writes stamp net_amount per line after
+                        # product/room/category/project discounts. Historic
+                        # rows without that field retain their gross fallback.
+                        "revenue": {"$sum": {"$ifNull": ["$items.net_amount", {"$multiply": ["$items.qty", "$items.unit_price"]}]}},
                     }},
                     {"$sort": {"revenue": -1}}, {"$limit": 5},
                     {"$project": {"_id": 0, "product_id": "$_id", "name": 1, "sku": 1, "image": 1, "qty": 1, "revenue": 1}},

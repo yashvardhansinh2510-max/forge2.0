@@ -530,6 +530,9 @@ function BrandPill({
     <Pressable
       onPress={onPress}
       testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}${count != null ? `, ${count.toLocaleString("en-IN")} products` : ""}`}
+      accessibilityState={{ selected: Boolean(active) }}
       style={{
         flexDirection: "row", alignItems: "center", gap: 8,
         paddingHorizontal: 12, paddingLeft: logo ? 6 : 12, height: 40, borderRadius: 999,
@@ -563,9 +566,12 @@ function CategoryPill({
     <Pressable
       onPress={onPress}
       testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={`Filter by ${label}`}
+      accessibilityState={{ selected: Boolean(active) }}
       style={{
         flexDirection: "row", alignItems: "center", gap: 8,
-        paddingHorizontal: 14, height: 40, borderRadius: 999,
+        paddingHorizontal: 14, height: 44, borderRadius: 999,
         borderWidth: 1, borderColor: active ? colors.brand : colors.border,
         backgroundColor: active ? colors.brand : colors.surfaceSecondary,
       }}
@@ -580,11 +586,17 @@ function ActiveChip({ label, onClose }: { label: string; onClose: () => void }) 
   return (
     <View style={{
       flexDirection: "row", alignItems: "center", gap: 6,
-      paddingLeft: 10, paddingRight: 4, height: 26,
+      paddingLeft: 10, paddingRight: 4, height: 44,
       backgroundColor: colors.brand, borderRadius: 999,
     }}>
       <Text style={{ color: colors.onBrand, fontSize: 11, fontWeight: "700" }} numberOfLines={1}>{label}</Text>
-      <Pressable onPress={onClose} hitSlop={8} style={{ paddingHorizontal: 4 }}>
+      <Pressable
+        onPress={onClose}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`Remove ${label} filter`}
+        style={{ width: 44, height: 44, alignItems: "center", justifyContent: "center", marginRight: -9 }}
+      >
         <Feather name="x" size={12} color={colors.onBrand} />
       </Pressable>
     </View>

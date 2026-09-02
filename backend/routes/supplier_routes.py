@@ -23,9 +23,10 @@ async def create_supplier(
     data = body.dict()
     data["floor_id"] = floor_for_write(user)
     if data.get("brand_id"):
-        b = await db.brands.find_one({"id": data["brand_id"]}, {"_id": 0, "name": 1})
-        if b:
-            data["brand_name"] = b["name"]
+        b = await db.brands.find_one({"id": data["brand_id"], "floor_id": data["floor_id"]}, {"_id": 0, "name": 1})
+        if not b:
+            raise HTTPException(status_code=400, detail="Brand is not available on this floor")
+        data["brand_name"] = b["name"]
     sup = Supplier(**data)
     await db.suppliers.insert_one(sup.dict())
     await log_event(
@@ -58,9 +59,10 @@ async def update_supplier(
         raise HTTPException(status_code=404, detail="Supplier not found")
     patch = {k: v for k, v in body.dict().items() if v is not None}
     if patch.get("brand_id"):
-        b = await db.brands.find_one({"id": patch["brand_id"]}, {"_id": 0, "name": 1})
-        if b:
-            patch["brand_name"] = b["name"]
+        b = await db.brands.find_one({"id": patch["brand_id"], "floor_id": doc["floor_id"]}, {"_id": 0, "name": 1})
+        if not b:
+            raise HTTPException(status_code=400, detail="Brand is not available on this floor")
+        patch["brand_name"] = b["name"]
     from datetime import datetime, timezone
     patch["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.suppliers.update_one(floor_query(user, {"id": supplier_id}), {"$set": patch})

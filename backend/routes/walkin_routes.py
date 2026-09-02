@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
-from auth import floor_query, floor_scope_ids, get_current_user, require_floor_access, require_min_role
+from auth import floor_query, floor_scope_ids, get_current_user, profile_floor_ids, require_floor_access, require_min_role
 from db import db
 from models import UserPublic, now_iso
 from models_walkins import WalkIn, WalkInCreate, WalkInUpdate, ReassignWalkInBody, WALKIN_OPEN_STATUSES
@@ -39,6 +39,28 @@ LEAD_SOURCES_KEY = "lead_sources"
 async def _next_walkin_number() -> str:
     year = datetime.now(timezone.utc).year
     return await _next_number_seq("walkin", f"WI-{year}-", collection="walkins")
+
+
+async def _salesperson_for_floor(salesperson_id: str, floor_id: str) -> dict:
+    """Return an active sales-capable staff member assigned to ``floor_id``.
+
+    A valid user id alone is not enough: assigning a warehouse/purchase user
+    or someone from another floor corrupts ownership, follow-up routing, and
+    salesperson analytics.
+    """
+    staff = await db.users.find_one(
+        {"id": salesperson_id},
+        {"_id": 0, "id": 1, "full_name": 1, "role": 1, "active": 1, "floor_ids": 1, "access_profile": 1},
+    )
+    if not staff:
+        raise HTTPException(status_code=404, detail="Salesperson not found")
+    if not staff.get("active", True) or staff.get("role") not in {"owner", "admin", "manager", "sales"}:
+        raise HTTPException(status_code=400, detail="Selected staff member cannot own sales follow-ups")
+    profile_floors = profile_floor_ids(staff.get("access_profile"))
+    assigned_floors = profile_floors if profile_floors is not None else staff.get("floor_ids") or []
+    if staff.get("role") not in {"owner", "manager"} and floor_id not in assigned_floors:
+        raise HTTPException(status_code=400, detail="Selected salesperson does not have access to this floor")
+    return staff
 
 
 class LeadSourcesSettingsBody(BaseModel):
@@ -143,9 +165,7 @@ async def create_walkin(body: WalkInCreate, user: UserPublic = Depends(require_m
             except DuplicateKeyError:
                 raise HTTPException(status_code=409, detail="That email is already used by another customer.")
     salesperson_id = body.salesperson_id or user.id
-    salesperson_doc = await db.users.find_one({"id": salesperson_id}, {"_id": 0, "full_name": 1})
-    if not salesperson_doc:
-        raise HTTPException(status_code=404, detail="Salesperson not found")
+    salesperson_doc = await _salesperson_for_floor(salesperson_id, body.floor_id)
     walkin = WalkIn(
         number=await _next_walkin_number(),
         customer_id=customer["id"], customer_name=customer.get("name"),
@@ -333,9 +353,7 @@ async def reassign_walkin(walkin_id: str, body: ReassignWalkInBody, user: UserPu
     doc = await db.walkins.find_one(floor_query(user, {"id": walkin_id}), {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Walk-in not found")
-    new_sp = await db.users.find_one({"id": body.salesperson_id}, {"_id": 0, "full_name": 1})
-    if not new_sp:
-        raise HTTPException(status_code=404, detail="Salesperson not found")
+    new_sp = await _salesperson_for_floor(body.salesperson_id, doc["floor_id"])
     old_name = doc.get("salesperson_name") or "Unassigned"
     await db.walkins.update_one(
         {"id": walkin_id},

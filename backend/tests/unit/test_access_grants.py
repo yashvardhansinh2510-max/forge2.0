@@ -58,9 +58,10 @@ def test_method_mapping_and_action_validation_are_explicit():
 
 
 def test_build_grant_has_audit_fields_and_rejects_non_future_expiry():
+    future = datetime.now(timezone.utc) + timedelta(days=1)
     grant = build_grant(
         user_id="worker-1", resource="payments", actions=["view"], floor_id="ground-floor",
-        expires_at=(NOW + timedelta(days=1)).isoformat(), actor_id="owner-1", actor_name="Owner",
+        expires_at=future.isoformat(), actor_id="owner-1", actor_name="Owner",
     )
     assert grant["created_by"] == "owner-1"
     assert grant["updated_by_name"] == "Owner"
@@ -68,7 +69,7 @@ def test_build_grant_has_audit_fields_and_rejects_non_future_expiry():
     with pytest.raises(ValueError):
         build_grant(
             user_id="worker-1", resource="payments", actions=["view"], floor_id=None,
-            expires_at=(NOW - timedelta(days=1)).isoformat(), actor_id="owner-1", actor_name="Owner",
+            expires_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(), actor_id="owner-1", actor_name="Owner",
         )
 
 

@@ -148,6 +148,8 @@ export type DataTableProps<T> = {
   keyExtractor: (row: T, index: number) => string;
   onRowPress?: (row: T, index: number) => void;
   rowTestID?: (row: T, index: number) => string;
+  /** A concise announcement for a row that opens another operational view. */
+  rowAccessibilityLabel?: (row: T, index: number) => string;
   /** Marks a row as the current selection (persistent highlight + brass rule). */
   isRowSelected?: (row: T, index: number) => boolean;
   /** Taller rows for tables whose cells stack a title over a subtitle, or wrap action clusters. */
@@ -180,7 +182,7 @@ export type DataTableProps<T> = {
 };
 
 export function DataTable<T>({
-  columns, data, keyExtractor, onRowPress, rowTestID, isRowSelected,
+  columns, data, keyExtractor, onRowPress, rowTestID, rowAccessibilityLabel, isRowSelected,
   rowMinHeight = 56, emptyMessage = "Nothing to show yet.", testID, fillViewport,
   scrollOwner = "self",
 }: DataTableProps<T>) {
@@ -233,6 +235,9 @@ export function DataTable<T>({
         <Pressable
           testID={rowTestID?.(item, index)}
           onPress={() => onRowPress(item, index)}
+          accessibilityRole="button"
+          accessibilityLabel={rowAccessibilityLabel?.(item, index)}
+          accessibilityHint="Opens details"
           style={({ pressed }) => [styles.mobileCard, selected ? styles.bodyRowSelected : null, pressed ? styles.bodyRowPressed : null]}
         >
           {content}
@@ -390,6 +395,9 @@ export function DataTable<T>({
                   key={keyExtractor(row, index)}
                   testID={rowTestID?.(row, index)}
                   onPress={() => onRowPress(row, index)}
+                  accessibilityRole="button"
+                  accessibilityLabel={rowAccessibilityLabel?.(row, index)}
+                  accessibilityHint="Opens details"
                   onHoverIn={() => setHoveredIndex(index)}
                   onHoverOut={() => setHoveredIndex((current) => (current === index ? null : current))}
                   style={({ pressed }: any) => [

@@ -2,12 +2,12 @@
 // and Quotation, any stage, with two entry points to start a new one. See
 // docs/superpowers/specs/2026-07-27-quotation-tiles-workflow-design.md.
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useRef, useState } from "react";
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { Button, EmptyState, SegmentedControl } from "@/src/components/ui";
+import { Button, EmptyState, ErrorState, SegmentedControl } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 import { useBp } from "@/src/design/responsive";
@@ -23,6 +23,9 @@ export default function QuotationTilesList() {
   useRequireFloorAccess("ground-floor");
   const router = useRouter();
   const [documents, setDocuments] = useState<Record<TilesDoc["doc_type"], TilesDoc[]> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
   const [documentType, setDocumentType] = useState<TilesDoc["doc_type"]>("tiles_quotation");
   const { isPhone, isTablet } = useBp();
   // The tablet shell reserves a 64px navigation rail. At a 768px viewport the
@@ -32,17 +35,31 @@ export default function QuotationTilesList() {
   const compact = isPhone || isTablet;
 
   const load = useCallback(async () => {
-    const [selections, quotations] = await Promise.all([
-      api.get<TilesDoc[]>("/quotations?doc_type=tiles_selection", { floorId: "ground-floor" }),
-      api.get<TilesDoc[]>("/quotations?doc_type=tiles_quotation", { floorId: "ground-floor" }),
-    ]);
-    const newestFirst = (docs: TilesDoc[]) => [...docs].sort(
-      (a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""),
-    );
-    setDocuments({ tiles_selection: newestFirst(selections), tiles_quotation: newestFirst(quotations) });
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [selections, quotations] = await Promise.all([
+        api.get<TilesDoc[]>("/quotations?doc_type=tiles_selection", { floorId: "ground-floor" }),
+        api.get<TilesDoc[]>("/quotations?doc_type=tiles_quotation", { floorId: "ground-floor" }),
+      ]);
+      if (requestId !== requestIdRef.current) return;
+      const newestFirst = (docs: TilesDoc[]) => [...docs].sort(
+        (a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""),
+      );
+      setDocuments({ tiles_selection: newestFirst(selections), tiles_quotation: newestFirst(quotations) });
+    } catch (error: any) {
+      if (requestId !== requestIdRef.current) return;
+      setLoadError(error?.detail || "Couldn't load Ground Floor quotations.");
+    } finally {
+      if (requestId === requestIdRef.current) setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useFocusEffect(useCallback(() => {
+    void load();
+    return () => { requestIdRef.current += 1; };
+  }, [load]));
 
   const openDoc = (doc: TilesDoc) => {
     const route = doc.doc_type === "tiles_selection" ? "selection" : "quotation";
@@ -92,7 +109,14 @@ export default function QuotationTilesList() {
         />
       </View>
 
-      {docs === null ? null : docs.length === 0 ? (
+      {loadError ? (
+        <ErrorState title="Couldn't load quotation tiles" subtitle={loadError} onRetry={() => void load()} />
+      ) : loading && docs === null ? (
+        <View style={styles.loading} accessibilityLiveRegion="polite">
+          <ActivityIndicator color={colors.brand} />
+          <Text style={type.bodyMuted}>Loading quotation tiles…</Text>
+        </View>
+      ) : docs?.length === 0 ? (
         <EmptyState icon="layers" title={`No ${label} yet`} subtitle={`Create a new ${label.slice(0, -1)} to get started.`} />
       ) : (
         <FlatList
@@ -100,7 +124,13 @@ export default function QuotationTilesList() {
           keyExtractor={(d) => d.id}
           contentContainerStyle={{ padding: spacing.lg, gap: 8 }}
           renderItem={({ item }) => (
-            <Pressable style={styles.row} onPress={() => openDoc(item)} testID={`tiles-doc-${item.id}`}>
+            <Pressable
+              style={styles.row}
+              onPress={() => openDoc(item)}
+              testID={`tiles-doc-${item.id}`}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${item.doc_type === "tiles_selection" ? "selection" : "quotation"} ${item.number} for ${item.customer_name || "unnamed customer"}`}
+            >
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ fontSize: 14, fontWeight: "600", color: colors.onSurface }} numberOfLines={1}>
                   {item.customer_name || "Unnamed customer"}
@@ -128,6 +158,7 @@ const styles = StyleSheet.create({
   headerActionsCompact: { flexDirection: "column", alignItems: "stretch", width: "100%" },
   compactAction: { alignSelf: "stretch" },
   filterBar: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.sm, padding: spacing.lg },
   row: {
     flexDirection: "row", alignItems: "center", gap: 10,
     padding: spacing.md, borderRadius: radius.md,

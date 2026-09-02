@@ -261,7 +261,10 @@ async def _brand_groups(quotation: dict, session: Any) -> list[dict]:
     brand_ids = list({p.get("brand_id") for p in products if p.get("brand_id")})
     brands = await db.brands.find({"id": {"$in": brand_ids}}, {"_id": 0}, session=session).to_list(len(brand_ids) + 5)
     brand_by_id = {brand["id"]: brand for brand in brands}
-    suppliers = await db.suppliers.find({"brand_id": {"$in": brand_ids}, "active": True}, {"_id": 0}, session=session).to_list(200)
+    suppliers = await db.suppliers.find(
+        {"brand_id": {"$in": brand_ids}, "floor_id": floor_inherit(quotation), "active": True},
+        {"_id": 0}, session=session,
+    ).to_list(200)
     supplier_by_brand: dict[str, dict] = {}
     for supplier in suppliers:
         supplier_by_brand.setdefault(supplier.get("brand_id"), supplier)

@@ -131,6 +131,24 @@ def _receipt_status(items: list[dict]) -> Optional[str]:
     return None
 
 
+async def _supplier_for_purchase_order(supplier_id: str, po: dict) -> dict:
+    """Resolve a supplier that is valid for this purchase order's floor.
+
+    Supplier ids are globally addressable, so an unscoped lookup can attach a
+    Sanitary dealer to a Ground Floor tile PO. Keep a brand-specific supplier
+    aligned with the PO's brand as well; a supplier without a brand remains a
+    valid general supplier.
+    """
+    supplier = await db.suppliers.find_one(
+        {"id": supplier_id, "floor_id": po.get("floor_id")}, {"_id": 0},
+    )
+    if not supplier:
+        raise HTTPException(status_code=400, detail="Supplier is not available on this floor")
+    if po.get("brand_id") and supplier.get("brand_id") and supplier["brand_id"] != po["brand_id"]:
+        raise HTTPException(status_code=400, detail="Supplier does not match this purchase order's brand")
+    return supplier
+
+
 async def _apply_status_change(
     po: dict, to_status: str, user: UserPublic, note: Optional[str] = None,
 ) -> dict:
@@ -275,7 +293,7 @@ async def update_purchase_order(
     events: list[dict] = []
 
     if body.supplier_id is not None and body.supplier_id != doc.get("supplier_id"):
-        supplier = await db.suppliers.find_one({"id": body.supplier_id}, {"_id": 0}) if body.supplier_id else None
+        supplier = await _supplier_for_purchase_order(body.supplier_id, doc) if body.supplier_id else None
         patch["supplier_id"] = body.supplier_id
         patch["supplier_name"] = supplier.get("name") if supplier else body.supplier_name
         events.append({

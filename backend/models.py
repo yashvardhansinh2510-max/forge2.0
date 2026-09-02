@@ -394,9 +394,19 @@ class ProductCreate(BaseModel):
     sku: str
     brand_id: str
     category_id: str
+    subcategory: Optional[str] = None
+    series: Optional[str] = None
+    collection: Optional[str] = None
+    # A SKU remains its own product record (price, stock, and media are SKU
+    # specific), but these fields place it in the family-first catalog card
+    # used by staff to switch colour/finish without seeing duplicate cards.
+    family_key: Optional[str] = None
+    family_name: Optional[str] = None
     description: Optional[str] = None
     variant_label: Optional[str] = None
     finish: Optional[str] = None
+    finish_code: Optional[str] = None
+    colour: Optional[str] = None
     size: Optional[str] = None
     material: Optional[str] = None
     dimensions: Optional[str] = None

@@ -96,6 +96,22 @@ def test_three_products_in_one_room_share_a_single_detail_page():
     assert pdf_generator._max_item_rows_per_page() == 17
 
 
+def test_sanitary_pdf_uses_persisted_tile_order_within_each_area():
+    """PDF rows must reflect the staff canvas order, not incidental API order."""
+    items = [
+        {"sku": "LAST", "name": "Last", "room": "Master", "sort_order": 30, "qty": 1, "unit_price": 1000},
+        {"sku": "FIRST", "name": "First", "room": "Master", "sort_order": 10, "qty": 1, "unit_price": 1000},
+        {"sku": "MIDDLE", "name": "Middle", "room": "Master", "sort_order": 20, "qty": 1, "unit_price": 1000},
+    ]
+    pages = PdfReader(BytesIO(pdf_generator.build_quotation_pdf(
+        {"customer_name": "Ordered", "items": items, "subtotal": 3000, "grand_total": 3000},
+        {"name": "Ordered"},
+    ))).pages
+    detail = pages[1].extract_text() or ""
+
+    assert detail.index("FIRST") < detail.index("MIDDLE") < detail.index("LAST")
+
+
 def test_sanitary_detail_pages_hold_seventeen_products_and_start_next_area_on_page_four():
     """A room continuation consumes its own pages; a new area never shares one."""
     primary_area = [
@@ -259,8 +275,8 @@ def test_exif_orientation_eight_is_honored_once():
         assert image.size == (120, 60)
 
 
-def test_standard_selection_and_tiles_quotation_pdfs_fill_centered_product_image_frames(monkeypatch):
-    """Every PDF variant uses a centered, full-size product image frame."""
+def test_standard_selection_and_tiles_quotation_pdfs_use_their_intended_image_treatment(monkeypatch):
+    """Sanitary pages contain sparse-row images; tile documents retain cover."""
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
     original_img = pdf_generator._img
     rendered_sizes: list[tuple[float, float]] = []
@@ -293,16 +309,51 @@ def test_standard_selection_and_tiles_quotation_pdfs_fill_centered_product_image
     assert pdf_tiles.build_tiles_quotation_pdf(tiles, {"name": "PDF Test"}).startswith(b"%PDF-")
     assert len(rendered_sizes) == 3
     assert requested_boxes == [
-        (14.0, pdf_generator._item_row_height_mm(1) - 1.0),
+        (14.0, pdf_generator.MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM),
         (pdf_tiles.SELECTION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.SELECTION_PRODUCT_IMAGE_HEIGHT_MM),
         (pdf_tiles.QUOTATION_PRODUCT_IMAGE_WIDTH_MM, pdf_tiles.QUOTATION_PRODUCT_IMAGE_HEIGHT_MM),
     ]
     assert all(width > 0 and height > 0 for width, height in rendered_sizes)
-    assert cover_values == [True, True, True]
+    assert cover_values == [False, True, True]
+    # The sanitary product is contained (not cropped) in the capped sparse
+    # frame. Tile document frames intentionally remain cover treatments.
+    assert rendered_sizes[0][0] <= requested_boxes[0][0] * pdf_generator.mm
+    assert rendered_sizes[0][1] <= requested_boxes[0][1] * pdf_generator.mm
     assert all(
         (width, height) == (box_width * pdf_generator.mm, box_height * pdf_generator.mm)
-        for (width, height), (box_width, box_height) in zip(rendered_sizes, requested_boxes, strict=True)
+        for (width, height), (box_width, box_height) in zip(rendered_sizes[1:], requested_boxes[1:], strict=True)
     )
+
+
+@pytest.mark.parametrize("count", [2, 3])
+def test_sparse_sanitary_pages_cap_and_contain_product_images(monkeypatch, count):
+    """A large sparse-row box must never crop a product into a thin strip."""
+    monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(140, 80))
+    images = []
+    original_img = pdf_generator._img
+
+    def capture_img(*args, **kwargs):
+        image = original_img(*args, **kwargs)
+        images.append((image, kwargs))
+        return image
+
+    monkeypatch.setattr(pdf_generator, "_img", capture_img)
+    items = [
+        {"image": f"https://example.test/{index}.png", "sku": f"SPARSE-{index}", "name": "Mixer", "room": "Bath", "qty": 1, "unit_price": 1000}
+        for index in range(count)
+    ]
+    pdf_generator.build_quotation_pdf(
+        {"customer_name": "Sparse", "items": items, "subtotal": count * 1000, "grand_total": count * 1000},
+        {"name": "Sparse"},
+    )
+
+    assert len(images) == count
+    expected_height = pdf_generator.MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM
+    for image, kwargs in images:
+        assert kwargs["cover"] is False
+        assert kwargs["height_mm"] == expected_height
+        assert image.drawWidth < 14 * pdf_generator.mm
+        assert image.drawHeight < expected_height * pdf_generator.mm
 
 
 def test_every_quotation_pdf_is_landscape_a4(monkeypatch):

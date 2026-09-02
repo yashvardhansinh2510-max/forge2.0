@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
+import { toast } from "@/src/components/Toast";
 import { productImageList } from "@/src/components/quotation/helpers/media";
 import type { Product } from "@/src/components/quotation/helpers/types";
 import { colors, money, radius, spacing } from "@/src/theme/tokens";
@@ -48,6 +49,7 @@ export function TilesProductPicker({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const requestId = useRef(0);
   const openedRef = useRef(false);
 
@@ -55,6 +57,7 @@ export function TilesProductPicker({
     const id = ++requestId.current;
     if (skip === 0) setLoading(true);
     else setLoadingMore(true);
+    if (skip === 0) setLoadError(null);
     try {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), skip: String(skip), sort: "popular" });
       if (q.trim()) params.set("q", q.trim());
@@ -63,8 +66,10 @@ export function TilesProductPicker({
       const items = res.items || [];
       setResults((current) => skip === 0 ? items : [...current, ...items.filter((item) => !current.some((x) => x.id === item.id))]);
       setTotal(res.total || 0);
-    } catch {
-      if (id === requestId.current && skip === 0) { setResults([]); setTotal(0); }
+    } catch (error: any) {
+      if (id === requestId.current) {
+        setLoadError(error?.detail || "Could not load the tile catalog. Check your connection and try again.");
+      }
     } finally {
       if (id === requestId.current) { setLoading(false); setLoadingMore(false); }
     }
@@ -161,7 +166,9 @@ export function TilesProductPicker({
                   // sibling product, so adding it updates all tile attributes.
                   const resolution = await api.get<{ product: Product }>(`/products/${item.id}/size-variants?size=${encodeURIComponent(size)}`, { floorId: "ground-floor" });
                   await pick(resolution.product, false);
-                } catch { /* Keep the catalog open if a size is unavailable. */ }
+                } catch (error: any) {
+                  toast.error(error?.detail || "That tile size could not be loaded. Please try again.");
+                }
               })()}
             />
           )}
@@ -173,9 +180,23 @@ export function TilesProductPicker({
           onEndReachedThreshold={0.5}
           onScroll={(event) => { if (isNearScrollEnd(event.nativeEvent, 0.5)) loadMore(); }}
           scrollEventThrottle={50}
-          ListEmptyComponent={!loading ? <Text style={styles.empty}>No tiles match “{query}”. Try another search.</Text> : null}
+          ListEmptyComponent={!loading && !loadError ? <Text style={styles.empty}>No tiles match “{query}”. Try another search.</Text> : null}
           ListFooterComponent={loadingMore ? <ActivityIndicator style={{ paddingVertical: spacing.lg }} color={colors.brand} /> : null}
         />
+        {loadError ? (
+          <View style={styles.errorNotice} accessibilityLiveRegion="polite">
+            <Text style={styles.errorText}>{loadError}</Text>
+            <Pressable
+              onPress={() => void search(query)}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading tile catalog"
+              style={styles.retryButton}
+            >
+              <Feather name="refresh-cw" size={14} color={colors.error} />
+              <Text style={styles.retryText}>Retry</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </SafeAreaView>
     </Modal>
   );
@@ -256,4 +277,8 @@ const styles = StyleSheet.create({
   price: { flex: 1, minWidth: 0, fontSize: 12, fontWeight: "700", color: colors.onSurface, fontVariant: ["tabular-nums"] },
   add: { width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center", backgroundColor: colors.brand },
   empty: { padding: spacing.xl, color: colors.onSurfaceMuted, fontSize: 14, textAlign: "center" },
+  errorNotice: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginHorizontal: spacing.lg, marginBottom: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.errorBg },
+  errorText: { flex: 1, color: colors.error, fontSize: 13 },
+  retryButton: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: spacing.sm },
+  retryText: { color: colors.error, fontSize: 13, fontWeight: "700" },
 });

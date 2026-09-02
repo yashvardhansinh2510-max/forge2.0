@@ -104,8 +104,8 @@ export function computeTotals(
 // the old pattern (`finish || color || size || sku`) picked only ONE of
 // them, silently dropping the other. Returns "" (never a fallback to sku)
 // so callers decide their own sku fallback explicitly.
-export function variantDescriptor(v: { finish?: string | null; size?: string | null; color?: string | null }): string {
-  return [v.finish, v.size, v.color].filter((part): part is string => !!part).join(" · ");
+export function variantDescriptor(v: { finish?: string | null; size?: string | null; colour?: string | null; color?: string | null }): string {
+  return [v.finish, v.size, v.colour ?? v.color].filter((part): part is string => !!part).join(" · ");
 }
 
 // Approximate swatch colour from a finish label. Kept deliberately small — we

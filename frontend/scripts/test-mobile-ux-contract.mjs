@@ -13,6 +13,11 @@ assert.match(adminShell, /styles\.notebookPhoneBar/);
 assert.match(adminShell, /bottom-nav-notebook-workspace/);
 assert.doesNotMatch(adminShell, /bottom-fab-new-quotation[\s\S]{0,600}contextualNotebookTabs/);
 
+const permissions = read("../src/hooks/use-permissions.ts");
+assert.match(permissions, /tiles:\s*"tiles"/);
+const accessProfiles = read("../src/access-profiles.ts");
+assert.match(accessProfiles, /tiles:\s*"\/\(admin\)\/tiles"/);
+
 const phoneSafeAreaRoutes = [
   "../app/(admin)/payments.tsx",
   "../app/(admin)/payments-list.tsx",
@@ -47,6 +52,11 @@ assert.match(tileMovementSheets, /import \{ Sheet \} from "@\/src\/design\/compo
 assert.doesNotMatch(tileMovementSheets, /\bModal\b/);
 assert.match(tileMovementSheets, /footer=\{<SheetFooter/);
 assert.match(tileMovementSheets, /accessibilityLabel=\{`Enter quantity for \$\{name\}`\}/);
+
+const tilesPicker = read("../src/components/tiles/TilesProductPicker.tsx");
+assert.match(tilesPicker, /Could not load the tile catalog/);
+assert.match(tilesPicker, /Retry loading tile catalog/);
+assert.doesNotMatch(tilesPicker, /setResults\(\[\]\); setTotal\(0\);/);
 
 const purchases = read("../app/(admin)/purchases.tsx");
 assert.match(purchases, /import \{ Sheet \} from "@\/src\/design\/components"/);

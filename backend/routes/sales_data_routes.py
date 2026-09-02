@@ -1,7 +1,7 @@
 """Sales Data dashboard (owner/admin only) — revenue by floor, by
-architect/interior-designer referrer, and by brand. Reads only `won`
-quotations, matching the revenue definition already used by
-/dashboard/stats. Aggregation happens in Python over an in-memory list —
+architect/interior-designer referrer, and by brand. Revenue comes from the
+current `ordered` workflow state, plus legacy `won` records that pre-date
+that state. Aggregation happens in Python over an in-memory list —
 matches the existing dashboard_routes.py convention — rather than a Mongo
 pipeline, since won-quotation volume stays small and this is far easier to
 unit-test against the codebase's existing fake-db pattern. See
@@ -22,6 +22,7 @@ from services.pricing import per_line_net_amounts
 router = APIRouter(prefix="/sales-data", tags=["sales-data"])
 
 Granularity = Literal["day", "month", "quarter", "year"]
+CONFIRMED_STATUSES = ("ordered", "won")
 
 
 def _bucket_label(iso_ts: str, granularity: Granularity) -> str:
@@ -60,10 +61,24 @@ def _resolve_floor_ids(user: UserPublic, floor_id: Optional[str]) -> Optional[li
     return None
 
 
-async def _won_quotations(
+def _revenue_timestamp(quotation: dict) -> Optional[str]:
+    """Return the immutable revenue date, with a legacy compatibility path.
+
+    New orders are always dated from their write-once ``ordered_at`` value.
+    Historic ``won`` documents pre-date that field, so retaining their
+    existing ``updated_at`` date avoids silently dropping prior revenue while
+    those records are migrated. New reporting must never use ``updated_at``
+    for an ``ordered`` document.
+    """
+    if quotation.get("status") == "ordered":
+        return quotation.get("ordered_at")
+    return quotation.get("updated_at") or quotation.get("created_at")
+
+
+async def _confirmed_quotations(
     floor_ids: Optional[list[str]], date_from: Optional[str], date_to: Optional[str],
 ) -> list[dict]:
-    query: dict = {"status": "won"}
+    query: dict = {"status": {"$in": list(CONFIRMED_STATUSES)}}
     if floor_ids is not None:
         query["floor_id"] = {"$in": floor_ids}
     if date_from or date_to:
@@ -72,7 +87,13 @@ async def _won_quotations(
             rng["$gte"] = date_from
         if date_to:
             rng["$lte"] = date_to
-        query["updated_at"] = rng
+        # Keep the date predicate aligned with the status that produced the
+        # revenue. This allows old records to remain visible without letting
+        # an edit move a current order into a different reporting period.
+        query["$or"] = [
+            {"status": "ordered", "ordered_at": rng},
+            {"status": "won", "updated_at": rng},
+        ]
     return await db.quotations.find(query, {"_id": 0}).to_list(10000)
 
 
@@ -86,7 +107,7 @@ async def sales_overview(
     user: UserPublic = Depends(require_roles("owner", "admin")),
 ):
     floor_ids = _resolve_floor_ids(user, floor_id)
-    quotations = await _won_quotations(floor_ids, date_from, date_to)
+    quotations = await _confirmed_quotations(floor_ids, date_from, date_to)
 
     if referrer_type:
         quotations = [q for q in quotations if q.get("referrer_type") == referrer_type]
@@ -100,7 +121,7 @@ async def sales_overview(
 
     trend_map: dict[str, float] = defaultdict(float)
     for q in quotations:
-        ts = q.get("updated_at") or q.get("created_at")
+        ts = _revenue_timestamp(q)
         if ts:
             trend_map[_bucket_label(ts, granularity)] += q.get("grand_total", 0)
     trend = [{"bucket": k, "revenue": round(v, 2)} for k, v in sorted(trend_map.items())]
@@ -140,7 +161,7 @@ async def referrer_detail(
     user: UserPublic = Depends(require_roles("owner", "admin")),
 ):
     floor_ids = _resolve_floor_ids(user, floor_id)
-    quotations = await _won_quotations(floor_ids, date_from, date_to)
+    quotations = await _confirmed_quotations(floor_ids, date_from, date_to)
     quotations = [q for q in quotations if q.get("referrer_id") == referrer_id]
 
     referrer = await db.referrers.find_one({"id": referrer_id}, {"_id": 0})
@@ -159,7 +180,7 @@ async def referrer_detail(
 
     trend_map: dict[str, float] = defaultdict(float)
     for q in quotations:
-        ts = q.get("updated_at") or q.get("created_at")
+        ts = _revenue_timestamp(q)
         if ts:
             trend_map[_bucket_label(ts, granularity)] += q.get("grand_total", 0)
     trend = [{"bucket": k, "revenue": round(v, 2)} for k, v in sorted(trend_map.items())]
@@ -168,7 +189,7 @@ async def referrer_detail(
         (
             {
                 "id": q["id"], "number": q["number"], "customer_name": q["customer_name"],
-                "grand_total": q.get("grand_total", 0), "updated_at": q.get("updated_at"),
+                "grand_total": q.get("grand_total", 0), "updated_at": _revenue_timestamp(q),
             }
             for q in quotations
         ),
@@ -200,7 +221,7 @@ async def brands_ranked(
     user: UserPublic = Depends(require_roles("owner", "admin")),
 ):
     floor_ids = _resolve_floor_ids(user, floor_id)
-    quotations = await _won_quotations(floor_ids, date_from, date_to)
+    quotations = await _confirmed_quotations(floor_ids, date_from, date_to)
 
     product_ids = {it["product_id"] for q in quotations for it in q.get("items", [])}
     product_brand = await _product_brand_map(product_ids)
@@ -239,7 +260,7 @@ async def brand_detail(
     user: UserPublic = Depends(require_roles("owner", "admin")),
 ):
     floor_ids = _resolve_floor_ids(user, floor_id)
-    quotations = await _won_quotations(floor_ids, date_from, date_to)
+    quotations = await _confirmed_quotations(floor_ids, date_from, date_to)
 
     product_ids = {it["product_id"] for q in quotations for it in q.get("items", [])}
     product_brand = await _product_brand_map(product_ids)
@@ -259,7 +280,7 @@ async def brand_detail(
     product_revenue: dict[str, dict] = {}
     total = 0.0
     for q in quotations:
-        ts = q.get("updated_at") or q.get("created_at")
+        ts = _revenue_timestamp(q)
         line_nets = per_line_net_amounts(q)
         for it in q.get("items", []):
             if it["product_id"] not in ids_for_brand:

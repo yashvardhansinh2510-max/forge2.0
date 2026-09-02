@@ -78,6 +78,12 @@ MAX_ITEM_ROWS_PER_PAGE = 17
 PRODUCT_IMAGE_ASPECT_RATIO = 16 / 10
 STANDARD_PRODUCT_IMAGE_WIDTH_MM = 16.0
 STANDARD_PRODUCT_IMAGE_HEIGHT_MM = STANDARD_PRODUCT_IMAGE_WIDTH_MM / PRODUCT_IMAGE_ASPECT_RATIO
+# Sparse detail pages deliberately stretch their *rows* to use the available
+# print space.  Their image column must not follow suit: a two-item page would
+# otherwise turn a 14 mm-wide image frame into a ~65 mm tall crop, leaving
+# landscape products as an unrecognisable sliver.  This is a display cap, not
+# a pagination constraint; the table row still owns the full page height.
+MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM = 18.0
 # This is the minimum row height used for capacity calculation.  Actual rows
 # are expanded per page to occupy all usable space.
 ITEM_ROW_MM = 14.0
@@ -440,9 +446,25 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     story: list[Flowable] = []
     created = _format_pdf_date(quotation.get("created_at"))
     room_order = list(quotation.get("rooms") or [])
-    grouped: dict[str, list[dict]] = defaultdict(list)
-    for item in quotation.get("items", []):
-        grouped[item.get("room") or "General"].append(item)
+    grouped_with_position: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+    for source_position, item in enumerate(quotation.get("items", [])):
+        grouped_with_position[item.get("room") or "General"].append((source_position, item))
+
+    def _item_sort_key(entry: tuple[int, dict]) -> tuple[int, int]:
+        """Respect staff drag/drop order without letting malformed values shuffle a page."""
+        source_position, item = entry
+        try:
+            return int(item.get("sort_order", source_position)), source_position
+        except (TypeError, ValueError):
+            return source_position, source_position
+
+    # Products always stay with their selected room (mixing bathrooms simply
+    # to fill a page made the document harder to read), while order inside the
+    # room follows the persisted canvas order rather than incidental API order.
+    grouped: dict[str, list[dict]] = {
+        room: [item for _, item in sorted(entries, key=_item_sort_key)]
+        for room, entries in grouped_with_position.items()
+    }
     for room in grouped:
         if room not in room_order:
             room_order.append(room)
@@ -624,7 +646,14 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             item_row_mm = _item_row_height_mm(n_data_rows)
             # Table padding consumes 3 mm on each side of the image column.
             image_width_mm = item_widths[1] / mm - 6
-            image_height_mm = max(2.0, item_row_mm - 1.0)
+            # Keep the entire product visible and centre it inside a bounded
+            # frame.  The old `cover=True` frame grew with sparse rows, which
+            # aggressively cropped both portrait and landscape products when
+            # an area had only two or three selections.
+            image_height_mm = min(
+                MAX_SPARSE_PAGE_IMAGE_HEIGHT_MM,
+                max(2.0, item_row_mm - 1.0),
+            )
             rows: list[list[object]] = [item_header]
             for offset_in_block, item in enumerate(block):
                 sr_no = sr_offset + offset_in_block + 1
@@ -643,7 +672,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                         Paragraph(str(sr_no), styles["cellCenter"]), _img(
                             item.get("image"),
                             width_mm=image_width_mm, height_mm=image_height_mm,
-                            cover=True,
+                            cover=False,
                         ),
                         Paragraph(_ellipsize(item.get("sku"), 20), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
                         Paragraph(_money(listed_mrp), styles["itemCenter"]), Paragraph(f"{qty:g}", styles["itemCenter"]),
@@ -653,7 +682,7 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
                 else:
                     rows.append([
                         Paragraph(str(sr_no), styles["cellCenter"]), _img(
-                            item.get("image"), width_mm=image_width_mm, height_mm=image_height_mm, cover=True,
+                            item.get("image"), width_mm=image_width_mm, height_mm=image_height_mm, cover=False,
                         ),
                         Paragraph(_ellipsize(item.get("sku"), 20), styles["itemCenter"]), Paragraph(description, styles["itemText"]),
                         Paragraph(_money(base_rate), styles["itemCenter"]), Paragraph(f"{qty:g}", styles["itemCenter"]),

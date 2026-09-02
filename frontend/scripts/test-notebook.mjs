@@ -41,10 +41,15 @@ const quotationFollowUp = await import("node:fs/promises").then(({ readFile }) =
 const legacyView = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/(admin)/notebook/[floor]/[view].tsx", import.meta.url), "utf8"));
 const notebookScreen = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../src/components/notebook/NotebookScreen.tsx", import.meta.url), "utf8"));
 assert.match(notebookRoot, /NotebookScreen/);
+assert.match(notebookRoot, /useRequireFloorAccess/);
 assert.doesNotMatch(notebookRoot, /WalkInsScreen|walkins/);
 assert.match(quotationFollowUp, /NotebookScreen/);
+assert.match(quotationFollowUp, /useRequireFloorAccess/);
 assert.doesNotMatch(quotationFollowUp, /WalkInsScreen|walkins/);
 assert.match(notebookScreen, /notebookApi\.list/);
+assert.match(notebookScreen, /requestIdRef/);
+assert.match(notebookScreen, /requestId !== requestIdRef\.current/);
+assert.match(notebookScreen, /accessibilityLabel=\{`Edit \$\{column\.label\} for \$\{row\.customer_name\}`\}/);
 assert.match(notebookScreen, /notebookApi\.patch/);
 assert.match(notebookScreen, /notebookApi\.convert/);
 assert.match(notebookScreen, /BottomSheet/);
