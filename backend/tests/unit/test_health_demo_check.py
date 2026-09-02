@@ -33,7 +33,7 @@ def test_health_ok_when_no_demo_accounts_detected(monkeypatch):
     monkeypatch.setattr(server, "_check_demo_accounts", _no_matches)
 
     result = asyncio.run(server.health())
-    assert result == {"status": "ok"}
+    assert result == {"status": "ok", "pdf_renderer_revision": server.PDF_RENDERER_REVISION}
 
 
 def test_health_degraded_when_demo_account_still_on_default_password(monkeypatch):
@@ -55,7 +55,7 @@ def test_readiness_stays_ok_when_health_only_has_a_security_warning(monkeypatch)
     monkeypatch.setattr(server, "db", _FakeDb())
 
     result = asyncio.run(server.readiness())
-    assert result == {"status": "ok"}
+    assert result == {"status": "ok", "pdf_renderer_revision": server.PDF_RENDERER_REVISION}
 
 
 def test_health_demo_check_is_ttl_cached(monkeypatch):
@@ -82,4 +82,4 @@ def test_startup_bootstrap_result_primes_health_demo_cache(monkeypatch):
     monkeypatch.setattr(server, "_check_demo_accounts", _should_not_run)
     monkeypatch.setattr(server, "db", _FakeDb())
 
-    assert asyncio.run(server.health()) == {"status": "ok"}
+    assert asyncio.run(server.health()) == {"status": "ok", "pdf_renderer_revision": server.PDF_RENDERER_REVISION}

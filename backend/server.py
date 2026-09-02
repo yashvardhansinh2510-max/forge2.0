@@ -68,6 +68,11 @@ from migrations.runner import pending_migrations, run_migrations  # noqa: E402
 from services.followup_engine import reconcile_followups  # noqa: E402
 from services.floor_scope import ensure_floor_scope  # noqa: E402
 
+
+# A non-sensitive marker used by the public health probe to verify that the
+# deployed service includes the current quotation-PDF renderer behaviour.
+PDF_RENDERER_REVISION = "sparse-contain-column-v1"
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 logger = logging.getLogger("forge")
 
@@ -294,7 +299,7 @@ async def health():
     if demo_accounts:
         logger.critical("Production demo credentials detected for %d account(s)", len(demo_accounts))
         return JSONResponse(status_code=503, content={"status": "degraded", "reasons": ["unsafe demo credentials detected"]})
-    return {"status": "ok"}
+    return {"status": "ok", "pdf_renderer_revision": PDF_RENDERER_REVISION}
 
 
 @api.get("/health/ready", include_in_schema=False)
@@ -317,7 +322,7 @@ async def readiness():
         await supabase_ready()
     except Exception:  # noqa: BLE001
         return JSONResponse(status_code=503, content={"status": "error", "detail": "database unavailable"})
-    return {"status": "ok"}
+    return {"status": "ok", "pdf_renderer_revision": PDF_RENDERER_REVISION}
 
 
 # Feature routers
