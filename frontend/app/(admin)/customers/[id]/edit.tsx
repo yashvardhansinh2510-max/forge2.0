@@ -37,7 +37,7 @@ type Customer = {
 export default function EditCustomer() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { isPhone } = useBp();
+  const { isPhone, gutter } = useBp();
   const { staff } = useAuth();
 
   const [loaded, setLoaded] = useState(false);
@@ -187,7 +187,7 @@ export default function EditCustomer() {
         keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
       >
         <ScrollView
-          contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}
+          contentContainerStyle={{ width: "100%", maxWidth: 720, alignSelf: "center", paddingHorizontal: gutter, paddingTop: isPhone ? spacing.lg : spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}
           keyboardShouldPersistTaps="handled"
         >
           <TextField
@@ -211,7 +211,7 @@ export default function EditCustomer() {
           <TextField label="City" value={city} onChangeText={setCity} testID="edit-customer-city" />
           <TextField label="Property / project" value={propertyName} onChangeText={setPropertyName} placeholder="e.g. Riverfront Residence" testID="edit-customer-property-name" />
           <TextField label="Address" value={address} onChangeText={setAddress} multiline numberOfLines={3} style={{ minHeight: 72, textAlignVertical: "top" }} testID="edit-customer-address" />
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <View style={{ flexDirection: isPhone ? "column" : "row", gap: spacing.sm }}>
             <TextField label="State" value={stateField} onChangeText={setStateField} containerStyle={{ flex: 1 }} testID="edit-customer-state" />
             <TextField label="Pincode" value={pincode} onChangeText={setPincode} keyboardType="number-pad" containerStyle={{ flex: 1 }} testID="edit-customer-pincode" />
           </View>
@@ -221,7 +221,7 @@ export default function EditCustomer() {
 
           <View style={{ gap: 6 }}>
             <Text style={type.label}>Tier</Text>
-            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
               {(["retail", "trade", "vip"] as Tier[]).map((t) => (
                 <Chip key={t} label={t.charAt(0).toUpperCase() + t.slice(1)} active={tier === t} onPress={() => setTier(t)} testID={`edit-customer-tier-${t}`} />
               ))}

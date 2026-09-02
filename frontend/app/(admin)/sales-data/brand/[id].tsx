@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { api } from "@/src/api/client";
@@ -8,7 +8,8 @@ import {
   EmptyState, ErrorState, LoadingState, PillTabs, Table, TableCell, TableHeader, TableRow,
 } from "@/src/components/ui";
 import { fmtMoney } from "@/src/design/tokens";
-import { spacing } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
+import { colors, spacing, type } from "@/src/theme/tokens";
 import { TrendChart } from "@/src/components/salesData/TrendChart";
 import {
   DATE_PRESET_LABEL, DatePreset, Granularity, presetToRange,
@@ -27,6 +28,7 @@ export default function BrandDetail() {
   const [granularity, setGranularity] = useState<Granularity>("month");
   const [data, setData] = useState<BrandDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { isPhone } = useBp();
 
   const { date_from, date_to } = presetToRange(preset);
 
@@ -67,7 +69,16 @@ export default function BrandDetail() {
           {data.top_products.length === 0 ? (
             <EmptyState title="No product revenue in this range" />
           ) : (
-            <Table>
+            isPhone ? (
+              <View style={{ gap: spacing.xs }}>
+                {data.top_products.map((p) => (
+                  <View key={p.product_id} testID={`brand-product-row-${p.product_id}`} style={{ minHeight: 56, paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                    <View style={{ flex: 1, minWidth: 0, gap: 2 }}><Text style={type.bodyStrong} numberOfLines={2}>{p.name}</Text><Text style={[type.caption, { color: colors.onSurfaceMuted }]}>{p.sku || "No SKU"}</Text></View>
+                    <Text style={[type.bodyStrong, { fontVariant: ["tabular-nums"] }]}>₹{fmtMoney(p.revenue)}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : <Table>
               <TableHeader columns={[
                 { label: "Product", flex: 2 }, { label: "SKU", flex: 1 }, { label: "Revenue", align: "right" },
               ]} />

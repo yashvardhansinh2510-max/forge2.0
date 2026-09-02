@@ -4,11 +4,13 @@ import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { api } from "@/src/api/client";
 import { Button, Sheet } from "@/src/components/ui";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 type Referrer = { id: string; name: string; type: "architect" | "interior_designer" };
 type ReferrerValue = Pick<Referrer, "id" | "name" | "type"> | null;
 
 export function ReferrerField({ value, onChange }: { value: ReferrerValue; onChange: (value: ReferrerValue) => void }) {
+  const { isPhone } = useBp();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Referrer[]>([]);
   const [kind, setKind] = useState<Referrer["type"]>("architect");
@@ -34,8 +36,8 @@ export function ReferrerField({ value, onChange }: { value: ReferrerValue; onCha
       <Text style={type.body}>{value?.name || "Select architect or interior designer"}</Text>
     </Pressable>
     <Sheet visible={open} onClose={() => setOpen(false)} title="Referred By" variant="bottom" testID="customer-referrer-sheet">
-      <ScrollView contentContainerStyle={{ padding: spacing.lg, gap: spacing.sm }} keyboardShouldPersistTaps="handled">
-        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+      <ScrollView contentContainerStyle={{ padding: isPhone ? spacing.md : spacing.lg, gap: spacing.sm, paddingBottom: spacing.xxl }} keyboardShouldPersistTaps="handled">
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
           {(["architect", "interior_designer"] as const).map((option) => <Button key={option} label={option === "architect" ? "Architect" : "Interior designer"} variant={kind === option ? "primary" : "secondary"} onPress={() => setKind(option)} />)}
         </View>
         <Pressable onPress={() => choose(null)} style={{ paddingVertical: spacing.sm }}><Text style={type.body}>No referrer</Text></Pressable>

@@ -50,9 +50,14 @@ def can_move_to_quotation(doc_type: str, status: str) -> bool:
 
 
 def can_place_order(doc_type: str, status: str) -> bool:
-    """A tiles quotation must be Confirmed (status=="approved") before
-    Place Order is allowed — the workflow's "Confirmation" stage. Standard
-    (non-tiles) quotations are untouched by this gate."""
+    """Only a confirmed tile quotation can create an order.
+
+    A ``tiles_selection`` is deliberately not an orderable document: it must
+    first be moved into a tile quotation, then confirmed. Standard
+    (non-tiles) quotations retain their established lifecycle.
+    """
+    if doc_type == "tiles_selection":
+        return False
     if doc_type != "tiles_quotation":
         return True
     return status == "approved"

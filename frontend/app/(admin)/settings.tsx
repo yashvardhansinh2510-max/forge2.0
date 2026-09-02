@@ -9,6 +9,7 @@ import { Avatar, Card } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
 import { brand, colors, radius, roleLabels, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 type SessionInfo = {
   id: string; device_label?: string | null; login_method: string;
@@ -17,6 +18,7 @@ type SessionInfo = {
 
 export default function Settings() {
   const { staff, logout } = useAuth();
+  const { isPhone } = useBp();
   const router = useRouter();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
@@ -128,12 +130,15 @@ export default function Settings() {
                 <Feather name={it.icon} size={14} color={colors.onSurfaceMuted} />
               </View>
               <Text style={[type.bodyMuted, { flex: 1 }]}>{it.label}</Text>
-              <Text style={{
+              <Text numberOfLines={isPhone ? 2 : 1} style={[
+                styles.rowValue,
+                {
                 fontSize: 14,
                 fontFamily: type.bodyStrong.fontFamily,
                 fontWeight: "500",
                 color: colors.onSurface,
-              }}>{it.value || "—"}</Text>
+                },
+              ]}>{it.value || "—"}</Text>
             </View>
           ))}
         </Card>
@@ -270,6 +275,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: 14,
   },
+  // Account/company values are user-controlled. Constrain their column so a
+  // long email or organisation name never pushes the label/icon off a phone.
+  rowValue: { flexShrink: 1, maxWidth: "58%", textAlign: "right" },
   itemIcon: {
     width: 32, height: 32, borderRadius: 10,
     backgroundColor: colors.surfaceTertiary,

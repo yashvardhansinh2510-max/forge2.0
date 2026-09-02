@@ -48,6 +48,12 @@ def test_can_place_order_gates_tiles_quotation_on_confirmed_status():
     assert can_place_order("tiles_quotation", "pending_approval") is False
 
 
+@pytest.mark.parametrize("status", ["draft", "pending_approval", "approved"])
+def test_can_place_order_never_allows_a_tiles_selection(status):
+    """Selections must go through Move to Quotation before order placement."""
+    assert can_place_order("tiles_selection", status) is False
+
+
 def test_can_place_order_never_gates_standard_quotations():
     # Regression guard: the new Confirmed-status gate must not change
     # behavior for the existing sanitaryware quotation flow.

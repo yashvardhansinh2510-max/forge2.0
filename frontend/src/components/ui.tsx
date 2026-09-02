@@ -460,14 +460,15 @@ export function SectionHeader({
   title: string; subtitle?: string; right?: React.ReactNode;
   tone?: "default" | "compact";
 }) {
+  const { isPhone } = useBp();
   const titleStyle = tone === "compact" ? type.titleMd : type.titleLg;
   return (
-    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: spacing.md, gap: spacing.md }}>
+    <View style={{ flexDirection: isPhone ? "column" : "row", justifyContent: "space-between", alignItems: isPhone ? "stretch" : "flex-end", marginBottom: spacing.md, gap: spacing.md }}>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={titleStyle} numberOfLines={2}>{title}</Text>
         {subtitle ? <Text style={[type.bodyMuted, { marginTop: 2 }]} numberOfLines={2}>{subtitle}</Text> : null}
       </View>
-      {right}
+      {right ? <View style={isPhone ? { alignSelf: "stretch" } : undefined}>{right}</View> : null}
     </View>
   );
 }
@@ -477,9 +478,10 @@ export function ScreenTitle({
 }: {
   title: string; subtitle?: string | null; right?: React.ReactNode; back?: () => void;
 }) {
+  const { isPhone } = useBp();
   return (
     <View style={{
-      flexDirection: "row", alignItems: "center", gap: spacing.md,
+      flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.md,
       paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md,
       backgroundColor: colors.surface,
     }}>
@@ -488,7 +490,7 @@ export function ScreenTitle({
         <Text numberOfLines={2} style={type.displayMd}>{title}</Text>
         {subtitle ? <Text numberOfLines={2} style={[type.bodyMuted, { marginTop: 2 }]}>{subtitle}</Text> : null}
       </View>
-      {right}
+      {right ? <View style={isPhone ? { width: "100%", alignItems: "flex-start" } : undefined}>{right}</View> : null}
     </View>
   );
 }
@@ -863,6 +865,7 @@ export function ListRow({
   isFirst?: boolean;
   isLast?: boolean;
 }) {
+  const { isPhone } = useBp();
   return (
     <Pressable
       testID={testID}
@@ -880,16 +883,16 @@ export function ListRow({
     >
       {leading}
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-        <Text numberOfLines={1} style={{
+        <Text numberOfLines={isPhone ? 2 : 1} style={{
           fontSize: 15,
           fontFamily: type.titleMd.fontFamily,
           fontWeight: "600",
           color: colors.onSurface,
           letterSpacing: -0.1,
         }}>{title}</Text>
-        {subtitle ? <Text numberOfLines={1} style={type.caption}>{subtitle}</Text> : null}
+        {subtitle ? <Text numberOfLines={isPhone ? 2 : 1} style={type.caption}>{subtitle}</Text> : null}
       </View>
-      <View style={{ alignItems: "flex-end", gap: 4 }}>
+      <View style={{ alignItems: "flex-end", gap: 4, flexShrink: 0, maxWidth: isPhone ? "42%" : undefined }}>
         {meta ? <Text style={{
           fontSize: 14,
           fontFamily: type.titleMd.fontFamily,

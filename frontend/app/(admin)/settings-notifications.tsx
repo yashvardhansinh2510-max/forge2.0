@@ -23,9 +23,9 @@ function IntegrationRow({ icon, name, status, ok, note }: { icon: any; name: str
       <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" }}>
         <Feather name={icon} size={15} color={colors.onSurfaceMuted} />
       </View>
-      <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-          <Text style={type.bodyStrong}>{name}</Text>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 4 }}>
+          <Text style={[type.bodyStrong, { flexShrink: 1 }]}>{name}</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
             <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: ok ? colors.success : colors.onSurfaceMuted }} />
             <Text style={type.caption}>{status}</Text>
@@ -63,8 +63,8 @@ export default function SettingsNotifications() {
           ) : (
             rules.map((r, i) => (
               <View key={r.rule_type} style={{ paddingTop: i === 0 ? spacing.sm : 0, borderTopWidth: i === 0 ? 0 : 1, borderTopColor: colors.divider, paddingVertical: 8 }}>
-                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                  <Text style={type.bodyStrong}>{r.label}</Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 4 }}>
+                  <Text style={[type.bodyStrong, { flexShrink: 1 }]}>{r.label}</Text>
                   <Text style={[type.caption, { fontWeight: "700" }]}>{r.active_count} active</Text>
                 </View>
                 <Text style={type.caption}>{r.description}</Text>

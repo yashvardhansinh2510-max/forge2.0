@@ -265,41 +265,60 @@ def _meta_grid(quotation: dict, customer: dict, styles: dict) -> Table:
     return table
 
 
-def _brand_terms_signature_block(styles: dict, branding: dict) -> list:
-    """Terms, contact line and customer signature box."""
+def _brand_terms_signature_block(styles: dict, branding: dict, *, density: str = "standard") -> list:
+    """Terms, contact line and customer signature box.
+
+    Selection covers have room to breathe, while quotation covers also carry
+    a price summary.  A single fixed vertical rhythm made the latter taller
+    than the printable frame and ReportLab consequently clipped its masthead.
+    Keep every required cover section, but use a compact quotation rhythm.
+    """
+    compact = density == "compact"
+    airy = density == "airy"
+    partner_gap = 0.8 if compact else 1.5
+    after_partner_gap = 2.0 if compact else (6.0 if airy else 4.0)
+    before_terms_gap = 0.5 if compact else 1.0
+    after_terms_gap = 0.6 if compact else (2.0 if airy else 1.3)
+    before_signature_gap = 0.8 if compact else (2.5 if airy else 1.5)
+    term_style = (
+        ParagraphStyle("termCompact", parent=styles["term"], fontSize=5.6, leading=6.35)
+        if compact else styles["term"]
+    )
     email = branding.get("footer_email") or DEFAULT_EMAIL
     mobile = branding.get("footer_phone") or DEFAULT_MOBILE
     flow: list = [
         Paragraph("OUR BRAND PARTNERS", styles["sectionTitle"]),
-        Spacer(1, 1.5 * mm),
+        Spacer(1, partner_gap * mm),
         brand_partners_table(styles["cell"], col_width_mm=PAGE_W_MM / 6),
-        Spacer(1, 3 * mm),
+        # Keep the partner, terms and signature groups visually distinct while
+        # preserving the fixed two-page printed form.
+        Spacer(1, after_partner_gap * mm),
         Paragraph("TERMS &amp; CONDITIONS", styles["sectionTitle"]),
-        Spacer(1, 0.8 * mm),
+        Spacer(1, before_terms_gap * mm),
     ]
     term_rows = [
-        [Paragraph(f"{left}. {TILES_TERMS[left - 1]}", styles["term"]), Paragraph(f"{right}. {TILES_TERMS[right - 1]}", styles["term"])]
+        [Paragraph(f"{left}. {TILES_TERMS[left - 1]}", term_style), Paragraph(f"{right}. {TILES_TERMS[right - 1]}", term_style)]
         for left, right in zip(range(1, 7), range(7, 13))
     ]
     terms = Table(term_rows, colWidths=[PAGE_W_MM / 2 * mm] * 2)
     terms.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.7),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0 if compact else 0.7),
     ]))
     flow.append(terms)
-    flow.append(Spacer(1, 1 * mm))
+    flow.append(Spacer(1, after_terms_gap * mm))
     flow.append(Paragraph(
         f"For general enquiries: <b>M: {_escape(mobile)}</b> &nbsp;|&nbsp; <b>Email: {_escape(email)}</b>",
         styles["contact"],
     ))
-    flow.append(Spacer(1, 1 * mm))
+    flow.append(Spacer(1, before_signature_gap * mm))
     signature = Table(
         [[
             Paragraph("I/We have reviewed and agree to the terms and conditions mentioned in this quotation.", styles["sigNote"]),
             Paragraph("CUSTOMER SIGNATURE &amp; DATE", styles["sigLabel"]),
         ]],
-        colWidths=[180 * mm, 101 * mm], rowHeights=[9 * mm],
+        colWidths=[180 * mm, 101 * mm], rowHeights=[8 * mm if compact else 9 * mm],
     )
     signature.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.6, GRID),
@@ -355,17 +374,20 @@ def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | 
 
     story: list = [
         _header_block("PRODUCT SELECTION", "Tiles &amp; Sanitaryware Solutions", styles),
-        Spacer(1, 1.5 * mm),
-        HRFlowable(width="100%", thickness=1.1, color=INK, spaceAfter=2 * mm),
-        _meta_grid(quotation, customer, styles),
         Spacer(1, 2 * mm),
+        HRFlowable(width="100%", thickness=1.1, color=INK, spaceAfter=2.5 * mm),
+        _meta_grid(quotation, customer, styles),
+        Spacer(1, 2.5 * mm),
         Paragraph(
             "Dear Sir/Madam, thank you for your interest in our products. Please find below the products shortlisted "
             "as per your selection, for your review and confirmation.",
             styles["intro"],
         ),
-        Spacer(1, 2 * mm),
+        Spacer(1, 2.5 * mm),
     ]
+    # The selection cover has no price summary, so the standard rhythm gives
+    # every group breathing room while still keeping the masthead inside the
+    # printable first-page frame.
     story.extend(_brand_terms_signature_block(styles, b))
 
     # --- PRODUCT DETAILS (page 2+) — one flowing table, auto-paginates ------
@@ -454,22 +476,22 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
 
     story: list = [
         _header_block("PRODUCT QUOTATION", "Tiles &amp; Sanitaryware Solutions", styles),
-        Spacer(1, 1.5 * mm),
-        HRFlowable(width="100%", thickness=1.1, color=INK, spaceAfter=2 * mm),
-        _meta_grid(quotation, customer, styles),
         Spacer(1, 2 * mm),
+        HRFlowable(width="100%", thickness=1.1, color=INK, spaceAfter=2.5 * mm),
+        _meta_grid(quotation, customer, styles),
+        Spacer(1, 2.5 * mm),
         Paragraph(
             "Dear Sir/Madam, thank you for your interest in our products. We are pleased to offer our most competitive "
             "rates for premium tiles and sanitaryware, prepared as per your selection.",
             styles["intro"],
         ),
-        Spacer(1, 2 * mm),
+        Spacer(1, 2.5 * mm),
         Paragraph("PRICE SUMMARY", styles["sectionTitle"]),
         Spacer(1, 1 * mm),
         _price_summary_table(total_quantity, subtotal, transportation_fee, total_quote, styles),
-        Spacer(1, 2 * mm),
+        Spacer(1, 2.5 * mm),
     ]
-    story.extend(_brand_terms_signature_block(styles, b))
+    story.extend(_brand_terms_signature_block(styles, b, density="compact"))
 
     # --- PRODUCT DETAILS (page 2+) — one flowing table, auto-paginates ------
     story.append(PageBreak())

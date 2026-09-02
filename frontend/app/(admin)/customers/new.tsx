@@ -25,7 +25,7 @@ type Tier = "retail" | "trade" | "vip";
 
 export default function NewCustomer() {
   const router = useRouter();
-  const { isPhone } = useBp();
+  const { isPhone, gutter } = useBp();
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
   const [company, setCompany] = useState("");
@@ -82,7 +82,7 @@ export default function NewCustomer() {
         keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
       >
         <ScrollView
-          contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}
+          contentContainerStyle={{ width: "100%", maxWidth: 720, alignSelf: "center", paddingHorizontal: gutter, paddingTop: isPhone ? spacing.lg : spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl }}
           keyboardShouldPersistTaps="handled"
         >
           <TextField
@@ -137,7 +137,7 @@ export default function NewCustomer() {
             style={{ minHeight: 72, textAlignVertical: "top" }}
             testID="new-customer-address"
           />
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <View style={{ flexDirection: isPhone ? "column" : "row", gap: spacing.sm }}>
             <TextField
               label="State"
               placeholder="e.g. Gujarat"
@@ -167,7 +167,7 @@ export default function NewCustomer() {
 
           <View style={{ gap: 6 }}>
             <Text style={type.label}>Tier</Text>
-            <View style={{ flexDirection: "row", gap: spacing.sm }}>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm }}>
               {(["retail", "trade", "vip"] as Tier[]).map((t) => (
                 <Chip
                   key={t}

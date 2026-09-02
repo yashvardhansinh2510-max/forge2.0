@@ -268,7 +268,9 @@ const styles = StyleSheet.create({
   sizePicker: { gap: 4, marginTop: 2 },
   sizeLabel: { fontSize: 10, fontWeight: "700", color: colors.onSurfaceMuted, textTransform: "uppercase", letterSpacing: 0.35 },
   sizeChoices: { flexDirection: "row", flexWrap: "wrap", gap: 4 },
-  sizeChoice: { maxWidth: 104, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 3, backgroundColor: colors.surface },
+  // Size is an independent action inside an otherwise tappable product card,
+  // so it receives a full touch target rather than inheriting chip-sized UI.
+  sizeChoice: { maxWidth: 104, minHeight: 44, justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 3, backgroundColor: colors.surface },
   sizeChoiceCurrent: { backgroundColor: colors.brand, borderColor: colors.brand },
   sizeChoicePressed: { opacity: 0.72 },
   sizeChoiceText: { fontSize: 10, fontWeight: "600", color: colors.onSurfaceSecondary },

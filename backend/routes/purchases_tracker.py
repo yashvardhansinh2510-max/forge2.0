@@ -38,6 +38,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from auth import (
     TILES_FLOOR_ID, floor_inherit, floor_query, floor_scope_ids,
@@ -2391,7 +2392,7 @@ async def chalan_pdf(po_id: str, chalan_id: str, user: UserPublic = Depends(get_
         {"_id": 0, "password_hash": 0},
     ) or {}
     from pdf_chalan import build_chalan_pdf, chalan_pdf_filename
-    pdf_bytes = build_chalan_pdf(chalan, po, customer, await _pdf_branding())
+    pdf_bytes = await run_in_threadpool(build_chalan_pdf, chalan, po, customer, await _pdf_branding())
     filename = chalan_pdf_filename(chalan, po.get("customer_name") or "")
     return StreamingResponse(
         iter([pdf_bytes]), media_type="application/pdf",

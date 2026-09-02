@@ -17,6 +17,7 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { useRoles } from "@/src/hooks/use-roles";
 import { useAuth } from "@/src/state/auth";
+import { useBp } from "@/src/design/responsive";
 import { AccessProfile, PROFILE_PROVISIONING } from "@/src/access-profiles";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
@@ -27,6 +28,7 @@ type Staff = {
 type Floor = { id: string; name: string; slug: string };
 
 export default function Team() {
+  const { isPhone } = useBp();
   const { staff: me } = useAuth();
   const { roles } = useRoles();
   const [floors, setFloors] = useState<Floor[]>([]);
@@ -71,7 +73,14 @@ export default function Team() {
                 key={u.id}
                 testID={`team-row-${u.id}`}
                 onPress={() => setEditing(u)}
-                style={({ pressed }) => [styles.card, { flexDirection: "row", gap: spacing.md, alignItems: "center", opacity: pressed ? 0.85 : 1 }]}
+                style={({ pressed }) => [
+                  styles.card,
+                  {
+                    flexDirection: "row", gap: spacing.md, alignItems: "center",
+                    flexWrap: isPhone ? "wrap" : "nowrap",
+                    opacity: pressed ? 0.85 : 1,
+                  },
+                ]}
               >
                 <Avatar name={u.full_name} size={44} tone="brand" />
                 <View style={{ flex: 1, minWidth: 0 }}>
@@ -84,7 +93,7 @@ export default function Team() {
                   }}>{u.full_name}{u.id === me?.id ? " · You" : ""}</Text>
                   <Text numberOfLines={1} style={type.caption}>{u.email}</Text>
                 </View>
-                <View style={{ alignItems: "flex-end", gap: 4 }}>
+                <View style={{ alignItems: isPhone ? "flex-start" : "flex-end", gap: 4, marginLeft: isPhone ? 44 + spacing.md : 0 }}>
                   <Badge label={roleInfo?.label || u.role} tone={u.active ? "brand" : "neutral"} size="sm" />
                   {!u.active ? <Badge label="Disabled" tone="warning" size="sm" /> : null}
                 </View>

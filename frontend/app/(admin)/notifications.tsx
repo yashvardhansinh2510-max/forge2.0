@@ -6,6 +6,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { AdminPage } from "@/src/components/AdminPage";
 import { EmptyState, ErrorState, Skeleton } from "@/src/components/ui";
 import { api } from "@/src/api/client";
+import { useBp } from "@/src/design/responsive";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type N = {
@@ -25,6 +26,7 @@ const iconMap = {
 };
 
 export default function Notifications() {
+  const { isPhone } = useBp();
   const [items, setItems] = useState<N[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const requestIdRef = useRef(0);
@@ -85,18 +87,18 @@ export default function Notifications() {
                   <Feather name={skin.icon} size={16} color={skin.fg} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
+                  <View style={{ flexDirection: isPhone ? "column" : "row", justifyContent: "space-between", alignItems: isPhone ? "flex-start" : "center", gap: isPhone ? 2 : spacing.sm }}>
                     <Text style={{
                       fontSize: 14,
                       fontFamily: type.titleMd.fontFamily,
                       fontWeight: "600",
                       color: colors.onSurface,
-                      flex: 1,
+                      flex: isPhone ? undefined : 1,
                       minWidth: 0,
                     }} numberOfLines={1}>
                       {n.title}
                     </Text>
-                    <Text style={type.caption}>
+                    <Text style={[type.caption, isPhone && { marginTop: 1 }]}>
                       {new Date(n.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
                     </Text>
                   </View>

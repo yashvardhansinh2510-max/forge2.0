@@ -19,6 +19,7 @@ import {
 } from "@/src/components/customer/CustomerPortal";
 import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type, money } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 type Quote = {
   id: string;
@@ -30,6 +31,7 @@ type Quote = {
 };
 
 export default function CustomerDashboard() {
+  const { isPhone } = useBp();
   const { customer, logout } = useAuth();
   const router = useRouter();
   const [quotes, setQuotes] = useState<Quote[] | null>(null);
@@ -106,7 +108,7 @@ export default function CustomerDashboard() {
         </Card>
       ) : (
         <Card testID={`latest-quote-${latest.id}`} onPress={() => router.push(`/(customer)/quotes/${latest.id}`)} style={styles.quoteCard}>
-          <View style={styles.quoteHeader}>
+          <View style={[styles.quoteHeader, isPhone && styles.stackOnPhone]}>
             <View style={styles.quoteCopy}>
               <Text style={[type.mono, { color: colors.onSurfaceMuted }]} numberOfLines={2}>{latest.number}</Text>
               <Text style={[type.titleMd, styles.quoteMeta]} numberOfLines={2}>
@@ -116,7 +118,7 @@ export default function CustomerDashboard() {
             <StatusBadge status={latest.status} />
           </View>
           <View style={styles.divider} />
-          <View style={styles.quoteFooter}>
+          <View style={[styles.quoteFooter, isPhone && styles.stackOnPhone]}>
             <View style={styles.totalCopy}>
               <Text style={type.caption}>Grand total</Text>
               <Text style={styles.total} numberOfLines={2}>{money(latest.grand_total)}</Text>
@@ -127,6 +129,7 @@ export default function CustomerDashboard() {
               icon="arrow-right"
               size="sm"
               variant="secondary"
+              fullWidth={isPhone}
               onPress={() => router.push(`/(customer)/quotes/${latest.id}`)}
             />
           </View>
@@ -142,7 +145,7 @@ export default function CustomerDashboard() {
         onPress={() => router.push("/(customer)/quotes")}
       />
 
-      <Card style={styles.supportCard}>
+      <Card style={{ ...styles.supportCard, ...(isPhone ? styles.stackOnPhone : {}) }}>
         <View style={styles.supportCopy}>
           <Text style={styles.supportTitle}>Need help?</Text>
           <Text style={styles.supportSubtitle}>Talk to your BuildCon House representative.</Text>
@@ -155,6 +158,7 @@ export default function CustomerDashboard() {
           variant="secondary"
           onPress={() => Linking.openURL("mailto:support@forge.app")}
           style={styles.supportButton}
+          fullWidth={isPhone}
         />
       </Card>
 
@@ -182,4 +186,5 @@ const styles = StyleSheet.create({
   supportTitle: { ...type.titleMd, color: colors.onSurfaceInverse },
   supportSubtitle: { ...type.caption, color: colors.onSurfaceSubtle },
   supportButton: { minWidth: 96 },
+  stackOnPhone: { flexDirection: "column", alignItems: "stretch" },
 });

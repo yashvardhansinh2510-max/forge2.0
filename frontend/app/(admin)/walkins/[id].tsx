@@ -110,7 +110,7 @@ export default function WalkInDetail() {
     return (
       <SafeAreaView style={{ flex: 1 }} edges={isPhone ? [] : ["top"]}>
         <PageHeader title="Walk-in" back={() => router.back()} />
-        <View style={{ padding: spacing.xl }}><Skeleton h={120} /></View>
+        <View style={{ padding: isPhone ? spacing.lg : spacing.xl }}><Skeleton h={120} /></View>
       </SafeAreaView>
     );
   }
@@ -118,7 +118,7 @@ export default function WalkInDetail() {
   return (
     <SafeAreaView style={{ flex: 1 }} edges={isPhone ? [] : ["top"]}>
       <PageHeader title={w.customer_name} overline={w.number} back={() => router.back()} />
-      <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.md }}>
+      <ScrollView contentContainerStyle={{ padding: isPhone ? spacing.lg : spacing.xl, paddingBottom: isPhone ? 132 : spacing.xxl, gap: spacing.md }}>
         <Card variant="outlined" style={{ gap: 4 }}>
           <Text style={type.bodyStrong}>{w.customer_phone} {w.alternate_phone ? `· Alt: ${w.alternate_phone}` : ""}</Text>
           <Text style={type.bodyMuted}>{w.source} · {(w.interested_products || []).join(", ") || "No products noted"}</Text>

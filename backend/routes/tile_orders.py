@@ -13,6 +13,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from auth import TILES_FLOOR_ID, require_min_role, tiles_floor_query
 from db import client, db
@@ -749,7 +750,7 @@ async def chalan_pdf(chalan_id: str, user: UserPublic = Depends(require_min_role
         "footer_company_name": pdf_settings.get("footer_company_name") or company.get("name") or "Buildcon House",
         "footer_phone": pdf_settings.get("footer_phone") or company.get("phone") or "",
     }
-    pdf_bytes = build_tile_chalan_pdf(chalan, branding)
+    pdf_bytes = await run_in_threadpool(build_tile_chalan_pdf, chalan, branding)
     filename = tile_chalan_pdf_filename(chalan, chalan.get("customer_name", "Customer"))
     return StreamingResponse(
         iter([pdf_bytes]), media_type="application/pdf",

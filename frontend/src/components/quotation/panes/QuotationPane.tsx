@@ -89,13 +89,19 @@ function CompactHeaderFields() {
       <CompactTextField label="Address" value={b.s.header.address} onChange={b.setAddress} placeholder="Site / delivery address" testID="compact-hdr-address" wide />
       <CompactTextField label="Phone" value={b.s.header.phone} onChange={b.setPhone} placeholder="+91 ·········" testID="compact-hdr-phone" />
       <CompactTextField label="Reference" value={b.s.header.referenceSource} onChange={b.setReferenceSource} placeholder="Walk-in · Architect" testID="compact-hdr-ref" />
-      <View testID="compact-hdr-referrer" style={[styles.compactField, styles.compactFieldWide]}>
+      <Pressable
+        testID="compact-hdr-referrer"
+        onPress={() => b.setReferrerSwitcherOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Choose referrer"
+        style={({ pressed }) => [styles.compactField, styles.compactFieldWide, pressed && styles.compactFieldPressed]}
+      >
         <Text style={styles.fieldLabel}>Referred by</Text>
         <View style={styles.customerValueRow}>
           <Text style={styles.fieldValue} numberOfLines={1}>{b.s.header.referrerName || "None"}</Text>
           <Feather name="chevron-down" size={12} color={colors.onSurfaceMuted} />
         </View>
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -135,6 +141,7 @@ const styles = StyleSheet.create({
     borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface,
   },
   compactFieldWide: { flexBasis: "100%" },
+  compactFieldPressed: { backgroundColor: colors.surfaceTertiary },
   fieldLabel: { fontSize: 9, fontWeight: "700", color: colors.onSurfaceMuted, letterSpacing: 0.7, textTransform: "uppercase" },
   fieldValue: { flex: 1, minWidth: 0, marginTop: 1, fontSize: 12, fontWeight: "600", color: colors.onSurface },
   fieldInput: { padding: 0, marginTop: 1, fontSize: 12, fontWeight: "600", color: colors.onSurface },

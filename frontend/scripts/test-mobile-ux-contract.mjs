@@ -67,6 +67,19 @@ const productImages = read("../src/components/catalog/ProductImageManager.tsx");
 assert.match(productImages, /const \{ isPhone \} = useBp\(\)/);
 assert.doesNotMatch(productImages, /winW >= 640/);
 
+const catalogImport = read("../app/(admin)/catalog/import.tsx");
+assert.match(catalogImport, /const \{ isPhone \} = useBp\(\)/);
+assert.match(catalogImport, /styles\.reviewActionsPhone/);
+assert.match(catalogImport, /styles\.urlRowPhone/);
+
+const assignments = read("../app/(admin)/followup-assignments.tsx");
+assert.match(assignments, /isPhone && styles\.rowPhone/);
+assert.match(assignments, /statusMetaPhone/);
+
+const paymentsList = read("../app/(admin)/payments-list.tsx");
+assert.match(paymentsList, /isPhone && styles\.searchPhone/);
+assert.match(paymentsList, /isPhone && styles\.pageButtonsPhone/);
+
 const tileTable = read("../src/components/tiles/TileTable.tsx");
 assert.match(tileTable, /scrollOwner === "parent"/);
 assert.match(tileTable, /const innerScroll = Boolean\(fillViewport\).*scrollOwner === "self"/);
@@ -77,4 +90,26 @@ const systemSettings = read("../app/(admin)/settings-system.tsx");
 assert.match(systemSettings, /scroll=\{false\}/);
 assert.match(systemSettings, /<ScrollView/);
 
-console.log("mobile shell, sheet, safe-area, list ownership, and notebook navigation contracts: 30 assertions passed");
+const notebook = read("../src/components/notebook/NotebookScreen.tsx");
+assert.match(notebook, /const \{ isPhone, isTabletPortrait \} = useBp\(\)/);
+assert.match(notebook, /const useCardList = isPhone \|\| isTabletPortrait/);
+assert.match(notebook, /styles\.phoneCard/);
+assert.match(notebook, /useCardList \? phoneRows/);
+
+const quotationDetail = read("../app/(admin)/quotations/[id]/index.tsx");
+assert.match(quotationDetail, /isPhone \? \(\s*<IconButton icon="download"/);
+assert.match(quotationDetail, /linkedPoRowPhone/);
+
+const placeOrder = read("../app/(admin)/quotations/[id]/place-order.tsx");
+assert.match(placeOrder, /confirmBarPhone: \{ flexDirection: "column", alignItems: "stretch" \}/);
+assert.match(placeOrder, /fullWidth=\{isPhone\}/);
+
+const productModal = read("../src/components/quotation/sheets/ProductModal.tsx");
+assert.match(productModal, /phoneSheet: \{/);
+assert.match(productModal, /bodyPhone: \{ flexDirection: "column"/);
+assert.match(productModal, /edges=\{isPhone \? \["bottom"\] : \[\]\}/);
+
+const customProduct = read("../src/components/quotation/sheets/CustomProductSheet.tsx");
+assert.match(customProduct, /\[styles\.grid, isPhone && styles\.phoneGrid\]/);
+
+console.log("mobile shell, sheet, list ownership, quotation flow, and notebook navigation contracts: 49 assertions passed");

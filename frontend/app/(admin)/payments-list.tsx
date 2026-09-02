@@ -105,7 +105,7 @@ export default function PaymentListScreen() {
       />
       <ScrollView contentContainerStyle={[styles.content, isPhone && styles.contentPhone]}>
         <View style={styles.filters}>
-          <View style={styles.search}><SearchField testID="payment-list-search" value={query} onChangeText={setQuery} onClear={() => setQuery("")} placeholder="Search client, invoice or reference…" /></View>
+          <View style={[styles.search, isPhone && styles.searchPhone]}><SearchField testID="payment-list-search" value={query} onChangeText={setQuery} onClear={() => setQuery("")} placeholder="Search client, invoice or reference…" /></View>
           <Dropdown label={floor === "all" ? "All business units" : floors.find((item) => item.id === floor)?.name || floor} items={[{ label: "All business units", onPress: () => setFloor("all") }, ...floors.map((item) => ({ label: item.name, onPress: () => setFloor(item.id) }))]} />
           <Dropdown label={mode === "all" ? "All methods" : MODE_LABELS[mode as PayMode] || mode} items={[{ label: "All methods", onPress: () => setMode("all") }, ...Object.entries(MODE_LABELS).map(([value, label]) => ({ label, onPress: () => setMode(value) }))]} />
           <Dropdown label={SORT_OPTIONS.find((item) => item.value === sort)?.label || "Sort"} items={SORT_OPTIONS.map((item) => ({ label: item.label, onPress: () => setSort(item.value) }))} />
@@ -119,9 +119,9 @@ export default function PaymentListScreen() {
           <DataTable testID="payment-list-table" columns={columns} data={rows} keyExtractor={(row) => row.id} rowTestID={(row) => `payment-list-row-${row.id}`} emptyMessage="No fully paid payments found." />
         )}
 
-        <View style={styles.pagination}>
+        <View style={[styles.pagination, isPhone && styles.paginationPhone]}>
           <Text style={type.caption}>{total ? `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)} of ${total}` : "0 payments"}</Text>
-          <View style={styles.pageButtons}>
+          <View style={[styles.pageButtons, isPhone && styles.pageButtonsPhone]}>
             <Button label="Previous" variant="secondary" size="sm" disabled={page === 0} onPress={() => setPage((value) => Math.max(0, value - 1))} />
             <Text style={type.caption}>Page {page + 1} of {pageCount}</Text>
             <Button label="Next" variant="secondary" size="sm" disabled={page + 1 >= pageCount} onPress={() => setPage((value) => Math.min(pageCount - 1, value + 1))} />
@@ -138,6 +138,9 @@ const styles = StyleSheet.create({
   contentPhone: { padding: spacing.lg, paddingBottom: 132 },
   filters: { flexDirection: "row", gap: spacing.sm, alignItems: "center", flexWrap: "wrap" },
   search: { flex: 1, minWidth: Platform.OS === "web" ? 280 : 220 },
+  searchPhone: { flexBasis: "100%", minWidth: 0 },
   pagination: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.md, flexWrap: "wrap" },
+  paginationPhone: { alignItems: "flex-start" },
   pageButtons: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  pageButtonsPhone: { width: "100%", justifyContent: "space-between" },
 });

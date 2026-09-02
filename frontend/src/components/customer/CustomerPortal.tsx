@@ -16,6 +16,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Card, EmptyState, ErrorState, IconButton, Skeleton } from "@/src/components/ui";
 import { BuildConLogo } from "@/src/design/BrandLogo";
 import { colors, layout, radius, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 type CustomerHeaderProps = {
   title?: string;
@@ -88,6 +89,7 @@ export function CustomerPage({
   testID?: string;
 }) {
   const insets = useSafeAreaInsets();
+  const { isPhone, gutter } = useBp();
   return (
     <SafeAreaView testID={testID} style={styles.safeArea} edges={["top", "left", "right"]}>
       {header}
@@ -97,6 +99,7 @@ export function CustomerPage({
         refreshControl={refreshControl ? <RefreshControl {...refreshControl} /> : undefined}
         contentContainerStyle={[
           styles.pageContent,
+          { paddingHorizontal: gutter, paddingTop: isPhone ? spacing.md : spacing.lg },
           { paddingBottom: Math.max(insets.bottom + spacing.xl, spacing.xxl) },
           contentStyle,
         ]}
@@ -166,7 +169,7 @@ export function formatCustomerDate(value: string | undefined, long = false) {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.surface },
-  pageContent: { padding: spacing.lg, gap: spacing.lg },
+  pageContent: { width: "100%", maxWidth: 760, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
   brandHeader: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,

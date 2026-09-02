@@ -84,14 +84,16 @@ export function BackLink({ label, onPress, testID }: { label: string; onPress: (
 export function PageHeader({
   eyebrow, title, subtitle, actions,
 }: { eyebrow?: string; title: string; subtitle?: string; actions?: ReactNode }) {
+  const { isPhone, bp } = useBreakpoint();
+  const compact = isPhone || bp === "tabletPortrait";
   return (
-    <View style={styles.pageHeader}>
-      <View style={styles.pageHeaderText}>
+    <View style={[styles.pageHeader, compact ? styles.pageHeaderCompact : null]}>
+      <View style={[styles.pageHeaderText, compact ? styles.pageHeaderTextCompact : null]}>
         {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
         <Text style={type.displayMd}>{title}</Text>
         {subtitle ? <Text style={[type.bodyMuted, styles.pageSubtitle]}>{subtitle}</Text> : null}
       </View>
-      {actions ? <View style={styles.pageHeaderActions}>{actions}</View> : null}
+      {actions ? <View style={[styles.pageHeaderActions, compact ? styles.pageHeaderActionsCompact : null]}>{actions}</View> : null}
     </View>
   );
 }
@@ -104,19 +106,22 @@ export function Section({ children, testID }: { children: ReactNode; testID?: st
 export function SectionHeader({
   title, meta, actions,
 }: { title: string; meta?: ReactNode; actions?: ReactNode }) {
+  const { isPhone, bp } = useBreakpoint();
+  const compact = isPhone || bp === "tabletPortrait";
   return (
-    <View style={styles.sectionHeader}>
+    <View style={[styles.sectionHeader, compact ? styles.sectionHeaderCompact : null]}>
       <View style={styles.sectionHeaderText}>
         <Text style={type.titleMd} numberOfLines={1}>{title}</Text>
         {meta}
       </View>
-      {actions ? <View style={styles.sectionHeaderActions}>{actions}</View> : null}
+      {actions ? <View style={[styles.sectionHeaderActions, compact ? styles.sectionHeaderActionsCompact : null]}>{actions}</View> : null}
     </View>
   );
 }
 
 export function Card({ children, testID }: { children: ReactNode; testID?: string }) {
-  return <View style={styles.card} testID={testID}>{children}</View>;
+  const { isPhone } = useBreakpoint();
+  return <View style={[styles.card, isPhone ? styles.cardPhone : null]} testID={testID}>{children}</View>;
 }
 
 // ── Controls ────────────────────────────────────────────────────────────────
@@ -198,8 +203,10 @@ export function Button({
  * Buttons never touch, and never stack raggedly — they wrap as whole units.
  */
 export function ButtonGroup({ children, align = "left" }: { children: ReactNode; align?: "left" | "right" }) {
+  const { isPhone, bp } = useBreakpoint();
+  const compact = isPhone || bp === "tabletPortrait";
   return (
-    <View style={[styles.buttonGroup, align === "right" ? styles.buttonGroupRight : null]}>
+    <View style={[styles.buttonGroup, align === "right" ? styles.buttonGroupRight : null, compact ? styles.buttonGroupCompact : null]}>
       {children}
     </View>
   );
@@ -216,8 +223,9 @@ export function SearchField({
   /** The placeholder is not a reliable accessible name once the user types. */
   accessibilityLabel?: string;
 }) {
+  const { isPhone } = useBreakpoint();
   return (
-    <View style={styles.searchWrap}>
+    <View style={[styles.searchWrap, isPhone ? styles.searchWrapPhone : null]}>
       <Text style={styles.searchIcon}>⌕</Text>
       <TextInput
         testID={testID}
@@ -308,12 +316,13 @@ export function TabBar<K extends string>({
  * the right, wrapping as coherent groups instead of a ragged button soup.
  */
 export function Toolbar({ search, filters, actions }: { search?: ReactNode; filters?: ReactNode; actions?: ReactNode }) {
-  const { isPhone } = useBreakpoint();
+  const { isPhone, bp } = useBreakpoint();
+  const compact = isPhone || bp === "tabletPortrait";
   return (
-    <View style={[styles.toolbar, isPhone ? styles.toolbarPhone : null]}>
+    <View style={[styles.toolbar, compact ? styles.toolbarPhone : null]}>
       {search ? <View style={styles.toolbarSearch}>{search}</View> : null}
-      <View style={[styles.toolbarTrailing, isPhone ? styles.toolbarTrailingPhone : null]}>
-        {filters ? (isPhone ? (
+      <View style={[styles.toolbarTrailing, compact ? styles.toolbarTrailingPhone : null]}>
+        {filters ? (compact ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.toolbarFilterScroller} contentContainerStyle={styles.toolbarFilters}>
             {filters}
           </ScrollView>
@@ -348,9 +357,10 @@ export function StatRow({ children, testID }: { children: ReactNode; testID?: st
 /** Sticky bottom action bar — batch operations live here, never in the scroll. */
 export function ActionBar({ children, testID }: { children: ReactNode; testID?: string }) {
   const gutter = usePageGutter();
+  const { isPhone } = useBreakpoint();
   return (
     <View style={[styles.actionBar, { paddingHorizontal: gutter }]} testID={testID}>
-      <View style={styles.actionBarInner}>{children}</View>
+      <View style={[styles.actionBarInner, isPhone ? styles.actionBarInnerPhone : null]}>{children}</View>
     </View>
   );
 }
@@ -385,6 +395,9 @@ const styles = StyleSheet.create({
   },
   pageHeaderText: { flexShrink: 1, minWidth: 260, gap: spacing.s4 },
   pageHeaderActions: { flexDirection: "row", alignItems: "center", gap: spacing.s12, flexWrap: "wrap" },
+  pageHeaderCompact: { alignItems: "stretch" },
+  pageHeaderTextCompact: { minWidth: 0, width: "100%" },
+  pageHeaderActionsCompact: { width: "100%", justifyContent: "flex-start" },
   eyebrow: { ...type.overline, color: colors.brand, marginBottom: spacing.s4 },
   pageSubtitle: { maxWidth: 720 },
 
@@ -399,6 +412,8 @@ const styles = StyleSheet.create({
   },
   sectionHeaderText: { flexDirection: "row", alignItems: "center", gap: spacing.s12, flexShrink: 1, minWidth: 0 },
   sectionHeaderActions: { flexDirection: "row", alignItems: "center", gap: spacing.s12 },
+  sectionHeaderCompact: { alignItems: "stretch" },
+  sectionHeaderActionsCompact: { width: "100%" },
 
   card: {
     backgroundColor: colors.surfaceSecondary,
@@ -407,6 +422,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.s24,
   },
+  cardPhone: { padding: spacing.lg },
 
   buttonBase: {
     flexDirection: "row",
@@ -431,6 +447,7 @@ const styles = StyleSheet.create({
 
   buttonGroup: { flexDirection: "row", alignItems: "center", gap: spacing.s12, flexWrap: "wrap" },
   buttonGroupRight: { justifyContent: "flex-end" },
+  buttonGroupCompact: { alignItems: "stretch" },
 
   searchWrap: {
     flexDirection: "row",
@@ -444,6 +461,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     backgroundColor: colors.surfaceSecondary,
   },
+  searchWrapPhone: { minWidth: 0, width: "100%" },
   searchIcon: { ...type.body, color: colors.onSurfaceMuted, fontSize: 16 },
   searchInput: {
     flex: 1,
@@ -543,4 +561,5 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
     flexWrap: "wrap",
   },
+  actionBarInnerPhone: { alignItems: "stretch" },
 });

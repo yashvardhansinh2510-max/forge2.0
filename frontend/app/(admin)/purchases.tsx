@@ -13,7 +13,7 @@ import {
   ActivityIndicator, FlatList, Linking, Platform, Pressable,
   ScrollView, StyleSheet, Text, TextInput, View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { cancelPurchaseItem, getPurchaseCustomers, getPurchasesPage, type PurchaseCustomer, type PurchaseItem, type PurchasesPage } from "@/src/api/purchases";
@@ -67,6 +67,8 @@ const VIEW_META: Record<ViewMode, { label: string; icon: keyof typeof Feather.gl
   dispatch_record:  { label: "Dispatch Record", icon: "truck",     sub: "Dispatched history" },
 };
 
+const STAGE_ORDER: Stage[] = ["order_in_company", "company_billing", "in_box", "dispatched", "in_transit", "delivered"];
+
 // Stage tone — one calm vocabulary; overrides whatever the backend sends.
 const STAGE_TONE: Record<Stage, { bg: string; fg: string }> = {
   order_in_company: { bg: ds.sunken,    fg: ds.inkMid },
@@ -90,6 +92,10 @@ function fmtDate(iso?: string | null): string {
   } catch { return "—"; }
 }
 
+function stageName(stage: Stage): string {
+  return stage.split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
+
 // -----------------------------------------------------------------------------
 // Screen
 // -----------------------------------------------------------------------------
@@ -99,7 +105,8 @@ export default function PurchasesScreen() {
   // this screen to "first-floor" is what made Ground Floor show The
   // Sanitary Bathroom's records.
   const router = useRouter();
-  const { isPhone, isDesktop } = useBp();
+  const { isPhone, isTablet, isDesktop, width } = useBp();
+  const insets = useSafeAreaInsets();
 
   // View + filter state
   const [view, setView] = useState<ViewMode>("today");
@@ -351,48 +358,58 @@ export default function PurchasesScreen() {
 
   if (!isDesktop) {
     const activeFilterCount = (brand !== "all" ? 1 : 0) + (stage ? 1 : 0);
+    const compactPhone = isPhone && width < 390;
     return (
       <SafeAreaView style={styles.mobileSafe} edges={isPhone ? [] : ["top"]}>
         <FlatList
           testID="purchases-mobile-list"
           data={view === "customers" ? [] : items}
+          key={`purchases-${isTablet ? "tablet" : "phone"}`}
+          numColumns={isTablet ? 2 : 1}
           keyExtractor={(item) => item.item_id}
           renderItem={({ item }) => (
-            <MobilePurchaseCard
-              item={item}
-              selected={selected.has(item.item_id)}
-              onSelect={() => setSelected((current) => {
-                const next = new Set(current);
-                if (next.has(item.item_id)) next.delete(item.item_id);
-                else next.add(item.item_id);
-                return next;
-              })}
-              onMove={() => setRowMoveTarget(item)}
-              onTransfer={() => setTransferItem(item)}
-              onHistory={() => setHistoryItemId(item.item_id)}
-              onOpenPo={() => router.push(`/(admin)/purchase-orders/${item.po_id}` as any)}
-              onCancel={() => setCancelTarget(item)}
-            />
+            <View style={[styles.purchaseCardCell, isTablet && styles.tabletPurchaseCardCell]}>
+              <MobilePurchaseCard
+                item={item}
+                selected={selected.has(item.item_id)}
+                compact={compactPhone}
+                onSelect={() => setSelected((current) => {
+                  const next = new Set(current);
+                  if (next.has(item.item_id)) next.delete(item.item_id);
+                  else next.add(item.item_id);
+                  return next;
+                })}
+                onMove={() => setRowMoveTarget(item)}
+                onTransfer={() => setTransferItem(item)}
+                onHistory={() => setHistoryItemId(item.item_id)}
+                onOpenPo={() => router.push(`/(admin)/purchase-orders/${item.po_id}` as any)}
+                onCancel={() => setCancelTarget(item)}
+              />
+            </View>
           )}
-          contentContainerStyle={styles.mobileListContent}
-          ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          contentContainerStyle={[
+            styles.mobileListContent,
+            isTablet && styles.tabletListContent,
+          ]}
+          columnWrapperStyle={isTablet ? styles.tabletCardRow : undefined}
+          ItemSeparatorComponent={() => <View style={{ height: isTablet ? 16 : 12 }} />}
           onEndReached={() => { if (view !== "customers" && !loading && !loadingMore && nextSkip != null) loadItems({ append: true }); }}
           onEndReachedThreshold={0.35}
           ListHeaderComponent={(
             <View style={styles.mobileHeaderContent}>
               <View style={styles.mobileTitleRow}>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.overline}>PURCHASES · {VIEW_META[view].label.toUpperCase()}</Text>
-                  <Text style={styles.mobilePageTitle}>Purchases</Text>
-                  <Text style={type.bodyMuted}>{total} tracked · {blockedCount} blocked · SLA {slaDays}d</Text>
+                  <Text style={styles.overline}>OPERATIONS · {VIEW_META[view].label.toUpperCase()}</Text>
+                  <Text style={styles.mobilePageTitle}>{isTablet ? "Purchase control" : "Purchases"}</Text>
+                  <Text style={type.bodyMuted}>{total} active items · {blockedCount ? `${blockedCount} need attention` : "all on track"}</Text>
                 </View>
-                <Pressable accessibilityLabel="More purchase actions" onPress={() => setShowMobileActions(true)} style={styles.mobileIconButton}>
+                <Pressable accessibilityRole="button" accessibilityLabel="More purchase actions" onPress={() => setShowMobileActions(true)} style={styles.mobileIconButton}>
                   <Feather name="more-vertical" size={20} color={colors.onSurface} />
                 </Pressable>
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mobileChips}>
                 {VIEW_ORDER.map((mode) => (
-                  <Pressable key={mode} testID={`view-${mode}`} onPress={() => { setView(mode); setStage(""); }} style={[styles.mobileChip, view === mode && styles.mobileChipActive]}>
+                  <Pressable key={mode} accessibilityRole="tab" accessibilityState={{ selected: view === mode }} testID={`view-${mode}`} onPress={() => { setView(mode); setStage(""); }} style={[styles.mobileChip, view === mode && styles.mobileChipActive]}>
                     <Feather name={VIEW_META[mode].icon} size={15} color={view === mode ? colors.onBrand : colors.onSurfaceMuted} />
                     <Text style={[styles.mobileChipText, view === mode && styles.mobileChipTextActive]}>{VIEW_META[mode].label}</Text>
                     {mode === "today" && blockedCount > 0 ? <Text style={[styles.mobileChipCount, view === mode && { color: colors.onBrand }]}>{blockedCount}</Text> : null}
@@ -405,7 +422,7 @@ export default function PurchasesScreen() {
                   <TextInput testID="purchases-search" value={q} onChangeText={setQ} placeholder="Product, SKU or customer" placeholderTextColor={colors.onSurfaceMuted} style={styles.mobileSearchInput} autoCorrect={false} autoCapitalize="none" returnKeyType="search" onSubmitEditing={() => setCommittedQ(q.trim())} />
                   {q ? <Pressable accessibilityLabel="Clear search" onPress={() => setQ("")} style={styles.mobileClear}><Feather name="x" size={18} color={colors.onSurfaceMuted} /></Pressable> : null}
                 </View>
-                <Pressable testID="purchases-filter-button" onPress={() => setShowMobileFilters(true)} style={[styles.mobileFilterButton, activeFilterCount > 0 && styles.mobileFilterButtonActive]}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Filter purchases" testID="purchases-filter-button" onPress={() => setShowMobileFilters(true)} style={[styles.mobileFilterButton, activeFilterCount > 0 && styles.mobileFilterButtonActive]}>
                   <Feather name="sliders" size={18} color={activeFilterCount ? colors.onBrand : colors.onSurface} />
                   {activeFilterCount > 0 ? <Text style={styles.mobileFilterCount}>{activeFilterCount}</Text> : null}
                 </Pressable>
@@ -418,28 +435,25 @@ export default function PurchasesScreen() {
                   <Pressable onPress={() => { setBrand("all"); setStage(""); }} style={styles.clearFiltersButton}><Text style={styles.clearFiltersText}>Clear</Text></Pressable>
                 </View>
               ) : null}
-              {selected.size > 0 ? (
-                <Pressable testID="mobile-bulk-move" onPress={() => setShowMoveMenu(true)} style={styles.mobileBulkButton}>
-                  <Text style={styles.mobileBulkText}>Move {selected.size} selected</Text><Feather name="chevron-down" size={18} color={colors.onBrand} />
-                </Pressable>
-              ) : null}
               {blockedCount > 0 ? (
-                <View style={styles.mobileAttentionRow}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Review blocked purchases" onPress={() => { setView("today"); setStage(""); }} style={styles.mobileAttentionRow}>
                   <Feather name="alert-triangle" size={16} color={colors.error} />
                   <Text style={styles.mobileAttentionText}>{blockedCount} item{blockedCount === 1 ? "" : "s"} need attention</Text>
-                </View>
+                  <Feather name="arrow-right" size={16} color={colors.error} />
+                </Pressable>
               ) : null}
               {loading ? <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading purchases…</Text></View> : null}
               {view === "customers" ? <CustomerNavigator loading={loadingCustomers} customers={visibleCustomers} onOpen={(customerId) => router.push(`/(admin)/customers/${customerId}` as any)} /> : null}
               {!loading && view !== "customers" && items.length === 0 ? <View style={styles.mobileEmpty}><Feather name="package" size={28} color={colors.onSurfaceMuted} /><Text style={styles.actionTitle}>No purchases found</Text><Text style={type.bodyMuted}>Clear filters or try a different search.</Text></View> : null}
             </View>
           )}
-          ListFooterComponent={view !== "customers" && loadingMore ? <View style={styles.mobileFooter}><ActivityIndicator /><Text style={type.caption}>Loading more…</Text></View> : <View style={{ height: 96 }} />}
+          ListFooterComponent={view !== "customers" && loadingMore ? <View style={styles.mobileFooter}><ActivityIndicator /><Text style={type.caption}>Loading more…</Text></View> : <View style={{ height: selected.size ? 116 : 32 }} />}
           initialNumToRender={8}
           maxToRenderPerBatch={8}
           windowSize={7}
           removeClippedSubviews={Platform.OS !== "web"}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         />
         <MobileFiltersSheet visible={showMobileFilters} brands={brands} stages={stages} brand={brand} stage={stage} onBrand={setBrand} onStage={setStage} onClose={() => setShowMobileFilters(false)} />
         <MobileActionsSheet visible={showMobileActions} shortages={shortages.length} onClose={() => setShowMobileActions(false)} onExport={() => { setShowMobileActions(false); doExport(); }} onShortages={() => { setShowMobileActions(false); setShowShortages(true); }} onSettings={() => { setShowMobileActions(false); setShowSettings(true); }} />
@@ -450,6 +464,22 @@ export default function PurchasesScreen() {
         <ShortagesModal visible={showShortages} shortages={shortages} onClose={() => setShowShortages(false)} onChanged={async () => { await Promise.all([loadShortages(), loadItems(), loadFacets()]); }} />
         <SettingsModal visible={showSettings} currentSla={slaDays} onClose={() => setShowSettings(false)} onSaved={async (value) => { setSlaDays(value); setShowSettings(false); await loadItems(); }} />
         <CancelPurchaseModal item={cancelTarget} onClose={() => setCancelTarget(null)} onConfirm={cancelItem} />
+        {selected.size > 0 ? (
+          <View style={[styles.mobileBulkDock, { paddingBottom: Math.max(spacing.sm, insets.bottom + spacing.sm) }]} pointerEvents="box-none">
+            <View style={styles.mobileBulkDockInner} pointerEvents="auto">
+              <Pressable accessibilityRole="button" accessibilityLabel="Clear selected purchases" onPress={() => setSelected(new Set())} style={styles.mobileBulkClear}>
+                <Feather name="x" size={18} color={colors.onSurface} />
+              </Pressable>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.mobileBulkCount}>{selected.size} selected</Text>
+                <Text style={styles.mobileBulkHint}>Choose the next stage together</Text>
+              </View>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Move ${selected.size} selected purchases`} testID="mobile-bulk-move" onPress={() => setShowMoveMenu(true)} style={styles.mobileBulkButton}>
+                <Text style={styles.mobileBulkText}>Move</Text><Feather name="arrow-right" size={17} color={colors.onBrand} />
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
       </SafeAreaView>
     );
   }
@@ -466,7 +496,7 @@ export default function PurchasesScreen() {
               Material tracker · {activeStageCount} item{activeStageCount === 1 ? "" : "s"} across all stages · SLA {slaDays}d
             </Text>
           </View>
-          <View style={[styles.topActions, !isDesktop && { flexWrap: "wrap" }]}>
+          <View style={styles.topActions}>
             <View style={styles.search}>
               <Feather name="search" size={14} color={colors.onSurfaceMuted} />
               <TextInput
@@ -768,24 +798,28 @@ export default function PurchasesScreen() {
 // Phone presentation.  It deliberately owns the only vertical scroll on the
 // screen; sheets render outside the FlatList and never compete for gestures.
 // -----------------------------------------------------------------------------
-function MobilePurchaseCard({ item, selected, onSelect, onMove, onTransfer, onHistory, onOpenPo, onCancel }: {
+function MobilePurchaseCard({ item, selected, compact, onSelect, onMove, onTransfer, onHistory, onOpenPo, onCancel }: {
   item: Item; selected: boolean; onSelect: () => void; onMove: () => void;
+  compact: boolean;
   onTransfer: () => void; onHistory: () => void; onOpenPo: () => void; onCancel: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const tone = STAGE_TONE[item.stage] || item.stage_tone;
+  const stageIndex = STAGE_ORDER.indexOf(item.stage);
+  const nextStage = stageIndex >= 0 ? STAGE_ORDER[stageIndex + 1] : null;
+  const nextLabel = nextStage ? stageName(nextStage) : null;
   return (
-    <View style={[styles.mobilePurchaseCard, item.blocked && styles.mobilePurchaseCardBlocked]}>
+    <View style={[styles.mobilePurchaseCard, compact && styles.mobilePurchaseCardCompact, item.blocked && styles.mobilePurchaseCardBlocked]}>
       <View style={styles.mobileCardTop}>
         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selected }} accessibilityLabel={`Select ${item.name}`} onPress={onSelect} style={styles.mobileSelectTarget}>
           <View style={[styles.chk, selected && styles.chkOn]}>{selected ? <Feather name="check" size={12} color={colors.onBrand} /> : null}</View>
         </Pressable>
-        <ProductImage source={item.image} style={styles.mobileCardImage} fallbackLabel={item.sku} disableSkeleton borderRadius={8} />
+        <ProductImage source={item.image} style={styles.mobileCardImage} contentFit="contain" fallbackLabel={item.sku} disableSkeleton borderRadius={8} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.mobileCardName} numberOfLines={2}>{item.name}</Text>
           <Text style={styles.mobileCardMeta} numberOfLines={2}>{item.sku || "No SKU"} · {item.brand_name || "Unbranded"}</Text>
         </View>
-        <Pressable accessibilityLabel={`Actions for ${item.name}`} onPress={() => setMenuOpen(true)} style={styles.mobileIconButton}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Actions for ${item.name}`} onPress={() => setMenuOpen(true)} style={styles.mobileIconButton}>
           <Feather name="more-vertical" size={19} color={colors.onSurface} />
         </Pressable>
       </View>
@@ -794,11 +828,20 @@ function MobilePurchaseCard({ item, selected, onSelect, onMove, onTransfer, onHi
         <View style={{ minWidth: 76 }}><Text style={styles.mobileCardLabel}>QUANTITY</Text><Text style={styles.mobileCardValue}>{item.qty}</Text></View>
         <View style={{ minWidth: 82, alignItems: "flex-end" }}><Text style={styles.mobileCardLabel}>AGE</Text><Text style={[styles.mobileCardValue, item.blocked && { color: colors.error }]}>{item.age_days}d</Text></View>
       </View>
+      <View style={styles.mobileProgress} accessibilityLabel={`${item.stage_label}, stage ${Math.max(stageIndex + 1, 1)} of ${STAGE_ORDER.length}`}>
+        {STAGE_ORDER.map((key, index) => <View key={key} style={[styles.mobileProgressDot, index <= stageIndex && styles.mobileProgressDotDone, index === stageIndex && styles.mobileProgressDotCurrent]} />)}
+      </View>
       <View style={styles.mobileCardBottom}>
-        <View style={[styles.stageBadge, { backgroundColor: tone.bg }]}><Text style={{ color: tone.fg, fontWeight: "700", fontSize: 12 }}>{item.stage_label}</Text></View>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Change stage for ${item.name}`} onPress={onMove} style={[styles.stageBadge, styles.mobileStageBadge, { backgroundColor: tone.bg }]}><Text style={{ color: tone.fg, fontWeight: "700", fontSize: 12 }} numberOfLines={1}>{item.stage_label}</Text><Feather name="chevron-down" size={13} color={tone.fg} /></Pressable>
         <Text style={styles.mobileCardPo} numberOfLines={1}>{item.po_number || "No PO"}</Text>
         {item.blocked ? <View style={styles.mobileBlockedPill}><Text style={styles.mobileBlockedText}>Blocked</Text></View> : null}
       </View>
+      {nextLabel ? (
+        <Pressable accessibilityRole="button" accessibilityLabel={`Choose the next stage for ${item.name}`} onPress={onMove} style={({ pressed }) => [styles.mobileAdvance, pressed && { opacity: 0.72 }]}>
+          <Text style={styles.mobileAdvanceText}>Update stage · {nextLabel}</Text>
+          <Feather name="arrow-up-right" size={15} color={colors.onBrand} />
+        </Pressable>
+      ) : null}
       <Sheet open={menuOpen} onClose={() => setMenuOpen(false)} title={item.name} footer={<Pressable accessibilityRole="button" accessibilityLabel="Cancel purchase actions" onPress={() => setMenuOpen(false)} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Cancel</Text></Pressable>}>
             <SheetAction icon="repeat" label="Move material" onPress={() => { setMenuOpen(false); onMove(); }} />
             <SheetAction icon="shuffle" label="Transfer customer" onPress={() => { setMenuOpen(false); onTransfer(); }} />
@@ -1054,11 +1097,11 @@ function ItemRow(props: {
   const compact = tableW < TABLE_FULL;
   return (
     <View style={[styles.tr, row.blocked && { backgroundColor: ds.riskTint }]}>
-      <View style={{ width: 30 }}>
+      <View style={{ width: 38 }}>
         <BulkChk checked={checked} onToggle={onToggle} />
       </View>
       {/* Product */}
-      <Pressable onPress={onOpenPo} style={{ flex: compact ? 3 : 2, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Open purchase order for ${row.name}`} onPress={onOpenPo} style={{ flex: compact ? 3 : 2, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 }}>
         <ProductImage
           source={row.image}
           style={styles.thumb}
@@ -1168,7 +1211,7 @@ function StageBadge({ stage, tone, label }: { stage: Stage; tone: { bg: string; 
 
 function BulkChk({ checked, onToggle }: { checked: boolean; onToggle: () => void }) {
   return (
-    <Pressable accessibilityRole="checkbox" accessibilityLabel="Select purchase" accessibilityState={{ checked }} onPress={onToggle} hitSlop={8} style={[styles.chk, checked && styles.chkOn]}>
+    <Pressable accessibilityRole="checkbox" accessibilityLabel="Select purchase" accessibilityState={{ checked }} onPress={onToggle} hitSlop={4} style={[styles.bulkCheckTarget, checked && styles.chkOn]}>
       {checked ? <Feather name="check" size={11} color="#fff" /> : null}
     </Pressable>
   );
@@ -1353,11 +1396,14 @@ const styles = StyleSheet.create({
 
   // Top action bar
   headerRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.md },
-  topActions: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 0 },
+  // Actions can wrap before the page itself runs out of room (notably when
+  // the admin rail is open on a 1366px laptop). This avoids a clipped final
+  // action while preserving the compact one-line toolbar on wider screens.
+  topActions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center", gap: 8, flexShrink: 1 },
   search: {
     flexDirection: "row", alignItems: "center", gap: 8,
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
-    paddingHorizontal: 10, height: 36, backgroundColor: colors.surfaceSecondary,
+    paddingHorizontal: 10, height: 40, backgroundColor: colors.surfaceSecondary,
     minWidth: 240,
   },
   searchInput: {
@@ -1367,7 +1413,7 @@ const styles = StyleSheet.create({
   iconAction: {
     flexDirection: "row", alignItems: "center", gap: 6,
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
-    paddingHorizontal: 12, height: 36, backgroundColor: colors.surfaceSecondary,
+    paddingHorizontal: 12, height: 40, backgroundColor: colors.surfaceSecondary,
   },
   bulkResultBanner: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
@@ -1406,7 +1452,7 @@ const styles = StyleSheet.create({
   },
   railItem: {
     flexDirection: "row", alignItems: "center", gap: 8,
-    paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.sm,
+    minHeight: 40, paddingHorizontal: 10, paddingVertical: 8, borderRadius: radius.sm,
     borderLeftWidth: 3, borderLeftColor: "transparent",
   },
   railItemActive: { backgroundColor: ds.sunken, borderLeftColor: ds.brass },
@@ -1419,7 +1465,7 @@ const styles = StyleSheet.create({
 
   brandItem: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.sm, gap: 8,
+    minHeight: 40, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.sm, gap: 8,
   },
   brandItemActive: { backgroundColor: ds.sunken },
   brandLabel: { fontSize: 13, color: colors.onSurface, flex: 1 },
@@ -1493,6 +1539,10 @@ const styles = StyleSheet.create({
 
   chk: {
     width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border,
+    alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary,
+  },
+  bulkCheckTarget: {
+    width: 36, height: 36, borderRadius: 8, borderWidth: 1.5, borderColor: colors.border,
     alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSecondary,
   },
   chkOn: { backgroundColor: colors.brand, borderColor: colors.brand },
@@ -1612,8 +1662,9 @@ const styles = StyleSheet.create({
 
   // Mobile-first Purchases workspace
   mobileSafe: { flex: 1, backgroundColor: colors.surface },
-  mobileListContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md },
-  mobileHeaderContent: { gap: spacing.md, paddingBottom: spacing.md },
+  mobileListContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md, paddingBottom: spacing.md, alignItems: "center" },
+  tabletListContent: { paddingHorizontal: spacing.xl, paddingTop: spacing.xl, alignItems: "stretch" },
+  mobileHeaderContent: { width: "100%", maxWidth: 1120, gap: spacing.md, paddingBottom: spacing.md },
   mobileTitleRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   mobilePageTitle: { fontFamily: dsFont.display, fontSize: 28, lineHeight: 34, color: colors.onSurface, letterSpacing: -0.3 },
   mobileIconButton: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary, flexShrink: 0 },
@@ -1634,26 +1685,42 @@ const styles = StyleSheet.create({
   activeFilterText: { flex: 1, minWidth: 0, color: ds.brassDeep, fontSize: 13, fontWeight: "600" },
   clearFiltersButton: { minWidth: 64, minHeight: 44, alignItems: "center", justifyContent: "center" },
   clearFiltersText: { color: ds.brassDeep, fontSize: 13, fontWeight: "800" },
-  mobileBulkButton: { minHeight: 48, paddingHorizontal: 16, borderRadius: 12, backgroundColor: colors.brand, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
+  mobileBulkButton: { minHeight: 48, paddingHorizontal: 18, borderRadius: 12, backgroundColor: colors.brand, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
   mobileBulkText: { color: colors.onBrand, fontSize: 14, fontWeight: "800" },
-  mobileAttentionRow: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, borderRadius: 10, backgroundColor: ds.riskTint },
+  mobileAttentionRow: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, borderRadius: 12, backgroundColor: ds.riskTint, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.errorBorder },
   mobileAttentionText: { flex: 1, color: colors.error, fontSize: 13, fontWeight: "700" },
   mobileEmpty: { minHeight: 180, alignItems: "center", justifyContent: "center", gap: 8, padding: 24, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surfaceSecondary },
   mobileFooter: { height: 96, alignItems: "center", justifyContent: "center", gap: 8 },
-  mobilePurchaseCard: { padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, gap: spacing.md, overflow: "hidden" },
+  purchaseCardCell: { width: "100%" },
+  tabletCardRow: { gap: 16 },
+  tabletPurchaseCardCell: { flex: 1, minWidth: 0 },
+  mobilePurchaseCard: { width: "100%", padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, gap: spacing.md, overflow: "hidden", ...shadow.soft },
+  mobilePurchaseCardCompact: { padding: 12, gap: 10 },
   mobilePurchaseCardBlocked: { borderLeftWidth: 4, borderLeftColor: colors.error },
   mobileCardTop: { flexDirection: "row", alignItems: "center", gap: 10 },
   mobileSelectTarget: { width: 44, height: 44, alignItems: "center", justifyContent: "center", marginLeft: -10 },
-  mobileCardImage: { width: 80, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO },
+  mobileCardImage: { width: 80, aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, flexShrink: 0 },
   mobileCardName: { color: colors.onSurface, fontSize: 14, lineHeight: 19, fontWeight: "800" },
   mobileCardMeta: { marginTop: 2, color: colors.onSurfaceMuted, fontSize: 11.5, lineHeight: 16 },
   mobileCardDetailRow: { flexDirection: "row", alignItems: "flex-start", gap: 10, paddingHorizontal: 4 },
   mobileCardLabel: { color: colors.onSurfaceMuted, fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
   mobileCardValue: { marginTop: 3, color: colors.onSurface, fontSize: 13, lineHeight: 17, fontWeight: "700" },
   mobileCardBottom: { minHeight: 30, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 },
+  mobileStageBadge: { maxWidth: "64%", flexShrink: 1, flexDirection: "row", alignItems: "center", gap: 4 },
   mobileCardPo: { flex: 1, minWidth: 0, color: colors.onSurfaceMuted, fontSize: 11.5, fontVariant: ["tabular-nums"] },
   mobileBlockedPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: ds.riskTint },
   mobileBlockedText: { color: colors.error, fontSize: 11, fontWeight: "800" },
+  mobileProgress: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 4 },
+  mobileProgressDot: { height: 3, flex: 1, borderRadius: 99, backgroundColor: colors.border },
+  mobileProgressDotDone: { backgroundColor: ds.brassLine },
+  mobileProgressDotCurrent: { backgroundColor: ds.brass },
+  mobileAdvance: { minHeight: 46, paddingHorizontal: 14, borderRadius: 11, backgroundColor: colors.brand, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  mobileAdvanceText: { color: colors.onBrand, fontSize: 13, fontWeight: "800", textTransform: "capitalize" },
+  mobileBulkDock: { position: "absolute", bottom: 0, left: spacing.md, right: spacing.md },
+  mobileBulkDockInner: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.sm, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.borderStrong, ...shadow.strong },
+  mobileBulkClear: { width: 44, height: 44, borderRadius: 10, backgroundColor: colors.surfaceTertiary, alignItems: "center", justifyContent: "center" },
+  mobileBulkCount: { color: colors.onSurface, fontSize: 14, fontWeight: "800" },
+  mobileBulkHint: { marginTop: 1, color: colors.onSurfaceMuted, fontSize: 11.5 },
   mobileSheetBackdrop: { flex: 1, backgroundColor: "rgba(15,17,21,0.45)", justifyContent: "flex-end" },
   mobileSheet: { width: "100%", maxHeight: "90%", paddingHorizontal: 16, paddingTop: 18, paddingBottom: 24, borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: colors.surfaceSecondary, ...shadow.strong },
   mobileSheetHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 8 },

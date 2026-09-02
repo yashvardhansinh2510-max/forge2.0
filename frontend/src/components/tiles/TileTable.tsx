@@ -191,7 +191,13 @@ export function DataTable<T>({
   const [bodyMaxHeight, setBodyMaxHeight] = useState<number | null>(null);
   const shellRef = useRef<View>(null);
   const windowHeight = useWindowDimensions().height;
-  const { isPhone } = useBreakpoint();
+  const { isPhone, bp } = useBreakpoint();
+  // A portrait tablet has enough room for a spacious card, but not for an
+  // operational table with seven counters and several verbs. Keeping the
+  // desktop table there made the primary actions live behind horizontal
+  // scrolling. Landscape tablets retain the dense table; portrait tablets
+  // use the same labelled, touch-first records as phones.
+  const useCardRows = isPhone || bp === "tabletPortrait";
   const scrollThreshold = columns.reduce((total, column) => total + columnFloor(column), 0);
 
   // Pinning is only a help while the pinned column leaves room to read the
@@ -212,7 +218,7 @@ export function DataTable<T>({
     && availableWidth > 0
     && availableWidth - stickyWidth >= MIN_UNPINNED_WIDTH;
 
-  if (isPhone) {
+  if (useCardRows) {
     const renderMobileRow = (item: T, index: number) => {
       const selected = isRowSelected?.(item, index) ?? false;
       const content = (

@@ -17,6 +17,7 @@ import { Platform, Text, View } from "react-native";
 import { Button, Sheet } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 export type TempPasswordResult = {
   delivery_method: "manual" | "email";
@@ -33,6 +34,7 @@ export function TempPasswordDialog({
   title: string;
   result: TempPasswordResult | null;
 }) {
+  const { isPhone } = useBp();
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -60,7 +62,7 @@ export function TempPasswordDialog({
       variant="modal"
       testID="temp-password-dialog"
     >
-      <View style={{ padding: spacing.xl, gap: spacing.lg }}>
+      <View style={{ padding: isPhone ? spacing.lg : spacing.xl, gap: spacing.lg }}>
         {result?.delivery_method === "manual" && result.temporary_password ? (
           <>
             <Text style={type.bodyMuted}>
@@ -68,7 +70,7 @@ export function TempPasswordDialog({
               not be shown again after you close this dialog.
             </Text>
             <View style={styles.pwBox}>
-              <Text testID="temp-password-value" selectable style={styles.pwText}>
+              <Text testID="temp-password-value" selectable numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.65} style={styles.pwText}>
                 {result.temporary_password}
               </Text>
             </View>

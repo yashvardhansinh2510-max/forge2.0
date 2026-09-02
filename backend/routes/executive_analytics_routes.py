@@ -56,7 +56,10 @@ async def _match(
     if customer_id: query["customer_id"] = customer_id
     if referrer_id: query["referrer_id"] = referrer_id
     if start or end:
-        query["updated_at"] = {k: v for k, v in (("$gte", start), ("$lte", end)) if v}
+        # Revenue reporting dates confirmed orders by their write-once
+        # confirmation stamp.  ``updated_at`` changes on every later edit and
+        # would silently move historical revenue between reporting periods.
+        query["ordered_at"] = {k: v for k, v in (("$gte", start), ("$lte", end)) if v}
     if brand_id:
         ids = [p["id"] for p in await db.products.find({"brand_id": brand_id}, {"_id": 0, "id": 1}).to_list(100000)]
         query["items.product_id"] = {"$in": ids}
@@ -73,6 +76,11 @@ async def filters(
     user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
 ):
     allowed = accessible_floor_ids(user)
+    # Validate the requested floor and reuse the exact scope for every
+    # floor-owned filter collection.  Returning referrers from another floor
+    # exposes contact information even before a report is opened.
+    match_scope = await _match(user, floor_id, "all", None, None, None, None, None)
+    entity_scope = {"floor_id": match_scope["floor_id"]} if "floor_id" in match_scope else {}
     floor_query = {"id": {"$in": allowed}} if allowed is not None else {}
     # The Brand filter must only offer brands belonging to the floor being
     # reported on. Listing every floor's brands put The Sanitary Bathroom's
@@ -87,7 +95,7 @@ async def filters(
         db.floors.find({**floor_query, "active": True}, {"_id": 0, "id": 1, "name": 1}).sort("name", 1).to_list(200),
         db.brands.find(brand_scope, {"_id": 0, "id": 1, "name": 1, "floor_id": 1}).sort("name", 1).to_list(5000),
         db.users.find({"active": True}, {"_id": 0, "id": 1, "full_name": 1, "role": 1}).sort("full_name", 1).to_list(500),
-        db.referrers.find({}, {"_id": 0, "id": 1, "name": 1, "type": 1}).sort("name", 1).to_list(5000),
+        db.referrers.find(entity_scope, {"_id": 0, "id": 1, "name": 1, "type": 1}).sort("name", 1).to_list(5000),
     )
     return {"floors": floors, "brands": brands, "salespeople": people, "referrers": refs}
 
@@ -100,7 +108,7 @@ async def dashboard(
     user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
 ):
     match = await _match(user, floor_id, preset, date_from, date_to, brand_id, salesperson_id, referrer_type, customer_id, referrer_id)
-    dt = {"$dateFromString": {"dateString": "$updated_at"}}
+    dt = {"$dateFromString": {"dateString": "$ordered_at"}}
     fmt = {"day": "%Y-%m-%d", "week": "%G-W%V", "month": "%Y-%m", "year": "%Y"}.get(granularity, "%Y-Q")
     bucket = {"$dateToString": {"format": fmt, "date": dt}}
     if granularity == "quarter": bucket = {"$concat": [{"$toString": {"$year": dt}}, "-Q", {"$toString": {"$ceil": {"$divide": [{"$month": dt}, 3]}}}]}
@@ -110,12 +118,15 @@ async def dashboard(
         _rows("quotations", [{"$match": match}, {"$group": {"_id": "$floor_id", "revenue": {"$sum": "$grand_total"}, "orders": {"$sum": 1}, "aov": {"$avg": "$grand_total"}}}, {"$sort": {"revenue": -1}}, {"$project": {"_id": 0, "floor_id": "$_id", "revenue": 1, "orders": 1, "aov": 1}}]),
         _rows("quotations", [{"$match": match}, {"$unwind": "$items"}, {"$lookup": {"from": "products", "localField": "items.product_id", "foreignField": "id", "as": "product"}}, {"$unwind": {"path": "$product", "preserveNullAndEmptyArrays": True}}, {"$lookup": {"from": "brands", "localField": "product.brand_id", "foreignField": "id", "as": "brand"}}, {"$unwind": {"path": "$brand", "preserveNullAndEmptyArrays": True}}, {"$group": {"_id": {"id": "$product.brand_id", "name": "$brand.name"}, "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}, "quantity": {"$sum": "$items.qty"}, "orders": {"$addToSet": "$id"}}}, {"$sort": {"revenue": -1}}, {"$limit": 50}, {"$project": {"_id": 0, "brand_id": "$_id.id", "brand_name": "$_id.name", "revenue": 1, "quantity": 1, "orders": {"$size": "$orders"}}}]),
         _rows("quotations", [{"$match": match}, {"$unwind": "$items"}, {"$group": {"_id": {"id": "$items.product_id", "name": "$items.name"}, "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}, "quantity": {"$sum": "$items.qty"}, "customers": {"$addToSet": "$customer_id"}}}, {"$sort": {"revenue": -1}}, {"$limit": 25}, {"$project": {"_id": 0, "product_id": "$_id.id", "name": "$_id.name", "revenue": 1, "quantity": 1, "customers": {"$size": "$customers"}}}]),
-        _rows("quotations", [{"$match": match}, {"$group": {"_id": {"id": "$customer_id", "name": "$customer_name"}, "revenue": {"$sum": "$grand_total"}, "orders": {"$sum": 1}, "aov": {"$avg": "$grand_total"}, "last_purchase": {"$max": "$updated_at"}}}, {"$sort": {"revenue": -1}}, {"$limit": 25}, {"$project": {"_id": 0, "customer_id": "$_id.id", "name": "$_id.name", "revenue": 1, "orders": 1, "aov": 1, "last_purchase": 1}}]),
+        _rows("quotations", [{"$match": match}, {"$group": {"_id": {"id": "$customer_id", "name": "$customer_name"}, "revenue": {"$sum": "$grand_total"}, "orders": {"$sum": 1}, "aov": {"$avg": "$grand_total"}, "last_purchase": {"$max": "$ordered_at"}}}, {"$sort": {"revenue": -1}}, {"$limit": 25}, {"$project": {"_id": 0, "customer_id": "$_id.id", "name": "$_id.name", "revenue": 1, "orders": 1, "aov": 1, "last_purchase": 1}}]),
         _rows("quotations", [{"$match": match}, {"$group": {"_id": {"id": "$created_by", "name": "$created_by_name"}, "revenue": {"$sum": "$grand_total"}, "orders": {"$sum": 1}, "aov": {"$avg": "$grand_total"}}}, {"$sort": {"revenue": -1}}, {"$limit": 25}, {"$project": {"_id": 0, "salesperson_id": "$_id.id", "name": "$_id.name", "revenue": 1, "orders": 1, "aov": 1}}]),
         _rows("quotations", [{"$match": {**match, "referrer_id": {"$ne": None}}}, {"$group": {"_id": {"id": "$referrer_id", "name": "$referrer_name", "type": "$referrer_type"}, "revenue": {"$sum": "$grand_total"}, "orders": {"$sum": 1}, "aov": {"$avg": "$grand_total"}}}, {"$sort": {"revenue": -1}}, {"$limit": 25}, {"$project": {"_id": 0, "referrer_id": "$_id.id", "name": "$_id.name", "type": "$_id.type", "revenue": 1, "orders": 1, "aov": 1}}]),
     )
     floor_scope = {"floor_id": match["floor_id"]} if "floor_id" in match else {}
-    activity_dates = {"created_at": match["updated_at"]} if "updated_at" in match else {}
+    # Activity metrics deliberately date by creation rather than confirmation;
+    # they share the selected window but must not inherit the revenue field.
+    start, end = _date_range(preset, date_from, date_to)
+    activity_dates = {"created_at": {k: v for k, v in (("$gte", start), ("$lte", end)) if v}} if start or end else {}
     walkin_counts, selection_counts, quotation_counts, followup_counts = await __import__("asyncio").gather(
         _rows("walkins", [{"$match": {**floor_scope, **activity_dates, "is_deleted": False}}, {"$group": {"_id": "$salesperson_id", "walkins": {"$sum": 1}}}]),
         _rows("quotations", [{"$match": {**floor_scope, **activity_dates, "doc_type": "tiles_selection"}}, {"$group": {"_id": "$created_by", "selections": {"$sum": 1}}}]),
@@ -133,7 +144,7 @@ async def dashboard(
     if start and end:
         start_dt, end_dt = datetime.fromisoformat(start), datetime.fromisoformat(end)
         span = end_dt - start_dt
-        previous_match = {**match, "updated_at": {"$gte": (start_dt - span).isoformat(), "$lt": start}}
+        previous_match = {**match, "ordered_at": {"$gte": (start_dt - span).isoformat(), "$lt": start}}
         previous = await _rows("quotations", [{"$match": previous_match}, {"$group": {"_id": None, "revenue": {"$sum": "$grand_total"}}}])
         previous_revenue = previous[0]["revenue"] if previous else 0
     growth = round((totals["revenue"] - previous_revenue) / previous_revenue * 100, 1) if previous_revenue else (100 if totals["revenue"] else 0)
@@ -194,14 +205,16 @@ async def brand_detail(
 async def customer_lifetime(
     customer_id: str, floor_id: Optional[str] = None, user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
 ):
-    customer = await db.customers.find_one({"id": customer_id}, {"_id": 0})
+    match = await _match(user, floor_id, "all", None, None, None, None, None, customer_id)
+    floor_scope = {"floor_id": match["floor_id"]} if "floor_id" in match else {}
+    customer = await db.customers.find_one({"id": customer_id, **floor_scope}, {"_id": 0, "password_hash": 0})
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     analytics = await dashboard(floor_id=floor_id, preset="all", customer_id=customer_id, user=user)
-    lifetime_rows = await _rows("quotations", [{"$match": {"status": "ordered", "customer_id": customer_id}}, {"$group": {"_id": None, "first_visit": {"$min": "$created_at"}, "last_purchase": {"$max": "$updated_at"}, "orders": {"$sum": 1}, "revenue": {"$sum": "$grand_total"}, "floors": {"$push": "$floor_id"}}}])
+    lifetime_rows = await _rows("quotations", [{"$match": match}, {"$group": {"_id": None, "first_visit": {"$min": "$created_at"}, "last_purchase": {"$max": "$ordered_at"}, "orders": {"$sum": 1}, "revenue": {"$sum": "$grand_total"}, "floors": {"$push": "$floor_id"}}}])
     lifetime = lifetime_rows[0] if lifetime_rows else {"first_visit": None, "last_purchase": None, "orders": 0, "revenue": 0, "floors": []}
     preferred_floor = max(set(lifetime["floors"]), key=lifetime["floors"].count) if lifetime["floors"] else None
-    brands = await _rows("quotations", [{"$match": {"status": "ordered", "customer_id": customer_id}}, {"$unwind": "$items"}, {"$lookup": {"from": "products", "localField": "items.product_id", "foreignField": "id", "as": "product"}}, {"$unwind": "$product"}, {"$group": {"_id": "$product.brand_id", "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}}}, {"$sort": {"revenue": -1}}, {"$limit": 1}])
+    brands = await _rows("quotations", [{"$match": match}, {"$unwind": "$items"}, {"$lookup": {"from": "products", "localField": "items.product_id", "foreignField": "id", "as": "product"}}, {"$unwind": "$product"}, {"$group": {"_id": "$product.brand_id", "revenue": {"$sum": {"$multiply": ["$items.qty", "$items.unit_price"]}}}}, {"$sort": {"revenue": -1}}, {"$limit": 1}])
     return {"customer": customer, "lifetime": analytics, "lifetime_value": {"revenue": lifetime["revenue"], "orders": lifetime["orders"], "average_order": round(lifetime["revenue"] / lifetime["orders"], 2) if lifetime["orders"] else 0, "first_visit": lifetime["first_visit"], "last_purchase": lifetime["last_purchase"], "preferred_floor": preferred_floor, "preferred_brand_id": brands[0]["_id"] if brands else None}}
 
 
@@ -220,7 +233,9 @@ async def salesperson_detail(
 async def referrer_detail(
     referrer_id: str, floor_id: Optional[str] = None, preset: str = "this_month", user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
 ):
-    referrer = await db.referrers.find_one({"id": referrer_id}, {"_id": 0})
+    match = await _match(user, floor_id, "all", None, None, None, None, None, referrer_id=referrer_id)
+    floor_scope = {"floor_id": match["floor_id"]} if "floor_id" in match else {}
+    referrer = await db.referrers.find_one({"id": referrer_id, **floor_scope}, {"_id": 0})
     if not referrer:
         raise HTTPException(status_code=404, detail="Referrer not found")
     analytics = await dashboard(floor_id=floor_id, preset=preset, referrer_id=referrer_id, user=user)
@@ -233,8 +248,8 @@ async def export_orders(
     date_from: Optional[str] = None, date_to: Optional[str] = None, user: UserPublic = Depends(require_roles("owner", "admin", "manager")),
 ):
     match = await _match(user, floor_id, preset, date_from, date_to, None, None, None)
-    orders = await db.quotations.find(match, {"_id": 0, "number": 1, "updated_at": 1, "floor_id": 1, "customer_name": 1, "created_by_name": 1, "grand_total": 1, "status": 1}).sort("updated_at", -1).to_list(100000)
-    rows = [[o.get("number"), o.get("updated_at"), o.get("floor_id"), o.get("customer_name"), o.get("created_by_name"), o.get("grand_total"), o.get("status")] for o in orders]
+    orders = await db.quotations.find(match, {"_id": 0, "number": 1, "ordered_at": 1, "floor_id": 1, "customer_name": 1, "created_by_name": 1, "grand_total": 1, "status": 1}).sort("ordered_at", -1).to_list(100000)
+    rows = [[o.get("number"), o.get("ordered_at"), o.get("floor_id"), o.get("customer_name"), o.get("created_by_name"), o.get("grand_total"), o.get("status")] for o in orders]
     headers = ["Order", "Confirmed at", "Floor", "Customer", "Salesperson", "Revenue", "Status"]
     filename = f"buildcon-executive-sales-{preset}"
     if format == "csv":

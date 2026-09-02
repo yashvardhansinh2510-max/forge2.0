@@ -219,13 +219,14 @@ def contain_box(
     )
 
 
-class _CoverImage(Flowable):
-    """A centered, aspect-preserving product image that fills its whole cell.
+class _ProductImageFrame(Flowable):
+    """A fixed, landscape product-image frame with a centred ``contain`` fit.
 
-    The image is clipped at the cell boundary when its source ratio differs
-    from the document's image frame.  That gives every selected product the
-    same clear, full-size visual treatment in the PDF instead of leaving a
-    small, differently-sized thumbnail in the middle of the image column.
+    Giving ReportLab a frame (rather than a differently-sized ``Image`` for
+    every source) makes image placement deterministic inside table cells.  A
+    source is never rotated, stretched, or cropped: EXIF orientation is baked
+    in by :func:`_prepare_image_bytes`, then the upright source is fitted at
+    the largest possible size in the landscape frame.
     """
 
     def __init__(self, data: bytes, width_mm: float, height_mm: float):
@@ -245,18 +246,18 @@ class _CoverImage(Flowable):
     def draw(self):
         if self.source_width <= 0 or self.source_height <= 0:
             return
-        scale = max(self.width / self.source_width, self.height / self.source_height)
-        drawn_width = self.source_width * scale
-        drawn_height = self.source_height * scale
-        path = self.canv.beginPath()
-        path.rect(0, 0, self.width, self.height)
-        self.canv.saveState()
-        self.canv.clipPath(path, stroke=0, fill=0)
+        x, y, drawn_width, drawn_height = contain_box(
+            self.source_width, self.source_height, self.width, self.height,
+        )
         self.canv.drawImage(
-            self.reader, (self.width - drawn_width) / 2, (self.height - drawn_height) / 2,
+            self.reader, x, y,
             width=drawn_width, height=drawn_height, mask="auto",
         )
-        self.canv.restoreState()
+
+
+# Backwards-compatible name for integrations that imported the previous
+# private flowable.  Its behaviour is intentionally now non-destructive.
+_CoverImage = _ProductImageFrame
 
 
 def _img(
@@ -268,27 +269,16 @@ def _img(
 ) -> Flowable:
     """Render the supplied product image inside the quotation image cell.
 
-    ``cover=True`` fills the designated image frame, centering and clipping
-    excess edges while preserving aspect ratio.  The default remains a
-    centered contain box for callers that explicitly need the entire source.
+    Every successful image receives a fixed landscape frame.  This removes
+    table-cell alignment ambiguity and lets portrait and landscape products
+    use the largest non-distorted fit without losing product detail.
     """
     if url and str(url).startswith(("https://", "http://")):
         data = _remote_image_bytes(str(url))
         if data:
             try:
                 prepared = _prepare_image_bytes(data, force_landscape=force_landscape)
-                if cover:
-                    return _CoverImage(prepared, width_mm, height_mm)
-                reader = ImageReader(BytesIO(prepared))
-                source_width, source_height = reader.getSize()
-                _, _, image_width, image_height = contain_box(
-                    source_width, source_height, width_mm, height_mm, inset=1.25,
-                )
-                image = Image(
-                    BytesIO(prepared), width=image_width * mm, height=image_height * mm,
-                )
-                image.hAlign = "CENTER"
-                return image
+                return _ProductImageFrame(prepared, width_mm, height_mm)
             except Exception:
                 pass
     return Paragraph("<i><font color='#999999' size='7'>[image]</font></i>", ParagraphStyle("image-placeholder", alignment=1, leading=8))

@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { api } from "@/src/api/client";
@@ -8,7 +8,8 @@ import {
   EmptyState, ErrorState, LoadingState, PillTabs, Table, TableCell, TableHeader, TableRow,
 } from "@/src/components/ui";
 import { fmtMoney } from "@/src/design/tokens";
-import { spacing } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
+import { colors, spacing, type } from "@/src/theme/tokens";
 import { TrendChart } from "@/src/components/salesData/TrendChart";
 import {
   DATE_PRESET_LABEL, DatePreset, Granularity, presetToRange,
@@ -27,6 +28,7 @@ export default function ReferrerDetail() {
   const [granularity, setGranularity] = useState<Granularity>("month");
   const [data, setData] = useState<ReferrerDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { isPhone } = useBp();
 
   const { date_from, date_to } = presetToRange(preset);
 
@@ -67,7 +69,16 @@ export default function ReferrerDetail() {
           {data.quotations.length === 0 ? (
             <EmptyState title="No won quotations in this range" />
           ) : (
-            <Table>
+            isPhone ? (
+              <View style={{ gap: spacing.xs }}>
+                {data.quotations.map((q) => (
+                  <View key={q.id} testID={`referrer-quote-row-${q.id}`} style={{ minHeight: 56, paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: "row", alignItems: "center", gap: spacing.md }}>
+                    <View style={{ flex: 1, minWidth: 0, gap: 2 }}><Text style={type.bodyStrong} numberOfLines={2}>{q.customer_name}</Text><Text style={[type.caption, { color: colors.onSurfaceMuted }]} numberOfLines={1}>{q.number}</Text></View>
+                    <Text style={[type.bodyStrong, { fontVariant: ["tabular-nums"] }]}>₹{fmtMoney(q.grand_total)}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : <Table>
               <TableHeader columns={[
                 { label: "Number", flex: 1 }, { label: "Customer", flex: 2 }, { label: "Amount", align: "right" },
               ]} />

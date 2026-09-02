@@ -12,9 +12,11 @@ import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { Button, Card, TextField } from "@/src/components/ui";
 import { useAuth } from "@/src/state/auth";
+import { useBp } from "@/src/design/responsive";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 export default function SetNewPassword() {
+  const { isPhone, gutter } = useBp();
   const { kind, markPasswordChanged, logout } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -43,8 +45,8 @@ export default function SetNewPassword() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", padding: spacing.xl }} keyboardShouldPersistTaps="handled">
-          <Card style={{ gap: spacing.md }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center", paddingHorizontal: gutter, paddingVertical: isPhone ? spacing.lg : spacing.xl }} keyboardShouldPersistTaps="handled">
+          <Card style={{ width: "100%", maxWidth: 480, alignSelf: "center", gap: spacing.md }}>
             <View style={{ gap: 4 }}>
               <Text style={type.titleLg}>Set a new password</Text>
               <Text style={type.bodyMuted}>

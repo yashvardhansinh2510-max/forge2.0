@@ -8,6 +8,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -113,19 +114,19 @@ export function ProductModal() {
   return (
     <>
     <Modal visible={open} transparent animationType="fade" onRequestClose={b.closeProductModal}>
-      <Pressable style={styles.backdrop} onPress={b.closeProductModal}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Pressable style={[styles.backdrop, isPhone && styles.phoneBackdrop]} onPress={b.closeProductModal}>
+        <Pressable style={[styles.sheet, isPhone && styles.phoneSheet]} onPress={(e) => e.stopPropagation()} accessibilityViewIsModal>
           {/* Header */}
-          <View style={styles.header}>
+          <View style={[styles.header, isPhone && styles.headerPhone]}>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.crumb}>{product.brand_name || "Product"}{product.collection ? ` · ${product.collection}` : ""}</Text>
               <Text style={styles.title} numberOfLines={2}>{product.name}</Text>
               <Text style={styles.sku}>{product.sku}</Text>
             </View>
             {canEditProduct ? (
-              <Pressable onPress={() => setEditorOpen(true)} style={styles.editBtn} hitSlop={6} testID="product-modal-edit">
+              <Pressable onPress={() => setEditorOpen(true)} style={[styles.editBtn, isPhone && styles.editBtnPhone]} hitSlop={6} testID="product-modal-edit" accessibilityLabel="Edit product">
                 <Feather name="edit-2" size={14} color={colors.onSurfaceSecondary} />
-                <Text style={styles.editBtnLabel}>Edit product</Text>
+                {!isPhone ? <Text style={styles.editBtnLabel}>Edit product</Text> : null}
               </Pressable>
             ) : null}
             <Pressable onPress={b.closeProductModal} style={styles.close} hitSlop={6}>
@@ -134,9 +135,9 @@ export function ProductModal() {
           </View>
 
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 16 }}>
-            <View style={styles.body}>
+            <View style={[styles.body, isPhone && styles.bodyPhone]}>
               {/* Left: gallery + price */}
-              <View style={styles.left}>
+              <View style={[styles.left, isPhone && styles.leftPhone]}>
                 <Pressable onPress={() => setZoomOpen(true)} disabled={!activeImage} testID="pm-hero-zoom">
                   {/* No `key` here on purpose — keeping the same ProductImage
                       instance across finish switches lets expo-image's own
@@ -184,7 +185,7 @@ export function ProductModal() {
               </View>
 
               {/* Right: details */}
-              <View style={styles.right}>
+              <View style={[styles.right, isPhone && styles.rightPhone]}>
                 {/* Variants / finishes */}
                 {product.variants && product.variants.length ? (
                   <View style={{ gap: 6 }}>
@@ -320,6 +321,7 @@ export function ProductModal() {
               a full-width primary "Add to quotation" button that's always
               easy to hit with a thumb and never gets squeezed by its
               siblings. Desktop/tablet keep the original single-row layout. */}
+          <SafeAreaView edges={isPhone ? ["bottom"] : []} style={styles.footerSafeArea}>
           {isCompactFooter ? (
             <View style={styles.footerStacked}>
               <View style={styles.footerStackedTopRow}>
@@ -356,6 +358,7 @@ export function ProductModal() {
               </Pressable>
             </View>
           )}
+          </SafeAreaView>
         </Pressable>
       </Pressable>
     </Modal>
@@ -410,17 +413,22 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: "rgba(9,9,11,0.55)",
     alignItems: "center", justifyContent: "center", padding: 24,
   },
+  phoneBackdrop: { padding: 0, justifyContent: "flex-end" },
   sheet: {
     width: "100%", maxWidth: 960, maxHeight: "92%",
     backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg,
     overflow: "hidden",
     ...shadow.strong,
   },
+  phoneSheet: {
+    maxWidth: undefined, maxHeight: "96%", borderBottomLeftRadius: 0, borderBottomRightRadius: 0,
+  },
 
   header: {
     flexDirection: "row", padding: spacing.lg, alignItems: "flex-start", gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  headerPhone: { paddingHorizontal: spacing.md, paddingVertical: spacing.md, gap: 8 },
   crumb: { fontSize: 11, fontWeight: "700", color: colors.onSurfaceMuted, letterSpacing: 1.2, textTransform: "uppercase" },
   title: { fontSize: 20, fontWeight: "700", color: colors.onSurface, marginTop: 4, letterSpacing: -0.3 },
   sku: { fontSize: 12, color: colors.onSurfaceMuted, marginTop: 4, fontVariant: ["tabular-nums"] },
@@ -433,11 +441,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 7, borderRadius: radius.md, marginRight: 8,
     backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
+  editBtnPhone: { width: 44, height: 44, paddingHorizontal: 0, paddingVertical: 0, justifyContent: "center", marginRight: 0 },
   editBtnLabel: { fontSize: 12, fontWeight: "600", color: colors.onSurfaceSecondary },
 
   body: { flexDirection: "row", padding: spacing.lg, gap: spacing.lg, flexWrap: "wrap" },
+  bodyPhone: { flexDirection: "column", padding: spacing.md, gap: spacing.md, flexWrap: "nowrap" },
   left: { width: "100%", maxWidth: 300, gap: 12 },
+  leftPhone: { maxWidth: undefined },
   right: { flex: 1, minWidth: 260, gap: 14 },
+  rightPhone: { width: "100%", minWidth: 0, flex: undefined, gap: 12 },
 
   hero: { width: "100%", aspectRatio: PRODUCT_IMAGE_ASPECT_RATIO, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   repImageNote: { fontSize: 10, color: colors.onSurfaceMuted, fontStyle: "italic", marginTop: -4 },
@@ -519,6 +531,7 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface,
   },
+  footerSafeArea: { backgroundColor: colors.surface },
   footerStacked: {
     gap: 8, paddingHorizontal: spacing.lg, paddingVertical: 12,
     borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border,

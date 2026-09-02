@@ -37,6 +37,7 @@ export function QuotationCanvas({ compact = false }: { compact?: boolean }) {
         catDiscs={b.s.categoryDiscounts}
         projDisc={b.s.projectDiscount}
         roomDiscs={b.s.roomDiscounts}
+        compact={compact}
       />
     );
   };

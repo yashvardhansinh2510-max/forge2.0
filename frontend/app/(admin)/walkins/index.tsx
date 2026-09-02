@@ -113,16 +113,16 @@ export default function WalkInsScreen({
         subtitle="Every customer journey starts here"
         actions={<Button label="Log Walk-in" icon="user-plus" onPress={() => router.push((fixedFloorId ? `/(admin)/walkins/new?floor_id=${fixedFloorId}` : "/(admin)/walkins/new") as any)} testID="walkin-new-btn" />}
       />
-      <ScrollView contentContainerStyle={{ padding: spacing.xl }}>
+      <ScrollView contentContainerStyle={{ padding: isPhone ? spacing.lg : spacing.xl, paddingBottom: isPhone ? 132 : spacing.xxxl }}>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.lg }}>
-          <StatTile label="Today" value={dashboard?.today_walkins ?? "—"} icon="user-plus" tone="brand" style={{ minWidth: 140, flex: 1 }} />
-          <StatTile label="This Week" value={dashboard?.this_week ?? "—"} icon="calendar" style={{ minWidth: 140, flex: 1 }} />
-          <StatTile label="Pending Follow-ups" value={dashboard?.pending_followups ?? "—"} icon="clock" tone="warning" style={{ minWidth: 140, flex: 1 }} />
-          <StatTile label="Selections Scheduled" value={dashboard?.selections_scheduled ?? "—"} icon="calendar" style={{ minWidth: 140, flex: 1 }} />
-          <StatTile label="Converted" value={dashboard?.converted ?? "—"} icon="check-circle" tone="success" style={{ minWidth: 140, flex: 1 }} />
-          <StatTile label="Lost" value={dashboard?.lost ?? "—"} icon="x-circle" tone="danger" style={{ minWidth: 140, flex: 1 }} />
-          <StatTile label="Conversion Rate" value={`${dashboard?.conversion_rate ?? 0}%`} icon="trending-up" tone="brand" style={{ minWidth: 140, flex: 1 }} />
-          <StatTile label="Avg. Conversion" value={`${dashboard?.avg_conversion_days ?? 0}d`} icon="activity" style={{ minWidth: 140, flex: 1 }} />
+          <StatTile label="Today" value={dashboard?.today_walkins ?? "—"} icon="user-plus" tone="brand" style={{ minWidth: isPhone ? 120 : 140, flex: 1 }} />
+          <StatTile label="This Week" value={dashboard?.this_week ?? "—"} icon="calendar" style={{ minWidth: isPhone ? 120 : 140, flex: 1 }} />
+          <StatTile label="Pending Follow-ups" value={dashboard?.pending_followups ?? "—"} icon="clock" tone="warning" style={{ minWidth: isPhone ? 120 : 140, flex: 1 }} />
+          <StatTile label="Selections Scheduled" value={dashboard?.selections_scheduled ?? "—"} icon="calendar" style={{ minWidth: isPhone ? 120 : 140, flex: 1 }} />
+          <StatTile label="Converted" value={dashboard?.converted ?? "—"} icon="check-circle" tone="success" style={{ minWidth: isPhone ? 120 : 140, flex: 1 }} />
+          <StatTile label="Lost" value={dashboard?.lost ?? "—"} icon="x-circle" tone="danger" style={{ minWidth: isPhone ? 120 : 140, flex: 1 }} />
+          <StatTile label="Conversion Rate" value={`${dashboard?.conversion_rate ?? 0}%`} icon="trending-up" tone="brand" style={{ minWidth: isPhone ? 120 : 140, flex: 1 }} />
+          <StatTile label="Avg. Conversion" value={`${dashboard?.avg_conversion_days ?? 0}d`} icon="activity" style={{ minWidth: isPhone ? 120 : 140, flex: 1 }} />
         </View>
 
         <SearchField

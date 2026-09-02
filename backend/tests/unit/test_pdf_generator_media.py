@@ -260,14 +260,17 @@ def test_pdf_image_bytes_never_force_rotates_an_old_landscape_asset():
         assert image.size == (192, 120)
 
 
-def test_pdf_img_contains_and_centers_a_portrait_source(monkeypatch):
+def test_pdf_img_places_a_portrait_source_in_a_full_centered_landscape_frame(monkeypatch):
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
 
     image = pdf_generator._img("https://example.test/product.png")
 
-    assert image.drawHeight == (pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM - 2.5) * pdf_generator.mm
-    assert image.drawWidth == (pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM - 2.5) / 2 * pdf_generator.mm
-    assert image.hAlign == "CENTER"
+    assert image.drawWidth == pdf_generator.STANDARD_PRODUCT_IMAGE_WIDTH_MM * pdf_generator.mm
+    assert image.drawHeight == pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM * pdf_generator.mm
+    x, y, width, height = pdf_generator.contain_box(60, 120, image.drawWidth, image.drawHeight)
+    assert x == pytest.approx((image.drawWidth - width) / 2)
+    assert y == 0
+    assert height == image.drawHeight
 
 
 def test_exif_orientation_six_is_honored_once():
@@ -288,8 +291,8 @@ def test_exif_orientation_eight_is_honored_once():
         assert image.size == (120, 60)
 
 
-def test_standard_selection_and_tiles_quotation_pdfs_use_their_intended_image_treatment(monkeypatch):
-    """Sanitary pages contain sparse-row images; tile documents retain cover."""
+def test_all_quotation_pdfs_use_full_centered_landscape_image_frames(monkeypatch):
+    """All document types share the same non-destructive image-frame policy."""
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
     original_img = pdf_generator._img
     rendered_sizes: list[tuple[float, float]] = []
@@ -328,13 +331,9 @@ def test_standard_selection_and_tiles_quotation_pdfs_use_their_intended_image_tr
     ]
     assert all(width > 0 and height > 0 for width, height in rendered_sizes)
     assert cover_values == [False, True, True]
-    # The sanitary product is contained (not cropped) in the capped sparse
-    # frame. Tile document frames intentionally remain cover treatments.
-    assert rendered_sizes[0][0] <= requested_boxes[0][0] * pdf_generator.mm
-    assert rendered_sizes[0][1] <= requested_boxes[0][1] * pdf_generator.mm
     assert all(
         (width, height) == (box_width * pdf_generator.mm, box_height * pdf_generator.mm)
-        for (width, height), (box_width, box_height) in zip(rendered_sizes[1:], requested_boxes[1:], strict=True)
+        for (width, height), (box_width, box_height) in zip(rendered_sizes, requested_boxes, strict=True)
     )
 
 
@@ -368,8 +367,8 @@ def test_sparse_sanitary_pages_cap_and_contain_product_images(monkeypatch, count
     for image, kwargs in images:
         assert kwargs["cover"] is False
         assert kwargs["height_mm"] == expected_height
-        assert image.drawWidth < 18 * pdf_generator.mm
-        assert image.drawHeight < expected_height * pdf_generator.mm
+        assert image.drawWidth == 18 * pdf_generator.mm
+        assert image.drawHeight == expected_height * pdf_generator.mm
 
 
 def test_every_quotation_pdf_is_landscape_a4(monkeypatch):

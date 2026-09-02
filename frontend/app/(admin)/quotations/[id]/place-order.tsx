@@ -290,8 +290,8 @@ export default function PlaceOrderReview() {
             </Text>
           </View>
           <View style={[styles.confirmActions, isPhone && styles.confirmActionsPhone]}>
-            <Button label="Cancel" variant="ghost" onPress={() => router.back()} />
-            <Button label={`Generate ${preview.brands.length} PO${preview.brands.length !== 1 ? "s" : ""}`} icon="check" onPress={confirm} loading={busy} testID="confirm-place-order" />
+            <Button label="Cancel" variant="ghost" onPress={() => router.back()} fullWidth={isPhone} />
+            <Button label={`Generate ${preview.brands.length} PO${preview.brands.length !== 1 ? "s" : ""}`} icon="check" onPress={confirm} loading={busy} testID="confirm-place-order" fullWidth={isPhone} />
           </View>
         </View>
       </ScrollView>
@@ -339,7 +339,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
   },
-  confirmBarPhone: { alignItems: "stretch" },
+  confirmBarPhone: { flexDirection: "column", alignItems: "stretch" },
   confirmActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  confirmActionsPhone: { flexWrap: "wrap", justifyContent: "flex-end" },
+  confirmActionsPhone: { flexDirection: "column", alignItems: "stretch" },
 });
