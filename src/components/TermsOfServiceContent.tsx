@@ -4,24 +4,24 @@
 // App Store Connect / Google Play Console require a hosted URL for,
 // mirroring how app/privacy.tsx and PrivacyPolicyContent.tsx are split.
 //
-// [LEGAL_ENTITY_NAME] / [REGISTERED_ADDRESS] / [CONTACT_EMAIL] /
-// [EFFECTIVE_DATE] / [GOVERNING_LAW_JURISDICTION] are placeholders — fill
-// in with real business facts before this page is used for an App Store /
-// Play Console submission or otherwise published.
 import { View } from "react-native";
 
 import { brand, space } from "@/src/design/tokens";
 import { P, Section } from "@/src/components/LegalDocContent";
+import { legalPublicationTodo } from "@/src/config/legal";
 
 export function TermsOfServiceContent() {
   return (
     <View style={{ gap: space.x6 }}>
       <Section title="Agreement">
         <P>
-          These Terms of Service govern access to and use of {brand.name}, operated by
-          [LEGAL_ENTITY_NAME], [REGISTERED_ADDRESS] (&quot;we&quot;, &quot;us&quot;). By signing in, you agree to
-          these terms. Effective date: [EFFECTIVE_DATE].
+          These Terms of Service govern access to and use of {brand.name}. By signing in, you
+          agree to these terms as published in the app.
         </P>
+      </Section>
+
+      <Section title="Publication requirement">
+        <P>{legalPublicationTodo}</P>
       </Section>
 
       <Section title="Who this applies to">
@@ -56,7 +56,7 @@ export function TermsOfServiceContent() {
         <P>
           Quotations, purchase orders, and other documents you create or view through the app
           remain the business records of {brand.name} and the customer they relate to. The app&apos;s
-          software, design, and branding are the property of [LEGAL_ENTITY_NAME] and may not be
+          software, design, and branding are owned or licensed by the app operator and may not be
           copied or redistributed outside normal use of the app.
         </P>
       </Section>
@@ -66,7 +66,7 @@ export function TermsOfServiceContent() {
           The app is provided &quot;as is.&quot; While we take reasonable care to keep quotation, order, and
           payment data accurate, you should confirm pricing and order details through your normal
           business process before relying on them for a transaction. To the extent permitted by
-          law, [LEGAL_ENTITY_NAME] is not liable for indirect or consequential loss arising from
+          law, the app operator is not liable for indirect or consequential loss arising from
           use of the app.
         </P>
       </Section>
@@ -81,21 +81,21 @@ export function TermsOfServiceContent() {
 
       <Section title="Governing law">
         <P>
-          These terms are governed by the laws of [GOVERNING_LAW_JURISDICTION], without regard to
-          conflict-of-law principles.
+          These terms are governed by the jurisdiction identified in the published legal notice,
+          without regard to conflict-of-law principles.
         </P>
       </Section>
 
       <Section title="Changes to these terms">
         <P>
           If these terms change, the updated version will be posted at this same location with a
-          new effective date above. Continued use of the app after a change takes effect means you
-          accept the updated terms.
+          new effective date. Continued use of the app after a change takes effect means you
+          accept the updated terms, where permitted by law.
         </P>
       </Section>
 
       <Section title="Contact">
-        <P>Questions about these terms: [CONTACT_EMAIL].</P>
+        <P>Questions about these terms can be sent to the published support contact.</P>
       </Section>
     </View>
   );

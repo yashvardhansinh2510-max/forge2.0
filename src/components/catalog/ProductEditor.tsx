@@ -230,7 +230,7 @@ const styles = StyleSheet.create({
   tabLabel: { fontSize: 13, fontWeight: "600", color: colors.onSurfaceMuted },
   tabLabelActive: { color: colors.brand },
   currencyRow: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.xs,
     paddingVertical: spacing.sm, paddingHorizontal: spacing.md, borderRadius: radius.md,
     backgroundColor: colors.surfaceSecondary,
   },

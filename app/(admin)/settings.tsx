@@ -92,6 +92,7 @@ export default function Settings() {
     { icon: "file-text", label: "PDF branding", hint: "Footer, terms, watermark", href: "/(admin)/settings-pdf", testId: "settings-nav-pdf" },
     { icon: "users", label: "Team", hint: "Add, edit roles, deactivate", href: "/(admin)/team", testId: "settings-nav-team" },
     { icon: "shield", label: "Roles & permissions", hint: "What each role can do", href: "/(admin)/settings-permissions", testId: "settings-nav-permissions" },
+    { icon: "shield", label: "Personal access", hint: "Worker access by page, action & floor", href: "/(admin)/settings-access-grants", testId: "settings-nav-access-grants", roles: ["owner", "admin"] },
     { icon: "bell", label: "Notifications", hint: "Channels & follow-up rules", href: "/(admin)/settings-notifications", testId: "settings-nav-notifications" },
     { icon: "user-plus", label: "Walk-in setup", hint: "Manage lead sources", href: "/(admin)/settings-walkins", testId: "settings-nav-walkins", roles: ["owner", "admin", "manager"] },
     { icon: "database", label: "Catalog tools", hint: "Import, export, backup", href: "/(admin)/settings-catalog", testId: "settings-nav-catalog" },

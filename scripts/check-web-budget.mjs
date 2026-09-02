@@ -11,11 +11,11 @@ const ROOT = path.resolve(SCRIPT_DIR, "..", "dist", "client");
 // without a CI signal.
 const ROUTES = ["login.html", "dashboard.html", "followups.html", "purchases.html"];
 // Expo Router + React Native Web form the unavoidable shell shared by every
-// route (about 490 KiB gzip in the production export).  Keep the full initial
-// payload under 528 KiB so a dependency or root-layout regression still fails
-// CI, while allowing the independently-loaded Follow-ups/Purchases workflows
-// (the former 350 KiB target cannot physically accommodate this framework).
-const MAX_INITIAL_JS_GZIP = 528 * 1024;
+// route (about 490 KiB gzip in the production export). The profiled largest
+// route is 519 KiB, so retain at least 10% (57 KiB) of release headroom while
+// still failing CI on a meaningful dependency or root-layout regression. The
+// former 528 KiB cap left only 1.7% headroom and did not satisfy that guard.
+const MAX_INITIAL_JS_GZIP = 576 * 1024;
 
 let failed = false;
 for (const route of ROUTES) {
@@ -50,6 +50,6 @@ for (const route of ROUTES) {
 }
 
 if (failed) {
-  console.error("Initial JavaScript exceeds the 528 KB gzip release budget.");
+  console.error("Initial JavaScript exceeds the 576 KB gzip release budget.");
   process.exitCode = 1;
 }

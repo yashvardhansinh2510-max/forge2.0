@@ -4,6 +4,8 @@ export type AccessProfile =
   | "sanitary_quotations_followups"
   | "sanitary_purchases";
 
+export type PersonalGrant = { resource: string; actions: string[]; floor_id?: string | null };
+
 export const PROFILE_PROVISIONING: Record<AccessProfile, {
   label: string;
   description: string;
@@ -45,7 +47,17 @@ export const PROFILE_MODULES: Record<AccessProfile, Set<string>> = {
   sanitary_purchases: new Set(["purchases"]),
 };
 
-export function staffLandingPath(profile?: AccessProfile | null): string {
+export function staffLandingPath(profile?: AccessProfile | null, grants?: PersonalGrant[]): string {
+  const permitted = grants?.find((grant) => grant.actions.includes("view"));
+  if (permitted) {
+    const routeByResource: Record<string, string> = {
+      payments: "/(admin)/payments", quotations: "/(admin)/quotations", catalog: "/(admin)/catalog",
+      customers: "/(admin)/customers", purchases: "/(admin)/purchases", followups: "/(admin)/followups",
+      orders: "/(admin)/tiles/orders", walkins: "/(admin)/walkins", dashboard: "/(admin)/dashboard",
+      notifications: "/(admin)/notifications",
+    };
+    if (routeByResource[permitted.resource]) return routeByResource[permitted.resource];
+  }
   switch (profile) {
     case "ground_tile_quotations_followups": return "/(admin)/tiles";
     case "ground_payments_dispatches": return "/(admin)/payments";

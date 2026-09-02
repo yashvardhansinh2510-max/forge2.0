@@ -25,6 +25,7 @@ import { fmtMoney, fmtMoneyCompact } from "@/src/design/tokens";
 import { getSelectedFloorId, useFloorAccess } from "@/src/hooks/use-floor-access";
 import { useAuth } from "@/src/state/auth";
 import { colors, layout, spacing, type } from "@/src/theme/tokens";
+import { downloadApiFile } from "@/src/utils/downloadFile";
 
 const ANALYTICS_ROLES = ["owner", "admin", "manager"];
 const TOP_N = 10;
@@ -167,6 +168,22 @@ export default function SalesDataIndex() {
 
   useEffect(() => { load(); }, [load]);
 
+  const exportSalesData = useCallback(() => {
+    if (!floorId || !period) return;
+    const filter: SalesFilter = {
+      floorId,
+      preset: period.preset,
+      dateFrom: period.dateFrom,
+      dateTo: period.dateTo,
+    };
+    void downloadApiFile(
+      salesDataApi.salesExportPath(filter),
+      "sales-data.xlsx",
+      "sales data Excel file",
+      floorId === "all" ? undefined : floorId,
+    );
+  }, [floorId, period]);
+
   // The role check is a plain `if` AFTER every hook call — an early return
   // before a hook would change this component's hook count between renders.
   if (staff && !ANALYTICS_ROLES.includes(staff.role)) {
@@ -198,13 +215,24 @@ export default function SalesDataIndex() {
       subtitle={`Confirmed orders only${period ? ` · ${period.label}` : ""}`}
     >
       {period ? (
-        <SalesFilters
-          floors={floors}
-          floorId={floorId}
-          onFloorChange={setFloorId}
-          period={period}
-          onPeriodChange={choose}
-        />
+        <View style={{ gap: spacing.md }}>
+          <SalesFilters
+            floors={floors}
+            floorId={floorId}
+            onFloorChange={setFloorId}
+            period={period}
+            onPeriodChange={choose}
+          />
+          <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
+            <Button
+              testID="sales-data-export-xlsx"
+              label="Export Excel"
+              icon="download"
+              variant="secondary"
+              onPress={exportSalesData}
+            />
+          </View>
+        </View>
       ) : null}
 
       {origin === "fallback" ? (

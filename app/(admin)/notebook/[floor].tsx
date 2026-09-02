@@ -1,12 +1,9 @@
 import { useLocalSearchParams } from "expo-router";
+import { NotebookScreen } from "@/src/components/notebook/NotebookScreen";
 
-import WalkInsScreen from "../walkins";
-
-/** Kitchen and Furniture deliberately share the established Walk-ins layout.
- * The route remains stable for bookmarks, but its data source is hard-pinned
- * to the floor represented by the URL. */
+/** The two notebook floors share one floor-pinned register implementation. */
 export default function FloorWalkIns() {
   const { floor } = useLocalSearchParams<{ floor?: string }>();
   const isFurniture = floor === "furniture";
-  return <WalkInsScreen fixedFloorId={isFurniture ? "third-floor" : "second-floor"} title={isFurniture ? "Furniture Walk-ins" : "Kitchen Walk-ins"} enableQuotationTransfer />;
+  return <NotebookScreen floorId={isFurniture ? "third-floor" : "second-floor"} floorName={isFurniture ? "Furniture Floor" : "Kitchen Floor"} view="followups" />;
 }

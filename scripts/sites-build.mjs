@@ -7,11 +7,12 @@ import { spawn } from 'node:child_process';
 // shaking passes can remove Expo's web global initialization, which makes the
 // client crash before React mounts (`globalThis.expo.EventEmitter`).
 const productionWebEnv = { ...process.env };
-const backendUrl = (
-  process.env.EXPO_PUBLIC_BACKEND_URL || 'https://buildcon-backend-production.up.railway.app'
-).replace(/\/+$/, '');
-if (!backendUrl || !backendUrl.startsWith('https://')) {
-  throw new Error('EXPO_PUBLIC_BACKEND_URL must be an https URL for a production Sites build.');
+const backendUrl = (process.env.BACKEND_URL || '').replace(/\/+$/, '');
+try {
+  const parsedBackendUrl = new URL(backendUrl);
+  if (parsedBackendUrl.protocol !== 'https:' || !parsedBackendUrl.hostname || parsedBackendUrl.username || parsedBackendUrl.password) throw new Error();
+} catch {
+  throw new Error('BACKEND_URL must be a valid HTTPS URL without embedded credentials for a production Sites build.');
 }
 
 const expo = spawn('npx', ['expo', 'export', '--clear', '--platform', 'web', '--output-dir', 'dist/client'], {

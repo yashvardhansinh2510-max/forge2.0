@@ -72,14 +72,14 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       // Just finished the forced change (mustChangePassword is now false,
       // otherwise the branch above would have returned) — fall through to
       // normal routing.
-      router.replace(kind === "staff" ? staffLandingPath(staff?.access_profile) as any : "/(customer)/home");
+      router.replace(kind === "staff" ? staffLandingPath(staff?.access_profile, staff?.access_grants) as any : "/(customer)/home");
       return;
     }
 
     if (!kind && !inAuth) {
       router.replace("/(auth)/login");
   } else if (kind === "staff" && !inAdmin) {
-    if (inAuth) router.replace(staffLandingPath(staff?.access_profile) as any);
+    if (inAuth) router.replace(staffLandingPath(staff?.access_profile, staff?.access_grants) as any);
   } else if (kind === "customer" && !inCustomer) {
     if (inAuth) router.replace("/(customer)/home");
     }

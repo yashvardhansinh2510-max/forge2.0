@@ -96,12 +96,23 @@ async function getRequestFloorId() {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, public detail: string) {
+  constructor(public status: number, public detail: string, public payload?: unknown) {
     super(detail);
   }
 }
 
 type RequestOptions = { floorId?: string; signal?: AbortSignal; cacheMs?: number };
+
+/** A shared GET owns its transport; each screen only owns its own wait. */
+function abortForConsumer<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return pending;
+  if (signal.aborted) return Promise.reject(new DOMException("Request cancelled by this screen.", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new DOMException("Request cancelled by this screen.", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 
 async function request<T>(method: string, path: string, body?: any, opts?: RequestOptions): Promise<T> {
   const contextVersion = requestContextVersion;
@@ -149,7 +160,7 @@ async function request<T>(method: string, path: string, body?: any, opts?: Reque
       const detail = data && typeof data === "object" && "detail" in data
         ? (data as { detail?: unknown }).detail
         : text || `HTTP ${res.status}`;
-      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail), data);
     }
     if (contextVersion !== requestContextVersion) {
       throw new DOMException("Request cancelled because the signed-in account or workspace changed.", "AbortError");
@@ -184,15 +195,17 @@ export const api = {
     if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value as T);
     if (cached) responseCache.delete(key);
     const existing = inflightGets.get(key);
-    if (existing) return existing as Promise<T>;
-    const pending = request<T>("GET", p, undefined, opts)
+    if (existing) return abortForConsumer(existing as Promise<T>, opts?.signal);
+    // Do not pass a consumer's signal to the shared transport. Otherwise one
+    // unmount cancels every component waiting for this resource.
+    const pending = request<T>("GET", p, undefined, { ...opts, signal: undefined })
       .then((value) => {
         if (opts?.cacheMs && opts.cacheMs > 0) responseCache.set(key, { expiresAt: Date.now() + opts.cacheMs, value });
         return value;
       })
       .finally(() => inflightGets.delete(key));
     inflightGets.set(key, pending);
-    return pending;
+    return abortForConsumer(pending, opts?.signal);
   },
   post: <T>(p: string, b?: any, opts?: RequestOptions) => { responseCache.clear(); return request<T>("POST", p, b, opts); },
   put: <T>(p: string, b?: any, opts?: RequestOptions) => { responseCache.clear(); return request<T>("PUT", p, b, opts); },

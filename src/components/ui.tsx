@@ -1295,6 +1295,7 @@ export function HeroBanner({
   tone?: "brand" | "neutral";
   icon?: FeatherName;
 }) {
+  const { isPhone } = useBp();
   const bg = tone === "brand" ? colors.brandTint : colors.surfaceTertiary;
   const border = tone === "brand" ? colors.brandBorder : colors.border;
   return (
@@ -1304,7 +1305,7 @@ export function HeroBanner({
       backgroundColor: bg,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: border,
-      flexDirection: "row",
+      flexDirection: isPhone ? "column" : "row",
       gap: spacing.lg,
       alignItems: "flex-start",
     }}>
@@ -1324,7 +1325,7 @@ export function HeroBanner({
         {subtitle ? <Text style={[type.bodyMuted, { marginTop: 6, maxWidth: 640 }]}>{subtitle}</Text> : null}
       </View>
       {actions ? (
-        <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexShrink: 0 }}>{actions}</View>
+        <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", flexShrink: 0, flexWrap: "wrap", width: isPhone ? "100%" : undefined }}>{actions}</View>
       ) : null}
     </View>
   );

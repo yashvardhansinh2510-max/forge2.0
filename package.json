@@ -16,6 +16,8 @@
     "test:notebook": "node --experimental-strip-types --no-warnings scripts/test-notebook.mjs",
     "test:mobile-ux": "node scripts/test-mobile-ux-contract.mjs",
     "test:mobile-budget": "node scripts/check-web-budget.mjs",
+    "test:api-proxy": "node --no-warnings scripts/test-api-proxy.mjs",
+    "test:api-client": "node scripts/test-api-client-contract.mjs",
     "test:e2e:profiles": "playwright test --config playwright.config.ts"
   },
   "dependencies": {
@@ -30,6 +32,7 @@
     "expo-asset": "~12.0.9",
     "expo-audio": "~1.1.1",
     "expo-blur": "15.0.8",
+    "expo-build-properties": "~1.0.10",
     "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.14",
     "expo-document-picker": "~14.0.8",

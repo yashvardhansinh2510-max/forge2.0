@@ -67,5 +67,12 @@ assert.match(builderSource, /loadMoreController\.current\?\.abort\(\)/);
 assert.match(catalogServiceSource, /signal\?: AbortSignal/);
 assert.match(builderSource, /retryReferenceData/);
 assert.match(builderSource, /controller\.abort\(\)/);
+// A picker card represents a family, but a selected swatch must be persisted
+// as its own SKU/product so the saved quotation and PDF resolve its own media.
+assert.match(builderSource, /const selectedProductId = variant\?\.id \?\? p\.id/);
+assert.match(builderSource, /product_id: selectedProductId, sku/);
+assert.match(builderSource, /image: variant \? variant\.image \?\? null : productImageList\(p\)\[0\] \?\? null/);
+assert.match(builderSource, /const selectedProductId = variant\?\.id \?\? target\.id/);
+assert.match(builderSource, /image: variant \? variant\.image \?\? null : productImageList\(target\)\[0\] \?\? null/);
 
-console.log("quotation media/layout helpers: 30 assertions passed");
+console.log("quotation media/layout helpers: 35 assertions passed");

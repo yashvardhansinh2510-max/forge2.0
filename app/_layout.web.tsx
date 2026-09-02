@@ -41,13 +41,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       return;
     }
     if (kind && onForceChange) {
-      router.replace(kind === "staff" ? staffLandingPath(staff?.access_profile) as any : "/(customer)/home");
+      router.replace(kind === "staff" ? staffLandingPath(staff?.access_profile, staff?.access_grants) as any : "/(customer)/home");
       return;
     }
     if (!kind && !inAuth) {
       router.replace("/(auth)/login");
     } else if (kind === "staff" && !inAdmin && inAuth) {
-      router.replace(staffLandingPath(staff?.access_profile) as any);
+      router.replace(staffLandingPath(staff?.access_profile, staff?.access_grants) as any);
     } else if (kind === "customer" && !inCustomer && inAuth) {
       router.replace("/(customer)/home");
     }

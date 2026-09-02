@@ -142,6 +142,16 @@ export const salesDataApi = {
     );
   },
 
+  /**
+   * The same canonical confirmed-order rows shown in the Sales Data table,
+   * exported without the UI's top-N limit. `query` carries the active floor
+   * and period so the workbook cannot include records outside the view the
+   * user is currently analysing.
+   */
+  salesExportPath(filter: SalesFilter) {
+    return `/analytics/recent-orders?${query(filter, { format: "xlsx" })}`;
+  },
+
   /** Phase 0's referral surface, consumed unchanged — one call per referrer
    *  type so Architects and Interior Designers render as the two separate
    *  workspaces the launch spec asks for. */
