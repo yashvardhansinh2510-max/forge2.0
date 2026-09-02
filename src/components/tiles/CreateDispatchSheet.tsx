@@ -28,6 +28,36 @@ const available = (item: { boxes_ready: number; boxes_godown: number }, source: 
 
 const qtyUnit = (item: { quantity_unit?: string }) => item.quantity_unit === "Pieces" ? "pieces" : "boxes";
 
+function validateDispatchQuantities(
+  qtyByItem: Record<string, string>,
+  items: { po_item_id: string; tile_name: string; boxes_ready: number; boxes_godown: number; quantity_unit?: string }[],
+  source: Source,
+) {
+  const entries: { po_item_id: string; qty: number }[] = [];
+  const errors: Record<string, string> = {};
+
+  for (const item of items.filter((candidate) => available(candidate, source) > 0)) {
+    const raw = (qtyByItem[item.po_item_id] || "").trim();
+    // Clearing a prefilled line deliberately leaves it out of this dispatch.
+    if (!raw) continue;
+    if (!/^\d+$/.test(raw)) {
+      errors[item.po_item_id] = "Enter a whole number.";
+      continue;
+    }
+    const value = Number(raw);
+    const max = available(item, source);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      errors[item.po_item_id] = "Enter a positive whole number.";
+    } else if (value > max) {
+      errors[item.po_item_id] = `Only ${max} ${qtyUnit(item)} available.`;
+    } else {
+      entries.push({ po_item_id: item.po_item_id, qty: value });
+    }
+  }
+
+  return { entries, errors, formError: entries.length === 0 && Object.keys(errors).length === 0 ? "Enter at least one quantity." : null };
+}
+
 export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [orders, setOrders] = useState<CustomerOrderCard[] | null>(null);
   const [detail, setDetail] = useState<CustomerOrderDetail | null>(null);
@@ -67,6 +97,10 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
     () => (group?.items || []).filter((item) => available(item, source) > 0),
     [group, source],
   );
+  const quantityValidation = useMemo(
+    () => validateDispatchQuantities(qty, group?.items || [], source),
+    [qty, group, source],
+  );
 
   const chooseGroup = (next: CustomerOrderBrandGroup) => {
     const preferred: Source = next.items.some((i) => i.boxes_ready > 0) ? "released" : "godown";
@@ -86,11 +120,8 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
 
   const confirm = async () => {
     if (!group) return;
-    const entries = Object.entries(qty)
-      .map(([po_item_id, value]) => ({ po_item_id, qty: Number(value || 0) }))
-      .filter((e) => e.qty > 0);
-    if (entries.length === 0) {
-      toast.error("Enter at least one quantity");
+    if (Object.keys(quantityValidation.errors).length || quantityValidation.formError) {
+      toast.error("Fix the highlighted quantities before creating the dispatch");
       return;
     }
     const laborCost = Number(transport.labor_cost || 0);
@@ -106,7 +137,7 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
     let chalanId: string | null = null;
     try {
       const call = source === "released" ? tileOrdersApi.dispatchFromReleased : tileOrdersApi.dispatchFromGodown;
-      const result = await call(group.purchase_order_id, entries, destination);
+      const result = await call(group.purchase_order_id, quantityValidation.entries, destination);
       chalanId = result.chalan?.id ?? null;
     } catch (e: any) {
       toast.error(e?.detail || "Could not create dispatch");
@@ -219,8 +250,12 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
                   onChangeText={(v) => setQty((s) => ({ ...s, [item.po_item_id]: v.replace(/[^0-9.]/g, "") }))}
                   placeholder={qtyUnit(item)} placeholderTextColor={colors.onSurfaceSubtle} style={styles.input}
                 />
+                {quantityValidation.errors[item.po_item_id] ? (
+                  <Text style={styles.inputError}>{quantityValidation.errors[item.po_item_id]}</Text>
+                ) : null}
               </View>
             ))}
+            {quantityValidation.formError ? <Text style={styles.inputError}>{quantityValidation.formError}</Text> : null}
             <Text style={[type.bodyStrong, { marginTop: spacing.xs }]}>Transport details</Text>
             {([ 
               ["vehicle_number", "Vehicle number"], ["driver_name", "Driver name"],
@@ -239,8 +274,8 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
             />
             <View style={styles.actionRow}>
               <Pressable
-                testID="tile-create-dispatch-confirm" disabled={busy || lines.length === 0}
-                onPress={confirm} style={[styles.primaryAction, busy || lines.length === 0 ? styles.disabled : null]}
+                testID="tile-create-dispatch-confirm" disabled={busy || lines.length === 0 || Boolean(Object.keys(quantityValidation.errors).length || quantityValidation.formError)}
+                onPress={confirm} style={[styles.primaryAction, busy || lines.length === 0 || Boolean(Object.keys(quantityValidation.errors).length || quantityValidation.formError) ? styles.disabled : null]}
               >
                 <Text style={styles.primaryActionText}>{busy ? "Creating…" : "Create Dispatch + Chalan"}</Text>
               </Pressable>
@@ -272,6 +307,7 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.brandTint, borderColor: colors.brandBorder },
   chipDisabled: { opacity: 0.45 },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, minHeight: 42, marginTop: 4, color: colors.onSurface },
+  inputError: { ...type.caption, color: colors.errorFg, marginTop: 4 },
   actionRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.md },
   primaryAction: { minHeight: 44, justifyContent: "center", paddingHorizontal: spacing.lg, borderRadius: radius.sm, backgroundColor: colors.brand },
   primaryActionText: { ...type.bodyStrong, color: colors.onBrand },

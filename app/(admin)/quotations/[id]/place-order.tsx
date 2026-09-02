@@ -18,6 +18,7 @@ import { toast } from "@/src/components/Toast";
 import { api } from "@/src/api/client";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
 import { useBp } from "@/src/design/responsive";
+import { TILES_FLOOR_ID } from "@/src/constants/floors";
 
 type PreviewItem = {
   line_id: string;
@@ -27,6 +28,9 @@ type PreviewItem = {
   room?: string | null;
   qty: number;
   unit_cost: number;
+  quantity_unit?: "Box" | "Pieces";
+  size?: string | null;
+  pcs_per_box?: string | number | null;
 };
 
 type BrandCard = {
@@ -51,7 +55,7 @@ type Preview = {
 type Supplier = { id: string; name: string; brand_id?: string | null; brand_name?: string | null };
 
 export default function PlaceOrderReview() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, floor } = useLocalSearchParams<{ id: string; floor?: string }>();
   const router = useRouter();
   const { isPhone } = useBp();
   const insets = useSafeAreaInsets();
@@ -64,13 +68,14 @@ export default function PlaceOrderReview() {
   const [projectName, setProjectName] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const floorId = floor === TILES_FLOOR_ID ? TILES_FLOOR_ID : undefined;
 
   const loadPreview = useCallback(async () => {
     setError(null);
     try {
       const [p, s] = await Promise.all([
-        api.get<Preview>(`/quotations/${id}/place-order/preview`),
-        api.get<Supplier[]>("/suppliers"),
+        api.get<Preview>(`/quotations/${id}/place-order/preview`, { floorId }),
+        api.get<Supplier[]>("/suppliers", { floorId }),
       ]);
       setPreview(p);
       setSuppliers(s);
@@ -82,7 +87,7 @@ export default function PlaceOrderReview() {
     } catch (e: any) {
       setError(e?.detail || "Failed to load preview");
     }
-  }, [id]);
+  }, [floorId, id]);
 
   useEffect(() => {
     void loadPreview();
@@ -108,7 +113,7 @@ export default function PlaceOrderReview() {
           notes_by_brand: notesByBrand,
           expected_delivery_at: expected || null,
           project_name: projectName || null,
-        },
+        }, { floorId },
       );
       toast.success(`Order placed · ${res.count} Purchase Orders created`);
       const isTilesDoc = preview.doc_type === "tiles_selection" || preview.doc_type === "tiles_quotation";
@@ -222,7 +227,8 @@ export default function PlaceOrderReview() {
                       {it.room ? <Text style={type.caption}>{it.room}</Text> : null}
                     </View>
                     <View style={styles.itemAmounts}>
-                      <Text style={[type.mono, styles.itemQty]}>{it.qty} nos</Text>
+                      <Text style={[type.mono, styles.itemQty]}>{it.qty} {it.quantity_unit === "Pieces" ? "pieces" : "boxes"}</Text>
+                      {it.size || it.pcs_per_box ? <Text style={type.caption}>{[it.size, it.pcs_per_box ? `${it.pcs_per_box} per box` : null].filter(Boolean).join(" · ")}</Text> : null}
                       <Text style={[type.mono, styles.itemAmount]} numberOfLines={1}>{money(it.unit_cost * it.qty)}</Text>
                     </View>
                   </View>

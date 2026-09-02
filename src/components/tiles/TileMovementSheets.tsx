@@ -26,13 +26,13 @@ async function openPdf(url: string) {
   }
 }
 
-function SheetFooter({ onCancel, onConfirm, confirmLabel, busy }: { onCancel: () => void; onConfirm: () => void; confirmLabel: string; busy: boolean }) {
+function SheetFooter({ onCancel, onConfirm, confirmLabel, busy, disabled = false }: { onCancel: () => void; onConfirm: () => void; confirmLabel: string; busy: boolean; disabled?: boolean }) {
   return (
     <View style={{ flexDirection: "row", gap: spacing.sm }}>
       <Pressable accessibilityRole="button" accessibilityLabel="Cancel" disabled={busy} onPress={onCancel} style={{ flex: 1, padding: spacing.md, alignItems: "center", borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, opacity: busy ? 0.5 : 1 }}>
         <Text style={type.bodyStrong}>Cancel</Text>
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel={confirmLabel} disabled={busy} onPress={onConfirm} style={{ flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: spacing.xs, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brand, opacity: busy ? 0.85 : 1 }}>
+      <Pressable accessibilityRole="button" accessibilityLabel={confirmLabel} disabled={busy || disabled} onPress={onConfirm} style={{ flex: 1, flexDirection: "row", justifyContent: "center", alignItems: "center", gap: spacing.xs, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brand, opacity: busy || disabled ? 0.55 : 1 }}>
         {busy ? <ActivityIndicator size="small" color={colors.onBrand} /> : null}
         <Text style={[type.bodyStrong, { color: colors.onBrand }]}>{busy ? "Processing…" : confirmLabel}</Text>
       </Pressable>
@@ -40,7 +40,7 @@ function SheetFooter({ onCancel, onConfirm, confirmLabel, busy }: { onCancel: ()
   );
 }
 
-function QtyRow({ name, hint, value, onChange }: { name: string; hint: string; value: string; onChange: (v: string) => void }) {
+function QtyRow({ name, hint, value, onChange, error }: { name: string; hint: string; value: string; onChange: (v: string) => void; error?: string }) {
   return (
     <View style={{ marginBottom: spacing.md }}>
       <Text style={type.bodyStrong}>{name}</Text>
@@ -51,6 +51,7 @@ function QtyRow({ name, hint, value, onChange }: { name: string; hint: string; v
         value={value} onChangeText={onChange}
         style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, marginTop: spacing.xs }}
       />
+      {error ? <Text style={{ ...type.caption, color: colors.errorFg, marginTop: spacing.xs }}>{error}</Text> : null}
     </View>
   );
 }
@@ -63,10 +64,31 @@ function prefill<T>(items: T[], id: (item: T) => string, max: (item: T) => numbe
   return Object.fromEntries(items.filter((item) => max(item) > 0).map((item) => [id(item), String(max(item))]));
 }
 
-function collectEntries(qtyByItem: Record<string, string>) {
-  return Object.entries(qtyByItem)
-    .map(([po_item_id, v]) => ({ po_item_id, qty: Number(v || 0) }))
-    .filter((e) => e.qty > 0);
+type QuantityRow = { id: string; name: string; available: number };
+
+function validateQuantities(qtyByItem: Record<string, string>, rows: QuantityRow[]) {
+  const entries: { po_item_id: string; qty: number }[] = [];
+  const errors: Record<string, string> = {};
+
+  for (const row of rows) {
+    const raw = (qtyByItem[row.id] || "").trim();
+    // Clearing a prefilled line deliberately excludes it from this movement.
+    if (!raw) continue;
+    if (!/^\d+$/.test(raw)) {
+      errors[row.id] = "Enter a whole number.";
+      continue;
+    }
+    const qty = Number(raw);
+    if (!Number.isSafeInteger(qty) || qty <= 0) {
+      errors[row.id] = "Enter a positive whole number.";
+    } else if (qty > row.available) {
+      errors[row.id] = `Only ${row.available} available.`;
+    } else {
+      entries.push({ po_item_id: row.id, qty });
+    }
+  }
+
+  return { entries, errors, formError: entries.length === 0 && Object.keys(errors).length === 0 ? "Enter at least one quantity." : null };
 }
 
 function qtyUnit(unit: "Box" | "Pieces" | undefined) {
@@ -79,16 +101,18 @@ export function ReleaseMaterialSheet({ poId, items, onClose, onDone }: { poId: s
     () => prefill(items, (item) => item.id, (item) => item.boxes_pending),
   );
   const [busy, setBusy] = useState(false);
+  const validation = validateQuantities(qtyByItem, items
+    .filter((item) => item.boxes_pending > 0)
+    .map((item) => ({ id: item.id, name: item.name, available: item.boxes_pending })));
 
   const submit = async () => {
-    const entries = collectEntries(qtyByItem);
-    if (entries.length === 0) {
-      toast.error("Enter at least one quantity");
+    if (Object.keys(validation.errors).length || validation.formError) {
+      toast.error("Fix the highlighted quantities before confirming");
       return;
     }
     setBusy(true);
     try {
-      await tileOrdersApi.releaseMaterial(poId, entries);
+      await tileOrdersApi.releaseMaterial(poId, validation.entries);
       toast.success("Material released");
       onDone();
     } catch (e: any) {
@@ -99,14 +123,15 @@ export function ReleaseMaterialSheet({ poId, items, onClose, onDone }: { poId: s
   };
 
   return (
-    <Sheet open onClose={onClose} title="Release Material" footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Release" busy={busy} />}>
+    <Sheet open onClose={onClose} title="Release Material" footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Release" busy={busy} disabled={Boolean(Object.keys(validation.errors).length || validation.formError)} />}>
       <View style={{ marginVertical: spacing.md }}>
         {items.filter((item) => item.boxes_pending > 0).map((item) => (
           <QtyRow
             key={item.id} name={item.name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${item.boxes_pending} ${qtyUnit(item.quantity_unit)} remaining`}
-            value={qtyByItem[item.id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.id]: v }))}
+            value={qtyByItem[item.id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.id]: v }))} error={validation.errors[item.id]}
           />
         ))}
+        {validation.formError ? <Text style={{ ...type.caption, color: colors.errorFg }}>{validation.formError}</Text> : null}
       </View>
     </Sheet>
   );
@@ -118,16 +143,18 @@ export function MoveToGodownSheet({ poId, items, onClose, onDone }: { poId: stri
     () => prefill(items, (item) => item.po_item_id, (item) => item.boxes_ready),
   );
   const [busy, setBusy] = useState(false);
+  const validation = validateQuantities(qtyByItem, items
+    .filter((item) => item.boxes_ready > 0)
+    .map((item) => ({ id: item.po_item_id, name: item.tile_name, available: item.boxes_ready })));
 
   const submit = async () => {
-    const entries = collectEntries(qtyByItem);
-    if (entries.length === 0) {
-      toast.error("Enter at least one quantity");
+    if (Object.keys(validation.errors).length || validation.formError) {
+      toast.error("Fix the highlighted quantities before confirming");
       return;
     }
     setBusy(true);
     try {
-      await tileOrdersApi.moveToGodown(poId, entries);
+      await tileOrdersApi.moveToGodown(poId, validation.entries);
       toast.success("Moved to Godown");
       onDone();
     } catch (e: any) {
@@ -138,14 +165,15 @@ export function MoveToGodownSheet({ poId, items, onClose, onDone }: { poId: stri
   };
 
   return (
-    <Sheet open onClose={onClose} title="Move to Godown" footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Move" busy={busy} />}>
+    <Sheet open onClose={onClose} title="Move to Godown" footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Move" busy={busy} disabled={Boolean(Object.keys(validation.errors).length || validation.formError)} />}>
       <View style={{ marginVertical: spacing.md }}>
         {items.filter((item) => item.boxes_ready > 0).map((item) => (
           <QtyRow
             key={item.po_item_id} name={item.tile_name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${item.boxes_ready} ${qtyUnit(item.quantity_unit)} Released`}
-            value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))}
+            value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))} error={validation.errors[item.po_item_id]}
           />
         ))}
+        {validation.formError ? <Text style={{ ...type.caption, color: colors.errorFg }}>{validation.formError}</Text> : null}
       </View>
     </Sheet>
   );
@@ -242,29 +270,32 @@ function DispatchSheet({
   );
   const [transport, setTransport] = useState<TransportDetails>(EMPTY_TRANSPORT);
   const [busy, setBusy] = useState(false);
+  const validation = validateQuantities(qtyByItem, items
+    .filter((item) => available(item) > 0)
+    .map((item) => ({ id: item.po_item_id, name: item.tile_name, available: available(item) })));
 
   const submit = async () => {
-    const entries = collectEntries(qtyByItem);
-    if (entries.length === 0) {
-      toast.error("Enter at least one quantity");
+    if (Object.keys(validation.errors).length || validation.formError) {
+      toast.error("Fix the highlighted quantities before confirming");
       return;
     }
     try {
-      await submitDispatch(poId, entries, (id, e) => dispatch(id, e, transportPayload(transport)), onDone, setBusy);
+      await submitDispatch(poId, validation.entries, (id, e) => dispatch(id, e, transportPayload(transport)), onDone, setBusy);
     } catch (e: any) {
       toast.error(e?.message || "Could not dispatch");
     }
   };
 
   return (
-    <Sheet open onClose={onClose} title={title} footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Dispatch" busy={busy} />}>
+    <Sheet open onClose={onClose} title={title} footer={<SheetFooter onCancel={onClose} onConfirm={submit} confirmLabel="Confirm Dispatch" busy={busy} disabled={Boolean(Object.keys(validation.errors).length || validation.formError)} />}>
       <View style={{ marginVertical: spacing.md }}>
         {items.filter((item) => available(item) > 0).map((item) => (
           <QtyRow
             key={item.po_item_id} name={item.tile_name} hint={`${item.sku ? `${tileIdentityMeta([], item.sku)} · ` : ""}${available(item)} ${qtyUnit(item.quantity_unit)} available`}
-            value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))}
+            value={qtyByItem[item.po_item_id] || ""} onChange={(v) => setQtyByItem((s) => ({ ...s, [item.po_item_id]: v }))} error={validation.errors[item.po_item_id]}
           />
         ))}
+        {validation.formError ? <Text style={{ ...type.caption, color: colors.errorFg, marginBottom: spacing.sm }}>{validation.formError}</Text> : null}
         <TransportFields value={transport} onChange={setTransport} />
       </View>
       <Text style={[type.bodyMuted, { marginBottom: spacing.sm }]}>Creates a Dispatch, generates a Chalan, and opens the PDF.</Text>

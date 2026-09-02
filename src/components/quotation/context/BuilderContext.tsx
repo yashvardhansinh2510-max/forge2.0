@@ -902,9 +902,10 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         const next = [...cur.lines]; next[idx] = { ...next[idx], qty: next[idx].qty + 1 };
         return { ...cur, lines: next };
       }
-      const finish = variant?.finish ?? variant?.color ?? variant?.size ?? p.finish ?? null;
-      const displayName = variant && (variant.finish || variant.color || variant.size)
-        ? `${p.name} · ${variant.finish || variant.color || variant.size}`
+      const variantColour = variant?.colour ?? variant?.color;
+      const finish = variant?.finish ?? variantColour ?? variant?.size ?? p.finish ?? p.colour ?? null;
+      const displayName = variant && (variant.finish || variantColour || variant.size)
+        ? `${p.name} · ${variant.finish || variantColour || variant.size}`
         : p.name;
       return {
         ...cur,
@@ -1109,9 +1110,10 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
       const idx = c.lines.findIndex((l) => l.id === cur.line_id);
       if (idx < 0) return c;
       const src = c.lines[idx];
-      const finish = variant?.finish ?? variant?.color ?? variant?.size ?? target.finish ?? null;
-      const displayName = variant && (variant.finish || variant.color || variant.size)
-        ? `${target.name} · ${variant.finish || variant.color || variant.size}`
+      const variantColour = variant?.colour ?? variant?.color;
+      const finish = variant?.finish ?? variantColour ?? variant?.size ?? target.finish ?? target.colour ?? null;
+      const displayName = variant && (variant.finish || variantColour || variant.size)
+        ? `${target.name} · ${variant.finish || variantColour || variant.size}`
         : target.name;
       const next = [...c.lines];
       const selectedProductId = variant?.id ?? target.id;

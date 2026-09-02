@@ -269,6 +269,12 @@ function useTilesDoc(docType: TilesDocType) {
       try {
         const doc = await api.get<any>(`/quotations/${routeId}`, { floorId: TILES_FLOOR_ID });
         if (!alive) return;
+        if (doc.doc_type !== docType) {
+          const canonicalRoute = doc.doc_type === "tiles_selection" ? "selection" : doc.doc_type === "tiles_quotation" ? "quotation" : null;
+          toast.error(canonicalRoute ? "Opening this document in its correct workspace" : "That document is not a tile document");
+          router.replace((canonicalRoute ? `/(admin)/tiles/${canonicalRoute}?id=${doc.id}` : "/(admin)/tiles") as any);
+          return;
+        }
         setDocId(doc.id);
         setDocNumberServer(doc.number || null);
         setStatus(normalizeTilesStatus(doc.status || "draft"));
@@ -321,7 +327,7 @@ function useTilesDoc(docType: TilesDocType) {
       }
     })();
     return () => { alive = false; };
-  }, [routeId, docType]);
+  }, [routeId, docType, router]);
 
   const markDirty = useCallback(() => { dirtyRef.current = true; }, []);
 
@@ -652,7 +658,7 @@ function useTilesDoc(docType: TilesDocType) {
       toast.show("Confirm the quotation before placing the order");
       return;
     }
-    router.push(`/(admin)/quotations/${id}/place-order` as any);
+    router.push(`/(admin)/quotations/${id}/place-order?floor=${TILES_FLOOR_ID}` as any);
   }, [busy, persist, buildItems, router, docType, status]);
 
   const workflowAction = nextTilesAction(docType, status);
@@ -697,7 +703,7 @@ function useTilesDoc(docType: TilesDocType) {
     try {
       await api.delete(`/quotations/${docId}`, { floorId: TILES_FLOOR_ID });
       toast.success("Quotation deleted");
-      router.replace("/(admin)/followups" as any);
+      router.replace("/(admin)/tiles" as any);
     } catch (e: any) {
       toast.error(e?.detail || "Quotation could not be deleted");
     } finally { setBusy(null); }

@@ -206,13 +206,15 @@ export function ButtonGroup({ children, align = "left" }: { children: ReactNode;
 }
 
 export function SearchField({
-  value, onChangeText, onSubmit, placeholder, testID,
+  value, onChangeText, onSubmit, placeholder, testID, accessibilityLabel = "Search",
 }: {
   value: string;
   onChangeText: (value: string) => void;
   onSubmit?: () => void;
   placeholder?: string;
   testID?: string;
+  /** The placeholder is not a reliable accessible name once the user types. */
+  accessibilityLabel?: string;
 }) {
   return (
     <View style={styles.searchWrap}>
@@ -224,6 +226,7 @@ export function SearchField({
         onSubmitEditing={onSubmit}
         placeholder={placeholder}
         placeholderTextColor={colors.onSurfaceSubtle}
+        accessibilityLabel={accessibilityLabel}
         style={styles.searchInput}
         returnKeyType="search"
       />
@@ -238,6 +241,9 @@ export function FilterChip({
     <Pressable
       testID={testID}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: active }}
       style={({ hovered }: any) => [
         styles.chip,
         active ? styles.chipActive : null,
@@ -267,6 +273,9 @@ export function TabBar<K extends string>({
         key={key}
         testID={testIDPrefix ? `${testIDPrefix}-${key}` : undefined}
         onPress={() => onChange(key)}
+        accessibilityRole="tab"
+        accessibilityLabel={label}
+        accessibilityState={{ selected: active }}
         style={({ hovered }: any) => [
           styles.tab,
           active ? styles.tabActive : null,
@@ -282,13 +291,13 @@ export function TabBar<K extends string>({
   });
   if (isPhone) {
     return (
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabScroller} contentContainerStyle={styles.tabBar}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} accessibilityRole="tablist" style={styles.tabScroller} contentContainerStyle={styles.tabBar}>
         {tabsContent}
       </ScrollView>
     );
   }
   return (
-    <View style={styles.tabBar}>
+    <View accessibilityRole="tablist" style={styles.tabBar}>
       {tabsContent}
     </View>
   );

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -37,6 +37,7 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const requestIdRef = useRef(0);
   const [editing, setEditing] = useState<{ id: string; field: NotebookField } | null>(null);
   const [cellValue, setCellValue] = useState("");
   const [saving, setSaving] = useState<string | null>(null);
@@ -45,19 +46,26 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
   const [draft, setDraft] = useState<NotebookCreate>({ ...EMPTY_DRAFT, ...(kitchen ? { kitchen_type: "GI" as const } : {}) });
 
   const load = useCallback(async (cursor?: string, append = false) => {
+    const requestId = ++requestIdRef.current;
     if (append) setLoadingMore(true); else setLoading(true);
     try {
       const result = await notebookApi.list(floorId, { view, status: view === "followups" ? filter : undefined, q: search.trim() || undefined, cursor });
+      if (requestId !== requestIdRef.current) return;
       setRows((current) => append ? [...current, ...result.rows] : result.rows);
       setNextCursor(result.next_cursor);
     } catch (error: any) {
-      toast.error(error?.detail || "Could not load the notebook");
+      if (requestId === requestIdRef.current) toast.error(error?.detail || "Could not load the notebook");
     } finally {
-      setLoading(false); setLoadingMore(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false); setLoadingMore(false);
+      }
     }
   }, [filter, floorId, search, view]);
 
-  useEffect(() => { const timer = setTimeout(() => { void load(); }, search ? 250 : 0); return () => clearTimeout(timer); }, [load, search]);
+  useEffect(() => {
+    const timer = setTimeout(() => { void load(); }, search ? 250 : 0);
+    return () => { clearTimeout(timer); requestIdRef.current += 1; };
+  }, [load, search]);
 
   const beginEdit = (row: NotebookRow, field: NotebookField) => {
     if (row.status === "won" && !["quotation_price", "estimated_value", "quotation_date"].includes(field)) return;
@@ -133,7 +141,17 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
           {rows.map((row) => <View key={row.id} style={styles.row}>{columns.map((column) => {
             const key = `${row.id}:${column.key}`; const active = editing?.id === row.id && editing.field === column.key;
             if (column.key === "status" && active) return <View key={column.key} style={[styles.cell, { width: column.minWidth, flexDirection: "row", gap: 4 }]}>{(Object.keys(STATUS_LABELS) as NotebookStatus[]).map((status) => <Chip key={status} label={STATUS_LABELS[status]} active={row.status === status} onPress={() => void patch(row, "status", status)} />)}</View>;
-            return <Pressable key={column.key} onPress={() => beginEdit(row, column.key)} style={[styles.cell, { width: column.minWidth }, active && styles.activeCell, conflictCells.has(key) && styles.conflictCell]}>{active ? <TextInput autoFocus value={cellValue} onChangeText={setCellValue} onBlur={() => void patch(row, column.key, cellValue)} onSubmitEditing={() => void patch(row, column.key, cellValue)} style={styles.input} /> : <Text numberOfLines={2} style={styles.cellText}>{valueForCell(row, column.key)}</Text>}{saving === key ? <Text style={styles.saveText}>Saving…</Text> : null}</Pressable>;
+            return <Pressable
+              key={column.key}
+              onPress={() => beginEdit(row, column.key)}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${column.label} for ${row.customer_name}`}
+              accessibilityState={{ busy: saving === key }}
+              style={[styles.cell, { width: column.minWidth }, active && styles.activeCell, conflictCells.has(key) && styles.conflictCell]}
+            >
+              {active ? <TextInput autoFocus value={cellValue} onChangeText={setCellValue} onBlur={() => void patch(row, column.key, cellValue)} onSubmitEditing={() => void patch(row, column.key, cellValue)} accessibilityLabel={`${column.label} for ${row.customer_name}`} style={styles.input} /> : <Text numberOfLines={2} style={styles.cellText}>{valueForCell(row, column.key)}</Text>}
+              {saving === key ? <Text style={styles.saveText}>Saving…</Text> : null}
+            </Pressable>;
           })}{view === "followups" ? <View style={[styles.cell, { width: 160 }]}>{saving === `${row.id}:convert` ? <ActivityIndicator color={colors.brand} /> : <Button label="To quotation" size="sm" variant="secondary" onPress={() => void convert(row)} />}</View> : null}</View>)}</View>
       </ScrollView>}
       {nextCursor ? <Button label="Load more" variant="secondary" onPress={() => void load(nextCursor, true)} loading={loadingMore} /> : null}

@@ -1,9 +1,13 @@
 import { useLocalSearchParams } from "expo-router";
 import { NotebookScreen } from "@/src/components/notebook/NotebookScreen";
+import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
+import { FURNITURE_FLOOR_ID, KITCHEN_FLOOR_ID } from "@/src/constants/floors";
 
 /** The two notebook floors share one floor-pinned register implementation. */
 export default function FloorWalkIns() {
   const { floor } = useLocalSearchParams<{ floor?: string }>();
   const isFurniture = floor === "furniture";
-  return <NotebookScreen floorId={isFurniture ? "third-floor" : "second-floor"} floorName={isFurniture ? "Furniture Floor" : "Kitchen Floor"} view="followups" />;
+  const floorId = isFurniture ? FURNITURE_FLOOR_ID : KITCHEN_FLOOR_ID;
+  useRequireFloorAccess(floorId);
+  return <NotebookScreen floorId={floorId} floorName={isFurniture ? "Furniture Floor" : "Kitchen Floor"} view="followups" />;
 }

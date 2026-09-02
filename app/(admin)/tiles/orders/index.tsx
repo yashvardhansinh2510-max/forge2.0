@@ -15,7 +15,7 @@
 // and alignment once and both the header and the body cell read from that
 // declaration, which is what stops labels drifting off their columns.
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from "react-native";
 
 import {
@@ -66,6 +66,12 @@ const TABS: [TabKey, string][] = [
 // nothing ever set godown_received_at or delivered_at, so both chips would
 // have been permanently dead options.
 const DISPATCH_STATUS_FILTERS = ["All", "Dispatched", "At Godown", "Delivered"] as const;
+const CUSTOMER_STATUS_FILTERS = [
+  ["All", "All active"],
+  ["Pending", "Awaiting release"],
+  ["Ready", "Released"],
+  ["Partially Dispatched", "Partially dispatched"],
+] as const;
 
 const MOVEMENT_LABEL: Record<string, string> = {
   order_created: "Order Created",
@@ -108,6 +114,11 @@ export default function TileOrdersScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [customerOrders, setCustomerOrders] = useState<CustomerOrderCard[]>([]);
   const [brands, setBrands] = useState<BrandLandingCard[]>([]);
+  const [customerSearch, setCustomerSearch] = useState(params.search ?? "");
+  const [customerSearchDraft, setCustomerSearchDraft] = useState(params.search ?? "");
+  const [customerStatus, setCustomerStatus] = useState<string>("All");
+  const [brandSearch, setBrandSearch] = useState(params.search ?? "");
+  const [brandSearchDraft, setBrandSearchDraft] = useState(params.search ?? "");
   const [history, setHistory] = useState<CompletedTileOrder[]>([]);
   const [selectedHistory, setSelectedHistory] = useState<CompletedTileOrder | null>(null);
   const [inventory, setInventory] = useState<GodownInventoryRow[]>([]);
@@ -133,6 +144,34 @@ export default function TileOrdersScreen() {
   const [hasMore, setHasMore] = useState(false);
   const requestId = useRef(0);
 
+  // Searching should not depend on spotting the phone keyboard's Submit key.
+  // A small delay prevents a request per keystroke while still making the
+  // result list feel directly connected to what the operator is typing.
+  useEffect(() => {
+    const timer = setTimeout(() => setCustomerSearch(customerSearchDraft.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [customerSearchDraft]);
+  useEffect(() => {
+    const timer = setTimeout(() => setBrandSearch(brandSearchDraft.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [brandSearchDraft]);
+  useEffect(() => {
+    const timer = setTimeout(() => setDispatchSearch(dispatchSearchDraft.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [dispatchSearchDraft]);
+  useEffect(() => {
+    const timer = setTimeout(() => setHistorySearch(historySearchDraft.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [historySearchDraft]);
+  useEffect(() => {
+    const timer = setTimeout(() => setInventorySearch(inventorySearchDraft.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [inventorySearchDraft]);
+  useEffect(() => {
+    const timer = setTimeout(() => setMovementSearch(movementSearchDraft.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [movementSearchDraft]);
+
   const load = useCallback(async (nextPage = 1) => {
     const currentRequest = ++requestId.current;
     if (nextPage === 1) setLoading(true);
@@ -141,12 +180,14 @@ export default function TileOrdersScreen() {
       if (tab === "customer") {
         const result = await tileOrdersApi.listCustomerOrders({
           page: nextPage, page_size: 30, customer_id: params.customer_id,
+          search: customerSearch || undefined,
+          status: customerStatus === "All" ? undefined : customerStatus,
         });
         if (currentRequest !== requestId.current) return;
         setCustomerOrders((previous) => nextPage === 1 ? result.orders : [...previous, ...result.orders]);
         setHasMore(result.has_more);
       } else if (tab === "brands") {
-        const result = await tileOrdersApi.listBrands({ page: nextPage, page_size: 30 });
+        const result = await tileOrdersApi.listBrands({ page: nextPage, page_size: 30, search: brandSearch || undefined });
         if (currentRequest !== requestId.current) return;
         setBrands((previous) => nextPage === 1 ? result.brands : [...previous, ...result.brands]);
         setHasMore(result.has_more);
@@ -189,7 +230,7 @@ export default function TileOrdersScreen() {
     } finally {
       if (currentRequest === requestId.current) setLoading(false);
     }
-  }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch, params.customer_id]);
+  }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch, customerSearch, customerStatus, brandSearch, params.customer_id]);
 
   // The customer-order screen can mutate go-down stock while this tab stays
   // mounted in the navigation stack. Re-fetch whenever the screen becomes
@@ -202,6 +243,15 @@ export default function TileOrdersScreen() {
   const openCustomerOrder = (id: string) => router.push(`/(admin)/tiles/orders/${id}` as any);
   const openBrand = (brandId: string | null) =>
     router.push(`/(admin)/tiles/orders/brands/${brandId || "unassigned"}` as any);
+
+  // Show loading immediately on a workspace switch. Without this, the prior
+  // tab's data could flash for a frame while the new query was scheduled.
+  const changeTab = (nextTab: TabKey) => {
+    if (nextTab === tab) return;
+    requestId.current += 1;
+    setLoading(true);
+    setTab(nextTab);
+  };
 
   // ── Column definitions ────────────────────────────────────────────────────
   // Names and descriptions `grow` so a wide monitor is filled by the columns
@@ -459,6 +509,7 @@ export default function TileOrdersScreen() {
           rowMinHeight={60}
           keyExtractor={(order) => order.id}
           rowTestID={(order) => `tile-orders-customer-${order.id}`}
+          rowAccessibilityLabel={(order) => `Open tile order ${order.number} for ${order.customer_name}, ${order.overall_status}, ${order.completion_percentage}% complete`}
           onRowPress={(order) => openCustomerOrder(order.id)}
           emptyMessage="No tile orders yet."
         />
@@ -475,6 +526,7 @@ export default function TileOrdersScreen() {
           rowMinHeight={60}
           keyExtractor={(brand) => brand.brand_id || "unassigned"}
           rowTestID={(brand) => `tile-orders-brand-${brand.brand_id || "unassigned"}`}
+          rowAccessibilityLabel={(brand) => `Open ${brand.brand_name} release queue, ${brand.active_orders} active orders`}
           onRowPress={(brand) => openBrand(brand.brand_id)}
           emptyMessage="No brands with active orders yet."
         />
@@ -482,7 +534,7 @@ export default function TileOrdersScreen() {
     }
 
     if (tab === "history") {
-      return <DataTable testID="tile-orders-history-table" scrollOwner="parent" columns={historyColumns} data={history} rowMinHeight={60} keyExtractor={(row) => row.id} rowTestID={(row) => `tile-orders-history-${row.id}`} onRowPress={(row) => setSelectedHistory(row)} emptyMessage="No completed tile deliveries yet." />;
+      return <DataTable testID="tile-orders-history-table" scrollOwner="parent" columns={historyColumns} data={history} rowMinHeight={60} keyExtractor={(row) => row.id} rowTestID={(row) => `tile-orders-history-${row.id}`} rowAccessibilityLabel={(row) => `Open completed order ${row.order_number} for ${row.customer}`} onRowPress={(row) => setSelectedHistory(row)} emptyMessage="No completed tile deliveries yet." />;
     }
 
     if (tab === "inventory") {
@@ -512,6 +564,7 @@ export default function TileOrdersScreen() {
         rowMinHeight={56}
         keyExtractor={(row) => row.id}
         rowTestID={(row) => `tile-orders-movement-${row.id}`}
+        rowAccessibilityLabel={(row) => `Open ${MOVEMENT_LABEL[row.movement_type] || row.movement_type} movement for ${row.customer_name}`}
         onRowPress={(row) => setSelectedMovement(row)}
         emptyMessage="No material movements recorded yet."
       />
@@ -548,10 +601,31 @@ export default function TileOrdersScreen() {
             Restore with <WorkflowRail active=… /> if a real stage is ever
             derivable for the list as a whole. */}
         <Section>
-          <TabBar tabs={TABS} value={tab} onChange={setTab} testIDPrefix="tile-orders-tab" />
+          <TabBar tabs={TABS} value={tab} onChange={changeTab} testIDPrefix="tile-orders-tab" />
         </Section>
 
         <Section testID="tile-orders-body">
+          {tab === "customer" ? (
+            <Toolbar
+              search={<SearchField testID="tile-orders-customer-search" value={customerSearchDraft} onChangeText={setCustomerSearchDraft} onSubmit={() => setCustomerSearch(customerSearchDraft.trim())} placeholder="Search customer, phone or order number…" accessibilityLabel="Search active tile orders" />}
+              filters={CUSTOMER_STATUS_FILTERS.map(([value, label]) => (
+                <FilterChip
+                  key={value}
+                  label={label}
+                  active={customerStatus === value}
+                  testID={`tile-orders-customer-status-${value.toLowerCase().replaceAll(" ", "-")}`}
+                  onPress={() => setCustomerStatus(value)}
+                />
+              ))}
+            />
+          ) : null}
+
+          {tab === "brands" ? (
+            <Toolbar
+              search={<SearchField testID="tile-orders-brand-search" value={brandSearchDraft} onChangeText={setBrandSearchDraft} onSubmit={() => setBrandSearch(brandSearchDraft.trim())} placeholder="Search active brands…" accessibilityLabel="Search tile brands" />}
+            />
+          ) : null}
+
           {tab === "dispatch-list" ? (
             <Toolbar
               search={
