@@ -63,7 +63,7 @@ def test_standard_item_tables_fill_the_landscape_printable_width():
     assert "item_widths = [12 * mm, 20 * mm, 38 * mm, 117 * mm, 28 * mm, 12 * mm, 40 * mm]" in source
 
 
-def test_standard_pdf_keeps_full_width_terms_care_and_signature_on_page_one():
+def test_standard_pdf_keeps_supplied_terms_enquiries_and_signature_on_page_one():
     quotation = {
         "customer_name": "Page One Contract",
         "items": [{"sku": "ART-100", "name": "Wall Mixer", "room": "Master Bath", "qty": 1, "unit_price": 1000}],
@@ -75,7 +75,7 @@ def test_standard_pdf_keeps_full_width_terms_care_and_signature_on_page_one():
     first_page_text = pages[0].extract_text()
 
     assert "TERMS & CONDITIONS" in first_page_text
-    assert "CUSTOMER CARE" in first_page_text
+    assert "For general enquiries" in first_page_text
     assert "CUSTOMER SIGNATURE & DATE" in first_page_text
     assert len(pages) == 2
 

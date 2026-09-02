@@ -316,7 +316,11 @@ def _draw_footer(cv, doc, branding: dict | None = None) -> None:
     cv.restoreState()
 
 
-WATERMARK_MAX_PAGE_WIDTH = 0.82
+# The approved page-one template uses a compact, diagonal watermark behind the
+# commercial content.  A page-wide horizontal logo competed with the summary
+# table and made the BuildCon mark look clipped rather than intentional.
+WATERMARK_MAX_PAGE_WIDTH = 0.44
+WATERMARK_ANGLE_DEGREES = 24
 
 
 def watermark_geometry(page_width: float, page_height: float) -> tuple[float, float, float, float]:
@@ -341,10 +345,14 @@ def _draw_room_watermark(cv, doc, branding: dict | None = None) -> None:
     # Keep the complete original logo inside the landscape sheet.  This is a
     # watermark, not a cover image: clipping any edge changes the logo.
     if hasattr(cv, "setFillAlpha"):
-        cv.setFillAlpha(0.055)
+        cv.setFillAlpha(0.075)
     page_width, page_height = LANDSCAPE_A4
     watermark_x, watermark_y, watermark_w, watermark_h = watermark_geometry(page_width, page_height)
-    cv.drawImage(str(LOGO_PATH), watermark_x, watermark_y, width=watermark_w, height=watermark_h, mask="auto")
+    watermark_cx = watermark_x + watermark_w / 2
+    watermark_cy = watermark_y + watermark_h / 2
+    cv.translate(watermark_cx, watermark_cy)
+    cv.rotate(WATERMARK_ANGLE_DEGREES)
+    cv.drawImage(str(LOGO_PATH), -watermark_w / 2, -watermark_h / 2, width=watermark_w, height=watermark_h, mask="auto")
     cv.restoreState()
 
 
@@ -482,16 +490,21 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
             room_order.append(room)
     room_order = [r for r in room_order if grouped.get(r)]  # never render a room with 0 items
 
-    # --- PAGE 1: Header and commercial summary --------------------------------
-    story.append(_brand_header("PRICE QUOTATION<br/><font name='Helvetica' size='8'>Bath &amp; Sanitaryware Solutions</font>", styles))
+    # --- PAGE 1: supplied BuildCon House quotation cover ---------------------
+    # Keep this cover deliberately close to the approved quotation's first
+    # page: the broad header, two four-field information bands, clear price
+    # summary and roomy contractual block are the visual system.  Product
+    # images belong on the itemised pages, where up to 17 real selections can
+    # be read without turning the cover into a cramped catalogue.
+    story.append(_brand_header("PRODUCT QUOTATION<br/><font name='Helvetica' size='8'>Tiles &amp; Sanitaryware Solutions</font>", styles))
     story.extend([Spacer(1, 3 * mm), HRFlowable(width="100%", thickness=1.25, color=BLUE), Spacer(1, 2.5 * mm)])
     meta = [
-        [Paragraph("CUSTOMER NAME", styles["label"]), Paragraph("CONTACT NO.", styles["label"]), Paragraph("QUOTATION DATE", styles["label"])],
-        [Paragraph(_escape(customer.get("company") or customer.get("name") or quotation.get("customer_name")), styles["body"]), Paragraph(_escape(quotation.get("phone_snapshot") or customer.get("phone") or ""), styles["body"]), Paragraph(created, styles["body"])],
-        [Paragraph("QUOTATION NO.", styles["label"]), Paragraph("REFERENCE", styles["label"]), Paragraph("PROJECT", styles["label"])],
-        [Paragraph(_escape(quotation.get("number")), styles["body"]), Paragraph(_escape(quotation.get("reference_source") or ""), styles["body"]), Paragraph(_escape(quotation.get("project_name") or ""), styles["body"])],
+        [Paragraph("CUSTOMER NAME", styles["label"]), Paragraph("CONTACT NO.", styles["label"]), Paragraph("SELECTION / QUOTATION DATE", styles["label"]), Paragraph("QUOTATION NO.", styles["label"])],
+        [Paragraph(_escape(customer.get("company") or customer.get("name") or quotation.get("customer_name")), styles["body"]), Paragraph(_escape(quotation.get("phone_snapshot") or customer.get("phone") or ""), styles["body"]), Paragraph(created, styles["body"]), Paragraph(_escape(quotation.get("number")), styles["body"])],
+        [Paragraph("REFERENCE", styles["label"]), Paragraph("ATTENDED BY", styles["label"]), Paragraph("PREPARED BY", styles["label"]), Paragraph("ADDRESS", styles["label"])],
+        [Paragraph(_escape(quotation.get("reference_source") or ""), styles["body"]), Paragraph(_escape(quotation.get("referrer_name") or ""), styles["body"]), Paragraph(_escape(b.get("footer_company_name") or "Buildcon House"), styles["body"]), Paragraph(_escape(quotation.get("address_snapshot") or customer.get("address") or ""), styles["body"])],
     ]
-    meta_row_heights = [5 * mm, 5 * mm, 5 * mm, 5 * mm]
+    meta_row_heights = [5 * mm, 5 * mm, 5 * mm, 6 * mm]
     meta_style = [
         ("LINEBELOW", (0, 1), (-1, 1), 0.4, LINE),
         ("LINEBELOW", (0, 3), (-1, 3), 0.4, LINE),
@@ -499,23 +512,11 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ("TOPPADDING", (0, 0), (-1, -1), 1), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
     ]
-    for label, value in [
-        ("REFERRED BY", quotation.get("referrer_name")),
-        ("SITE / DELIVERY ADDRESS", quotation.get("address_snapshot") or customer.get("address")),
-    ]:
-        if value:
-            row = len(meta)
-            meta.extend([[Paragraph(label, styles["label"]), "", ""], [Paragraph(_escape(value), styles["body"]), "", ""]])
-            meta_row_heights.extend([4 * mm, 6 * mm])
-            meta_style.extend([
-                ("SPAN", (0, row), (-1, row)), ("SPAN", (0, row + 1), (-1, row + 1)),
-                ("LINEBELOW", (0, row + 1), (-1, row + 1), 0.4, LINE),
-            ])
-    meta_table = Table(meta, colWidths=[90 * mm, 90 * mm, 87 * mm], rowHeights=meta_row_heights)
+    meta_table = Table(meta, colWidths=[66.75 * mm] * 4, rowHeights=meta_row_heights)
     meta_table.setStyle(TableStyle(meta_style))
     story.extend([meta_table, Spacer(1, 2 * mm)])
-    story.append(Paragraph("Dear Sir/Madam, thank you for your interest in our products. We are pleased to offer our most competitive rates for premium bath and sanitaryware fittings, prepared as per your requirements.", styles["body"]))
-    story.extend([Spacer(1, 3 * mm), Paragraph("QUOTATION SUMMARY", styles["section"]), Spacer(1, 1.5 * mm)])
+    story.append(Paragraph("Dear Sir/Madam, thank you for your interest in our products. We are pleased to offer our most competitive rates for premium tiles and sanitaryware, prepared as per your selection.", styles["body"]))
+    story.extend([Spacer(1, 3 * mm), Paragraph("PRICE SUMMARY", styles["section"]), Spacer(1, 1.5 * mm)])
 
     # ---- Dynamic Quotation Summary: exactly one row per room, no filler ----
     n_rooms = len(room_order)
@@ -562,16 +563,18 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
     story.extend([brand_partners_table(styles["cell"]), Spacer(1, 1.2 * mm)])
 
     terms = [
-        "1. All rates are as per current MRP.",
-        "2. Brands may revise MRP without prior notice.",
-        "3. 100% advance payment is required to confirm the order.",
-        "4. All MRP mentioned is inclusive of applicable tax.",
-        "5. This quotation is valid for the current month or until the company MRP changes — whichever is earlier — subject to force majeure w.r.t. tax or MRP.",
-        "6. For items with escalated MRP, order confirmation requires 100% payment prior to the cut-off timeline.",
-        "7. Delivery as per company schedule. Freight extra, as per actuals.",
-        "8. Any damage in transit must be reported within 24 hours of delivery with photographic proof.",
-        "9. Cancellations after order confirmation may be subject to a restocking charge.",
-        "10. GST and other applicable taxes will be charged extra as per government norms.",
+        "1. Prices quoted are based on the current NET prices at the time of selection.",
+        "2. Prices are subject to revision by any brand without prior notice.",
+        "3. 100% advance payment is required to confirm orders.",
+        "4. Freight and unloading charges will be applicable as per actuals.",
+        "5. Delivery timelines are subject to the manufacturer's schedule.",
+        "6. Rates are valid for 5 days, unless stated otherwise in writing.",
+        "7. Above rates are inclusive of GST @18%, unless stated otherwise.",
+        "8. All orders and deliveries are subject to material availability.",
+        "9. Prices are subject to change in case of changes in government levy.",
+        "10. Cheques should be written in favour of Buildcon House.",
+        "11. On confirmation of purchase order, material will be delivered within 15 days.",
+        "12. Labour cost is extra and not included in this quotation.",
     ]
     if b.get("terms_text"):
         terms.append(f"Additional terms: {_escape(b['terms_text'])}")
@@ -593,25 +596,15 @@ def build_quotation_pdf(quotation: dict, customer: dict, branding: dict | None =
         # padding forced only the signature into an otherwise blank page two.
         ("TOPPADDING", (0, 0), (-1, -1), 0.4), ("BOTTOMPADDING", (0, 0), (-1, -1), 0.4),
     ]))
-    care_entries = [
-        ("GEBERIT", "1800 102 4323"), ("GROHE", "1800 102 4475"), ("HANSGROHE", "1800 209 3246"), ("VITRA", "70451 32132"), ("OYSTER", "1800 120 8999"),
-    ]
-    care_rows = [
-        [Paragraph(brand, styles["tableHead"]) for brand, _ in care_entries],
-        [Paragraph(number, styles["cellCenter"]) for _, number in care_entries],
-    ]
-    care = Table(care_rows, colWidths=[53.4 * mm] * len(care_entries), rowHeights=[5 * mm, 5.5 * mm])
-    care.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.3, GRID), ("BACKGROUND", (0, 0), (-1, 0), HEADER_GREY),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 2),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-    ]))
+    enquiries = Paragraph(
+        f"For general enquiries: M: {_escape(b.get('footer_phone') or '+91 99099 06652')}  |  Email: {_escape(b.get('footer_email') or 'buildconhouse10@gmail.com')}",
+        styles["small"],
+    )
     signature = Table([[Paragraph("I/We have reviewed and agree to the terms and conditions mentioned in this quotation.", styles["small"]), Paragraph("CUSTOMER SIGNATURE &amp; DATE", styles["signature"])]], colWidths=[160 * mm, 107 * mm], rowHeights=[8 * mm])
     signature.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.45, GRID), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 1.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1.5)]))
     story.extend([
         Paragraph("TERMS &amp; CONDITIONS", styles["section"]), Spacer(1, 0.8 * mm), terms_table,
-        Spacer(1, 1.4 * mm), Paragraph("CUSTOMER CARE — TOLL FREE NUMBERS", styles["section"]),
-        Spacer(1, 0.8 * mm), care, Spacer(1, 1.5 * mm), signature,
+        Spacer(1, 1.5 * mm), enquiries, Spacer(1, 1.5 * mm), signature,
     ])
     if b.get("signature_name"):
         sig_line = _escape(b["signature_name"]) + (f", {_escape(b['signature_title'])}" if b.get("signature_title") else "")
