@@ -100,6 +100,20 @@ def _require_tiles_quotation_address(doc_type: str, address: str | None) -> None
         )
 
 
+def _require_tile_item_images(items: list[dict]) -> None:
+    """Require a product image on every tile-document PDF line."""
+    missing = [
+        str(item.get("sku") or item.get("name") or index + 1)
+        for index, item in enumerate(items)
+        if not str(item.get("image") or "").strip()
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Every tile product requires an image before generating a PDF. Missing image: {', '.join(missing[:3])}.",
+        )
+
+
 def _normalize_tile_items(items: list[QuotationLineItem], doc_type: str) -> list[QuotationLineItem]:
     """Apply tile-only defaults before totals and downstream reads."""
     if doc_type not in TILES_DOC_TYPES:
@@ -269,17 +283,17 @@ async def create_quotation(
 
     # Fill category_id on items so category discounts can resolve later, and
     # collect each item's own product floor_id (see `_floor_id_for_new_quotation`).
-    items = _normalize_tile_items(body.items or [], body.doc_type)
+    items = body.items or []
     # Client image URLs are only a convenience for the picker. Persist the
     # current canonical media URL so newly-created quotations cannot capture a
     # stale/portrait snapshot.
     canonical_items = await _canonicalize_item_images(items)
-    items = _normalize_tile_items([QuotationLineItem(**item) for item in canonical_items], body.doc_type)
+    items = [QuotationLineItem(**item) for item in canonical_items]
     item_floor_ids: set[str] = set()
     for it in items:
         p = await db.products.find_one(
             floor_query(user, {"id": it.product_id}),
-            {"_id": 0, "category_id": 1, "floor_id": 1},
+            {"_id": 0, "category_id": 1, "floor_id": 1, "specs": 1},
         )
         if not p:
             raise HTTPException(status_code=400, detail="One or more quotation products are unavailable on this floor.")
@@ -287,6 +301,8 @@ async def create_quotation(
             it.category_id = p.get("category_id")
         if p.get("floor_id"):
             item_floor_ids.add(p["floor_id"])
+
+    items = _normalize_tile_items(items, body.doc_type)
 
     # A standard quotation must never mix catalog floors. This makes the
     # document's business unit a server-enforced invariant rather than a
@@ -483,7 +499,7 @@ async def update_quotation(
         for it in items_typed:
             p = await db.products.find_one(
                 floor_query(user, {"id": it.product_id, "floor_id": doc.get("floor_id")}),
-                {"_id": 0, "category_id": 1},
+                {"_id": 0, "category_id": 1, "specs": 1},
             )
             if not p:
                 raise HTTPException(status_code=400, detail="One or more quotation products are unavailable on this quotation's floor.")
@@ -535,6 +551,25 @@ async def update_quotation(
         update["phone_snapshot"] = body.phone_snapshot
     if body.reference_source is not None:
         update["reference_source"] = body.reference_source
+    # The builder's Architect / Interior Designer picker supplies an id and
+    # may include a stale display type. Resolve the directory row here rather
+    # than trusting either client field; this is what makes the attribution
+    # durable for the Sales Data architect/interior-designer workspaces.
+    if "referrer_id" in body.model_fields_set:
+        if not body.referrer_id:
+            update.update({"referrer_id": None, "referrer_name": None, "referrer_type": None})
+        else:
+            referrer = await get_floor_scoped_or_404(
+                db.referrers, body.referrer_id, user, not_found="Referrer not found", projection={"_id": 0},
+            )
+            if referrer.get("active") is False:
+                raise HTTPException(status_code=400, detail="This referrer is archived")
+            update.update({
+                "referrer_id": referrer["id"], "referrer_name": referrer["name"],
+                "referrer_type": referrer["type"],
+            })
+    elif "referrer_type" in body.model_fields_set:
+        raise HTTPException(status_code=422, detail="Select an architect or interior designer from the directory")
     if body.attended_by is not None:
         update["attended_by"] = body.attended_by
     if body.prepared_by is not None:
@@ -963,6 +998,8 @@ async def quotation_pdf(quotation_id: str, user: UserPublic = Depends(get_curren
     _require_tiles_quotation_address(doc_type, doc.get("address_snapshot"))
     branding = await _pdf_branding()
     pdf_items = await _pdf_items(doc)
+    if doc_type in TILES_DOC_TYPES:
+        _require_tile_item_images(pdf_items)
     if doc_type == "tiles_selection":
         pdf_bytes = await _render_pdf(build_tiles_selection_pdf, {**doc, "items": pdf_items}, customer, branding)
         filename = tiles_pdf_filename(doc)

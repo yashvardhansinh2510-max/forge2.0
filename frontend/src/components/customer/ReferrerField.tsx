@@ -9,7 +9,7 @@ import { useBp } from "@/src/design/responsive";
 type Referrer = { id: string; name: string; type: "architect" | "interior_designer" };
 type ReferrerValue = Pick<Referrer, "id" | "name" | "type"> | null;
 
-export function ReferrerField({ value, onChange }: { value: ReferrerValue; onChange: (value: ReferrerValue) => void }) {
+export function ReferrerField({ value, onChange, floorId, label = "Referred By" }: { value: ReferrerValue; onChange: (value: ReferrerValue) => void; floorId?: string; label?: string }) {
   const { isPhone } = useBp();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Referrer[]>([]);
@@ -17,21 +17,21 @@ export function ReferrerField({ value, onChange }: { value: ReferrerValue; onCha
   const [name, setName] = useState("");
   const [adding, setAdding] = useState(false);
 
-  useEffect(() => { if (open) api.get<Referrer[]>("/referrers").then(setItems).catch(() => setItems([])); }, [open]);
+  useEffect(() => { if (open) api.get<Referrer[]>("/referrers", floorId ? { floorId } : undefined).then(setItems).catch(() => setItems([])); }, [open, floorId]);
   const filtered = useMemo(() => items.filter((item) => item.type === kind), [items, kind]);
   const choose = (item: Referrer | null) => { onChange(item); setOpen(false); };
   const add = async () => {
     if (!name.trim()) return;
     setAdding(true);
     try {
-      const created = await api.post<Referrer>("/referrers", { name: name.trim(), type: kind });
+      const created = await api.post<Referrer>("/referrers", { name: name.trim(), type: kind }, floorId ? { floorId } : undefined);
       setItems((current) => [...current, created]);
       choose(created);
     } finally { setAdding(false); }
   };
 
   return <View style={{ gap: 6 }}>
-    <Text style={type.label}>Referred By</Text>
+    <Text style={type.label}>{label}</Text>
     <Pressable onPress={() => setOpen(true)} style={{ minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md, justifyContent: "center" }}>
       <Text style={type.body}>{value?.name || "Select architect or interior designer"}</Text>
     </Pressable>

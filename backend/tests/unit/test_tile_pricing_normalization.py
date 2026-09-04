@@ -68,3 +68,12 @@ def test_boxed_tile_quantity_addition_subtraction_and_multiplication_are_linear(
     assert recalc_quotation_totals([line])["subtotal"] == 2400
     line.qty -= 5
     assert recalc_quotation_totals([line])["subtotal"] == 1400
+
+
+def test_line_quantity_unit_is_an_explicit_user_choice():
+    """The API preserves the Box/Pieces setting selected for each quote line."""
+    box = normalize_tile_line_item(_line(quantity_unit="Box", rate_sqft=50, box_sqft=4))
+    piece = normalize_tile_line_item(_line(quantity_unit="Pieces", offer_rate=50, rate_box=0, unit_price=0))
+
+    assert box.quantity_unit == "Box"
+    assert piece.quantity_unit == "Pieces"
