@@ -61,10 +61,17 @@ def notebook_projection(*, converted: bool) -> dict[str, int]:
         "address": 1,
         "kitchen_type": 1,
         "referred_by": 1,
+        "referrer_id": 1,
+        "referrer_name": 1,
+        "referrer_type": 1,
         "architect_interior_designer": 1,
         "notebook_status": 1,
         "notes": 1,
+        "lost_reason": 1,
         "is_converted": 1,
+        "converted_at": 1,
+        "last_contacted_at": 1,
+        "contact_attempts": 1,
         "updated_at": 1,
         "floor_id": 1,
     }
@@ -83,10 +90,17 @@ def serialize_notebook_row(document: dict[str, Any]) -> dict[str, Any]:
         "address": document.get("address") or "",
         "kitchen_type": document.get("kitchen_type") or "",
         "referred_by": document.get("referred_by") or "",
+        "referrer_id": document.get("referrer_id"),
+        "referrer_name": document.get("referrer_name") or document.get("architect_interior_designer") or "",
+        "referrer_type": document.get("referrer_type"),
         "architect_interior_designer": document.get("architect_interior_designer") or "",
         "status": document.get("notebook_status") or "new",
         "notes": document.get("notes") or "",
+        "lost_reason": document.get("lost_reason") or "",
         "is_converted": converted,
+        "converted_at": document.get("converted_at"),
+        "last_contacted_at": document.get("last_contacted_at"),
+        "contact_attempts": document.get("contact_attempts") or 0,
         "updated_at": document.get("updated_at"),
     }
     if converted:
@@ -279,6 +293,8 @@ async def convert_notebook_row(
         raise KeyError("Notebook row not found")
     if current.get("is_converted"):
         return serialize_notebook_row(current)
+    if (current.get("notebook_status") or "new") in {"lost", "won"}:
+        raise NotebookValidationError("Closed follow-ups cannot be moved to quotation")
     if current.get("updated_at") != expected_updated_at:
         raise NotebookConflictError(
             serialize_notebook_row(current), changed_fields=[*patch.keys(), "is_converted"],
@@ -289,12 +305,57 @@ async def convert_notebook_row(
     now = now_iso()
     result = await db.followups.update_one(
         {**query, "updated_at": expected_updated_at},
-        {"$set": {**clean, "is_converted": True, "updated_at": now}},
+        {"$set": {
+            **clean,
+            "is_converted": True,
+            "converted_at": now,
+            # A converted row remains an active quotation follow-up until it
+            # is explicitly won or lost; it must not disappear from the
+            # shared follow-up queue.
+            "notebook_status": "pending",
+            "updated_at": now,
+        }},
     )
     if not result.matched_count:
         changed = await db.followups.find_one(query, {"_id": 0})
         raise NotebookConflictError(
             serialize_notebook_row(changed or current), changed_fields=[*patch.keys(), "is_converted"],
         )
+    updated = await db.followups.find_one(query, {"_id": 0})
+    return serialize_notebook_row(updated)
+
+
+async def complete_notebook_row(
+    db: Any, *, user: Any, floor_id: str, row_id: str, outcome: str,
+    lost_reason: str | None, expected_updated_at: str,
+) -> dict[str, Any]:
+    """Atomically close a notebook lead and its shared Followup record."""
+    query = notebook_query(user, floor_id, {"id": row_id})
+    current = await db.followups.find_one(query, {"_id": 0})
+    if not current:
+        raise KeyError("Notebook row not found")
+    if current.get("updated_at") != expected_updated_at:
+        raise NotebookConflictError(serialize_notebook_row(current), changed_fields=["status", "lost_reason"])
+    if (current.get("notebook_status") or "new") in {"won", "lost"}:
+        raise NotebookValidationError("This follow-up is already closed")
+    if outcome == "lost" and not (lost_reason or "").strip():
+        raise NotebookValidationError("A lost reason is required")
+
+    now = now_iso()
+    update = {
+        "notebook_status": outcome,
+        "status": "done" if outcome == "won" else "dismissed",
+        "completed_outcome": outcome,
+        "completed_at": now,
+        "resolution_note": (lost_reason or "").strip() if outcome == "lost" else "Client won",
+        "lost_reason": (lost_reason or "").strip() if outcome == "lost" else None,
+        "updated_at": now,
+    }
+    result = await db.followups.update_one(
+        {**query, "updated_at": expected_updated_at}, {"$set": update},
+    )
+    if not result.matched_count:
+        changed = await db.followups.find_one(query, {"_id": 0})
+        raise NotebookConflictError(serialize_notebook_row(changed or current), changed_fields=["status", "lost_reason"])
     updated = await db.followups.find_one(query, {"_id": 0})
     return serialize_notebook_row(updated)

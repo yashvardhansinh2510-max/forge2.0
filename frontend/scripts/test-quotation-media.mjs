@@ -48,20 +48,22 @@ assert.deepEqual(productImageList({
 // a single assertion.
 const productImageSource = readFileSync(new URL("../src/components/ProductImage.tsx", import.meta.url), "utf8");
 assert.match(productImageSource, /storage\/v1\/render\/image\/public/);
-assert.match(productImageSource, /contentFit = "contain"/);
+assert.match(productImageSource, /forceLandscape/);
 assert.match(productImageSource, /resize=contain/);
 assert.doesNotMatch(productImageSource, /resize=fill/);
-assert.doesNotMatch(productImageSource, /contentFit = "fill"/);
+assert.match(productImageSource, /contentFit=\{forceLandscape \? "cover" : contentFit\}/);
 assert.match(productImageSource, /rotation\?: "0deg" \| "90deg" \| "270deg"/);
 
-// Tile documents are customer-facing: their landscape image cells must show
-// the actual selected catalog photo, not infer a rotation from the product's
-// physical dimensions or crop it away on narrow screens.
+// Tile document images are mandatory landscape presentation assets. Older
+// portrait source images and portrait tile dimensions are rotated in the UI.
 const tilesDocBuilderSource = readFileSync(new URL("../src/components/tiles/TilesDocBuilder.tsx", import.meta.url), "utf8");
-assert.doesNotMatch(tilesDocBuilderSource, /tileNeedsLandscapeRotation/);
-assert.doesNotMatch(tilesDocBuilderSource, /forceLandscape/);
-assert.match(tilesDocBuilderSource, /function TileImageCell\(\{ uri \}: \{ uri: string \}\)/);
-assert.match(tilesDocBuilderSource, /contentFit="contain"/);
+assert.match(tilesDocBuilderSource, /function tileNeedsLandscapeRotation/);
+assert.match(tilesDocBuilderSource, /forceLandscape/);
+assert.match(tilesDocBuilderSource, /rotation=\{tileNeedsLandscapeRotation\(size\) \? "90deg" : "0deg"\}/);
+assert.match(tilesDocBuilderSource, /function TileImageCell\(\{ uri, size \}/);
+assert.match(tilesDocBuilderSource, /contentFit="cover"/);
+assert.match(tilesDocBuilderSource, /This product has no image\. Add a product image before including it in a tile selection\./);
+assert.match(tilesDocBuilderSource, /Every selected tile needs a product image before generating the PDF\./);
 const tilesStageSource = readFileSync(new URL("../src/components/tiles/tilesStage.ts", import.meta.url), "utf8");
 assert.match(tilesStageSource, /if \(docType === "tiles_selection"\) return false/);
 

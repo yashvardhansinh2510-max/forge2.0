@@ -150,32 +150,22 @@ _remote_image_bytes = remote_image_bytes
 
 
 def _prepare_image_bytes(data: bytes, *, force_landscape: bool = False) -> bytes:
-    """Bake EXIF orientation without rotating, cropping, or stretching media.
+    """Apply the persisted landscape product-image contract to PDF inputs.
 
-    ``force_landscape`` is retained only as a backwards-compatible keyword for
-    callers saved before the orientation fix.  PDF rendering must never infer
-    rotation from a product's physical dimensions: a portrait basin and a
-    portrait tile are both valid portrait photographs.
+    Quotation snapshots can reference media created before upload
+    normalization, so PDFs repeat the shared transform defensively.
     """
     from PIL import Image as PILImage
-    from PIL import ImageOps
+    from services.product_image_normalizer import normalize_product_image
 
     try:
-        with PILImage.open(BytesIO(data)) as opened:
-            # Animated GIFs cannot be safely re-encoded without discarding
-            # frames, and ReportLab will use the first frame as before.
-            if (opened.format or "").upper() == "GIF":
-                return data
-            image = ImageOps.exif_transpose(opened)
-            image.load()
-            fmt = (opened.format or "PNG").upper()
-        output_format = {"JPG": "JPEG", "JPEG": "JPEG", "PNG": "PNG", "WEBP": "WEBP"}.get(fmt)
-        if not output_format:
+        with PILImage.open(BytesIO(data)) as image:
+            fmt = (image.format or "").upper()
+        mime = {"JPG": "image/jpeg", "JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp", "GIF": "image/gif"}.get(fmt)
+        if not mime:
             return data
-        out = BytesIO()
-        save_image = image.convert("RGB") if output_format == "JPEG" and image.mode not in ("RGB", "L") else image
-        save_image.save(out, format=output_format)
-        return out.getvalue()
+        normalized, _ = normalize_product_image(data, mime, force_landscape=force_landscape)
+        return normalized
     except Exception:
         return data
 

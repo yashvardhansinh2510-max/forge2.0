@@ -1,7 +1,7 @@
 """Contract tests for the tile-only quotation defaults and totals."""
 
 from models import QuotationLineItem
-from routes.quotation_routes import _normalize_tile_items, _require_tiles_quotation_address, _tile_totals
+from routes.quotation_routes import _normalize_tile_items, _require_tile_item_images, _require_tiles_quotation_address, _tile_totals
 
 
 def _item(**kwargs) -> QuotationLineItem:
@@ -59,3 +59,15 @@ def test_tile_quotation_requires_a_non_blank_address():
 
     _require_tiles_quotation_address("tiles_quotation", "  12 Ring Road  ")
     _require_tiles_quotation_address("tiles_selection", None)
+
+
+def test_tile_document_pdf_requires_an_image_for_every_product():
+    import pytest
+
+    with pytest.raises(Exception, match="Every tile product requires an image"):
+        _require_tile_item_images([
+            {"sku": "TILE-001", "image": "https://cdn.example.test/tile.jpg"},
+            {"sku": "TILE-002", "image": None},
+        ])
+
+    _require_tile_item_images([{"sku": "TILE-001", "image": "https://cdn.example.test/tile.jpg"}])

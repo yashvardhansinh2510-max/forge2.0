@@ -496,7 +496,7 @@ class QuotationLineItem(BaseModel):
     size: Optional[str] = None             # e.g. "1200X1800"
     rate_sqft: Optional[float] = Field(default=None, ge=0)
     rate_box: Optional[float] = Field(default=None, ge=0)
-    pcs_per_box: Optional[str] = None      # catalog metadata; UI/PDF show the quantity unit instead
+    pcs_per_box: Optional[str] = None      # catalog metadata retained in the PCS/BOX column for every tile line
     box_sqft: Optional[float] = Field(default=None, ge=0)  # sqft covered by one box — effective per-sqft price x box_sqft derives unit_price (rate/box)
     offer_rate: Optional[float] = Field(default=None, ge=0)  # final selling price per SQ.FT; defaults to rate_sqft and drives totals
     quantity_unit: Literal["Box", "Pieces"] = "Box"
@@ -1130,11 +1130,20 @@ class Followup(TimestampedModel):
     address: Optional[str] = None
     kitchen_type: Optional[Literal["GI", "SS"]] = None
     referred_by: Optional[str] = None
+    # Structured partner attribution. ``architect_interior_designer`` remains
+    # as a legacy display value for older notebook rows, but new assignments
+    # must point to the shared referrer directory so they survive into sales
+    # data and can be attributed on quotations.
+    referrer_id: Optional[str] = None
+    referrer_name: Optional[str] = None
+    referrer_type: Optional[ReferrerType] = None
     architect_interior_designer: Optional[str] = None
     notebook_status: NotebookStatus = "new"
     quotation_price: Optional[float] = None
     estimated_value: Optional[float] = None
     quotation_date: Optional[str] = None
+    converted_at: Optional[str] = None
+    lost_reason: Optional[str] = None
 
 
 class FollowupCreate(BaseModel):
@@ -1190,6 +1199,7 @@ class NotebookFollowupCreatePayload(BaseModel):
     # that kitchen-specific attribute.
     kitchen_type: Optional[str] = None
     referred_by: Optional[str] = None
+    referrer_id: Optional[str] = None
     architect_interior_designer: Optional[str] = None
     notes: Optional[str] = None
 
@@ -1208,6 +1218,26 @@ class NotebookConversionPayload(BaseModel):
     # A quotation conversion is complete only when its quoted price is known.
     # Other follow-up fields remain unchanged.
     quotation_price: float
+    updated_at: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NotebookOutcomePayload(BaseModel):
+    outcome: Literal["won", "lost"]
+    # A lost lead is a business decision, not a cosmetic status. Require the
+    # reason atomically with the transition so it cannot be bypassed by an
+    # inline status edit.
+    lost_reason: Optional[str] = None
+    updated_at: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NotebookReferrerPayload(BaseModel):
+    # Empty string intentionally clears the assignment; non-empty values are
+    # resolved server-side against the floor-scoped referrer directory.
+    referrer_id: Optional[str] = None
     updated_at: str
 
     model_config = ConfigDict(extra="forbid")

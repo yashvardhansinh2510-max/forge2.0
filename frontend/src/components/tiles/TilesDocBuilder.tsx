@@ -69,7 +69,12 @@ const ZEBRA = "#F0F0F0";
 const GRID = "#8A8A8A";
 const SERIF = Platform.select({ ios: "Times New Roman", android: "serif", default: "Georgia, 'Times New Roman', serif" }) as string;
 
-function TileImageCell({ uri }: { uri: string }) {
+function tileNeedsLandscapeRotation(size: string | null | undefined): boolean {
+  const match = String(size || "").match(/(\d+(?:\.\d+)?)\s*[x×X]\s*(\d+(?:\.\d+)?)/);
+  return Boolean(match && Number(match[1]) < Number(match[2]));
+}
+
+function TileImageCell({ uri, size }: { uri: string; size?: string | null }) {
   const [cellWidth, setCellWidth] = useState(0);
   // A numeric size is intentional: percentage sizing in an RN-web table cell
   // can shrink to the source bitmap's intrinsic square. This guarantees every
@@ -79,16 +84,13 @@ function TileImageCell({ uri }: { uri: string }) {
     <View style={{ width: "100%", alignItems: "center", justifyContent: "center" }} onLayout={(event) => setCellWidth(event.nativeEvent.layout.width)}>
       <ProductImage
         source={uri}
-        // Keep the exact catalog photo upright and visible. A product's
-        // physical dimensions do not describe its photo orientation, so
-        // rotating or cover-cropping from the size field could show a
-        // sideways/incomplete product in the selection and quotation.
-        // `contain` uses the maximum possible centered fit in this fixed
-        // landscape frame without changing the product image itself.
-        contentFit="contain"
+        contentFit="cover"
         frameInset={0}
         borderRadius={0}
         disableSkeleton
+        mirror
+        forceLandscape
+        rotation={tileNeedsLandscapeRotation(size) ? "90deg" : "0deg"}
         frameBackground="#FFFFFF"
         style={{ width: imageWidth, height: imageWidth / TILE_IMAGE_ASPECT_RATIO }}
         accessibilityLabel="Quotation product image"
@@ -349,6 +351,14 @@ function useTilesDoc(docType: TilesDocType) {
         const derived = derivedTileBoxRate(next);
         if (derived !== null) next.rateBox = String(derived);
       }
+      // The catalog provides the initial unit, but the quotation author may
+      // explicitly switch it. Re-entering Box mode restores the normal
+      // rate-per-square-foot × box-coverage calculation; Pieces continues to
+      // use the editable rate per unit without guessing a conversion.
+      if (patch.quantityUnit === "Box") {
+        const derived = derivedTileBoxRate(next);
+        if (derived !== null) next.rateBox = String(derived);
+      }
       // Editable values are sent to the backend pricing engine. The
       // presentation layer does not derive prices or line totals.
       if ("total" in patch) next.totalEdited = true;
@@ -385,6 +395,10 @@ function useTilesDoc(docType: TilesDocType) {
 
   const applyProduct = useCallback((key: string, product: Product, history?: { size: string | null; rate_sqft: number | null; rate_box: number | null; pcs_per_box: string | null; box_sqft?: number | null }) => {
     const image = productImageList(product)[0] || null;
+    if (!image) {
+      toast.error("This product has no image. Add a product image before including it in a tile selection.");
+      return;
+    }
     const specs = product.specs || {};
     const specNum = (...keys: string[]): string => {
       for (const k of keys) {
@@ -621,6 +635,10 @@ function useTilesDoc(docType: TilesDocType) {
   }, [header, rows, docId]);
 
   const generatePdf = useCallback(async () => {
+    if (rows.some((row) => row.productId && !row.image?.trim())) {
+      toast.error("Every selected tile needs a product image before generating the PDF.");
+      return;
+    }
     setBusy("pdf");
     try {
       const id = await persist({ silent: true });
@@ -629,9 +647,13 @@ function useTilesDoc(docType: TilesDocType) {
     } finally {
       setBusy(null);
     }
-  }, [persist, header.customerName, header.docDate]);
+  }, [persist, header.customerName, header.docDate, rows]);
 
   const print = useCallback(async () => {
+    if (rows.some((row) => row.productId && !row.image?.trim())) {
+      toast.error("Every selected tile needs a product image before printing.");
+      return;
+    }
     setBusy("print");
     try {
       const id = await persist({ silent: true });
@@ -640,7 +662,7 @@ function useTilesDoc(docType: TilesDocType) {
     } finally {
       setBusy(null);
     }
-  }, [persist]);
+  }, [persist, rows]);
 
   const placeOrder = useCallback(async () => {
     if (busy) return;
@@ -1272,7 +1294,7 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
           ]}>
             <View style={[selStyles.td, flex(0)]}><Text style={selStyles.cellText}>{index + 1}</Text></View>
             <View style={[selStyles.td, flex(1), { padding: 2 }]}>
-              {row.image ? <TileImageCell uri={row.image} /> : null}
+              {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
             </View>
             <View style={[selStyles.td, flex(2)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
@@ -1399,7 +1421,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
           ]}>
             <View style={[quoStyles.td, flex(0)]}><Text style={quoStyles.cellText}>{index + 1}</Text></View>
             <View style={[quoStyles.td, flex(1), { padding: 2 }]}>
-              {row.image ? <TileImageCell uri={row.image} /> : null}
+              {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
             </View>
             <View style={[quoStyles.td, flex(2)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
@@ -1574,7 +1596,7 @@ function MobileRowCard({
     <View style={mobileStyles.rowCard} testID={`mobile-row-${index}`}>
       <Pressable onPress={onOpenPicker} style={mobileStyles.productImage} testID={`mobile-thumb-${index}`} accessibilityLabel={row.productId ? "Change product image" : "Select product image"}>
           {row.image ? (
-            <ProductImage source={row.image} contentFit="contain" frameInset={0} borderRadius={radius.md} disableSkeleton frameBackground={colors.surface} style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
+            <ProductImage source={row.image} contentFit="cover" frameInset={0} borderRadius={radius.md} disableSkeleton forceLandscape frameBackground={colors.surface} style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
           ) : (
             <Feather name="image" size={18} color={colors.onSurfaceMuted} />
           )}

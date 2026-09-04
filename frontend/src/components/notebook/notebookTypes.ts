@@ -19,14 +19,20 @@ export type NotebookRow = {
   address: string;
   kitchen_type: "GI" | "SS" | "";
   referred_by: string;
+  referrer_id: string | null;
+  referrer_name: string;
+  referrer_type: "architect" | "interior_designer" | null;
   architect_interior_designer: string;
   status: NotebookStatus;
   notes: string;
+  lost_reason: string;
   is_converted: boolean;
+  converted_at: string | null;
+  last_contacted_at: string | null;
+  contact_attempts: number;
   updated_at: string;
   quotation_price?: number | null;
   quotation_number?: string | null;
-  converted_at?: string | null;
 };
 
 export type NotebookColumn = {

@@ -35,6 +35,7 @@ from models import (
     FollowupContactPayload, FollowupCreate, FollowupSavedView,
     FollowupSavedViewCreate, FollowupSnoozePayload, FollowupUpdate,
     NotebookCellPatchPayload, NotebookConversionPayload, NotebookFollowupCreatePayload,
+    NotebookOutcomePayload, NotebookReferrerPayload,
     UserPublic, now_iso,
 )
 from services import automation_rules, workflow_transitions
@@ -45,7 +46,7 @@ from services.followup_engine import (
     reason_factors_for, reconcile_followups, score_followup,
 )
 from services.followup_notebook import (
-    NotebookConflictError, NotebookValidationError, convert_notebook_row,
+    NotebookConflictError, NotebookValidationError, complete_notebook_row, convert_notebook_row,
     notebook_query, notebook_search_query, normalize_mobile, patch_notebook_row,
     serialize_notebook_row, timeline_event_for_field, validate_notebook_patch, resolve_or_create_customer,
 )
@@ -113,6 +114,27 @@ def _notebook_conflict(error: NotebookConflictError) -> HTTPException:
     return HTTPException(status_code=409, detail={
         "message": str(error), "row": error.row, "changed_fields": error.changed_fields,
     })
+
+
+async def _notebook_referrer_fields(referrer_id: str | None, floor_id: str) -> dict:
+    """Resolve a notebook partner from the directory pinned to its floor.
+
+    Notebook routes deliberately accept a floor URL independently of the
+    caller's currently selected floor.  The normal customer helper scopes via
+    that ambient selection, so resolve explicitly here after access has
+    already been authorized by ``require_notebook_floor``.
+    """
+    if not referrer_id:
+        return {"referrer_id": None, "referrer_name": None, "referrer_type": None}
+    referrer = await db.referrers.find_one({"id": referrer_id, "floor_id": floor_id}, {"_id": 0})
+    if not referrer:
+        raise HTTPException(status_code=404, detail="Referrer not found")
+    if referrer.get("active") is False:
+        raise HTTPException(status_code=400, detail="This referrer is archived")
+    return {
+        "referrer_id": referrer["id"], "referrer_name": referrer["name"],
+        "referrer_type": referrer["type"],
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -476,8 +498,10 @@ async def list_notebook(
         "_id": 0, **({
             "id": 1, "customer_name": 1, "customer_phone": 1, "address": 1,
             "kitchen_type": 1, "referred_by": 1, "architect_interior_designer": 1,
+            "referrer_id": 1, "referrer_name": 1, "referrer_type": 1,
             "notebook_status": 1, "notes": 1, "is_converted": 1, "updated_at": 1,
             "quotation_price": 1, "estimated_value": 1, "quotation_date": 1,
+            "converted_at": 1, "lost_reason": 1, "last_contacted_at": 1, "contact_attempts": 1,
         }),
     }
     rows = await db.followups.find(query, projection).sort([("updated_at", -1), ("id", -1)]).limit(limit + 1).to_list(limit + 1)
@@ -497,6 +521,7 @@ async def create_notebook_row(
 ):
     require_notebook_floor(floor_id, user)
     patch = body.dict(exclude_none=True)
+    requested_referrer_id = patch.pop("referrer_id", None)
     patch["notebook_status"] = "new"
     try:
         clean = validate_notebook_patch(
@@ -508,6 +533,12 @@ async def create_notebook_row(
         db, user=user, floor_id=floor_id, name=clean["customer_name"],
         phone=clean["customer_phone"], address=clean.get("address"),
     )
+    referrer_fields = await _notebook_referrer_fields(requested_referrer_id, floor_id)
+    if requested_referrer_id:
+        await db.customers.update_one(
+            {"id": customer["id"], "floor_id": floor_id}, {"$set": referrer_fields},
+        )
+        customer = {**customer, **referrer_fields}
     # A customer has one notebook row per floor. Repeated creation requests
     # must resolve to that row instead of making the register appear to ignore
     # edits or creating a second customer conversation.
@@ -516,6 +547,17 @@ async def create_notebook_row(
         notebook_query(user, floor_id, {"notebook_key": notebook_key}), {"_id": 0},
     )
     if existing:
+        # Retrying an add with a newly selected directory partner should not
+        # make the picker look as if it saved only on the customer. Keep the
+        # already-canonical lead row in sync too.
+        if requested_referrer_id:
+            await db.followups.update_one(
+                notebook_query(user, floor_id, {"notebook_key": notebook_key}),
+                {"$set": {**referrer_fields, "architect_interior_designer": referrer_fields["referrer_name"], "updated_at": now_iso()}},
+            )
+            existing = await db.followups.find_one(
+                notebook_query(user, floor_id, {"notebook_key": notebook_key}), {"_id": 0},
+            )
         return serialize_notebook_row(existing)
     now = now_iso()
     row = Followup(
@@ -528,6 +570,7 @@ async def create_notebook_row(
         is_automated=False, is_converted=False, notebook_status="new",
         address=clean.get("address"), kitchen_type=clean.get("kitchen_type"),
         referred_by=clean.get("referred_by"),
+        **referrer_fields,
         architect_interior_designer=clean.get("architect_interior_designer"),
         notes=clean.get("notes"),
     )
@@ -566,6 +609,8 @@ async def patch_notebook(
 ):
     require_notebook_floor(floor_id, user)
     field = "notebook_status" if body.field == "status" else body.field
+    if field == "notebook_status" and isinstance(body.value, str) and body.value in {"won", "lost"}:
+        raise HTTPException(status_code=422, detail="Use the explicit Won or Lost action so this outcome is recorded correctly")
     if field == "customer_phone" and body.value is not None:
         value = normalize_mobile(str(body.value))
     else:
@@ -598,6 +643,69 @@ async def patch_notebook(
             payload={"note": row.get("notes")}, summary="Lost note recorded",
         )
     return row
+
+
+@router.post("/notebook/{floor_id}/{row_id}/outcome")
+async def complete_notebook_outcome(
+    floor_id: str, row_id: str, body: NotebookOutcomePayload,
+    user: UserPublic = Depends(get_current_user),
+):
+    """Close a Kitchen/Furniture lead with a durable Won/Lost outcome."""
+    require_notebook_floor(floor_id, user)
+    before = await db.followups.find_one(notebook_query(user, floor_id, {"id": row_id}), {"_id": 0})
+    if not before:
+        raise HTTPException(status_code=404, detail="Notebook row not found")
+    try:
+        row = await complete_notebook_row(
+            db, user=user, floor_id=floor_id, row_id=row_id, outcome=body.outcome,
+            lost_reason=body.lost_reason, expected_updated_at=body.updated_at,
+        )
+    except NotebookConflictError as error:
+        raise _notebook_conflict(error)
+    except NotebookValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    summary = "Client won" if body.outcome == "won" else "Client lost"
+    await log_event(
+        event_type=f"project_followup.{body.outcome}", entity_type="followup", entity_id=row_id,
+        actor=user, customer_id=before.get("customer_id"), floor_id=floor_id,
+        payload={"lost_reason": body.lost_reason} if body.outcome == "lost" else {}, summary=summary,
+    )
+    return row
+
+
+@router.put("/notebook/{floor_id}/{row_id}/referrer")
+async def assign_notebook_referrer(
+    floor_id: str, row_id: str, body: NotebookReferrerPayload,
+    user: UserPublic = Depends(get_current_user),
+):
+    """Assign/clear a directory partner on a lead and its linked customer."""
+    require_notebook_floor(floor_id, user)
+    query = notebook_query(user, floor_id, {"id": row_id})
+    before = await db.followups.find_one(query, {"_id": 0})
+    if not before:
+        raise HTTPException(status_code=404, detail="Notebook row not found")
+    if before.get("updated_at") != body.updated_at:
+        raise _notebook_conflict(NotebookConflictError(serialize_notebook_row(before), ["referrer_id"]))
+    fields = await _notebook_referrer_fields(body.referrer_id, floor_id)
+    now = now_iso()
+    result = await db.followups.update_one(
+        {**query, "updated_at": body.updated_at},
+        {"$set": {**fields, "architect_interior_designer": fields["referrer_name"] or "", "updated_at": now}},
+    )
+    if not result.matched_count:
+        changed = await db.followups.find_one(query, {"_id": 0})
+        raise _notebook_conflict(NotebookConflictError(serialize_notebook_row(changed or before), ["referrer_id"]))
+    await db.customers.update_one(
+        {"id": before.get("customer_id"), "floor_id": floor_id}, {"$set": fields},
+    )
+    await log_event(
+        event_type="project_followup.referrer_assigned", entity_type="followup", entity_id=row_id,
+        actor=user, customer_id=before.get("customer_id"), floor_id=floor_id,
+        payload={"referrer_id": fields["referrer_id"], "referrer_type": fields["referrer_type"]},
+        summary=(f"Assigned {fields['referrer_name']}" if fields["referrer_name"] else "Cleared referrer"),
+    )
+    updated = await db.followups.find_one(query, {"_id": 0})
+    return serialize_notebook_row(updated)
 
 
 @router.post("/notebook/{floor_id}/{row_id}/convert")
@@ -932,7 +1040,10 @@ async def contact_followup(followup_id: str, body: FollowupContactPayload, user:
     if not f:
         raise HTTPException(status_code=404, detail="Follow-up not found")
     now = now_iso()
-    await db.followups.update_one(floor_query(user, {"id": followup_id}), {"$set": {"last_contacted_at": now, "updated_at": now}})
+    await db.followups.update_one(
+        floor_query(user, {"id": followup_id}),
+        {"$set": {"last_contacted_at": now, "updated_at": now}, "$inc": {"contact_attempts": 1}},
+    )
     await log_event(
         event_type="followup.contacted", entity_type="followup", entity_id=followup_id, actor=user,
         customer_id=f.get("customer_id"), quotation_id=f.get("quotation_id"), purchase_id=f.get("purchase_id"),

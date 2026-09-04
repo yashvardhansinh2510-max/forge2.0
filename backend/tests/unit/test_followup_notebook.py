@@ -6,6 +6,7 @@ from services.followup_notebook import (
     QUOTATION_FIELDS,
     NotebookValidationError,
     NotebookConflictError,
+    complete_notebook_row,
     convert_notebook_row,
     normalize_mobile,
     notebook_query,
@@ -364,3 +365,76 @@ async def test_furniture_conversion_requires_and_stores_a_price():
         db, user=object(), floor_id="third-floor", row_id="furniture-1", patch={"quotation_price": 25000}, expected_updated_at="v1",
     )
     assert row["is_converted"] is True and row["quotation_price"] == 25000
+
+
+@pytest.mark.asyncio
+async def test_conversion_keeps_the_lead_active_as_a_quotation_followup():
+    db = _Db(followups=[{
+        "id": "f1", "floor_id": "second-floor", "notebook_key": "second-floor:c1",
+        "customer_name": "A", "customer_phone": "9909906652", "kitchen_type": "GI",
+        "notebook_status": "new", "status": "open", "updated_at": "v1", "is_converted": False,
+    }])
+    await convert_notebook_row(
+        db, user=object(), floor_id="second-floor", row_id="f1",
+        patch={"quotation_price": 50000}, expected_updated_at="v1",
+    )
+    assert db.followups.rows[0]["notebook_status"] == "pending"
+    assert db.followups.rows[0]["status"] == "open"
+    assert db.followups.rows[0]["converted_at"]
+
+
+@pytest.mark.asyncio
+async def test_lost_outcome_requires_reason_and_closes_shared_followup():
+    db = _Db(followups=[{
+        "id": "f1", "floor_id": "third-floor", "notebook_key": "third-floor:c1",
+        "customer_name": "A", "customer_phone": "9909906652", "notebook_status": "pending",
+        "status": "open", "updated_at": "v1", "is_converted": True,
+    }])
+    with pytest.raises(NotebookValidationError, match="lost reason"):
+        await complete_notebook_row(
+            db, user=object(), floor_id="third-floor", row_id="f1", outcome="lost",
+            lost_reason="", expected_updated_at="v1",
+        )
+    row = await complete_notebook_row(
+        db, user=object(), floor_id="third-floor", row_id="f1", outcome="lost",
+        lost_reason="Selected another vendor", expected_updated_at="v1",
+    )
+    assert row["status"] == "lost"
+    assert db.followups.rows[0]["status"] == "dismissed"
+    assert db.followups.rows[0]["completed_outcome"] == "lost"
+    assert db.followups.rows[0]["lost_reason"] == "Selected another vendor"
+
+
+@pytest.mark.asyncio
+async def test_notebook_partner_assignment_updates_the_lead_and_customer(monkeypatch):
+    from models import NotebookReferrerPayload
+    from routes import followup_routes
+
+    db = _Db(
+        customers=[{"id": "c1", "floor_id": "third-floor", "name": "A"}],
+        followups=[{
+            "id": "f1", "floor_id": "third-floor", "notebook_key": "third-floor:c1",
+            "customer_id": "c1", "customer_name": "A", "customer_phone": "9909906652",
+            "notebook_status": "new", "status": "open", "updated_at": "v1", "is_converted": False,
+        }],
+    )
+    db.referrers = _Collection([{
+        "id": "r1", "floor_id": "third-floor", "name": "Aster Architects",
+        "type": "architect", "active": True,
+    }])
+    events = []
+
+    async def _log_event(**event):
+        events.append(event)
+
+    monkeypatch.setattr(followup_routes, "db", db)
+    monkeypatch.setattr(followup_routes, "log_event", _log_event)
+    user = SimpleNamespace(active_floor_id="third-floor", floor_ids=["third-floor"], role="sales")
+    row = await followup_routes.assign_notebook_referrer(
+        "third-floor", "f1", NotebookReferrerPayload(referrer_id="r1", updated_at="v1"), user,
+    )
+
+    assert row["referrer_name"] == "Aster Architects"
+    assert db.followups.rows[0]["referrer_type"] == "architect"
+    assert db.customers.rows[0]["referrer_id"] == "r1"
+    assert events[0]["event_type"] == "project_followup.referrer_assigned"

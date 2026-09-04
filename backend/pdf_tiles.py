@@ -163,6 +163,12 @@ def _fmt_rate_sqft(value, suffix: str = "") -> str:
     return f"{text}{suffix}"
 
 
+def _portrait_tile_size(value: object) -> bool:
+    import re
+    match = re.search(r"(\d+(?:\.\d+)?)\s*[x×X]\s*(\d+(?:\.\d+)?)", str(value or ""))
+    return bool(match and float(match.group(1)) < float(match.group(2)))
+
+
 def _quantity_unit(value: object) -> str:
     """Return one display unit for current and legacy tile line items.
 
@@ -408,6 +414,7 @@ def build_tiles_selection_pdf(quotation: dict, customer: dict, branding: dict | 
                 item.get("image"),
                 width_mm=SELECTION_PRODUCT_IMAGE_WIDTH_MM,
                 height_mm=SELECTION_PRODUCT_IMAGE_HEIGHT_MM,
+                force_landscape=_portrait_tile_size(item.get("size")),
                 cover=True,
             ),
             Paragraph(_escape(item.get("room") or ""), styles["cell"]),
@@ -520,6 +527,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
                 item.get("image"),
                 width_mm=QUOTATION_PRODUCT_IMAGE_WIDTH_MM,
                 height_mm=QUOTATION_PRODUCT_IMAGE_HEIGHT_MM,
+                force_landscape=_portrait_tile_size(item.get("size")),
                 cover=True,
             ),
             Paragraph(_escape(item.get("room") or ""), styles["cell"]),
@@ -529,7 +537,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
             Paragraph(_money(offer_rate) if offer_rate else "", styles["cellOffer"]),
             Paragraph(_money(rate_box) if rate_box else "", styles["cell"]),
             Paragraph(_quantity_label(qty, quantity_unit) if qty else "", styles["cellBold"]),
-            Paragraph("N/A" if quantity_unit == "Pieces" else _escape(item.get("pcs_per_box") or ""), styles["cellBold"]),
+            Paragraph(_escape(item.get("pcs_per_box") or ""), styles["cellBold"]),
             Paragraph(_money(line_total) if line_total else "", styles["cell"]),
         ])
     # Keep the grand total out of the flowing product table.  When a table

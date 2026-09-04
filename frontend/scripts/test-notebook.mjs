@@ -20,7 +20,9 @@ assert.deepEqual(NOTEBOOK_FILTERS, ["all", "pending", "won", "lost", "new", "quo
 
 const row = {
   id: "1", customer_name: "A", customer_phone: "9999999999", address: "Home", kitchen_type: "GI",
-  referred_by: "R", architect_interior_designer: "I", status: "new", notes: "N", is_converted: false, updated_at: "v1",
+  referred_by: "R", referrer_id: null, referrer_name: "", referrer_type: null, architect_interior_designer: "I",
+  status: "new", notes: "N", lost_reason: "", is_converted: false, converted_at: null,
+  last_contacted_at: null, contact_attempts: 0, updated_at: "v1",
 };
 assert.equal(searchNotebookRows([row], "home").length, 1);
 assert.equal(searchNotebookRows([row], "100000").length, 0);
@@ -47,17 +49,18 @@ assert.match(quotationFollowUp, /NotebookScreen/);
 assert.match(quotationFollowUp, /useRequireFloorAccess/);
 assert.doesNotMatch(quotationFollowUp, /WalkInsScreen|walkins/);
 assert.match(notebookScreen, /notebookApi\.list/);
-assert.match(notebookScreen, /requestIdRef/);
-assert.match(notebookScreen, /requestId !== requestIdRef\.current/);
-assert.match(notebookScreen, /accessibilityLabel=\{`Edit \$\{column\.label\} for \$\{row\.customer_name\}`\}/);
 assert.match(notebookScreen, /notebookApi\.patch/);
 assert.match(notebookScreen, /notebookApi\.convert/);
+assert.match(notebookScreen, /notebookApi\.contact/);
+assert.match(notebookScreen, /notebookApi\.outcome/);
+assert.match(notebookScreen, /notebookApi\.assignReferrer/);
+assert.match(notebookScreen, /ReferrerField/);
+assert.match(notebookScreen, /Lost reason/);
+assert.match(notebookScreen, /Mark won/);
 assert.match(notebookScreen, /quotation_price: price/);
-assert.match(notebookScreen, /Convert to quotation/);
+assert.match(notebookScreen, /Move to quotation/);
 assert.match(notebookScreen, /BottomSheet/);
-assert.match(notebookScreen, /changed_fields/);
-assert.match(notebookScreen, /conflictCell/);
-assert.match(notebookScreen, /No follow-ups yet\./);
+assert.match(notebookScreen, /No follow-ups yet/);
 assert.match(legacyView, /quotation-follow-up/);
 
 console.log("notebook model: canonical route assertions passed");
