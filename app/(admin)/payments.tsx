@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView,
   StyleSheet, Text, TextInput, View,
@@ -17,6 +17,7 @@ import { api } from "@/src/api/client";
 import { useBp } from "@/src/design/responsive";
 import { TILES_FLOOR_ID } from "@/src/constants/floors";
 import { toast } from "@/src/components/Toast";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import {
   Alert as UIAlert,
   Badge, Button, Card, Dropdown, EmptyState, FilterBar, FormField, HeroCard,
@@ -68,6 +69,15 @@ type OrderDetail = {
   paid: number; outstanding: number; percent_collected: number;
   payment_status: "paid" | "partial" | "due";
   payments: PaymentEntry[];
+};
+
+type CustomerCollection = {
+  id: string;
+  name: string;
+  outstanding: number;
+  paid: number;
+  orderCount: number;
+  orders: OrderRow[];
 };
 
 const MODE_LABELS: Record<PayMode, string> = {
@@ -152,6 +162,7 @@ const HISTORY_SORTS: { value: string; label: string }[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 export default function PaymentsScreen() {
   const { isDesktop, isPhone } = useBp();
+  const { selectedFloorId } = useFloorAccess();
   const router = useRouter();
 
   const [tab, setTab] = useState<TabKey>("collections");
@@ -159,6 +170,7 @@ export default function PaymentsScreen() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [q, setQ] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const isGroundFloorOrder = detail?.floor_id === TILES_FLOOR_ID;
@@ -191,25 +203,28 @@ export default function PaymentsScreen() {
   const HISTORY_PAGE_SIZE = 50;
 
   const loadStats = useCallback(async () => {
+    if (!selectedFloorId) return;
     try { setStats(await api.get<Stats>("/payments/stats")); }
     catch (e: any) { console.warn("stats", e); }
-  }, []);
+  }, [selectedFloorId]);
 
   const loadOrders = useCallback(async (query: string = q) => {
+    if (!selectedFloorId) return;
     setLoadingList(true);
     try {
       const url = query ? `/payments/orders?q=${encodeURIComponent(query)}` : "/payments/orders";
       const list = await api.get<OrderRow[]>(url);
       setOrders(list);
-      setSelectedId((current) => current || (list.length ? list[0].id : null));
+      setSelectedId((current) => list.some((order) => order.id === current) ? current : (list.length ? list[0].id : null));
     } catch (e: any) {
       toast.error(e?.detail || "Could not load orders");
     } finally {
       setLoadingList(false);
     }
-  }, [q]);
+  }, [q, selectedFloorId]);
 
   const loadDetail = useCallback(async (id: string) => {
+    if (!selectedFloorId) return;
     setLoadingDetail(true);
     try {
       const d = await api.get<OrderDetail>(`/payments/orders/${id}`);
@@ -222,18 +237,43 @@ export default function PaymentsScreen() {
     } finally {
       setLoadingDetail(false);
     }
-  }, []);
+  }, [selectedFloorId]);
 
-  // Initial mount only.
   useEffect(() => {
+    setStats(null); setOrders([]); setSelectedId(null); setDetail(null); setHistoryRows([]); setHistoryTotal(0);
     loadStats();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedFloorId, loadStats]);
   useEffect(() => {
     const t = setTimeout(() => { loadOrders(q); }, 220);
     return () => clearTimeout(t);
-  }, [q, loadOrders]);
+  }, [q, loadOrders, selectedFloorId]);
   useEffect(() => { if (selectedId) loadDetail(selectedId); }, [selectedId, loadDetail]);
+
+  const customerCollections = useMemo<CustomerCollection[]>(() => {
+    const grouped = new Map<string, CustomerCollection>();
+    orders.forEach((order) => {
+      const current = grouped.get(order.customer_id) || {
+        id: order.customer_id, name: order.customer_name, outstanding: 0, paid: 0, orderCount: 0, orders: [],
+      };
+      current.outstanding += order.outstanding;
+      current.paid += order.paid;
+      current.orderCount += 1;
+      current.orders.push(order);
+      grouped.set(order.customer_id, current);
+    });
+    return [...grouped.values()]
+      .map((customer) => ({ ...customer, orders: [...customer.orders].sort((a, b) => b.outstanding - a.outstanding) }))
+      .sort((a, b) => b.outstanding - a.outstanding);
+  }, [orders]);
+
+  const selectedCustomer = customerCollections.find((customer) => customer.id === selectedCustomerId)
+    || customerCollections.find((customer) => customer.orders.some((order) => order.id === selectedId))
+    || null;
+
+  const selectCustomer = useCallback((customer: CustomerCollection) => {
+    setSelectedCustomerId(customer.id);
+    setSelectedId(customer.orders[0]?.id || null);
+  }, []);
 
   const savePayment = async () => {
     if (!detail) return;
@@ -309,7 +349,7 @@ export default function PaymentsScreen() {
   // ── Payment History: load + export ───────────────────────────────────────
   useEffect(() => {
     api.get<FloorOpt[]>("/settings/floors").then(setFloors).catch(() => setFloors([]));
-  }, []);
+  }, [selectedFloorId]);
 
   const historyParams = useCallback(() => {
     const qs = new URLSearchParams();
@@ -323,6 +363,7 @@ export default function PaymentsScreen() {
   }, [historyQ, historyUnit, historyMode, historyDateFrom, historyDateTo, historySort]);
 
   const loadHistory = useCallback(async (page: number) => {
+    if (!selectedFloorId) return;
     setHistoryLoading(true);
     setHistoryError(null);
     try {
@@ -343,7 +384,7 @@ export default function PaymentsScreen() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [historyParams]);
+  }, [historyParams, selectedFloorId]);
 
   // Reset to page 0 whenever a filter changes, then load exactly once.
   // Previously switching to the ledger triggered both of these effects at
@@ -442,7 +483,7 @@ export default function PaymentsScreen() {
         <View style={{ flexDirection: isDesktop ? "row" : "column", gap: spacing.lg, alignItems: "flex-start" }}>
           {/* Left rail */}
           <View style={{ width: isDesktop ? 380 : "100%" }}>
-            <Panel title="Outstanding orders" overline="ORDERS" padding={spacing.md}>
+            <Panel title="Customers with balances" overline="COLLECTIONS" padding={spacing.md}>
               <View style={{ gap: spacing.md }}>
                 <SearchField
                   testID="payments-search"
@@ -467,16 +508,16 @@ export default function PaymentsScreen() {
                     ))}
                   </View>
                 ) : orders.length === 0 ? (
-                  <EmptyState icon="inbox" title="No collectable orders"
+                  <EmptyState icon="inbox" title="No outstanding customers"
                     subtitle="Place an order from a quotation to start tracking payments here." />
                 ) : (
                   <View style={{ gap: spacing.sm }}>
-                    {orders.map((o) => (
-                      <OrderRowCard
-                        key={o.id}
-                        row={o}
-                        active={o.id === selectedId}
-                        onPress={() => setSelectedId(o.id)}
+                    {customerCollections.map((customer) => (
+                      <CustomerCollectionCard
+                        key={customer.id}
+                        customer={customer}
+                        active={customer.id === selectedCustomer?.id}
+                        onPress={() => selectCustomer(customer)}
                       />
                     ))}
                   </View>
@@ -523,6 +564,35 @@ export default function PaymentsScreen() {
                     </View>
                   </View>
                 </Panel>
+
+                {selectedCustomer && selectedCustomer.orders.length > 1 ? (
+                  <Panel title="Outstanding customer orders" overline="SELECT AN ORDER" padding={spacing.md}>
+                    <View style={{ gap: spacing.sm }}>
+                      {selectedCustomer.orders.map((order) => (
+                        <Pressable
+                          key={order.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Select ${order.number}`}
+                          onPress={() => setSelectedId(order.id)}
+                          style={({ pressed }) => [{
+                            padding: spacing.md, borderRadius: radius.md, borderWidth: 1,
+                            borderColor: order.id === detail.id ? colors.brand : colors.border,
+                            backgroundColor: order.id === detail.id ? colors.surfaceTertiary : colors.surfaceSecondary,
+                            opacity: pressed ? 0.84 : 1,
+                          }]}
+                        >
+                          <View style={{ flexDirection: "row", gap: spacing.sm, justifyContent: "space-between", alignItems: "center" }}>
+                            <View style={{ flex: 1, minWidth: 0 }}>
+                              <Text style={type.titleSm}>{order.number}</Text>
+                              <Text style={type.caption}>{order.percent_collected}% collected · {money(order.paid)} paid</Text>
+                            </View>
+                            <Text style={{ color: colors.error, fontWeight: "800", fontVariant: ["tabular-nums"] }}>{money(order.outstanding)}</Text>
+                          </View>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </Panel>
+                ) : null}
 
                 {/* Metrics */}
                 <View style={{ flexDirection: "row", gap: spacing.md, flexWrap: "wrap" }}>
@@ -875,15 +945,17 @@ function PaymentHistoryTab(props: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OrderRowCard — uses HoverCard primitive (scale 1.01 hover, low elevation).
+// CustomerCollectionCard — a customer-first collection queue. Payment writes
+// remain safely scoped to the selected order in the detail panel.
 // ─────────────────────────────────────────────────────────────────────────────
-function OrderRowCard({ row, active, onPress }: { row: OrderRow; active: boolean; onPress: () => void }) {
-  const tone = paymentTone(row.payment_status);
+function CustomerCollectionCard({ customer, active, onPress }: { customer: CustomerCollection; active: boolean; onPress: () => void }) {
+  const collectedPercent = customer.paid + customer.outstanding <= 0 ? 0
+    : Math.round(customer.paid / (customer.paid + customer.outstanding) * 100);
   return (
     <HoverCard
       onPress={onPress}
       padding={spacing.md}
-      testID={`order-${row.number}`}
+      testID={`payment-customer-${customer.id}`}
       style={{
         borderColor: active ? colors.brand : colors.border,
         backgroundColor: active ? colors.brandTint : colors.surfaceSecondary,
@@ -891,21 +963,14 @@ function OrderRowCard({ row, active, onPress }: { row: OrderRow; active: boolean
     >
       <View style={{ gap: spacing.sm }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm }}>
-          <Text style={[type.titleSm, { flex: 1 }]} numberOfLines={1}>{row.customer_name}</Text>
-          {row.payment_status === "paid" ? (
-            <Badge label="Paid" tone="success" size="sm" icon="check" />
-          ) : row.outstanding_short ? (
-            <Badge label={`${row.outstanding_short} due`}
-              tone={tone === "warning" ? "warning" : "error"} size="sm" />
-          ) : null}
+          <Text style={[type.titleSm, { flex: 1 }]} numberOfLines={1}>{customer.name}</Text>
+          <Badge label={`${moneyShort(customer.outstanding)} due`} tone="error" size="sm" />
         </View>
         <Text style={type.caption} numberOfLines={1}>
-          {row.number} · {dateShort(row.confirmed_at)}
+          {customer.orderCount} outstanding order{customer.orderCount === 1 ? "" : "s"}
         </Text>
-        <ProgressBar percent={row.percent_collected} tone={tone} size="xs" />
-        <Text style={type.caption}>
-          {row.payment_status === "paid" ? "100% — fully paid" : `${row.percent_collected}% collected`}
-        </Text>
+        <ProgressBar percent={collectedPercent} tone={collectedPercent ? "warning" : "danger"} size="xs" />
+        <Text style={type.caption}>{collectedPercent}% collected across open orders</Text>
       </View>
     </HoverCard>
   );

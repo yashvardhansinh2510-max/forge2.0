@@ -9,6 +9,7 @@ import { Avatar, Badge, EmptyState, Skeleton } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
+import { useBp } from "@/src/design/responsive";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 type AssignmentRow = {
@@ -26,6 +27,7 @@ export const MANAGER_ROLES = ["owner", "admin", "manager"];
 
 export default function FollowupAssignments() {
   const { staff } = useAuth();
+  const { isPhone } = useBp();
   const [rows, setRows] = useState<AssignmentRow[] | null>(null);
 
   const load = useCallback(() => {
@@ -56,16 +58,18 @@ export default function FollowupAssignments() {
       ) : (
         <View style={styles.table}>
           {rows.map((r, i) => (
-            <View key={r.id} style={[styles.row, i > 0 ? styles.rowBorder : null]}>
+            <View key={r.id} style={[styles.row, isPhone && styles.rowPhone, i > 0 ? styles.rowBorder : null]}>
               <Avatar name={r.assigned_to_name || "—"} size={34} tone="brand" />
               <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
                 <Text style={type.bodyStrong} numberOfLines={1}>{r.assigned_to_name || "Unassigned"}</Text>
                 <Text style={type.caption} numberOfLines={1}>{r.customer_name} · {r.reason}</Text>
               </View>
-              <Text style={[type.bodySm, { width: 90, textAlign: "right" }]}>
-                {r.days_pending} day{r.days_pending === 1 ? "" : "s"}
-              </Text>
-              <Badge label={r.status} tone={STATUS_TONE[r.status] || "neutral"} size="sm" />
+              <View style={[styles.statusMeta, isPhone && styles.statusMetaPhone]}>
+                <Text style={[type.bodySm, { textAlign: isPhone ? "left" : "right" }, !isPhone && { width: 90 }]}>
+                  {r.days_pending} day{r.days_pending === 1 ? "" : "s"}
+                </Text>
+                <Badge label={r.status} tone={STATUS_TONE[r.status] || "neutral"} size="sm" />
+              </View>
             </View>
           ))}
         </View>
@@ -83,5 +87,11 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: spacing.md,
     paddingVertical: spacing.md, paddingHorizontal: spacing.lg,
   },
+  // On a phone the pending-age/status pair gets its own line. This keeps the
+  // customer's reason readable instead of compressing it between two fixed
+  // metadata columns.
+  rowPhone: { flexWrap: "wrap", alignItems: "flex-start" },
+  statusMeta: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  statusMetaPhone: { width: "100%", paddingLeft: 34 + spacing.md },
   rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.divider },
 });

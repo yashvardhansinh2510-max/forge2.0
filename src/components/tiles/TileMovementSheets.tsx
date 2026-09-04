@@ -49,7 +49,7 @@ function QtyRow({ name, hint, value, onChange, error }: { name: string; hint: st
         accessibilityLabel={`Enter quantity for ${name}`}
         keyboardType="numeric" placeholder="Boxes"
         value={value} onChangeText={onChange}
-        style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, marginTop: spacing.xs }}
+        style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, minHeight: 44, marginTop: spacing.xs }}
       />
       {error ? <Text style={{ ...type.caption, color: colors.errorFg, marginTop: spacing.xs }}>{error}</Text> : null}
     </View>
@@ -196,7 +196,7 @@ function TransportFields({ value, onChange }: { value: TransportDetails; onChang
         keyboardType={key === "labor_cost" ? "decimal-pad" : "default"}
         value={value[key]} onChangeText={(v) => onChange({ ...value, [key]: v })} placeholder={placeholder}
         placeholderTextColor={colors.onSurfaceSubtle}
-        style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, marginTop: 2 }}
+        style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, minHeight: 44, marginTop: 2 }}
       />
     </View>
   );

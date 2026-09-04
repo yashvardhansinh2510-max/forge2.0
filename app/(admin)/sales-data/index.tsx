@@ -1,6 +1,6 @@
 import { Redirect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import { executiveApi, type Overview } from "@/src/api/executive";
 import {
@@ -223,13 +223,14 @@ export default function SalesDataIndex() {
             period={period}
             onPeriodChange={choose}
           />
-          <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
+          <View style={{ flexDirection: "row", justifyContent: isPhone ? "flex-start" : "flex-end" }}>
             <Button
               testID="sales-data-export-xlsx"
               label="Export Excel"
               icon="download"
               variant="secondary"
               onPress={exportSalesData}
+              style={isPhone ? { flex: 1 } : undefined}
             />
           </View>
         </View>
@@ -337,7 +338,11 @@ export default function SalesDataIndex() {
         onRetry={load}
         emptyTitle="No brand revenue in this period"
       >
-        {(rows) => (
+        {(rows) => isPhone ? (
+          <MobileRows>{rows.map((row) => (
+            <MobileRow key={row.brand_id} testID={`sales-brand-row-${row.brand_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.quantity} sold`} badge={row.is_unlinked ? "Unmatched" : undefined} />
+          ))}</MobileRows>
+        ) : (
           <Table>
             <TableHeader columns={[{ label: "Brand", flex: 2 }, { label: "Qty", align: "right" }, { label: "Revenue", align: "right" }]} />
             {rows.map((row, i) => (
@@ -378,7 +383,11 @@ export default function SalesDataIndex() {
           ) : null
         }
       >
-        {(rows) => (
+        {(rows) => isPhone ? (
+          <MobileRows>{rows.slice(0, TOP_N).map((row) => (
+            <MobileRow key={row.customer_id || row.name} testID={`sales-customer-row-${row.customer_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.orders} ${row.orders === 1 ? "order" : "orders"}`} onPress={row.customer_id ? () => router.push(`/(admin)/customers/${row.customer_id}` as never) : undefined} />
+          ))}</MobileRows>
+        ) : (
           <Table>
             <TableHeader columns={[{ label: "Customer", flex: 2 }, { label: "Orders", align: "right" }, { label: "Revenue", align: "right" }]} />
             {rows.slice(0, TOP_N).map((row, i, shown) => (
@@ -431,7 +440,11 @@ export default function SalesDataIndex() {
         onRetry={load}
         emptyTitle="No products sold in this period"
       >
-        {(rows) => (
+        {(rows) => isPhone ? (
+          <MobileRows>{rows.map((row) => (
+            <MobileRow key={row.product_id} testID={`sales-product-row-${row.product_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.quantity} sold${row.brand_name ? ` · ${row.brand_name}` : ""}`} />
+          ))}</MobileRows>
+        ) : (
           <Table>
             <TableHeader columns={[{ label: "Product", flex: 3 }, { label: "Qty", align: "right" }, { label: "Revenue", align: "right" }]} />
             {rows.map((row, i) => (
@@ -474,7 +487,11 @@ export default function SalesDataIndex() {
           ) : null
         }
       >
-        {(rows) => (
+        {(rows) => isPhone ? (
+          <MobileRows>{rows.map((row) => (
+            <MobileRow key={row.id} testID={`sales-order-row-${row.id}`} title={row.customer_name} value={cellMoney(row.grand_total)} detail={`${row.number || "—"} · ${shortDate(row.ordered_at)} · ${row.outstanding > 0 ? `${cellMoney(row.outstanding)} due` : "Paid"}`} onPress={() => router.push(`/(admin)/quotations/${row.id}` as never)} />
+          ))}</MobileRows>
+        ) : (
           <Table>
             <TableHeader
               columns={[
@@ -538,6 +555,7 @@ function ReferrerWorkspace({
   testID: string;
 }) {
   const cellMoney = useCellMoney();
+  const { isPhone } = useBp();
   return (
     <SalesSection
       testID={testID}
@@ -549,7 +567,11 @@ function ReferrerWorkspace({
       emptyTitle="No referrals recorded in this period"
       emptySubtitle="Set 'Referred By' on a quotation and that person's business appears here."
     >
-      {(list) => (
+      {(list) => isPhone ? (
+        <MobileRows>{list.map((row) => (
+          <MobileRow key={row.referrer_id} testID={`${testID}-row-${row.referrer_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.quotations_confirmed} confirmed ${row.quotations_confirmed === 1 ? "order" : "orders"}`} onPress={() => onOpen(row.referrer_id)} />
+        ))}</MobileRows>
+      ) : (
         <Table>
           <TableHeader
             columns={[
@@ -574,4 +596,28 @@ function ReferrerWorkspace({
       )}
     </SalesSection>
   );
+}
+
+/** Phone-first records preserve the complete row meaning without forcing a
+ * spreadsheet-width table to own the page's horizontal scroll. */
+function MobileRows({ children }: { children: React.ReactNode }) {
+  return <View style={{ gap: spacing.xs }}>{children}</View>;
+}
+
+function MobileRow({ title, detail, value, badge, onPress, testID }: {
+  title: string; detail: string; value: string; badge?: string; onPress?: () => void; testID?: string;
+}) {
+  const content = (
+    <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 56, paddingVertical: spacing.xs }}>
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: spacing.xs }}>
+          <Text style={type.bodyStrong} numberOfLines={2}>{title}</Text>
+          {badge ? <Badge label={badge} tone="warning" /> : null}
+        </View>
+        <Text style={[type.caption, { color: colors.onSurfaceMuted }]} numberOfLines={2}>{detail}</Text>
+      </View>
+      <Text style={[type.bodyStrong, { fontVariant: ["tabular-nums"], textAlign: "right" }]} numberOfLines={1}>{value}</Text>
+    </View>
+  );
+  return onPress ? <Pressable testID={testID} accessibilityRole="button" accessibilityLabel={`Open ${title}`} onPress={onPress} style={{ borderBottomWidth: 1, borderBottomColor: colors.border, minHeight: 56 }}>{content}</Pressable> : <View testID={testID} style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>{content}</View>;
 }

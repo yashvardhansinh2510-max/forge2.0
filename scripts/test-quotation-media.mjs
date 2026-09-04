@@ -54,6 +54,17 @@ assert.doesNotMatch(productImageSource, /resize=fill/);
 assert.doesNotMatch(productImageSource, /contentFit = "fill"/);
 assert.match(productImageSource, /rotation\?: "0deg" \| "90deg" \| "270deg"/);
 
+// Tile documents are customer-facing: their landscape image cells must show
+// the actual selected catalog photo, not infer a rotation from the product's
+// physical dimensions or crop it away on narrow screens.
+const tilesDocBuilderSource = readFileSync(new URL("../src/components/tiles/TilesDocBuilder.tsx", import.meta.url), "utf8");
+assert.doesNotMatch(tilesDocBuilderSource, /tileNeedsLandscapeRotation/);
+assert.doesNotMatch(tilesDocBuilderSource, /forceLandscape/);
+assert.match(tilesDocBuilderSource, /function TileImageCell\(\{ uri \}: \{ uri: string \}\)/);
+assert.match(tilesDocBuilderSource, /contentFit="contain"/);
+const tilesStageSource = readFileSync(new URL("../src/components/tiles/tilesStage.ts", import.meta.url), "utf8");
+assert.match(tilesStageSource, /if \(docType === "tiles_selection"\) return false/);
+
 const builderSource = readFileSync(new URL("../src/components/quotation/context/BuilderContext.tsx", import.meta.url), "utf8");
 const catalogServiceSource = readFileSync(new URL("../src/services/catalogService.ts", import.meta.url), "utf8");
 assert.ok(builderSource.includes('api.get<Customer[]>("/customers", request)'), "missing essential customer bootstrap request");
@@ -75,4 +86,4 @@ assert.match(builderSource, /image: variant \? variant\.image \?\? null : produc
 assert.match(builderSource, /const selectedProductId = variant\?\.id \?\? target\.id/);
 assert.match(builderSource, /image: variant \? variant\.image \?\? null : productImageList\(target\)\[0\] \?\? null/);
 
-console.log("quotation media/layout helpers: 35 assertions passed");
+console.log("quotation media/layout helpers: 40 assertions passed");

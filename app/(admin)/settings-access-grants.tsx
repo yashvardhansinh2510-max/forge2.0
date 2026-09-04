@@ -3,7 +3,7 @@
 // to one person, one business surface, optional floor, and explicit actions.
 import { Feather } from "@expo/vector-icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { Button, Card, Chip, EmptyState } from "@/src/components/ui";
@@ -94,7 +94,7 @@ export default function SettingsAccessGrants() {
   return (
     <AdminPage title="Personal access" subtitle="Give each worker only the pages and actions they need">
       {!canManage ? <EmptyState icon="lock" title="Owner or admin access required" subtitle="Ask an owner or admin to set personal access." /> : (
-        <ScrollView contentContainerStyle={styles.page}>
+        <View style={styles.page}>
           <Card style={styles.notice}>
             <Feather name="shield" size={18} color={colors.brand} />
             <Text style={[type.caption, { flex: 1 }]}>{summary}</Text>
@@ -128,7 +128,7 @@ export default function SettingsAccessGrants() {
               </Card>
             ))}
           </Section>
-        </ScrollView>
+        </View>
       )}
     </AdminPage>
   );

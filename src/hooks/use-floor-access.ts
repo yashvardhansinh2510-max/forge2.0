@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useRouter } from "expo-router";
 
@@ -159,6 +159,7 @@ export function useFloorAccess() {
 export function useRequireFloorAccess(floorId: string) {
   const { access, selectedFloorId, selectFloor } = useFloorAccess();
   const router = useRouter();
+  const synchronizedFloorRef = useRef<string | null>(null);
   useEffect(() => {
     if (!access) return; // still loading — nothing to enforce yet
     const allowed = access.all_floors || access.floor_ids.includes(floorId);
@@ -167,9 +168,14 @@ export function useRequireFloorAccess(floorId: string) {
       router.replace("/(admin)/dashboard" as any);
       return;
     }
-    // Update both persistence and the live shell state. Persisting only here
-    // left the direct-link quotation builder mounted under the previous floor
-    // until a later remount, so its nav and request scope could disagree.
-    if (selectedFloorId !== floorId) void selectFloor(floorId);
+    // A floor-pinned URL sets the workspace once when it mounts (bookmarks
+    // and direct links need this). It must not keep forcing that floor after
+    // the user has selected another workspace: while the router is replacing
+    // this screen, that feedback loop used to undo the switch and cancel the
+    // new floor's requests.
+    if (synchronizedFloorRef.current !== floorId) {
+      synchronizedFloorRef.current = floorId;
+      if (selectedFloorId !== floorId) void selectFloor(floorId);
+    }
   }, [access, floorId, router, selectedFloorId, selectFloor]);
 }

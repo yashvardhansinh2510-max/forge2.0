@@ -16,6 +16,7 @@ import {
   formatCustomerDate,
 } from "@/src/components/customer/CustomerPortal";
 import { colors, money, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 import { openPortalPdf } from "@/src/utils/portalPdf";
 
 type Item = { id: string; name: string; sku: string; qty: number; unit_price: number; room?: string };
@@ -35,6 +36,7 @@ type Detail = {
 };
 
 export default function CustomerQuotationDetail() {
+  const { isPhone } = useBp();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
   const router = useRouter();
@@ -139,14 +141,14 @@ export default function CustomerQuotationDetail() {
               {doc.items.map((item, index) => (
                 <View key={item.id}>
                   {index > 0 ? <View style={styles.divider} /> : null}
-                  <View style={styles.itemRow}>
+                  <View style={[styles.itemRow, isPhone && styles.itemRowPhone]}>
                     <View style={styles.itemCopy}>
                       <Text style={type.bodyStrong} numberOfLines={3}>{item.name}</Text>
                       <Text style={type.caption} numberOfLines={3}>
                         {item.sku}{item.room ? ` · ${item.room}` : ""} · Qty {item.qty}
                       </Text>
                     </View>
-                    <Text style={styles.itemAmount} numberOfLines={2}>{money(item.qty * item.unit_price)}</Text>
+                    <Text style={[styles.itemAmount, isPhone && styles.itemAmountPhone]} numberOfLines={2}>{money(item.qty * item.unit_price)}</Text>
                   </View>
                 </View>
               ))}
@@ -160,7 +162,7 @@ export default function CustomerQuotationDetail() {
                 {doc.revisions.map((revision, index) => (
                   <View key={revision.revision_no}>
                     {index > 0 ? <View style={styles.divider} /> : null}
-                    <View style={styles.actionRow}>
+                    <View style={[styles.actionRow, isPhone && styles.actionRowPhone]}>
                       <View style={styles.actionCopy}>
                         <Text style={type.bodyStrong}>Revision {revision.revision_no}</Text>
                         <Text style={type.caption} numberOfLines={3}>
@@ -173,6 +175,7 @@ export default function CustomerQuotationDetail() {
                         icon="download"
                         size="sm"
                         variant="secondary"
+                        fullWidth={isPhone}
                         loading={downloading === `revision-${revision.revision_no}`}
                         onPress={() => void download(`revision-${revision.revision_no}`, `/quotations/${doc.id}/portal-pdf/revision/${revision.revision_no}`, `${doc.number}-rev${revision.revision_no}.pdf`)}
                       />
@@ -192,7 +195,7 @@ export default function CustomerQuotationDetail() {
                   return (
                     <View key={brandKey}>
                       {index > 0 ? <View style={styles.divider} /> : null}
-                      <View style={styles.actionRow}>
+                      <View style={[styles.actionRow, isPhone && styles.actionRowPhone]}>
                         <View style={styles.brandCopy}>
                           <Feather name="tag" size={16} color={colors.onSurfaceMuted} />
                           <View style={styles.actionCopy}>
@@ -206,6 +209,7 @@ export default function CustomerQuotationDetail() {
                           icon="download"
                           size="sm"
                           variant="secondary"
+                          fullWidth={isPhone}
                           loading={downloading === `brand-${brandKey}`}
                           onPress={() => void download(`brand-${brandKey}`, `/quotations/${doc.id}/portal-pdf/brand/${brandKey}`, `${doc.number}-${brand.brand_name}.pdf`)}
                         />
@@ -237,7 +241,10 @@ const styles = StyleSheet.create({
   itemRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
   itemCopy: { flex: 1, minWidth: 0, gap: 4 },
   itemAmount: { ...type.bodyStrong, minWidth: 88, maxWidth: 116, textAlign: "right", fontVariant: ["tabular-nums"] },
+  itemRowPhone: { flexDirection: "column", gap: spacing.xs },
+  itemAmountPhone: { minWidth: 0, maxWidth: undefined, textAlign: "left" },
   actionRow: { flexDirection: "row", alignItems: "flex-start", flexWrap: "wrap", gap: spacing.md, minHeight: 44 },
+  actionRowPhone: { flexDirection: "column", alignItems: "stretch", gap: spacing.sm },
   actionCopy: { flex: 1, minWidth: 150, gap: 4 },
   brandCopy: { flex: 1, minWidth: 150, flexDirection: "row", alignItems: "flex-start", gap: spacing.sm },
 });

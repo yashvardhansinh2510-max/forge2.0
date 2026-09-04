@@ -47,11 +47,11 @@ export function BuilderTopbar({
       </Pressable>
 
       <View style={styles.titleCol}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <Text style={type.titleMd} numberOfLines={1}>
+        <View style={styles.titleRow}>
+          <Text style={[type.titleMd, styles.titleText]} numberOfLines={1}>
             Quotation Builder
           </Text>
-          {b.quotationNumber ? (
+          {!isPhone && b.quotationNumber ? (
             <View style={styles.numPill}>
               <Text style={styles.numPillText}>{b.quotationNumber}</Text>
             </View>
@@ -59,7 +59,7 @@ export function BuilderTopbar({
           <View style={[styles.statusPill, { backgroundColor: meta.bg }]}>
             <Text style={[styles.statusText, { color: meta.fg }]}>{meta.label}</Text>
           </View>
-          {revs > 0 ? (
+          {!isPhone && revs > 0 ? (
             <View style={styles.revPill}>
               <Feather name="git-branch" size={10} color={colors.onSurfaceMuted} />
               <Text style={styles.revText}>Rev {revs}</Text>
@@ -123,14 +123,21 @@ export function BuilderTopbar({
             placeholder="Walk-in · Architect · Instagram"
             testID="hdr-ref"
           />
-          <View testID="hdr-referrer" style={styles.field}>
+          <Pressable
+            testID="hdr-referrer"
+            onPress={() => b.setReferrerSwitcherOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Choose referrer"
+            style={({ pressed }) => [styles.field, styles.fieldPressable, pressed && styles.fieldPressed]}
+          >
             <Text style={styles.fieldLabel}>Referred By</Text>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
               <Text style={styles.fieldValue} numberOfLines={1}>
                 {b.s.header.referrerName || "None"}
               </Text>
+              <Feather name="chevron-down" size={11} color={colors.onSurfaceMuted} />
             </View>
-          </View>
+          </Pressable>
         </ScrollView>
       ) : null}
 
@@ -202,9 +209,12 @@ export function BuilderTopbar({
         onClose={() => { if (!deleting) setDeleteOpen(false); }}
         onConfirm={async () => {
           setDeleting(true);
-          await b.deleteQuotation();
-          setDeleting(false);
-          setDeleteOpen(false);
+          try {
+            await b.deleteQuotation();
+            setDeleteOpen(false);
+          } finally {
+            setDeleting(false);
+          }
         }}
         title="Delete quotation?"
         description="This removes the quotation and unpaid workflow records. Completed payments and purchase orders are protected."
@@ -261,6 +271,8 @@ const styles = StyleSheet.create({
   // be allowed to give up intrinsic width instead of pushing undo/redo past
   // the viewport edge.
   titleCol: { flex: 1, minWidth: 0, gap: 2 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 },
+  titleText: { flexShrink: 1 },
   numPill: {
     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, backgroundColor: colors.surfaceTertiary,
   },

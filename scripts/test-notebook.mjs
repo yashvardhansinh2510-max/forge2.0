@@ -15,19 +15,21 @@ assert.deepEqual(NOTEBOOK_COLUMNS.map((column) => column.key), [
   "customer_name", "customer_phone", "address", "kitchen_type", "referred_by",
   "architect_interior_designer", "status", "notes",
 ]);
-assert.deepEqual(QUOTATION_COLUMNS.map((column) => column.key), ["quotation_price", "estimated_value", "quotation_date"]);
+assert.deepEqual(QUOTATION_COLUMNS.map((column) => column.key), ["quotation_price"]);
 assert.deepEqual(NOTEBOOK_FILTERS, ["all", "pending", "won", "lost", "new", "quotation"]);
 
 const row = {
   id: "1", customer_name: "A", customer_phone: "9999999999", address: "Home", kitchen_type: "GI",
-  referred_by: "R", architect_interior_designer: "I", status: "new", notes: "N", is_converted: false, updated_at: "v1",
+  referred_by: "R", referrer_id: null, referrer_name: "", referrer_type: null, architect_interior_designer: "I",
+  status: "new", notes: "N", lost_reason: "", is_converted: false, converted_at: null,
+  last_contacted_at: null, contact_attempts: 0, updated_at: "v1",
 };
 assert.equal(searchNotebookRows([row], "home").length, 1);
 assert.equal(searchNotebookRows([row], "100000").length, 0);
 assert.equal(columnsForView("followups").length, 8);
-assert.equal(columnsForView("quotation").length, 11);
+assert.equal(columnsForView("quotation").length, 9);
 assert.deepEqual(columnsForView("followups", "third-floor").map((column) => column.key).includes("kitchen_type"), false);
-assert.equal(columnsForView("quotation", "third-floor").length, 10);
+assert.equal(columnsForView("quotation", "third-floor").length, 8);
 assert.deepEqual(nextCell({ row: 0, column: 7 }, "Tab", 2, 8), { row: 1, column: 0 });
 assert.deepEqual(nextCell({ row: 1, column: 0 }, "Shift+Tab", 2, 8), { row: 0, column: 7 });
 assert.equal(nextCell({ row: 0, column: 0 }, "Escape", 2, 8), null);
@@ -47,15 +49,18 @@ assert.match(quotationFollowUp, /NotebookScreen/);
 assert.match(quotationFollowUp, /useRequireFloorAccess/);
 assert.doesNotMatch(quotationFollowUp, /WalkInsScreen|walkins/);
 assert.match(notebookScreen, /notebookApi\.list/);
-assert.match(notebookScreen, /requestIdRef/);
-assert.match(notebookScreen, /requestId !== requestIdRef\.current/);
-assert.match(notebookScreen, /accessibilityLabel=\{`Edit \$\{column\.label\} for \$\{row\.customer_name\}`\}/);
 assert.match(notebookScreen, /notebookApi\.patch/);
 assert.match(notebookScreen, /notebookApi\.convert/);
+assert.match(notebookScreen, /notebookApi\.contact/);
+assert.match(notebookScreen, /notebookApi\.outcome/);
+assert.match(notebookScreen, /notebookApi\.assignReferrer/);
+assert.match(notebookScreen, /ReferrerField/);
+assert.match(notebookScreen, /Lost reason/);
+assert.match(notebookScreen, /Mark won/);
+assert.match(notebookScreen, /quotation_price: price/);
+assert.match(notebookScreen, /Move to quotation/);
 assert.match(notebookScreen, /BottomSheet/);
-assert.match(notebookScreen, /changed_fields/);
-assert.match(notebookScreen, /conflictCell/);
-assert.match(notebookScreen, /No follow-ups yet\./);
+assert.match(notebookScreen, /No follow-ups yet/);
 assert.match(legacyView, /quotation-follow-up/);
 
 console.log("notebook model: canonical route assertions passed");

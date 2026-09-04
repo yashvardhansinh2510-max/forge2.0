@@ -1,170 +1,95 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { notebookApi, type NotebookCreate } from "@/src/api/notebook";
-import { toast } from "@/src/components/Toast";
 import { BottomSheet } from "@/src/components/BottomSheet";
+import { ReferrerField } from "@/src/components/customer/ReferrerField";
+import { toast } from "@/src/components/Toast";
 import { Button, Chip, EmptyState, PageHeader, SearchField, TextField } from "@/src/components/ui";
-import { columnsForView, FOLLOWUP_FILTERS, formatIndianDate, formatRupees } from "@/src/components/notebook/notebookModel";
-import type { NotebookField, NotebookFilter, NotebookRow, NotebookStatus, NotebookView } from "@/src/components/notebook/notebookTypes";
+import { FOLLOWUP_FILTERS, formatIndianDate, formatRupees } from "@/src/components/notebook/notebookModel";
+import type { NotebookFilter, NotebookRow, NotebookStatus, NotebookView } from "@/src/components/notebook/notebookTypes";
 import { useBp } from "@/src/design/responsive";
+import { layout } from "@/src/design/tokens";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
-const STATUS_LABELS: Record<NotebookStatus, string> = { new: "New", pending: "Pending", won: "Won", lost: "Lost" };
-const EMPTY_DRAFT: NotebookCreate = { customer_name: "", customer_phone: "", address: "", referred_by: "", architect_interior_designer: "", notes: "" };
+const STATUS_LABELS: Record<NotebookStatus, string> = { new: "New", pending: "In progress", won: "Won", lost: "Lost" };
+const EMPTY_DRAFT: NotebookCreate = { customer_name: "", customer_phone: "", address: "", referred_by: "", notes: "", referrer_id: null };
+type Partner = { id: string; name: string; type: "architect" | "interior_designer" } | null;
 
-function valueForCell(row: NotebookRow, field: NotebookField): string {
-  const value = row[field];
-  if (field === "quotation_price" || field === "estimated_value") return formatRupees(value as number | null);
-  if (field === "quotation_date") return formatIndianDate(value as string | null);
-  if (field === "status") return STATUS_LABELS[value as NotebookStatus];
-  return String(value ?? "");
+function partnerFrom(row: NotebookRow): Partner {
+  return row.referrer_id && row.referrer_type ? { id: row.referrer_id, name: row.referrer_name, type: row.referrer_type } : null;
+}
+function statusTone(status: NotebookStatus) {
+  return status === "won" ? styles.statusWon : status === "lost" ? styles.statusLost : status === "pending" ? styles.statusPending : styles.statusNew;
 }
 
-function editableValue(field: NotebookField, value: string): unknown {
-  if (field === "quotation_price" || field === "estimated_value") return value.trim() === "" ? null : Number(value.replace(/[^0-9.]/g, ""));
-  return value;
-}
-
+/** Shared Kitchen/Furniture lead workspace; route wrappers only supply department and phase. */
 export function NotebookScreen({ floorId, floorName, view }: { floorId: string; floorName: string; view: NotebookView }) {
-  const { isPhone } = useBp();
-  const kitchen = floorId === "second-floor";
-  const columns = useMemo(() => columnsForView(view, floorId), [floorId, view]);
-  const [rows, setRows] = useState<NotebookRow[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Exclude<NotebookFilter, "quotation">>("all");
-  const [search, setSearch] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const requestIdRef = useRef(0);
-  const [editing, setEditing] = useState<{ id: string; field: NotebookField } | null>(null);
-  const [cellValue, setCellValue] = useState("");
-  const [saving, setSaving] = useState<string | null>(null);
-  const [conflictCells, setConflictCells] = useState<Set<string>>(new Set());
-  const [draftOpen, setDraftOpen] = useState(false);
-  const [draft, setDraft] = useState<NotebookCreate>({ ...EMPTY_DRAFT, ...(kitchen ? { kitchen_type: "GI" as const } : {}) });
+  const { isPhone } = useBp(); const kitchen = floorId === "second-floor";
+  const [rows, setRows] = useState<NotebookRow[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Exclude<NotebookFilter, "quotation">>("all"); const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true); const [loadingMore, setLoadingMore] = useState(false); const [saving, setSaving] = useState<string | null>(null);
+  const [draftOpen, setDraftOpen] = useState(false); const [draft, setDraft] = useState<NotebookCreate>({ ...EMPTY_DRAFT, ...(kitchen ? { kitchen_type: "GI" as const } : {}) }); const [draftPartner, setDraftPartner] = useState<Partner>(null);
+  const [converting, setConverting] = useState<NotebookRow | null>(null); const [quotationPrice, setQuotationPrice] = useState("");
+  const [outcomeRow, setOutcomeRow] = useState<NotebookRow | null>(null); const [outcome, setOutcome] = useState<"won" | "lost">("lost"); const [lostReason, setLostReason] = useState("");
+  const [editing, setEditing] = useState<{ row: NotebookRow; field: "notes" | "quotation_price" } | null>(null); const [editValue, setEditValue] = useState("");
+  const [partnerRow, setPartnerRow] = useState<NotebookRow | null>(null); const [partner, setPartner] = useState<Partner>(null); const requestId = useRef(0);
 
   const load = useCallback(async (cursor?: string, append = false) => {
-    const requestId = ++requestIdRef.current;
-    if (append) setLoadingMore(true); else setLoading(true);
+    const id = ++requestId.current; if (append) setLoadingMore(true); else setLoading(true);
     try {
       const result = await notebookApi.list(floorId, { view, status: view === "followups" ? filter : undefined, q: search.trim() || undefined, cursor });
-      if (requestId !== requestIdRef.current) return;
-      setRows((current) => append ? [...current, ...result.rows] : result.rows);
-      setNextCursor(result.next_cursor);
-    } catch (error: any) {
-      if (requestId === requestIdRef.current) toast.error(error?.detail || "Could not load the notebook");
-    } finally {
-      if (requestId === requestIdRef.current) {
-        setLoading(false); setLoadingMore(false);
-      }
-    }
+      if (id !== requestId.current) return; setRows((current) => append ? [...current, ...result.rows] : result.rows); setNextCursor(result.next_cursor);
+    } catch (error: any) { if (id === requestId.current) toast.error(error?.detail || "Could not load follow-ups"); }
+    finally { if (id === requestId.current) { setLoading(false); setLoadingMore(false); } }
   }, [filter, floorId, search, view]);
+  useEffect(() => { const timer = setTimeout(() => { void load(); }, search ? 250 : 0); return () => { clearTimeout(timer); requestId.current += 1; }; }, [load, search]);
+  const replace = (updated: NotebookRow) => setRows((current) => current.map((row) => row.id === updated.id ? updated : row));
 
-  useEffect(() => {
-    const timer = setTimeout(() => { void load(); }, search ? 250 : 0);
-    return () => { clearTimeout(timer); requestIdRef.current += 1; };
-  }, [load, search]);
-
-  const beginEdit = (row: NotebookRow, field: NotebookField) => {
-    if (row.status === "won" && !["quotation_price", "estimated_value", "quotation_date"].includes(field)) return;
-    setEditing({ id: row.id, field });
-    const raw = row[field];
-    setCellValue(raw === null || raw === undefined ? "" : String(raw));
-  };
-  const patch = async (row: NotebookRow, field: NotebookField, raw: string) => {
-    const key = `${row.id}:${field}`;
-    const value = editableValue(field, raw);
-    if ((field === "quotation_price" || field === "estimated_value") && raw.trim() && Number.isNaN(value)) { toast.error("Enter a valid amount"); return; }
-    if (field === "status" && value === "lost" && !row.notes.trim()) { toast.error("Add a note before marking Lost"); return; }
-    if (field === "status" && value === "won" && Platform.OS === "web" && !globalThis.confirm("Mark this follow-up as Won?")) return;
-    setSaving(key);
-    try {
-      const updated = await notebookApi.patch(floorId, row.id, field, value, row.updated_at);
-      setRows((current) => current.map((item) => item.id === row.id ? updated : item));
-      toast.success("Saved");
-    } catch (error: any) {
-      if (error?.status === 409) {
-        let conflict: { row?: NotebookRow; changed_fields?: string[] } = {};
-        try { conflict = JSON.parse(error.detail); } catch { /* retain the confirmed value if a proxy stripped detail */ }
-        if (conflict.row) setRows((current) => current.map((item) => item.id === row.id ? conflict.row! : item));
-        setConflictCells(new Set((conflict.changed_fields?.length ? conflict.changed_fields : [field]).map((changed) => `${row.id}:${changed === "notebook_status" ? "status" : changed}`)));
-        toast.error("This row changed elsewhere; the refreshed cells are highlighted.");
-      }
-      else toast.error(error?.detail || "Could not save this field");
-    } finally { setSaving(null); setEditing(null); }
-  };
-  const convert = async (row: NotebookRow) => {
-    setSaving(`${row.id}:convert`);
-    try {
-      await notebookApi.convert(floorId, row.id, {}, row.updated_at);
-      setRows((current) => current.filter((item) => item.id !== row.id));
-      toast.success("Moved to Quotation Follow-ups");
-    } catch (error: any) { toast.error(error?.detail || "Could not convert this follow-up"); }
-    finally { setSaving(null); }
-  };
   const create = async () => {
-    if (!draft.customer_name.trim() || !draft.customer_phone.trim() || (kitchen && !draft.kitchen_type)) { toast.error("Enter the required customer details"); return; }
-    setSaving("draft");
-    try {
-      const row = await notebookApi.create(floorId, draft);
-      setRows((current) => [row, ...current.filter((item) => item.id !== row.id)]);
-      setDraft({ ...EMPTY_DRAFT, ...(kitchen ? { kitchen_type: "GI" as const } : {}) }); setDraftOpen(false);
-      toast.success("Follow-up added");
-    } catch (error: any) { toast.error(error?.detail || "Could not add the follow-up"); }
-    finally { setSaving(null); }
+    if (!draft.customer_name.trim() || !draft.customer_phone.trim() || (kitchen && !draft.kitchen_type)) { toast.error("Enter the customer name, mobile number, and kitchen type."); return; }
+    setSaving("draft"); try { const row = await notebookApi.create(floorId, draft); setRows((current) => [row, ...current.filter((item) => item.id !== row.id)]); setDraft({ ...EMPTY_DRAFT, ...(kitchen ? { kitchen_type: "GI" as const } : {}) }); setDraftPartner(null); setDraftOpen(false); toast.success("Follow-up added"); } catch (error: any) { toast.error(error?.detail || "Could not add the follow-up"); } finally { setSaving(null); }
   };
-
-  const draftFields = (
-    <View style={{ gap: spacing.md }}>
-      <TextField label="Customer Name *" value={draft.customer_name} onChangeText={(customer_name) => setDraft((d) => ({ ...d, customer_name }))} />
-      <TextField label="Mobile Number *" keyboardType="phone-pad" value={draft.customer_phone} onChangeText={(customer_phone) => setDraft((d) => ({ ...d, customer_phone }))} />
-      {kitchen ? <View><Text style={type.label}>Kitchen Type *</Text><View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs }}>{(["GI", "SS"] as const).map((kind) => <Chip key={kind} label={kind} active={draft.kitchen_type === kind} onPress={() => setDraft((d) => ({ ...d, kitchen_type: kind }))} />)}</View></View> : null}
-      <TextField label="Address" value={draft.address} onChangeText={(address) => setDraft((d) => ({ ...d, address }))} />
-      <TextField label="Referred By" value={draft.referred_by} onChangeText={(referred_by) => setDraft((d) => ({ ...d, referred_by }))} />
-      <TextField label="Architect / Interior Designer" value={draft.architect_interior_designer} onChangeText={(architect_interior_designer) => setDraft((d) => ({ ...d, architect_interior_designer }))} />
-      <TextField label="Notes" multiline value={draft.notes} onChangeText={(notes) => setDraft((d) => ({ ...d, notes }))} />
-      <Button label="Add Follow-up" icon="plus" onPress={() => void create()} loading={saving === "draft"} />
-    </View>
-  );
+  const contact = async (row: NotebookRow, channel: "call" | "whatsapp") => {
+    setSaving(`${row.id}:${channel}`); try { const result = await notebookApi.contact(floorId, row.id, channel); const url = channel === "call" ? (result.phone ? `tel:${result.phone.replace(/\s+/g, "")}` : null) : result.wa_url; if (!url) throw new Error(channel === "call" ? "No phone number on file" : "No WhatsApp number on file"); await Linking.openURL(url); replace({ ...row, last_contacted_at: new Date().toISOString(), contact_attempts: row.contact_attempts + 1 }); } catch (error: any) { toast.error(error?.detail || error?.message || `Could not open ${channel}`); } finally { setSaving(null); }
+  };
+  const convert = async () => {
+    if (!converting) return; const price = Number(quotationPrice.replace(/[^0-9.]/g, "")); if (!quotationPrice.trim() || !Number.isFinite(price) || price < 0) { toast.error("Enter a valid quotation price"); return; }
+    setSaving(`${converting.id}:convert`); try { await notebookApi.convert(floorId, converting.id, { quotation_price: price }, converting.updated_at); setRows((current) => current.filter((row) => row.id !== converting.id)); setConverting(null); toast.success("Moved to quotation follow-ups"); } catch (error: any) { toast.error(error?.detail || "Could not move this follow-up"); } finally { setSaving(null); }
+  };
+  const saveOutcome = async () => {
+    if (!outcomeRow) return; if (outcome === "lost" && !lostReason.trim()) { toast.error("Explain why this client was lost."); return; }
+    setSaving(`${outcomeRow.id}:${outcome}`); try { const updated = await notebookApi.outcome(floorId, outcomeRow.id, outcome, outcomeRow.updated_at, outcome === "lost" ? lostReason.trim() : undefined); replace(updated); setOutcomeRow(null); toast.success(outcome === "won" ? "Client marked as won" : "Lead marked as lost"); } catch (error: any) { toast.error(error?.detail || "Could not save this outcome"); } finally { setSaving(null); }
+  };
+  const saveEdit = async () => {
+    if (!editing) return; const value = editing.field === "quotation_price" ? Number(editValue.replace(/[^0-9.]/g, "")) : editValue;
+    if (editing.field === "quotation_price" && (!editValue.trim() || !Number.isFinite(value as number) || (value as number) < 0)) { toast.error("Enter a valid quotation price"); return; }
+    setSaving(`${editing.row.id}:${editing.field}`); try { const updated = await notebookApi.patch(floorId, editing.row.id, editing.field, value, editing.row.updated_at); replace(updated); setEditing(null); toast.success("Saved"); } catch (error: any) { toast.error(error?.detail || "Could not save this change"); } finally { setSaving(null); }
+  };
+  const savePartner = async () => {
+    if (!partnerRow) return; setSaving(`${partnerRow.id}:partner`); try { const updated = await notebookApi.assignReferrer(floorId, partnerRow.id, partner?.id || null, partnerRow.updated_at); replace(updated); setPartnerRow(null); toast.success(partner ? "Partner assigned" : "Partner cleared"); } catch (error: any) { toast.error(error?.detail || "Could not assign partner"); } finally { setSaving(null); }
+  };
+  const openOutcome = (row: NotebookRow, next: "won" | "lost") => { setOutcomeRow(row); setOutcome(next); setLostReason(""); };
+  const openPartner = (row: NotebookRow) => { setPartnerRow(row); setPartner(partnerFrom(row)); };
+  const openEdit = (row: NotebookRow, field: "notes" | "quotation_price") => { setEditing({ row, field }); setEditValue(field === "quotation_price" ? String(row.quotation_price ?? "") : row.notes); };
+  const draftFields = <View style={styles.sheetFields}><TextField label="Customer name *" value={draft.customer_name} onChangeText={(customer_name) => setDraft((current) => ({ ...current, customer_name }))} /><TextField label="Mobile number *" keyboardType="phone-pad" value={draft.customer_phone} onChangeText={(customer_phone) => setDraft((current) => ({ ...current, customer_phone }))} />{kitchen ? <View style={{ gap: spacing.xs }}><Text style={type.label}>Kitchen type *</Text><View style={styles.chips}>{(["GI", "SS"] as const).map((kind) => <Chip key={kind} label={kind} active={draft.kitchen_type === kind} onPress={() => setDraft((current) => ({ ...current, kitchen_type: kind }))} />)}</View></View> : null}<TextField label="Address" value={draft.address} onChangeText={(address) => setDraft((current) => ({ ...current, address }))} /><TextField label="Referred by" value={draft.referred_by} onChangeText={(referred_by) => setDraft((current) => ({ ...current, referred_by }))} /><ReferrerField floorId={floorId} label="Architect / interior designer" value={draftPartner} onChange={(value) => { setDraftPartner(value); setDraft((current) => ({ ...current, referrer_id: value?.id || null })); }} /><TextField label="Follow-up note" multiline value={draft.notes} onChangeText={(notes) => setDraft((current) => ({ ...current, notes }))} /><Button label="Add follow-up" icon="plus" onPress={() => void create()} loading={saving === "draft"} /></View>;
+  const visibleRows = useMemo(() => rows, [rows]);
 
   return <SafeAreaView style={{ flex: 1 }} edges={isPhone ? [] : ["top"]}>
-    <PageHeader title={`${floorName} ${view === "quotation" ? "Quotation Follow-ups" : "Follow-ups"}`} overline="DIGITAL NOTEBOOK" subtitle={view === "quotation" ? "Converted customer follow-ups" : "A simple customer follow-up register"} actions={view === "followups" ? <Button label="New Follow-up" icon="plus" onPress={() => setDraftOpen(true)} /> : undefined} />
-    <ScrollView contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg }} keyboardShouldPersistTaps="handled">
-      <SearchField value={search} onChangeText={setSearch} onClear={() => setSearch("")} placeholder="Search customer, mobile, address, referral or notes" />
-      {view === "followups" ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }}>{FOLLOWUP_FILTERS.map((item) => <Chip key={item} label={item === "all" ? "All" : STATUS_LABELS[item]} active={filter === item} onPress={() => setFilter(item)} />)}</View> : null}
-      {!isPhone && draftOpen && view === "followups" ? <View style={styles.draft}>{draftFields}</View> : null}
-      {loading ? <ActivityIndicator color={colors.brand} /> : rows.length === 0 ? <EmptyState icon="book-open" title="No follow-ups yet." subtitle="Add the first customer to this notebook." action={view === "followups" ? <Button label="New Follow-up" icon="plus" onPress={() => setDraftOpen(true)} /> : undefined} /> : <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={styles.grid}>
-        <View>
-          <View style={styles.header}>{columns.map((column) => <Text key={column.key} style={[styles.headerCell, { width: column.minWidth }]}>{column.label}</Text>)}{view === "followups" ? <Text style={[styles.headerCell, { width: 160 }]}>Action</Text> : null}</View>
-          {rows.map((row) => <View key={row.id} style={styles.row}>{columns.map((column) => {
-            const key = `${row.id}:${column.key}`; const active = editing?.id === row.id && editing.field === column.key;
-            if (column.key === "status" && active) return <View key={column.key} style={[styles.cell, { width: column.minWidth, flexDirection: "row", gap: 4 }]}>{(Object.keys(STATUS_LABELS) as NotebookStatus[]).map((status) => <Chip key={status} label={STATUS_LABELS[status]} active={row.status === status} onPress={() => void patch(row, "status", status)} />)}</View>;
-            return <Pressable
-              key={column.key}
-              onPress={() => beginEdit(row, column.key)}
-              accessibilityRole="button"
-              accessibilityLabel={`Edit ${column.label} for ${row.customer_name}`}
-              accessibilityState={{ busy: saving === key }}
-              style={[styles.cell, { width: column.minWidth }, active && styles.activeCell, conflictCells.has(key) && styles.conflictCell]}
-            >
-              {active ? <TextInput autoFocus value={cellValue} onChangeText={setCellValue} onBlur={() => void patch(row, column.key, cellValue)} onSubmitEditing={() => void patch(row, column.key, cellValue)} accessibilityLabel={`${column.label} for ${row.customer_name}`} style={styles.input} /> : <Text numberOfLines={2} style={styles.cellText}>{valueForCell(row, column.key)}</Text>}
-              {saving === key ? <Text style={styles.saveText}>Saving…</Text> : null}
-            </Pressable>;
-          })}{view === "followups" ? <View style={[styles.cell, { width: 160 }]}>{saving === `${row.id}:convert` ? <ActivityIndicator color={colors.brand} /> : <Button label="To quotation" size="sm" variant="secondary" onPress={() => void convert(row)} />}</View> : null}</View>)}</View>
-      </ScrollView>}
-      {nextCursor ? <Button label="Load more" variant="secondary" onPress={() => void load(nextCursor, true)} loading={loadingMore} /> : null}
-    </ScrollView>
-    {isPhone ? <BottomSheet visible={draftOpen} onClose={() => setDraftOpen(false)} title="New Follow-up">{draftFields}</BottomSheet> : null}
+    <PageHeader title={`${floorName} ${view === "quotation" ? "Quotation Follow-ups" : "Follow-ups"}`} overline="SALES FOLLOW-UPS" subtitle={view === "quotation" ? "Converted opportunities awaiting a clear business outcome." : "Contact, qualify, and move every client forward."} actions={!isPhone && view === "followups" ? <Button label="New follow-up" icon="plus" onPress={() => setDraftOpen(true)} /> : undefined} />
+    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled"><SearchField value={search} onChangeText={setSearch} onClear={() => setSearch("")} placeholder="Search customer, phone, address, referral or notes" />{isPhone && view === "followups" ? <Button label="New follow-up" icon="plus" onPress={() => setDraftOpen(true)} fullWidth /> : null}{view === "followups" ? <View style={styles.chips}>{FOLLOWUP_FILTERS.map((item) => <Chip key={item} label={item === "all" ? "All" : STATUS_LABELS[item]} active={filter === item} onPress={() => setFilter(item)} />)}</View> : null}{!isPhone && draftOpen && view === "followups" ? <View style={styles.inlineDraft}>{draftFields}</View> : null}{loading ? <ActivityIndicator color={colors.brand} /> : visibleRows.length === 0 ? <EmptyState icon="users" title={view === "quotation" ? "No quotation follow-ups" : "No follow-ups yet"} subtitle={view === "quotation" ? "Converted opportunities will appear here until they are won or lost." : "Add the first customer inquiry to begin."} action={view === "followups" ? <Button label="New follow-up" icon="plus" onPress={() => setDraftOpen(true)} /> : undefined} /> : <View style={styles.list}>{visibleRows.map((row) => <LeadCard key={row.id} row={row} kitchen={kitchen} quotationStage={view === "quotation"} saving={saving} onCall={() => void contact(row, "call")} onWhatsApp={() => void contact(row, "whatsapp")} onConvert={() => { setConverting(row); setQuotationPrice(""); }} onOutcome={openOutcome} onEdit={openEdit} onPartner={openPartner} />)}</View>}{nextCursor ? <Button label="Load more" variant="secondary" onPress={() => void load(nextCursor, true)} loading={loadingMore} /> : null}</ScrollView>
+    {isPhone ? <BottomSheet visible={draftOpen} onClose={() => setDraftOpen(false)} title="New follow-up">{draftFields}</BottomSheet> : null}
+    <BottomSheet visible={Boolean(converting)} onClose={() => setConverting(null)} title="Move to quotation follow-up"><View style={styles.sheetFields}><Text style={type.body}>This keeps the client history together and starts an active quotation follow-up.</Text><TextField label="Quotation price *" value={quotationPrice} onChangeText={setQuotationPrice} keyboardType="decimal-pad" /><Button label="Move to quotation follow-up" icon="file-text" onPress={() => void convert()} loading={saving === `${converting?.id}:convert`} /></View></BottomSheet>
+    <BottomSheet visible={Boolean(outcomeRow)} onClose={() => setOutcomeRow(null)} title={outcome === "won" ? "Mark client as won" : "Mark lead as lost"}><View style={styles.sheetFields}><Text style={type.body}>{outcome === "won" ? "This closes the follow-up as a successful opportunity." : "Record why this client was lost. This reason is required and remains on the activity history."}</Text>{outcome === "lost" ? <TextField label="Lost reason *" multiline value={lostReason} onChangeText={setLostReason} placeholder="e.g. Budget changed, selected another vendor" /> : null}<Button label={outcome === "won" ? "Mark as won" : "Mark as lost"} icon={outcome === "won" ? "check" : "user-x"} variant={outcome === "lost" ? "danger" : "primary"} onPress={() => void saveOutcome()} loading={saving === `${outcomeRow?.id}:${outcome}`} /></View></BottomSheet>
+    <BottomSheet visible={Boolean(editing)} onClose={() => setEditing(null)} title={editing?.field === "quotation_price" ? "Update quotation price" : "Edit follow-up note"}><View style={styles.sheetFields}><TextField label={editing?.field === "quotation_price" ? "Quotation price *" : "Follow-up note"} multiline={editing?.field === "notes"} keyboardType={editing?.field === "quotation_price" ? "decimal-pad" : "default"} value={editValue} onChangeText={setEditValue} /><Button label="Save" icon="check" onPress={() => void saveEdit()} loading={saving === `${editing?.row.id}:${editing?.field}`} /></View></BottomSheet>
+    <BottomSheet visible={Boolean(partnerRow)} onClose={() => setPartnerRow(null)} title="Assign architect or interior designer"><View style={styles.sheetFields}><ReferrerField floorId={floorId} label="Assigned partner" value={partner} onChange={setPartner} /><Button label={partner ? "Save assignment" : "Clear assignment"} icon="check" onPress={() => void savePartner()} loading={saving === `${partnerRow?.id}:partner`} /></View></BottomSheet>
   </SafeAreaView>;
 }
 
-const styles = StyleSheet.create({
-  draft: { backgroundColor: colors.surfaceSecondary, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg },
-  grid: { minWidth: "100%" }, header: { flexDirection: "row", backgroundColor: colors.surfaceTertiary, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-  headerCell: { padding: spacing.md, fontFamily: type.titleMd.fontFamily, fontSize: 12, fontWeight: "600", color: colors.onSurfaceSecondary },
-  row: { flexDirection: "row", borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-  cell: { minHeight: 52, padding: spacing.md, borderRightWidth: StyleSheet.hairlineWidth, borderColor: colors.border, justifyContent: "center" },
-  activeCell: { backgroundColor: colors.brandTint }, conflictCell: { backgroundColor: colors.warningBg }, cellText: { fontFamily: type.body.fontFamily, fontSize: 14, color: colors.onSurface }, input: { fontFamily: type.body.fontFamily, color: colors.onSurface, fontSize: 14, padding: 0, minHeight: 30 }, saveText: { color: colors.onSurfaceMuted, fontSize: 11, marginTop: 2 },
-});
+function LeadCard({ row, kitchen, quotationStage, saving, onCall, onWhatsApp, onConvert, onOutcome, onEdit, onPartner }: { row: NotebookRow; kitchen: boolean; quotationStage: boolean; saving: string | null; onCall: () => void; onWhatsApp: () => void; onConvert: () => void; onOutcome: (row: NotebookRow, outcome: "won" | "lost") => void; onEdit: (row: NotebookRow, field: "notes" | "quotation_price") => void; onPartner: (row: NotebookRow) => void }) {
+  const closed = row.status === "won" || row.status === "lost";
+  return <View style={[styles.card, closed && styles.closedCard]}><View style={styles.cardHeader}><View style={{ flex: 1, minWidth: 0, gap: 3 }}><Text style={styles.customerName}>{row.customer_name}</Text><Text selectable style={styles.phone}>{row.customer_phone}</Text></View><View style={[styles.status, statusTone(row.status)]}><Text style={styles.statusText}>{STATUS_LABELS[row.status]}</Text></View></View><View style={styles.metadata}>{row.address ? <Meta label="Address" value={row.address} /> : null}{kitchen && row.kitchen_type ? <Meta label="Kitchen" value={row.kitchen_type} /> : null}<Pressable onPress={() => onPartner(row)} accessibilityRole="button"><Meta label="Partner" value={row.referrer_name || row.architect_interior_designer || "Assign architect / interior designer"} editable /></Pressable>{row.referred_by ? <Meta label="Referred by" value={row.referred_by} /> : null}{row.last_contacted_at ? <Meta label="Last contacted" value={formatIndianDate(row.last_contacted_at)} /> : null}{quotationStage ? <Pressable onPress={() => onEdit(row, "quotation_price")} accessibilityRole="button"><Meta label="Quotation value" value={formatRupees(row.quotation_price)} editable /></Pressable> : null}<Pressable onPress={() => onEdit(row, "notes")} accessibilityRole="button"><Meta label="Note" value={row.notes || "Add a follow-up note"} editable /></Pressable>{row.lost_reason ? <Meta label="Lost reason" value={row.lost_reason} /> : null}</View>{!closed ? <View style={styles.actions}><Button label="Call" icon="phone" size="sm" variant="secondary" onPress={onCall} loading={saving === `${row.id}:call`} /><Button label="WhatsApp" icon="message-circle" size="sm" variant="secondary" onPress={onWhatsApp} loading={saving === `${row.id}:whatsapp`} />{quotationStage ? <><Button label="Mark won" icon="check" size="sm" onPress={() => onOutcome(row, "won")} loading={saving === `${row.id}:won`} /><Button label="Lost" icon="user-x" size="sm" variant="danger" onPress={() => onOutcome(row, "lost")} loading={saving === `${row.id}:lost`} /></> : <><Button label="Move to quotation" icon="file-text" size="sm" onPress={onConvert} loading={saving === `${row.id}:convert`} /><Button label="Lost" icon="user-x" size="sm" variant="danger" onPress={() => onOutcome(row, "lost")} loading={saving === `${row.id}:lost`} /></>}</View> : null}</View>;
+}
+function Meta({ label, value, editable = false }: { label: string; value: string; editable?: boolean }) { return <View style={styles.metaRow}><Text style={styles.metaLabel}>{label}</Text><Text style={[styles.metaValue, editable && styles.editable]} numberOfLines={2}>{value}{editable ? "  Edit" : ""}</Text></View>; }
+const styles = StyleSheet.create({ content: { padding: spacing.lg, paddingBottom: layout.bottomBar + spacing.xl, gap: spacing.lg }, list: { gap: spacing.md, maxWidth: 860 }, card: { gap: spacing.md, padding: spacing.lg, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }, closedCard: { opacity: 0.78 }, cardHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md }, customerName: { ...type.titleSm, color: colors.onSurface }, phone: { ...type.body, color: colors.onSurfaceSecondary }, status: { paddingHorizontal: spacing.sm, paddingVertical: 5, borderRadius: 999 }, statusText: { ...type.label, fontSize: 11 }, statusNew: { backgroundColor: colors.brandTint }, statusPending: { backgroundColor: colors.warningBg }, statusWon: { backgroundColor: colors.successBg }, statusLost: { backgroundColor: colors.errorBg }, metadata: { gap: spacing.xs }, metaRow: { flexDirection: "row", gap: spacing.md, alignItems: "flex-start" }, metaLabel: { ...type.caption, color: colors.onSurfaceMuted, width: 94, textTransform: "uppercase" }, metaValue: { ...type.body, color: colors.onSurface, flex: 1 }, editable: { color: colors.brand }, actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border }, chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }, inlineDraft: { maxWidth: 860, backgroundColor: colors.surfaceSecondary, padding: spacing.lg, borderRadius: radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }, sheetFields: { gap: spacing.md, paddingBottom: spacing.md } });

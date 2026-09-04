@@ -17,6 +17,7 @@ import {
 import { useBp } from "@/src/design/responsive";
 import { color, layout, space } from "@/src/design/tokens";
 import { useAuth } from "@/src/state/auth";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 
 type Mission = {
   due_count: number; revenue_at_risk: number; revenue_at_risk_short: string;
@@ -113,6 +114,7 @@ function Stat({ label, value, note, noteTone = "soft", compactValue }: {
 export default function Today() {
   const router = useRouter();
   const { staff } = useAuth();
+  const { selectedFloorId } = useFloorAccess();
   const { isPhone, isDesktop, gutter } = useBp();
 
   const [mission, setMission] = useState<Mission | null>(null);
@@ -124,6 +126,10 @@ export default function Today() {
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
+    if (!selectedFloorId) return;
+    if (!isRefresh) {
+      setMission(null); setQueue(null); setStats(null); setPay(null); setRecent(null); setShortages([]);
+    }
     if (isRefresh) setRefreshing(true);
     // Fire-and-forget: this reconcile pass can take several seconds under
     // load and is best-effort housekeeping, not something the user should
@@ -146,7 +152,7 @@ export default function Today() {
     else setRecent([]);
     if (sh.status === "fulfilled") setShortages(sh.value.items || []);
     setRefreshing(false);
-  }, []);
+  }, [selectedFloorId]);
 
   useEffect(() => { void load(); }, [load]);
 

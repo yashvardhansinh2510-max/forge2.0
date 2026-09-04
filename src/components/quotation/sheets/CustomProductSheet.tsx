@@ -137,7 +137,7 @@ export function CustomProductSheet() {
               </ScrollView>
             </View>
 
-            <View style={styles.grid}>
+            <View style={[styles.grid, isPhone && styles.phoneGrid]}>
               <Field label="Price *" flex={1}>
                 <TextInput value={price} onChangeText={setPrice} placeholder="0" keyboardType="numeric" style={styles.input} testID="cp-price" />
               </Field>
@@ -172,7 +172,7 @@ export function CustomProductSheet() {
             </Pressable>
           </ScrollView>
 
-          <View style={styles.footer}>
+          <View style={[styles.footer, isPhone && styles.phoneFooter]}>
             <Pressable onPress={() => b.setCustomProductSheetOpen(false)} style={styles.secondary} accessibilityRole="button">
               <Text style={styles.secondaryLabel}>Cancel</Text>
             </Pressable>
@@ -232,8 +232,9 @@ const styles = StyleSheet.create({
   checkboxHint: { fontSize: 11, color: colors.onSurfaceMuted, marginTop: 2 },
 
   footer: { flexDirection: "row", justifyContent: "flex-end", gap: 8, padding: spacing.lg, borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border, backgroundColor: colors.surface },
-  secondary: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  phoneFooter: { padding: spacing.md },
+  secondary: { minHeight: 44, justifyContent: "center", paddingHorizontal: 14, paddingVertical: 9, borderRadius: radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   secondaryLabel: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
-  primary: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brand },
+  primary: { flexDirection: "row", alignItems: "center", justifyContent: "center", minHeight: 44, gap: 6, paddingHorizontal: 16, paddingVertical: 10, borderRadius: radius.md, backgroundColor: colors.brand },
   primaryLabel: { fontSize: 12, fontWeight: "700", color: colors.onBrand, letterSpacing: 0.2 },
 });

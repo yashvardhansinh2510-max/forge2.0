@@ -99,17 +99,19 @@ export default function QuotationDetail() {
             <Text style={[type.titleMd, { marginTop: 2 }]} numberOfLines={1}>{q.number}</Text>
           </View>
         </View>
-        <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
-          <Button label="PDF" icon="download" variant="secondary" size="sm" onPress={openPdf} testID="download-pdf" />
-          <Button label="Delete" icon="trash-2" variant="danger" size="sm" onPress={() => setDeleteOpen(true)} testID="delete-quotation" />
+        <View style={{ flexDirection: "row", gap: isPhone ? 4 : 8, alignItems: "center", flexShrink: 0 }}>
+          {isPhone ? (
+            <IconButton icon="download" tone="surface" onPress={openPdf} testID="download-pdf" accessibilityLabel="Download PDF" />
+          ) : <Button label="PDF" icon="download" variant="secondary" size="sm" onPress={openPdf} testID="download-pdf" />}
+          {isPhone ? (
+            <IconButton icon="trash-2" tone="danger" onPress={() => setDeleteOpen(true)} testID="delete-quotation" accessibilityLabel="Delete quotation" />
+          ) : <Button label="Delete" icon="trash-2" variant="danger" size="sm" onPress={() => setDeleteOpen(true)} testID="delete-quotation" />}
           {NEXT_STATUS[q.status] ? (
-            <Button
-              label={isTablet ? `Mark ${NEXT_STATUS[q.status].replace("_", " ")}` : "Mark"}
-              icon="check"
-              size="sm"
-              onPress={advance}
-              testID="advance-status"
-            />
+            isPhone ? (
+              <IconButton icon="check" tone="brand" onPress={advance} testID="advance-status" accessibilityLabel={`Mark ${NEXT_STATUS[q.status].replace("_", " ")}`} />
+            ) : (
+              <Button label={isTablet ? `Mark ${NEXT_STATUS[q.status].replace("_", " ")}` : "Mark"} icon="check" size="sm" onPress={advance} testID="advance-status" />
+            )
           ) : null}
         </View>
       </View>
@@ -253,15 +255,17 @@ export default function QuotationDetail() {
                   key={po.id}
                   testID={`linked-po-${po.id}`}
                   onPress={() => router.push(`/(admin)/purchase-orders/${po.id}` as any)}
-                  style={styles.linkedPoRow}
+                  style={[styles.linkedPoRow, isPhone && styles.linkedPoRowPhone]}
                 >
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={[type.mono, { fontSize: 12 }]}>{po.number}</Text>
                     <Text style={{ fontSize: 13, fontFamily: type.titleMd.fontFamily, fontWeight: "600", marginTop: 2, color: colors.onSurface }}>{po.brand_name || "—"}</Text>
                   </View>
-                  <StatusBadge status={po.status} />
-                  <Text style={{ width: 100, textAlign: "right", fontFamily: type.titleMd.fontFamily, fontWeight: "600", fontVariant: ["tabular-nums"], color: colors.onSurface }} numberOfLines={1}>{money(po.grand_total)}</Text>
-                  <Feather name="chevron-right" size={14} color={colors.onSurfaceMuted} />
+                  <View style={[styles.linkedPoMeta, isPhone && styles.linkedPoMetaPhone]}>
+                    <StatusBadge status={po.status} />
+                    <Text style={[styles.linkedPoTotal, isPhone && styles.linkedPoTotalPhone]} numberOfLines={1}>{money(po.grand_total)}</Text>
+                    <Feather name="chevron-right" size={14} color={colors.onSurfaceMuted} />
+                  </View>
                 </Pressable>
               ))}
             </View>
@@ -379,4 +383,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface,
   },
+  linkedPoRowPhone: { alignItems: "flex-start", gap: spacing.sm },
+  linkedPoMeta: { flexDirection: "row", alignItems: "center", gap: spacing.md, flexShrink: 0 },
+  linkedPoMetaPhone: { flexDirection: "column", alignItems: "flex-end", gap: 4 },
+  linkedPoTotal: { width: 100, textAlign: "right", fontFamily: type.titleMd.fontFamily, fontWeight: "600", fontVariant: ["tabular-nums"], color: colors.onSurface },
+  linkedPoTotalPhone: { width: undefined, maxWidth: 120 },
 });

@@ -17,6 +17,7 @@ import {
   formatCustomerDate,
 } from "@/src/components/customer/CustomerPortal";
 import { colors, money, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 type Quote = {
   id: string;
@@ -30,6 +31,7 @@ type Quote = {
 };
 
 export default function CustomerQuotationsList() {
+  const { isPhone } = useBp();
   const router = useRouter();
   const [quotes, setQuotes] = useState<Quote[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -95,7 +97,7 @@ export default function CustomerQuotationsList() {
           ) : null}
           {quotes?.map((quote) => (
             <Card key={quote.id} testID={`quote-row-${quote.id}`} onPress={() => router.push(`/(customer)/quotes/${quote.id}`)} style={styles.quoteCard}>
-              <View style={styles.quoteRow}>
+              <View style={[styles.quoteRow, isPhone && styles.quoteRowPhone]}>
                 <View style={styles.quoteCopy}>
                   <Text style={type.mono} numberOfLines={2}>{quote.number}</Text>
                   <Text style={styles.quoteTotal} numberOfLines={2}>{money(quote.grand_total)}</Text>
@@ -105,7 +107,7 @@ export default function CustomerQuotationsList() {
                     {quote.valid_until ? ` · Valid till ${formatCustomerDate(quote.valid_until, false).replace(/\s+\d{4}$/, "")}` : ""}
                   </Text>
                 </View>
-                <View style={styles.quoteActions}>
+                <View style={[styles.quoteActions, isPhone && styles.quoteActionsPhone]}>
                   <StatusBadge status={quote.status} />
                   <View style={styles.chevronButton}>
                     <Feather name="chevron-right" size={18} color={colors.onSurfaceMuted} />
@@ -128,6 +130,8 @@ const styles = StyleSheet.create({
   quoteCopy: { flex: 1, minWidth: 160, gap: 4 },
   quoteTotal: { ...type.titleMd, fontVariant: ["tabular-nums"] },
   quoteActions: { alignItems: "flex-end", gap: spacing.sm, minWidth: 92 },
+  quoteRowPhone: { flexDirection: "column", gap: spacing.sm },
+  quoteActionsPhone: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "space-between", minWidth: 0, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   chevronButton: { minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" },
   refreshError: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: spacing.sm, backgroundColor: colors.errorBg, borderColor: colors.errorBorder },
   retryButton: { minHeight: 44, justifyContent: "center", paddingHorizontal: spacing.sm },

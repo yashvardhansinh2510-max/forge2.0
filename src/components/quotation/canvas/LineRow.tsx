@@ -2,14 +2,13 @@
 // Tapping the row focuses it in the Assistant pane (right pane / mobile sheet).
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { ProductImage } from "@/src/components/ProductImage";
 import { Badge } from "@/src/components/ui";
 import { colors, font, money, PRODUCT_IMAGE_ASPECT_RATIO, radius, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
-import { useBp } from "@/src/design/responsive";
 
 import { useBuilder } from "../context/BuilderContext";
 import { computeLineBreakdown, effectivePct, sourceBadge } from "../helpers/pricing";
@@ -18,7 +17,7 @@ import { grabCursor } from "../shared/grabCursor";
 import type { Line, RoomDiscount } from "../helpers/types";
 
 function LineRowImpl({
-  line, drag, isActive, catDiscs, projDisc, roomDiscs,
+  line, drag, isActive, catDiscs, projDisc, roomDiscs, compact = false,
 }: {
   line: Line;
   drag: () => void;
@@ -26,11 +25,35 @@ function LineRowImpl({
   catDiscs: Record<string, number>;
   projDisc: number;
   roomDiscs?: Record<string, RoomDiscount>;
+  /** Matches BuilderShell's container-driven compact layout. */
+  compact?: boolean;
 }) {
   const b = useBuilder();
-  const { isPhone } = useBp();
+  const isPhone = compact;
   const [menuOpen, setMenuOpen] = useState(false);
   const l = line;
+  // Native number inputs emit an empty string while a salesperson replaces a
+  // value. Do not turn that transient state into a persisted zero: it makes a
+  // normal edit look like the line has vanished and can autosave bad totals.
+  const [qtyDraft, setQtyDraft] = useState(String(l.qty));
+  const [rateDraft, setRateDraft] = useState(String(l.unit_price));
+  useEffect(() => setQtyDraft(String(l.qty)), [l.qty]);
+  useEffect(() => setRateDraft(String(l.unit_price)), [l.unit_price]);
+
+  const commitQty = () => {
+    const value = qtyDraft.trim();
+    if (!value) { setQtyDraft(String(l.qty)); return; }
+    const next = Number(value);
+    if (!Number.isFinite(next) || next < 1) { setQtyDraft(String(l.qty)); return; }
+    b.updateLine(l.id, { qty: next }, "qty");
+  };
+  const commitRate = () => {
+    const value = rateDraft.trim();
+    if (!value) { setRateDraft(String(l.unit_price)); return; }
+    const next = Number(value);
+    if (!Number.isFinite(next) || next < 0) { setRateDraft(String(l.unit_price)); return; }
+    b.updateLine(l.id, { unit_price: next }, "rate");
+  };
   const eff = effectivePct(l, roomDiscs || {}, catDiscs, projDisc);
   // Use the same all-line breakdown as the footer. A room-level flat discount
   // is allocated across eligible lines, so calculating this row from only its
@@ -83,9 +106,11 @@ function LineRowImpl({
             <Text style={styles.miniLabel}>QTY</Text>
             <TextInput
               testID={`qty-${l.id}`}
-              value={String(l.qty)}
+              value={qtyDraft}
               keyboardType="number-pad"
-              onChangeText={(v) => b.updateLine(l.id, { qty: Math.max(0, Number(v) || 0) }, "qty")}
+              onChangeText={setQtyDraft}
+              onBlur={commitQty}
+              onSubmitEditing={commitQty}
               style={styles.miniVal}
               selectTextOnFocus
             />
@@ -94,9 +119,11 @@ function LineRowImpl({
             <Text style={styles.miniLabel}>RATE</Text>
             <TextInput
               testID={`rate-${l.id}`}
-              value={String(l.unit_price)}
+              value={rateDraft}
               keyboardType="decimal-pad"
-              onChangeText={(v) => b.updateLine(l.id, { unit_price: Number(v) || 0 }, "rate")}
+              onChangeText={setRateDraft}
+              onBlur={commitRate}
+              onSubmitEditing={commitRate}
               style={styles.miniVal}
               selectTextOnFocus
             />

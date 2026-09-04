@@ -209,10 +209,9 @@ function generationKey(poId: string): string {
 export default function PurchaseOrderDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { isPhone, isDesktop } = useBp();
+  const { isPhone, isDesktop, isTablet } = useBp();
   const { staff } = useAuth();
   const { roles, loading: rolesLoading, error: rolesError, refresh: refreshRoles } = useRoles();
-  const isTablet = !isPhone;
 
   const [po, setPo] = useState<PO | null>(null);
   const [config, setConfig] = useState<StatusConfig | null>(null);
@@ -511,12 +510,12 @@ export default function PurchaseOrderDetail() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
-      <View style={styles.topbar}>
+      <View style={[styles.topbar, isPhone && styles.topbarPhone]}>
         <Pressable testID="back-btn" onPress={() => router.back()} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
           <Feather name="chevron-left" size={18} color={colors.onSurface} />
           <Text style={{ fontSize: 14, fontWeight: "500" }}>Purchases</Text>
         </Pressable>
-        <View style={{ flexDirection: "row", gap: 8 }}>
+        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {po.status !== "draft" && po.status !== "cancelled" && po.status !== "packed" && po.status !== "ready_for_dispatch" ? (
             <Button label="Receive" icon="package" variant="secondary" size="sm" onPress={() => setReceiveOpen(true)} testID="receive-btn" />
           ) : null}
@@ -535,10 +534,15 @@ export default function PurchaseOrderDetail() {
       ) : null}
 
       <ScrollView
-        contentContainerStyle={{ padding: spacing.xl, gap: spacing.lg, flexDirection: isTablet ? "row" : "column" }}
+        contentContainerStyle={{
+          padding: isPhone ? spacing.lg : spacing.xl,
+          paddingBottom: isPhone ? 132 : spacing.xxl,
+          gap: spacing.lg,
+          flexDirection: isTablet || isDesktop ? "row" : "column",
+        }}
       >
         {/* Left / main column */}
-        <View style={{ flex: isTablet ? 1.6 : undefined, gap: spacing.lg }}>
+        <View style={{ flex: isTablet || isDesktop ? 1.6 : undefined, gap: spacing.lg, minWidth: 0 }}>
           <View>
             <Text style={[type.mono, { color: colors.onSurfaceMuted }]}>{po.number}</Text>
             <Text style={[type.displayLg, { marginTop: 4 }]}>{po.customer_name}</Text>
@@ -844,7 +848,7 @@ export default function PurchaseOrderDetail() {
         </View>
 
         {/* Right column — status timeline + activity */}
-        <View style={{ flex: isTablet ? 1 : undefined, gap: spacing.lg }}>
+        <View style={{ flex: isTablet || isDesktop ? 1 : undefined, gap: spacing.lg, minWidth: 0 }}>
           <Card>
             <Text style={type.overline}>Status Timeline</Text>
             <View style={{ marginTop: spacing.md, gap: spacing.md }}>
@@ -1313,6 +1317,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg, paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
     backgroundColor: colors.surface,
+  },
+  topbarPhone: {
+    alignItems: "flex-start",
+    flexWrap: "wrap",
+    gap: spacing.sm,
   },
   refreshBanner: {
     flexDirection: "row", alignItems: "center", gap: spacing.sm,

@@ -69,12 +69,7 @@ const ZEBRA = "#F0F0F0";
 const GRID = "#8A8A8A";
 const SERIF = Platform.select({ ios: "Times New Roman", android: "serif", default: "Georgia, 'Times New Roman', serif" }) as string;
 
-function tileNeedsLandscapeRotation(size: string | null | undefined): boolean {
-  const match = String(size || "").match(/(\d+(?:\.\d+)?)\s*[x×X]\s*(\d+(?:\.\d+)?)/);
-  return Boolean(match && Number(match[1]) < Number(match[2]));
-}
-
-function TileImageCell({ uri, size }: { uri: string; size?: string | null }) {
+function TileImageCell({ uri }: { uri: string }) {
   const [cellWidth, setCellWidth] = useState(0);
   // A numeric size is intentional: percentage sizing in an RN-web table cell
   // can shrink to the source bitmap's intrinsic square. This guarantees every
@@ -84,13 +79,16 @@ function TileImageCell({ uri, size }: { uri: string; size?: string | null }) {
     <View style={{ width: "100%", alignItems: "center", justifyContent: "center" }} onLayout={(event) => setCellWidth(event.nativeEvent.layout.width)}>
       <ProductImage
         source={uri}
-        contentFit="cover"
+        // Keep the exact catalog photo upright and visible. A product's
+        // physical dimensions do not describe its photo orientation, so
+        // rotating or cover-cropping from the size field could show a
+        // sideways/incomplete product in the selection and quotation.
+        // `contain` uses the maximum possible centered fit in this fixed
+        // landscape frame without changing the product image itself.
+        contentFit="contain"
         frameInset={0}
         borderRadius={0}
         disableSkeleton
-        mirror
-        forceLandscape
-        rotation={tileNeedsLandscapeRotation(size) ? "90deg" : "0deg"}
         frameBackground="#FFFFFF"
         style={{ width: imageWidth, height: imageWidth / TILE_IMAGE_ASPECT_RATIO }}
         accessibilityLabel="Quotation product image"
@@ -1274,7 +1272,7 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
           ]}>
             <View style={[selStyles.td, flex(0)]}><Text style={selStyles.cellText}>{index + 1}</Text></View>
             <View style={[selStyles.td, flex(1), { padding: 2 }]}>
-              {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
+              {row.image ? <TileImageCell uri={row.image} /> : null}
             </View>
             <View style={[selStyles.td, flex(2)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
@@ -1401,7 +1399,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
           ]}>
             <View style={[quoStyles.td, flex(0)]}><Text style={quoStyles.cellText}>{index + 1}</Text></View>
             <View style={[quoStyles.td, flex(1), { padding: 2 }]}>
-              {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
+              {row.image ? <TileImageCell uri={row.image} /> : null}
             </View>
             <View style={[quoStyles.td, flex(2)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
@@ -1435,20 +1433,9 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
             </View>
             <View style={[quoStyles.td, flex(8)]}>
               <CellInput value={row.totalBox} onChangeText={(t) => doc.updateRow(row.key, { totalBox: t })} bold testID={`tiles-total-box-${index}`} />
-              <Dropdown
-                label={quantityUnitLabel(row.quantityUnit)}
-                variant="ghost"
-                testID={`tiles-quantity-unit-${index}`}
-                items={[
-                  { label: "Box", onPress: () => doc.updateRow(row.key, { quantityUnit: "Box" }) },
-                  { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
-                ]}
-              />
             </View>
             <View style={[quoStyles.td, flex(9)]}>
-              {row.quantityUnit === "Box" ? (
-                <CellInput value={row.pcsBox} onChangeText={(t) => doc.updateRow(row.key, { pcsBox: t })} placeholder="PCS" testID={`tiles-pcs-box-${index}`} />
-              ) : <Text style={{ fontSize: 11, fontWeight: "700" }}>—</Text>}
+              <CellInput value={row.pcsBox} onChangeText={(t) => doc.updateRow(row.key, { pcsBox: t })} placeholder="PCS" testID={`tiles-pcs-box-${index}`} />
             </View>
             <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
               <CellInput value={lineTotalInputValue(row)} onChangeText={(t) => doc.updateRow(row.key, { total: t })} testID={`tiles-total-${index}`} />
@@ -1576,7 +1563,7 @@ function MobileRowCard({
     <View style={mobileStyles.rowCard} testID={`mobile-row-${index}`}>
       <Pressable onPress={onOpenPicker} style={mobileStyles.productImage} testID={`mobile-thumb-${index}`} accessibilityLabel={row.productId ? "Change product image" : "Select product image"}>
           {row.image ? (
-            <ProductImage source={row.image} contentFit="cover" frameInset={0} borderRadius={radius.md} disableSkeleton style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
+            <ProductImage source={row.image} contentFit="contain" frameInset={0} borderRadius={radius.md} disableSkeleton frameBackground={colors.surface} style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
           ) : (
             <Feather name="image" size={18} color={colors.onSurfaceMuted} />
           )}
@@ -1613,7 +1600,7 @@ function MobileRowCard({
       </View>
 
       <View style={mobileStyles.fieldStack}>
-        {fields.filter((f) => f.key !== "pcsBox" || row.quantityUnit === "Box").map((f) => (
+        {fields.map((f) => (
           <View key={f.key} style={mobileStyles.fieldFull}>
             {f.key === "size" ? (
               <TileSizeField
@@ -1626,7 +1613,7 @@ function MobileRowCard({
               />
             ) : (
               <TextField
-                label={f.key === "rateBox" ? `Rate / ${quantityUnitLabel(row.quantityUnit)}` : f.key === "totalBox" ? `Qty (${row.quantityUnit === "Pieces" ? "Pieces" : "Boxes"})` : f.label}
+                label={f.key === "rateBox" ? `Rate / ${quantityUnitLabel(row.quantityUnit)}` : f.key === "totalBox" ? "Quantity" : f.label}
                 value={f.key === "total" ? lineTotalInputValue(row) : (row as any)[f.key]}
                 onChangeText={(t: string) => doc.updateRow(row.key, { [f.key]: t } as Partial<TileRow>)}
                 keyboardType={f.numeric ? "decimal-pad" : "default"}
@@ -1636,18 +1623,6 @@ function MobileRowCard({
             )}
           </View>
         ))}
-        <View style={mobileStyles.fieldFull}>
-          <Text style={type.label}>Quantity unit</Text>
-          <Dropdown
-            label={quantityUnitLabel(row.quantityUnit)}
-            variant="secondary"
-            testID={`mobile-quantity-unit-${index}`}
-            items={[
-              { label: "Box", onPress: () => doc.updateRow(row.key, { quantityUnit: "Box" }) },
-              { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
-            ]}
-          />
-        </View>
       </View>
     </View>
   );

@@ -285,5 +285,5 @@ const styles = StyleSheet.create({
   outlineAction: { minHeight: 44, justifyContent: "center", paddingHorizontal: spacing.lg, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.brandBorder },
   outlineActionText: { ...type.bodyStrong, color: colors.brandHover },
   disabled: { opacity: 0.6 },
-  input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, minHeight: 42, color: colors.onSurface },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.sm, minHeight: 44, color: colors.onSurface },
 });

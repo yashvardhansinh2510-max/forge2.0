@@ -17,6 +17,7 @@ import { ProductImageManagerBody } from "@/src/components/catalog/ProductImageMa
 import { toast } from "@/src/components/Toast";
 import { Button, Dropdown, Sheet, TextField } from "@/src/components/ds";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
+import { useBp } from "@/src/design/responsive";
 
 type LookupItem = { id: string; name: string };
 
@@ -43,6 +44,7 @@ export function ProductEditor({
   onSaved?: (updated: Record<string, unknown>) => void;
   initialTab?: Tab;
 }) {
+  const { isPhone } = useBp();
   const [tab, setTab] = useState<Tab>(initialTab);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -179,7 +181,7 @@ export function ProductEditor({
                 />
               </View>
               <TextField label="Family" value={form.family_name} onChangeText={(v) => set("family_name", v)} testID="edit-family" />
-              <View style={{ flexDirection: "row", gap: spacing.md }}>
+              <View style={{ flexDirection: isPhone ? "column" : "row", gap: spacing.md }}>
                 <View style={{ flex: 1 }}>
                   <TextField label="Finish" value={form.finish} onChangeText={(v) => set("finish", v)} testID="edit-finish" />
                 </View>

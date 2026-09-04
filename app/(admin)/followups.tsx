@@ -16,7 +16,7 @@ import {
   KeyboardAvoidingView,
 } from "react-native";
 import { Swipeable } from "@/src/components/Swipeable";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
 import { useBp } from "@/src/design/responsive";
@@ -238,6 +238,7 @@ export default function FollowupsScreen() {
   const { selectedFloorId } = useFloorAccess();
   const router = useRouter();
   const { isPhone, isDesktop } = useBp();
+  const insets = useSafeAreaInsets();
   const pagePad = isPhone ? spacing.md : spacing.xl;
 
   const [loading, setLoading] = useState(true);
@@ -803,7 +804,7 @@ export default function FollowupsScreen() {
         </View>
       </Panel>
 
-      {selectedIds.size > 0 ? <BulkActionBar count={selectedIds.size} assignees={assignees} onClear={clearSelection} onSnooze={bulkSnooze} onComplete={bulkComplete} onAssign={bulkAssign} /> : null}
+      {selectedIds.size > 0 && !isPhone ? <BulkActionBar count={selectedIds.size} assignees={assignees} onClear={clearSelection} onSnooze={bulkSnooze} onComplete={bulkComplete} onAssign={bulkAssign} /> : null}
     </>
   );
 
@@ -1107,6 +1108,21 @@ export default function FollowupsScreen() {
           >
             <Feather name="phone" size={20} color={colors.onBrand} />
           </Pressable>
+        </View>
+      ) : null}
+
+      {/* Selection should remain actionable while moving through a long phone
+          queue; keeping it in the list header stranded it above the cards. */}
+      {isPhone && selectedIds.size > 0 ? (
+        <View style={[styles.mobileBulkDock, { paddingBottom: Math.max(spacing.sm, insets.bottom + spacing.xs) }]} pointerEvents="box-none">
+          <BulkActionBar
+            count={selectedIds.size}
+            assignees={assignees}
+            onClear={clearSelection}
+            onSnooze={bulkSnooze}
+            onComplete={bulkComplete}
+            onAssign={bulkAssign}
+          />
         </View>
       ) : null}
 
@@ -1543,7 +1559,7 @@ function FollowupCard({
         </View>
 
         {/* Revenue — dedicated visual chip (was buried in prose; audit gap) */}
-        {f.value > 0 && !isPhone ? (
+        {f.value > 0 ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", backgroundColor: colors.surfaceTertiary, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 3 }}>
             <Feather name="trending-up" size={11} color={colors.onSurfaceSecondary} />
             <Text style={[type.numeric, { fontSize: 12, lineHeight: 16, color: colors.onSurface }]}>{moneyShort(f.value)}</Text>
@@ -1606,6 +1622,7 @@ function FollowupCard({
               label="More" icon="more-horizontal" variant="secondary"
               items={[
                 { label: "Open customer details", icon: "user", onPress: () => onPress(f) },
+                ...(canOpenDoc ? [{ label: f.rule_type === "selection_waiting" ? "Open Selection" : "Open Quotation", icon: "external-link" as FeatherName, onPress: () => onOpenDoc!(f) }] : []),
                 { label: "Call", icon: "phone", onPress: () => onCall(f, "call") },
                 { label: "WhatsApp", icon: "message-circle", onPress: () => onWhatsApp(f, "whatsapp") },
                 { label: "Snooze 1 hour", icon: "clock", onPress: () => onSnooze(f, "1h") },
@@ -1691,9 +1708,7 @@ function FollowupCard({
         else onSnooze(f, "1h");
       }}
     >
-      <Pressable onLongPress={() => assignees[0] && onAssign(f, assignees[0].id)} delayLongPress={450}>
-        {content}
-      </Pressable>
+      {content}
     </Swipeable>
   );
 }
@@ -2100,6 +2115,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSecondary, borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: colors.brandBorder,
     padding: spacing.md,
+  },
+  mobileBulkDock: {
+    position: "absolute", left: spacing.md, right: spacing.md, bottom: 0,
   },
   mobileMissionCard: {
     padding: spacing.lg,

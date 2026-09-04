@@ -70,8 +70,8 @@ export default function SettingsPDF() {
           <TextField testID="pdf-signature-title-input" label="Signatory title (optional)" value={form.signature_title || ""} onChangeText={set("signature_title")} editable={canEdit} />
         </Card>
 
-        <Card style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <View style={{ flex: 1 }}>
+        <Card style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={type.bodyStrong}>Show watermark</Text>
             <Text style={type.caption}>The rotated logo watermark on itemised pages</Text>
           </View>

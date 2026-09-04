@@ -28,6 +28,7 @@ import { CellNumber, CellStack, DataTable, type Column } from "@/src/components/
 import { Sheet } from "@/src/components/ui";
 import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 import { useAuth } from "@/src/state/auth";
+import { useBreakpoint } from "@/src/hooks/use-breakpoint";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
 type ActiveSheet = { kind: "godown" | "dispatch-released" | "dispatch-godown"; poId: string; item: CustomerOrderItem } | null;
@@ -40,6 +41,8 @@ type ActiveSheet = { kind: "godown" | "dispatch-released" | "dispatch-godown"; p
 function ItemActions({
   item, poId, onOpen, readOnly = false,
 }: { item: CustomerOrderItem; poId: string; onOpen: (sheet: ActiveSheet) => void; readOnly?: boolean }) {
+  const { isPhone, bp } = useBreakpoint();
+  const fullWidth = isPhone || bp === "tabletPortrait";
   if (readOnly) return <Text style={styles.hint}>Read-only delivery lookup</Text>;
   const actions: { key: string; label: string; kind: NonNullable<ActiveSheet>["kind"]; enabled: boolean; primary?: boolean }[] = [
     { key: "move-godown", label: "Move to Godown", kind: "godown", enabled: item.boxes_ready > 0 },
@@ -60,6 +63,7 @@ function ItemActions({
             size="sm"
             variant={action.primary ? "primary" : "secondary"}
             disabled={!action.enabled}
+            fullWidth={fullWidth}
             testID={`tile-order-${action.key}-${item.po_item_id}`}
             onPress={() => onOpen({ kind: action.kind, poId, item })}
           />

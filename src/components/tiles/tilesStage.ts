@@ -43,6 +43,7 @@ export function canMoveToQuotation(docType: string, status: string): boolean {
 }
 
 export function canPlaceOrder(docType: string, status: string): boolean {
+  if (docType === "tiles_selection") return false;
   if (docType !== "tiles_quotation") return true;
   return status === "approved";
 }

@@ -126,6 +126,7 @@ export default function BrandOrderDetailScreen() {
             testID={`tile-release-select-${item.id}`}
             disabled={!selectable}
             onPress={() => toggleItem(item.id, item.boxes_pending)}
+            hitSlop={11}
             style={({ hovered }: any) => [
               styles.checkbox,
               checked ? styles.checkboxChecked : null,
@@ -381,7 +382,7 @@ const styles = StyleSheet.create({
   // vertical run of fields rather than a ragged edge.
   qtyInput: {
     width: "100%",
-    height: 36,
+    height: 44,
     borderWidth: 1,
     borderColor: colors.brandBorder,
     borderRadius: radius.sm,

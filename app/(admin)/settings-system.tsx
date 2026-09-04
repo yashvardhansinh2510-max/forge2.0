@@ -42,7 +42,7 @@ export default function SettingsSystem() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   return (
-    <AdminPage title="System" subtitle="Live diagnostics — no configuration here, read-only" back={() => router.back()} scroll={false}>
+    <AdminPage title="System" subtitle="Live diagnostics — no configuration here, read-only" back={() => router.back()} scroll={false} contentStyle={{ paddingHorizontal: 0, paddingTop: 0 }}>
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
@@ -62,30 +62,30 @@ export default function SettingsSystem() {
         ) : (
           <>
             <Card style={{ gap: spacing.md }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
                 <Text style={type.overline}>Overall</Text>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <StatusDot ok={health.healthy} />
                   <Text style={type.bodyStrong}>{health.healthy ? "Healthy" : "Attention needed"}</Text>
                 </View>
               </View>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={type.bodyMuted}>Version</Text>
-                <Text style={type.body}>{health.version}</Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.md }}>
+                <Text style={[type.bodyMuted, { flexShrink: 1 }]}>Version</Text>
+                <Text style={[type.body, { flexShrink: 1, textAlign: "right" }]} numberOfLines={2}>{health.version}</Text>
               </View>
             </Card>
 
             <Card style={{ gap: spacing.sm }}>
               <Text style={type.overline}>Connections</Text>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 }}>
                   <Feather name="database" size={14} color={colors.onSurfaceMuted} />
                   <Text style={type.body}>MongoDB{health.mongo.is_local ? " (local)" : " (Atlas)"}</Text>
                 </View>
                 <StatusDot ok={health.mongo.connected} />
               </View>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 8 }}>
                   <Feather name="hard-drive" size={14} color={colors.onSurfaceMuted} />
                   <Text style={type.body}>Supabase storage</Text>
                 </View>

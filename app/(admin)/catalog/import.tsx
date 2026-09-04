@@ -14,6 +14,7 @@ import { toast } from "@/src/components/Toast";
 import { api, csrfHeaders, getToken } from "@/src/api/client";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 import { uriToBlob } from "@/src/utils/uriToBlob";
+import { useBp } from "@/src/design/responsive";
 
 const SUPPORTED = ["Hansgrohe", "Axor", "Grohe", "Vitra", "Geberit"] as const;
 type Brand = typeof SUPPORTED[number];
@@ -76,6 +77,7 @@ async function runBounded<T>(items: T[], worker: (item: T) => Promise<void>, con
 
 export default function CatalogImport() {
   const router = useRouter();
+  const { isPhone } = useBp();
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [brand, setBrand] = useState<Brand>("Hansgrohe");
   const [current, setCurrent] = useState<Job | null>(null);
@@ -253,9 +255,9 @@ export default function CatalogImport() {
         title={`Review · ${current.supplier_name}`}
         subtitle={`${current.filename} · ${current.total_rows} products · Powered by BuildCon Ingestion Framework`}
         right={
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button label="Discard" variant="secondary" onPress={() => setCurrent(null)} disabled={processing || changesInFlight} testID="discard-import" />
-            <Button label={acceptingAll ? "Accepting…" : "Accept all"} icon="check-square" variant="secondary" onPress={acceptAll} disabled={processing || changesInFlight} loading={acceptingAll} testID="accept-all" />
+          <View style={[styles.reviewActions, isPhone && styles.reviewActionsPhone]}>
+            <Button label="Discard" variant="secondary" onPress={() => setCurrent(null)} disabled={processing || changesInFlight} testID="discard-import" fullWidth={isPhone} />
+            <Button label={acceptingAll ? "Accepting…" : "Accept all"} icon="check-square" variant="secondary" onPress={acceptAll} disabled={processing || changesInFlight} loading={acceptingAll} testID="accept-all" fullWidth={isPhone} />
             <Button
               label={processing ? "Processing…" : `Import ${accepted} products`}
               icon="upload-cloud"
@@ -263,19 +265,20 @@ export default function CatalogImport() {
               loading={processing}
               disabled={accepted === 0 || changesInFlight || processing}
               testID="import-accepted"
+              fullWidth={isPhone}
             />
           </View>
         }
       >
         {cert ? (
           <Card style={styles.certCard}>
-            <View style={styles.certHead}>
+            <View style={[styles.certHead, isPhone && styles.certHeadPhone]}>
               <View style={styles.certScore}>
                 <Text style={styles.certScoreNum}>{cert.overall_score}%</Text>
                 <Text style={styles.certScoreLabel}>Certification</Text>
               </View>
               <View style={{ flex: 1, gap: 4 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <Text style={type.titleLg}>{cert.production_ready ? "Production ready" : "Needs human review"}</Text>
                   <Badge tone={cert.production_ready ? "success" : "warning"} label={cert.production_ready ? "CERTIFIED" : "REVIEW"} />
                 </View>
@@ -318,7 +321,7 @@ export default function CatalogImport() {
 
         {processing && progress ? <View accessibilityLiveRegion="polite" style={styles.importProgress}><ActivityIndicator size="small" color={colors.brand} /><Text style={type.caption}>Importing in the background: {progress.completed + progress.failed} / {progress.total} complete{progress.failed ? ` · ${progress.failed} failed` : ""}</Text></View> : null}
 
-        <View accessibilityLabel={`Review page ${safePage + 1} of ${pageCount}. Showing ${pageRows.length} of ${current.rows.length} import rows.`} style={styles.reviewPagination}>
+        <View accessibilityLabel={`Review page ${safePage + 1} of ${pageCount}. Showing ${pageRows.length} of ${current.rows.length} import rows.`} style={[styles.reviewPagination, isPhone && styles.reviewPaginationPhone]}>
           <Text style={type.caption}>Showing {safePage * REVIEW_PAGE_SIZE + 1}–{Math.min((safePage + 1) * REVIEW_PAGE_SIZE, current.rows.length)} of {current.rows.length}</Text>
           <View style={styles.pageActions}>
             <Pressable accessibilityRole="button" accessibilityLabel="Previous review page" accessibilityState={{ disabled: safePage === 0 }} disabled={safePage === 0} onPress={() => setReviewPage((page) => Math.max(0, page - 1))} style={[styles.pageButton, safePage === 0 && styles.disabledControl]}><Feather name="chevron-left" size={16} color={colors.onSurface} /></Pressable>
@@ -352,7 +355,7 @@ export default function CatalogImport() {
                     placeholderTextColor={colors.onSurfaceMuted}
                     style={styles.rowNameInput}
                   />
-                  <View style={{ flexDirection: "row", gap: 6, alignItems: "center" }}>
+                  <View style={{ flexDirection: "row", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <Text style={type.mono}>{item.sku === MISSING ? "no-sku" : item.sku}</Text>
                     <Text style={type.caption}>· {item.category}</Text>
                     {item.confidence < 0.7 ? <Badge tone="warning" label={`${Math.round(item.confidence * 100)}%`} /> : null}
@@ -490,7 +493,7 @@ export default function CatalogImport() {
         </Pressable>
 
         <Text style={[type.overline, { marginTop: spacing.lg }]}>Or import from URL</Text>
-        <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+        <View style={[styles.urlRow, isPhone && styles.urlRowPhone]}>
           <TextInput
             testID="url-input"
             value={urlInput}
@@ -501,7 +504,7 @@ export default function CatalogImport() {
             autoCorrect={false}
             style={styles.urlInput}
           />
-          <Button label="Fetch" icon="link" onPress={importFromUrl} disabled={!urlInput || uploading} testID="fetch-url" />
+          <Button label="Fetch" icon="link" onPress={importFromUrl} disabled={!urlInput || uploading} testID="fetch-url" fullWidth={isPhone} />
         </View>
       </Card>
 
@@ -623,10 +626,13 @@ const styles = StyleSheet.create({
     flex: 1, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceSecondary,
     borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: colors.onSurface,
   },
+  urlRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  urlRowPhone: { flexDirection: "column" },
   certCard: {
     padding: spacing.lg, gap: spacing.md, borderColor: colors.brandTertiary,
   },
   certHead: { flexDirection: "row", alignItems: "center", gap: spacing.lg },
+  certHeadPhone: { alignItems: "flex-start" },
   certScore: {
     width: 96, height: 96, borderRadius: 48, backgroundColor: colors.surfaceInverse,
     alignItems: "center", justifyContent: "center",
@@ -644,6 +650,9 @@ const styles = StyleSheet.create({
     flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4,
   },
   reviewPagination: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
+  reviewPaginationPhone: { alignItems: "flex-start", flexDirection: "column" },
+  reviewActions: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  reviewActionsPhone: { flexDirection: "column", width: "100%" },
   pageActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   pageButton: { minWidth: 36, minHeight: 36, borderWidth: 1, borderColor: colors.border, borderRadius: 6, alignItems: "center", justifyContent: "center" },
   disabledControl: { opacity: 0.5 },

@@ -1,6 +1,6 @@
 import { Redirect, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
 import { salesWorkspaceApi, type WorkspaceData, type WorkspaceName } from "@/src/api/salesWorkspaces";
 import { AdminPage } from "@/src/components/AdminPage";
@@ -9,7 +9,7 @@ import { useBp } from "@/src/design/responsive";
 import { fmtMoneyCompact } from "@/src/design/tokens";
 import { getSelectedFloorId, useFloorAccess } from "@/src/hooks/use-floor-access";
 import { useAuth } from "@/src/state/auth";
-import { colors, spacing, type } from "@/src/theme/tokens";
+import { colors, layout, spacing, type } from "@/src/theme/tokens";
 
 const LABELS: Record<WorkspaceName, { title: string; subtitle: string; rows: "brands" | "products" | "customers" | "relationships" | "floors" }> = {
   revenue: { title: "Revenue", subtitle: "Confirmed sales, dated by order confirmation", rows: "brands" },
@@ -58,5 +58,11 @@ function WorkspaceTable({ kind, data, phone, onOpen }: { kind: "brands" | "produ
   const rows: any[] = kind === "brands" ? data.brands : kind === "products" ? data.products : kind === "customers" ? data.customers : kind === "relationships" ? (data.relationships || []) : data.floors;
   if (!rows.length) return <EmptyState icon="bar-chart-2" title="No confirmed sales in this period" subtitle="Try a different date range or business unit." tone="brand" />;
   const title = kind === "relationships" ? "Revenue relationships" : kind === "floors" ? "Business units" : `Top ${kind}`;
-  return <Card variant="flat" padding={spacing.lg}><View style={{ gap: spacing.md }}><Text style={type.titleSm}>{title}</Text>{phone ? <View style={{ gap: spacing.sm }}>{rows.slice(0, 25).map((r) => <View key={r.id || r.brand_id || r.product_id || r.customer_id || r.floor_id} style={{ minHeight: 56, borderBottomWidth: 1, borderBottomColor: colors.border, justifyContent: "center" }}><Text style={type.bodyStrong}>{r.name || r.floor_id}</Text><Text style={[type.caption, { color: colors.onSurfaceMuted }]}>{fmtMoneyCompact(r.revenue)} · {r.orders || r.quantity || 0} orders</Text></View>)}</View> : <Table><TableHeader columns={[{ label: "Name", flex: 2 }, { label: "Revenue", align: "right" }, { label: "Orders", align: "right" }]} />{rows.slice(0, 50).map((r, i) => <TableRow key={r.id || r.brand_id || r.product_id || r.customer_id || r.floor_id} isLast={i === Math.min(rows.length, 50) - 1} onPress={r.customer_id ? () => onOpen(`/(admin)/customers/${r.customer_id}`) : undefined}><TableCell flex={2}>{r.name || r.floor_id}</TableCell><TableCell align="right">{fmtMoneyCompact(r.revenue)}</TableCell><TableCell align="right">{String(r.orders || r.quantity || 0)}</TableCell></TableRow>)}</Table>}</View></Card>;
+  const phoneRow = (r: any) => {
+    const key = r.id || r.brand_id || r.product_id || r.customer_id || r.floor_id;
+    const detail = `${fmtMoneyCompact(r.revenue)} · ${r.orders ?? r.quantity ?? 0} ${r.orders !== undefined ? "orders" : "units"}`;
+    const body = <View style={{ minHeight: 56, paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border, justifyContent: "center" }}><Text style={type.bodyStrong} numberOfLines={2}>{r.name || r.floor_id}</Text><Text style={[type.caption, { color: colors.onSurfaceMuted }]}>{detail}</Text></View>;
+    return r.customer_id ? <Pressable key={key} accessibilityRole="button" accessibilityLabel={`Open customer ${r.name}`} onPress={() => onOpen(`/(admin)/customers/${r.customer_id}`)}>{body}</Pressable> : <View key={key}>{body}</View>;
+  };
+  return <Card variant="flat" padding={phone ? layout.cardPadding.base : spacing.lg}><View style={{ gap: spacing.md }}><Text style={type.titleSm}>{title}</Text>{phone ? <View style={{ gap: spacing.xs }}>{rows.slice(0, 25).map(phoneRow)}</View> : <Table><TableHeader columns={[{ label: "Name", flex: 2 }, { label: "Revenue", align: "right" }, { label: "Orders", align: "right" }]} />{rows.slice(0, 50).map((r, i) => <TableRow key={r.id || r.brand_id || r.product_id || r.customer_id || r.floor_id} isLast={i === Math.min(rows.length, 50) - 1} onPress={r.customer_id ? () => onOpen(`/(admin)/customers/${r.customer_id}`) : undefined}><TableCell flex={2}>{r.name || r.floor_id}</TableCell><TableCell align="right">{fmtMoneyCompact(r.revenue)}</TableCell><TableCell align="right">{String(r.orders || r.quantity || 0)}</TableCell></TableRow>)}</Table>}</View></Card>;
 }

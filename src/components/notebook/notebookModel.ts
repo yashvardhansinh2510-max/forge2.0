@@ -15,8 +15,6 @@ export const NOTEBOOK_COLUMNS: readonly NotebookColumn[] = [
 
 export const QUOTATION_COLUMNS: readonly NotebookColumn[] = [
   { key: "quotation_price", label: "Quotation Price", minWidth: 155, editable: true, quotationOnly: true },
-  { key: "estimated_value", label: "Estimated Value", minWidth: 155, editable: true, quotationOnly: true },
-  { key: "quotation_date", label: "Quotation Date", minWidth: 145, editable: true, quotationOnly: true },
 ];
 
 /** Filters that apply to the Follow-ups page. Quotation follow-ups are a
