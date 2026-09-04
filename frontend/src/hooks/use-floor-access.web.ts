@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 
 import { api, setRequestFloorId } from "@/src/api/client";
@@ -124,6 +124,7 @@ export function useFloorAccess() {
 export function useRequireFloorAccess(floorId: string) {
   const { access, selectedFloorId, selectFloor } = useFloorAccess();
   const router = useRouter();
+  const synchronizedFloorRef = useRef<string | null>(null);
   useEffect(() => {
     if (!access) return;
     if (!(access.all_floors || access.floor_ids.includes(floorId))) {
@@ -131,6 +132,11 @@ export function useRequireFloorAccess(floorId: string) {
       router.replace("/(admin)/dashboard" as any);
       return;
     }
-    if (selectedFloorId !== floorId) void selectFloor(floorId);
+    // Synchronize deep links once, but never fight a user-initiated floor
+    // switch while this route is unmounting.
+    if (synchronizedFloorRef.current !== floorId) {
+      synchronizedFloorRef.current = floorId;
+      if (selectedFloorId !== floorId) void selectFloor(floorId);
+    }
   }, [access, floorId, router, selectedFloorId, selectFloor]);
 }

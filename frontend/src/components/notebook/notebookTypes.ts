@@ -10,9 +10,7 @@ export type NotebookField =
   | "architect_interior_designer"
   | "status"
   | "notes"
-  | "quotation_price"
-  | "estimated_value"
-  | "quotation_date";
+  | "quotation_price";
 
 export type NotebookRow = {
   id: string;
@@ -27,8 +25,6 @@ export type NotebookRow = {
   is_converted: boolean;
   updated_at: string;
   quotation_price?: number | null;
-  estimated_value?: number | null;
-  quotation_date?: string | null;
   quotation_number?: string | null;
   converted_at?: string | null;
 };

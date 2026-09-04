@@ -134,14 +134,7 @@ def test_notebook_api_is_limited_to_kitchen_and_furniture_floors():
 def test_quotation_fields_are_rejected_before_conversion():
     with pytest.raises(NotebookValidationError, match="require conversion"):
         validate_notebook_patch({"quotation_price": 100}, converted=False, current={})
-    assert QUOTATION_FIELDS == {"quotation_price", "estimated_value", "quotation_date"}
-
-
-def test_quotation_date_must_be_a_real_calendar_date():
-    with pytest.raises(NotebookValidationError, match="quotation_date"):
-        validate_notebook_patch(
-            {"quotation_date": "31/02/2026"}, converted=True, current={}, floor_id="third-floor",
-        )
+    assert QUOTATION_FIELDS == {"quotation_price"}
 
 
 def test_lost_requires_notes():
@@ -344,7 +337,7 @@ async def test_conversion_updates_same_row_and_is_idempotent(monkeypatch):
     }])
     row = await convert_notebook_row(
         db, user=object(), floor_id="second-floor", row_id="f1",
-        patch={"quotation_price": 100, "estimated_value": 125, "quotation_date": "06/08/2026"},
+        patch={"quotation_price": 100},
         expected_updated_at="v1",
     )
     assert row["is_converted"] is True
@@ -354,3 +347,20 @@ async def test_conversion_updates_same_row_and_is_idempotent(monkeypatch):
         patch={}, expected_updated_at="stale",
     )
     assert retry["id"] == "f1" and retry["quotation_price"] == 100
+
+
+@pytest.mark.asyncio
+async def test_furniture_conversion_requires_and_stores_a_price():
+    db = _Db(followups=[{
+        "id": "furniture-1", "floor_id": "third-floor", "notebook_key": "third-floor:c1",
+        "customer_name": "A", "customer_phone": "9909906652", "notebook_status": "new",
+        "notes": "", "updated_at": "v1", "is_converted": False,
+    }])
+    with pytest.raises(NotebookValidationError, match="quotation_price is required"):
+        await convert_notebook_row(
+            db, user=object(), floor_id="third-floor", row_id="furniture-1", patch={}, expected_updated_at="v1",
+        )
+    row = await convert_notebook_row(
+        db, user=object(), floor_id="third-floor", row_id="furniture-1", patch={"quotation_price": 25000}, expected_updated_at="v1",
+    )
+    assert row["is_converted"] is True and row["quotation_price"] == 25000

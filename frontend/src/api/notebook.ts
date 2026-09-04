@@ -25,6 +25,6 @@ export const notebookApi = {
     api.post<NotebookRow>(`/followups/notebook/${floorId}`, body, { floorId }),
   patch: (floorId: string, rowId: string, field: NotebookField, value: unknown, updatedAt: string) =>
     api.patch<NotebookRow>(`/followups/notebook/${floorId}/${rowId}`, { field, value, updated_at: updatedAt }, { floorId }),
-  convert: (floorId: string, rowId: string, body: Pick<NotebookRow, "quotation_price" | "estimated_value" | "quotation_date">, updatedAt: string) =>
+  convert: (floorId: string, rowId: string, body: Pick<NotebookRow, "quotation_price">, updatedAt: string) =>
     api.post<NotebookRow>(`/followups/notebook/${floorId}/${rowId}/convert`, { ...body, updated_at: updatedAt }, { floorId }),
 };

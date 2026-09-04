@@ -7,7 +7,6 @@ and automation fields carried by :class:`models.Followup`.
 from __future__ import annotations
 
 import re
-from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -25,7 +24,7 @@ NOTEBOOK_FIELDS: frozenset[str] = frozenset({
     "referred_by", "architect_interior_designer", "notebook_status", "notes",
 })
 QUOTATION_FIELDS: frozenset[str] = frozenset({
-    "quotation_price", "estimated_value", "quotation_date",
+    "quotation_price",
 })
 SEARCH_FIELDS: tuple[str, ...] = (
     "customer_name", "customer_phone", "address",
@@ -93,8 +92,6 @@ def serialize_notebook_row(document: dict[str, Any]) -> dict[str, Any]:
     if converted:
         row.update({
             "quotation_price": document.get("quotation_price"),
-            "estimated_value": document.get("estimated_value"),
-            "quotation_date": document.get("quotation_date"),
         })
     return row
 
@@ -156,20 +153,13 @@ def validate_notebook_patch(
     for field in QUOTATION_FIELDS:
         if field in clean and not converted:
             raise NotebookValidationError("quotation fields require conversion")
-    for field in ("quotation_price", "estimated_value"):
+    for field in ("quotation_price",):
         if field in clean and clean[field] is not None:
             try:
                 if float(clean[field]) < 0:
                     raise NotebookValidationError(f"{field} cannot be negative")
             except (TypeError, ValueError):
                 raise NotebookValidationError(f"{field} must be a number")
-    if "quotation_date" in clean and clean["quotation_date"]:
-        date_value = str(clean["quotation_date"])
-        date_format = "%d/%m/%Y" if re.fullmatch(r"\d{2}/\d{2}/\d{4}", date_value) else "%Y-%m-%d"
-        try:
-            datetime.strptime(date_value, date_format)
-        except ValueError:
-            raise NotebookValidationError("quotation_date must be dd/mm/yyyy")
     return clean
 
 
@@ -293,6 +283,8 @@ async def convert_notebook_row(
         raise NotebookConflictError(
             serialize_notebook_row(current), changed_fields=[*patch.keys(), "is_converted"],
         )
+    if patch.get("quotation_price") is None:
+        raise NotebookValidationError("quotation_price is required to convert a follow-up")
     clean = validate_notebook_patch(patch, converted=True, current=current, floor_id=floor_id)
     now = now_iso()
     result = await db.followups.update_one(

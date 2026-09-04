@@ -1205,9 +1205,9 @@ class NotebookCellPatchPayload(BaseModel):
 
 
 class NotebookConversionPayload(BaseModel):
-    quotation_price: Optional[float] = None
-    estimated_value: Optional[float] = None
-    quotation_date: Optional[str] = None
+    # A quotation conversion is complete only when its quoted price is known.
+    # Other follow-up fields remain unchanged.
+    quotation_price: float
     updated_at: str
 
     model_config = ConfigDict(extra="forbid")

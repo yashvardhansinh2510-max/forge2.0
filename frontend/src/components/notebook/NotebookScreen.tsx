@@ -6,7 +6,7 @@ import { notebookApi, type NotebookCreate } from "@/src/api/notebook";
 import { toast } from "@/src/components/Toast";
 import { BottomSheet } from "@/src/components/BottomSheet";
 import { Button, Chip, EmptyState, PageHeader, SearchField, TextField } from "@/src/components/ui";
-import { columnsForView, FOLLOWUP_FILTERS, formatIndianDate, formatRupees } from "@/src/components/notebook/notebookModel";
+import { columnsForView, FOLLOWUP_FILTERS, formatRupees } from "@/src/components/notebook/notebookModel";
 import type { NotebookField, NotebookFilter, NotebookRow, NotebookStatus, NotebookView } from "@/src/components/notebook/notebookTypes";
 import { useBp } from "@/src/design/responsive";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
@@ -17,14 +17,13 @@ const EMPTY_DRAFT: NotebookCreate = { customer_name: "", customer_phone: "", add
 
 function valueForCell(row: NotebookRow, field: NotebookField): string {
   const value = row[field];
-  if (field === "quotation_price" || field === "estimated_value") return formatRupees(value as number | null);
-  if (field === "quotation_date") return formatIndianDate(value as string | null);
+  if (field === "quotation_price") return formatRupees(value as number | null);
   if (field === "status") return STATUS_LABELS[value as NotebookStatus];
   return String(value ?? "");
 }
 
 function editableValue(field: NotebookField, value: string): unknown {
-  if (field === "quotation_price" || field === "estimated_value") return value.trim() === "" ? null : Number(value.replace(/[^0-9.]/g, ""));
+  if (field === "quotation_price") return value.trim() === "" ? null : Number(value.replace(/[^0-9.]/g, ""));
   return value;
 }
 
@@ -48,6 +47,8 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
   const [saving, setSaving] = useState<string | null>(null);
   const [conflictCells, setConflictCells] = useState<Set<string>>(new Set());
   const [draftOpen, setDraftOpen] = useState(false);
+  const [converting, setConverting] = useState<NotebookRow | null>(null);
+  const [quotationPrice, setQuotationPrice] = useState("");
   const [draft, setDraft] = useState<NotebookCreate>({ ...EMPTY_DRAFT, ...(kitchen ? { kitchen_type: "GI" as const } : {}) });
 
   const load = useCallback(async (cursor?: string, append = false) => {
@@ -73,7 +74,7 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
   }, [load, search]);
 
   const beginEdit = (row: NotebookRow, field: NotebookField) => {
-    if (row.status === "won" && !["quotation_price", "estimated_value", "quotation_date"].includes(field)) return;
+    if (row.status === "won" && field !== "quotation_price") return;
     setEditing({ id: row.id, field });
     const raw = row[field];
     setCellValue(raw === null || raw === undefined ? "" : String(raw));
@@ -81,7 +82,7 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
   const patch = async (row: NotebookRow, field: NotebookField, raw: string) => {
     const key = `${row.id}:${field}`;
     const value = editableValue(field, raw);
-    if ((field === "quotation_price" || field === "estimated_value") && raw.trim() && Number.isNaN(value)) { toast.error("Enter a valid amount"); return; }
+    if (field === "quotation_price" && raw.trim() && Number.isNaN(value)) { toast.error("Enter a valid amount"); return; }
     if (field === "status" && value === "lost" && !row.notes.trim()) { toast.error("Add a note before marking Lost"); return; }
     if (field === "status" && value === "won" && Platform.OS === "web" && !globalThis.confirm("Mark this follow-up as Won?")) return;
     setSaving(key);
@@ -100,12 +101,24 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
       else toast.error(error?.detail || "Could not save this field");
     } finally { setSaving(null); setEditing(null); }
   };
-  const convert = async (row: NotebookRow) => {
+  const openConversion = (row: NotebookRow) => {
+    setQuotationPrice("");
+    setConverting(row);
+  };
+  const convert = async () => {
+    if (!converting) return;
+    const price = Number(quotationPrice.replace(/[^0-9.]/g, ""));
+    if (!quotationPrice.trim() || !Number.isFinite(price) || price < 0) {
+      toast.error("Enter a valid quotation price");
+      return;
+    }
+    const row = converting;
     setSaving(`${row.id}:convert`);
     try {
-      await notebookApi.convert(floorId, row.id, {}, row.updated_at);
+      await notebookApi.convert(floorId, row.id, { quotation_price: price }, row.updated_at);
       setRows((current) => current.filter((item) => item.id !== row.id));
-      toast.success("Moved to Quotation Follow-ups");
+      setConverting(null);
+      toast.success("Converted to quotation");
     } catch (error: any) { toast.error(error?.detail || "Could not convert this follow-up"); }
     finally { setSaving(null); }
   };
@@ -195,7 +208,7 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
               })}
             </View>
             {view === "followups" ? (
-              <Button label="Move to quotation follow-up" size="sm" variant="secondary" onPress={() => void convert(row)} loading={saving === `${row.id}:convert`} fullWidth />
+              <Button label="Convert to quotation" size="sm" variant="secondary" onPress={() => openConversion(row)} loading={saving === `${row.id}:convert`} fullWidth />
             ) : null}
           </View>
         );
@@ -227,11 +240,18 @@ export function NotebookScreen({ floorId, floorName, view }: { floorId: string; 
               {active ? <TextInput autoFocus value={cellValue} onChangeText={setCellValue} onBlur={() => void patch(row, column.key, cellValue)} onSubmitEditing={() => void patch(row, column.key, cellValue)} accessibilityLabel={`${column.label} for ${row.customer_name}`} style={styles.input} /> : <Text numberOfLines={2} style={styles.cellText}>{valueForCell(row, column.key)}</Text>}
               {saving === key ? <Text style={styles.saveText}>Saving…</Text> : null}
             </Pressable>;
-          })}{view === "followups" ? <View style={[styles.cell, { width: 160 }]}>{saving === `${row.id}:convert` ? <ActivityIndicator color={colors.brand} /> : <Button label="To quotation" size="sm" variant="secondary" onPress={() => void convert(row)} />}</View> : null}</View>)}</View>
+          })}{view === "followups" ? <View style={[styles.cell, { width: 160 }]}>{saving === `${row.id}:convert` ? <ActivityIndicator color={colors.brand} /> : <Button label="Convert to quotation" size="sm" variant="secondary" onPress={() => openConversion(row)} />}</View> : null}</View>)}</View>
       </ScrollView>}
       {nextCursor ? <Button label="Load more" variant="secondary" onPress={() => void load(nextCursor, true)} loading={loadingMore} /> : null}
     </ScrollView>
     {isPhone ? <BottomSheet visible={draftOpen} onClose={() => setDraftOpen(false)} title="New Follow-up">{draftFields}</BottomSheet> : null}
+    <BottomSheet visible={Boolean(converting)} onClose={() => setConverting(null)} title="Convert to quotation">
+      <View style={{ gap: spacing.md }}>
+        <Text style={type.body}>Add the quotation price. All customer and follow-up details stay unchanged.</Text>
+        <TextField label="Quotation Price *" value={quotationPrice} onChangeText={setQuotationPrice} keyboardType="decimal-pad" />
+        <Button label="Convert to quotation" icon="file-text" onPress={() => void convert()} loading={saving === `${converting?.id}:convert`} />
+      </View>
+    </BottomSheet>
   </SafeAreaView>;
 }
 

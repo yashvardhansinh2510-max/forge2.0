@@ -15,7 +15,7 @@ assert.deepEqual(NOTEBOOK_COLUMNS.map((column) => column.key), [
   "customer_name", "customer_phone", "address", "kitchen_type", "referred_by",
   "architect_interior_designer", "status", "notes",
 ]);
-assert.deepEqual(QUOTATION_COLUMNS.map((column) => column.key), ["quotation_price", "estimated_value", "quotation_date"]);
+assert.deepEqual(QUOTATION_COLUMNS.map((column) => column.key), ["quotation_price"]);
 assert.deepEqual(NOTEBOOK_FILTERS, ["all", "pending", "won", "lost", "new", "quotation"]);
 
 const row = {
@@ -25,9 +25,9 @@ const row = {
 assert.equal(searchNotebookRows([row], "home").length, 1);
 assert.equal(searchNotebookRows([row], "100000").length, 0);
 assert.equal(columnsForView("followups").length, 8);
-assert.equal(columnsForView("quotation").length, 11);
+assert.equal(columnsForView("quotation").length, 9);
 assert.deepEqual(columnsForView("followups", "third-floor").map((column) => column.key).includes("kitchen_type"), false);
-assert.equal(columnsForView("quotation", "third-floor").length, 10);
+assert.equal(columnsForView("quotation", "third-floor").length, 8);
 assert.deepEqual(nextCell({ row: 0, column: 7 }, "Tab", 2, 8), { row: 1, column: 0 });
 assert.deepEqual(nextCell({ row: 1, column: 0 }, "Shift+Tab", 2, 8), { row: 0, column: 7 });
 assert.equal(nextCell({ row: 0, column: 0 }, "Escape", 2, 8), null);
@@ -52,6 +52,8 @@ assert.match(notebookScreen, /requestId !== requestIdRef\.current/);
 assert.match(notebookScreen, /accessibilityLabel=\{`Edit \$\{column\.label\} for \$\{row\.customer_name\}`\}/);
 assert.match(notebookScreen, /notebookApi\.patch/);
 assert.match(notebookScreen, /notebookApi\.convert/);
+assert.match(notebookScreen, /quotation_price: price/);
+assert.match(notebookScreen, /Convert to quotation/);
 assert.match(notebookScreen, /BottomSheet/);
 assert.match(notebookScreen, /changed_fields/);
 assert.match(notebookScreen, /conflictCell/);
