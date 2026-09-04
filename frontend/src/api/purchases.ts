@@ -44,6 +44,19 @@ export type PurchaseCustomer = {
   tier?: "retail" | "trade" | "vip";
 };
 
+/** Live purchase workspace used by the inline customer panel. */
+export type PurchaseCustomerWorkspace = {
+  customer: PurchaseCustomer;
+  summary: {
+    total_items: number; total_value: number; outstanding_value: number;
+    outstanding_count: number; open_pos: number; blocked_count: number;
+    delivered_count: number; shortage_count: number; outstanding_balance?: number;
+  };
+  outstanding_items: PurchaseItem[];
+  products: PurchaseItem[];
+  expected_delivery?: { next_at: string | null };
+};
+
 export type PurchasesPage = {
   items: PurchaseItem[];
   total: number;
@@ -84,6 +97,10 @@ export function getPurchasesPage(query: PurchasesPageQuery, signal?: AbortSignal
 /** This deliberately uses the CRM collection, not the purchase-item facet. */
 export function getPurchaseCustomers(signal?: AbortSignal) {
   return api.get<PurchaseCustomer[]>("/customers", { signal, cacheMs: 10_000 });
+}
+
+export function getPurchaseCustomerWorkspace(customerId: string, signal?: AbortSignal) {
+  return api.get<PurchaseCustomerWorkspace>(`/purchases/customers/${customerId}/workspace`, { signal });
 }
 
 export function cancelPurchaseItem(itemId: string, reason?: string) {

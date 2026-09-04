@@ -246,8 +246,16 @@ async def list_orders(
             "outstanding_short": _short_amount(outstanding) if outstanding > 0 else None,
         })
 
-    if status_filter and status_filter != "all":
+    # Collections is an action queue, not an archive. A settled order belongs
+    # in Payment History and must not make staff scroll past it to collect an
+    # outstanding balance. `all` remains available to an explicit API caller
+    # that needs the complete set.
+    if status_filter == "all":
+        pass
+    elif status_filter:
         out = [o for o in out if o["payment_status"] == status_filter]
+    else:
+        out = [o for o in out if o["payment_status"] != "paid"]
 
     # Sort: outstanding desc, then most recently confirmed
     out.sort(key=lambda o: (-o["outstanding"], -(o.get("confirmed_at") or "").__hash__()))

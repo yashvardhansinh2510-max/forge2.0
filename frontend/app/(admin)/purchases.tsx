@@ -16,7 +16,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api/client";
-import { cancelPurchaseItem, getPurchaseCustomers, getPurchasesPage, type PurchaseCustomer, type PurchaseItem, type PurchasesPage } from "@/src/api/purchases";
+import { cancelPurchaseItem, getPurchaseCustomerWorkspace, getPurchaseCustomers, getPurchasesPage, type PurchaseCustomer, type PurchaseCustomerWorkspace, type PurchaseItem, type PurchasesPage } from "@/src/api/purchases";
 import { useBp } from "@/src/design/responsive";
 import { Sheet } from "@/src/design/components";
 import { ProductImage } from "@/src/components/ProductImage";
@@ -150,6 +150,9 @@ export default function PurchasesScreen() {
   const [shortages, setShortages] = useState<Shortage[]>([]);
   const [showShortages, setShowShortages] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<Item | null>(null);
+  const [customerWorkspaceId, setCustomerWorkspaceId] = useState<string | null>(null);
+  const [customerWorkspace, setCustomerWorkspace] = useState<PurchaseCustomerWorkspace | null>(null);
+  const [loadingWorkspace, setLoadingWorkspace] = useState(false);
 
   const loadShortages = useCallback(async () => {
     try {
@@ -224,6 +227,16 @@ export default function PurchasesScreen() {
   useEffect(() => { loadFacets(); }, [loadFacets]);
   useEffect(() => { loadCustomers(); }, [loadCustomers]);
   useEffect(() => { loadShortages(); }, [loadShortages]);
+  useEffect(() => {
+    if (!customerWorkspaceId) { setCustomerWorkspace(null); return; }
+    const controller = new AbortController();
+    setLoadingWorkspace(true);
+    getPurchaseCustomerWorkspace(customerWorkspaceId, controller.signal)
+      .then(setCustomerWorkspace)
+      .catch((e: any) => { if (!controller.signal.aborted) toast.error(e?.detail || "Could not load customer purchases"); })
+      .finally(() => { if (!controller.signal.aborted) setLoadingWorkspace(false); });
+    return () => controller.abort();
+  }, [customerWorkspaceId]);
   useEffect(() => {
     const t = setTimeout(() => setCommittedQ(q.trim()), 300);
     return () => clearTimeout(t);
@@ -443,7 +456,7 @@ export default function PurchasesScreen() {
                 </Pressable>
               ) : null}
               {loading ? <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading purchases…</Text></View> : null}
-              {view === "customers" ? <CustomerNavigator loading={loadingCustomers} customers={visibleCustomers} onOpen={(customerId) => router.push(`/(admin)/customers/${customerId}` as any)} /> : null}
+              {view === "customers" ? <CustomerNavigator loading={loadingCustomers} customers={visibleCustomers} onOpen={setCustomerWorkspaceId} /> : null}
               {!loading && view !== "customers" && items.length === 0 ? <View style={styles.mobileEmpty}><Feather name="package" size={28} color={colors.onSurfaceMuted} /><Text style={styles.actionTitle}>No purchases found</Text><Text style={type.bodyMuted}>Clear filters or try a different search.</Text></View> : null}
             </View>
           )}
@@ -464,6 +477,7 @@ export default function PurchasesScreen() {
         <ShortagesModal visible={showShortages} shortages={shortages} onClose={() => setShowShortages(false)} onChanged={async () => { await Promise.all([loadShortages(), loadItems(), loadFacets()]); }} />
         <SettingsModal visible={showSettings} currentSla={slaDays} onClose={() => setShowSettings(false)} onSaved={async (value) => { setSlaDays(value); setShowSettings(false); await loadItems(); }} />
         <CancelPurchaseModal item={cancelTarget} onClose={() => setCancelTarget(null)} onConfirm={cancelItem} />
+        <CustomerPurchasePanel visible={!!customerWorkspaceId} loading={loadingWorkspace} workspace={customerWorkspace} onClose={() => setCustomerWorkspaceId(null)} onMove={(item) => { setCustomerWorkspaceId(null); setRowMoveTarget(item); }} onTransfer={(item) => { setCustomerWorkspaceId(null); setTransferItem(item); }} onHistory={(item) => { setCustomerWorkspaceId(null); setHistoryItemId(item.item_id); }} />
         {selected.size > 0 ? (
           <View style={[styles.mobileBulkDock, { paddingBottom: Math.max(spacing.sm, insets.bottom + spacing.sm) }]} pointerEvents="box-none">
             <View style={styles.mobileBulkDockInner} pointerEvents="auto">
@@ -728,7 +742,7 @@ export default function PurchasesScreen() {
               <CustomerNavigator
                 loading={loadingCustomers}
                 customers={visibleCustomers}
-                onOpen={(customerId) => router.push(`/(admin)/customers/${customerId}` as any)}
+                onOpen={setCustomerWorkspaceId}
               />
             ) : (
               <DispatchWorkspace
@@ -790,6 +804,15 @@ export default function PurchasesScreen() {
         }}
       />
       <CancelPurchaseModal item={cancelTarget} onClose={() => setCancelTarget(null)} onConfirm={cancelItem} />
+      <CustomerPurchasePanel
+        visible={!!customerWorkspaceId}
+        loading={loadingWorkspace}
+        workspace={customerWorkspace}
+        onClose={() => setCustomerWorkspaceId(null)}
+        onMove={(item) => { setCustomerWorkspaceId(null); setRowMoveTarget(item); }}
+        onTransfer={(item) => { setCustomerWorkspaceId(null); setTransferItem(item); }}
+        onHistory={(item) => { setCustomerWorkspaceId(null); setHistoryItemId(item.item_id); }}
+      />
     </SafeAreaView>
   );
 }
@@ -814,7 +837,7 @@ function MobilePurchaseCard({ item, selected, compact, onSelect, onMove, onTrans
         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selected }} accessibilityLabel={`Select ${item.name}`} onPress={onSelect} style={styles.mobileSelectTarget}>
           <View style={[styles.chk, selected && styles.chkOn]}>{selected ? <Feather name="check" size={12} color={colors.onBrand} /> : null}</View>
         </Pressable>
-        <ProductImage source={item.image} style={styles.mobileCardImage} contentFit="contain" fallbackLabel={item.sku} disableSkeleton borderRadius={8} />
+        <ProductImage source={item.image} style={styles.mobileCardImage} contentFit="cover" frameInset={0} frameBackground="transparent" fallbackLabel={item.sku} disableSkeleton borderRadius={8} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.mobileCardName} numberOfLines={2}>{item.name}</Text>
           <Text style={styles.mobileCardMeta} numberOfLines={2}>{item.sku || "No SKU"} · {item.brand_name || "Unbranded"}</Text>
@@ -1069,7 +1092,9 @@ function ItemRow(props: {
           <ProductImage
             source={row.image}
             style={styles.mobileThumb}
-            contentFit="contain"
+            contentFit="cover"
+            frameInset={0}
+            frameBackground="transparent"
             disableSkeleton
             fallbackLabel={row.sku}
             borderRadius={8}
@@ -1105,7 +1130,9 @@ function ItemRow(props: {
         <ProductImage
           source={row.image}
           style={styles.thumb}
-          contentFit="contain"
+          contentFit="cover"
+          frameInset={0}
+          frameBackground="transparent"
           disableSkeleton
           fallbackLabel={row.sku}
           borderRadius={8}
@@ -1167,7 +1194,9 @@ function BlockedCard({ row, onOpenMove, onTransfer, onHistory }: {
       <ProductImage
         source={row.image}
         style={styles.blockedThumb}
-        contentFit="contain"
+        contentFit="cover"
+        frameInset={0}
+        frameBackground="transparent"
         disableSkeleton
         fallbackLabel={row.sku}
         borderRadius={8}
@@ -1215,6 +1244,59 @@ function BulkChk({ checked, onToggle }: { checked: boolean; onToggle: () => void
       {checked ? <Feather name="check" size={11} color="#fff" /> : null}
     </Pressable>
   );
+}
+
+function CustomerPurchasePanel({ visible, loading, workspace, onClose, onMove, onTransfer, onHistory }: {
+  visible: boolean; loading: boolean; workspace: PurchaseCustomerWorkspace | null; onClose: () => void;
+  onMove: (item: Item) => void; onTransfer: (item: Item) => void; onHistory: (item: Item) => void;
+}) {
+  const rupees = (value?: number) => `₹${Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+  return (
+    <Sheet open={visible} onClose={onClose} title={workspace?.customer.name || "Customer purchases"} width={560}
+      footer={<Pressable accessibilityRole="button" accessibilityLabel="Close customer purchases" onPress={onClose} style={styles.mobileSheetCancel}><Text style={styles.mobileSheetCancelText}>Close</Text></Pressable>}
+    >
+      {loading || !workspace ? (
+        <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading customer purchases…</Text></View>
+      ) : (
+        <ScrollView contentContainerStyle={{ gap: spacing.md, paddingBottom: spacing.lg }}>
+          <View style={styles.customerPanelHero}>
+            <View style={{ flex: 1, gap: 3 }}>
+              <Text style={styles.actionTitle}>{workspace.customer.company || workspace.customer.name}</Text>
+              <Text style={type.caption}>{[workspace.customer.phone, workspace.customer.email, workspace.customer.city].filter(Boolean).join(" · ") || "Customer purchase workspace"}</Text>
+            </View>
+            <View style={styles.customerPanelDue}><Text style={styles.customerPanelDueLabel}>OUTSTANDING</Text><Text style={styles.customerPanelDueValue}>{rupees(workspace.summary.outstanding_balance)}</Text></View>
+          </View>
+          <View style={styles.customerPanelMetrics}>
+            <CustomerMetric label="Open items" value={String(workspace.summary.outstanding_count)} />
+            <CustomerMetric label="Open POs" value={String(workspace.summary.open_pos)} />
+            <CustomerMetric label="Blocked" value={String(workspace.summary.blocked_count)} />
+            <CustomerMetric label="Material value" value={rupees(workspace.summary.outstanding_value)} />
+          </View>
+          <View style={styles.workspaceCard}>
+            <Text style={styles.workspaceTitle}>Active purchase items</Text>
+            {workspace.outstanding_items.length === 0 ? <Text style={type.bodyMuted}>No active purchase items.</Text> : workspace.outstanding_items.map((item, index) => (
+              <View key={item.item_id} style={[styles.customerPanelItem, index > 0 && styles.customerNavDivider]}>
+                <ProductImage source={item.image} style={styles.customerPanelImage} contentFit="cover" frameInset={0} frameBackground="transparent" fallbackLabel={item.sku} borderRadius={8} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.actionTitle} numberOfLines={1}>{item.name}</Text>
+                  <Text style={type.caption} numberOfLines={1}>{item.sku} · {item.qty} · {item.stage_label}</Text>
+                </View>
+                <View style={{ gap: 5 }}>
+                  <Pressable accessibilityLabel={`Move ${item.name}`} onPress={() => onMove(item)} style={styles.customerPanelAction}><Text style={styles.customerPanelActionText}>Move</Text></Pressable>
+                  <Pressable accessibilityLabel={`Transfer ${item.name}`} onPress={() => onTransfer(item)} style={styles.customerPanelAction}><Text style={styles.customerPanelActionText}>Transfer</Text></Pressable>
+                  <Pressable accessibilityLabel={`View movement history for ${item.name}`} onPress={() => onHistory(item)} style={styles.customerPanelAction}><Text style={styles.customerPanelActionText}>History</Text></Pressable>
+                </View>
+              </View>
+            ))}
+          </View>
+        </ScrollView>
+      )}
+    </Sheet>
+  );
+}
+
+function CustomerMetric({ label, value }: { label: string; value: string }) {
+  return <View style={styles.customerPanelMetric}><Text style={styles.customerPanelMetricValue}>{value}</Text><Text style={styles.customerPanelMetricLabel}>{label}</Text></View>;
 }
 
 function CancelPurchaseModal({ item, onClose, onConfirm }: {
@@ -1654,6 +1736,18 @@ const styles = StyleSheet.create({
   customerNavDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
   customerAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: ds.brassTint, alignItems: "center", justifyContent: "center" },
   customerAvatarText: { color: ds.brassDeep, fontWeight: "800", fontSize: 14 },
+  customerPanelHero: { flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
+  customerPanelDue: { alignItems: "flex-end" },
+  customerPanelDueLabel: { color: colors.onSurfaceMuted, fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  customerPanelDueValue: { color: colors.error, fontSize: 17, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  customerPanelMetrics: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  customerPanelMetric: { minWidth: 108, flexGrow: 1, padding: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary },
+  customerPanelMetricValue: { color: colors.onSurface, fontSize: 15, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  customerPanelMetricLabel: { marginTop: 2, color: colors.onSurfaceMuted, fontSize: 10, fontWeight: "700" },
+  customerPanelItem: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm },
+  customerPanelImage: { width: 64, height: 64, flexShrink: 0 },
+  customerPanelAction: { minWidth: 62, minHeight: 27, paddingHorizontal: 8, borderRadius: 7, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceTertiary },
+  customerPanelActionText: { color: colors.onSurface, fontSize: 10, fontWeight: "800" },
   openPill: { minWidth: 46, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, alignItems: "center", backgroundColor: colors.surfaceTertiary },
   openPillText: { color: colors.onSurfaceSecondary, fontSize: 10.5, fontWeight: "700" },
   dispatchRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 4 },
