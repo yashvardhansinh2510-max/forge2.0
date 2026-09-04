@@ -21,6 +21,7 @@ import { useBp } from "@/src/design/responsive";
 import { Sheet } from "@/src/design/components";
 import { ProductImage } from "@/src/components/ProductImage";
 import { toast } from "@/src/components/Toast";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, PRODUCT_IMAGE_ASPECT_RATIO, radius, shadow, spacing, type } from "@/src/theme/tokens";
 import { color as ds, font as dsFont } from "@/src/design/tokens";
 import {
@@ -106,6 +107,7 @@ export default function PurchasesScreen() {
   // Sanitary Bathroom's records.
   const router = useRouter();
   const { isPhone, isTablet, isDesktop, width } = useBp();
+  const { selectedFloorId } = useFloorAccess();
   const insets = useSafeAreaInsets();
 
   // View + filter state
@@ -155,11 +157,12 @@ export default function PurchasesScreen() {
   const [loadingWorkspace, setLoadingWorkspace] = useState(false);
 
   const loadShortages = useCallback(async () => {
+    if (!selectedFloorId) return;
     try {
       const r = await api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder");
       setShortages(r.items || []);
     } catch { /* soft-fail — non-critical banner */ }
-  }, []);
+  }, [selectedFloorId]);
 
   const toMovable = useCallback((r: Item): MovableItem => ({
     item_id: r.item_id, sku: r.sku, name: r.name, image: r.image, qty: r.qty,
@@ -171,6 +174,7 @@ export default function PurchasesScreen() {
   // Data loaders
   // -----------------------------------
   const loadFacets = useCallback(async ({ throwOnError = false }: { throwOnError?: boolean } = {}) => {
+    if (!selectedFloorId) return;
     try {
       const [b, s] = await Promise.all([
         api.get<{ all: number; brands: BrandFacet[] }>("/purchases/brands"),
@@ -181,16 +185,18 @@ export default function PurchasesScreen() {
       if (throwOnError) throw e;
       /* Purchases remains usable when a secondary facet cannot load. */
     }
-  }, []);
+  }, [selectedFloorId]);
 
   const loadCustomers = useCallback(async () => {
+    if (!selectedFloorId) return;
     setLoadingCustomers(true);
     try { setCustomers(await getPurchaseCustomers()); }
     catch (e: any) { toast.error(e?.detail || "Could not load customers"); }
     finally { setLoadingCustomers(false); }
-  }, []);
+  }, [selectedFloorId]);
 
   const loadItems = useCallback(async ({ throwOnError = false, append = false }: { throwOnError?: boolean; append?: boolean } = {}) => {
+    if (!selectedFloorId) return;
     if (append && nextSkipRef.current == null) return;
     const skip = append ? nextSkipRef.current || 0 : 0;
     const seq = ++requestSeq.current;
@@ -222,7 +228,7 @@ export default function PurchasesScreen() {
     } finally {
       if (seq === requestSeq.current) { setLoading(false); setLoadingMore(false); }
     }
-  }, [view, brand, committedQ, stage, isDesktop]);
+  }, [view, brand, committedQ, stage, isDesktop, selectedFloorId]);
 
   useEffect(() => { loadFacets(); }, [loadFacets]);
   useEffect(() => { loadCustomers(); }, [loadCustomers]);
@@ -236,7 +242,7 @@ export default function PurchasesScreen() {
       .catch((e: any) => { if (!controller.signal.aborted) toast.error(e?.detail || "Could not load customer purchases"); })
       .finally(() => { if (!controller.signal.aborted) setLoadingWorkspace(false); });
     return () => controller.abort();
-  }, [customerWorkspaceId]);
+  }, [customerWorkspaceId, selectedFloorId]);
   useEffect(() => {
     const t = setTimeout(() => setCommittedQ(q.trim()), 300);
     return () => clearTimeout(t);

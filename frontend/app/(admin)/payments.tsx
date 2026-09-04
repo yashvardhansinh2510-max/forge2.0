@@ -17,6 +17,7 @@ import { api } from "@/src/api/client";
 import { useBp } from "@/src/design/responsive";
 import { TILES_FLOOR_ID } from "@/src/constants/floors";
 import { toast } from "@/src/components/Toast";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import {
   Alert as UIAlert,
   Badge, Button, Card, Dropdown, EmptyState, FilterBar, FormField, HeroCard,
@@ -161,6 +162,7 @@ const HISTORY_SORTS: { value: string; label: string }[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 export default function PaymentsScreen() {
   const { isDesktop, isPhone } = useBp();
+  const { selectedFloorId } = useFloorAccess();
   const router = useRouter();
 
   const [tab, setTab] = useState<TabKey>("collections");
@@ -201,11 +203,13 @@ export default function PaymentsScreen() {
   const HISTORY_PAGE_SIZE = 50;
 
   const loadStats = useCallback(async () => {
+    if (!selectedFloorId) return;
     try { setStats(await api.get<Stats>("/payments/stats")); }
     catch (e: any) { console.warn("stats", e); }
-  }, []);
+  }, [selectedFloorId]);
 
   const loadOrders = useCallback(async (query: string = q) => {
+    if (!selectedFloorId) return;
     setLoadingList(true);
     try {
       const url = query ? `/payments/orders?q=${encodeURIComponent(query)}` : "/payments/orders";
@@ -217,9 +221,10 @@ export default function PaymentsScreen() {
     } finally {
       setLoadingList(false);
     }
-  }, [q]);
+  }, [q, selectedFloorId]);
 
   const loadDetail = useCallback(async (id: string) => {
+    if (!selectedFloorId) return;
     setLoadingDetail(true);
     try {
       const d = await api.get<OrderDetail>(`/payments/orders/${id}`);
@@ -232,17 +237,16 @@ export default function PaymentsScreen() {
     } finally {
       setLoadingDetail(false);
     }
-  }, []);
+  }, [selectedFloorId]);
 
-  // Initial mount only.
   useEffect(() => {
+    setStats(null); setOrders([]); setSelectedId(null); setDetail(null); setHistoryRows([]); setHistoryTotal(0);
     loadStats();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedFloorId, loadStats]);
   useEffect(() => {
     const t = setTimeout(() => { loadOrders(q); }, 220);
     return () => clearTimeout(t);
-  }, [q, loadOrders]);
+  }, [q, loadOrders, selectedFloorId]);
   useEffect(() => { if (selectedId) loadDetail(selectedId); }, [selectedId, loadDetail]);
 
   const customerCollections = useMemo<CustomerCollection[]>(() => {
@@ -345,7 +349,7 @@ export default function PaymentsScreen() {
   // ── Payment History: load + export ───────────────────────────────────────
   useEffect(() => {
     api.get<FloorOpt[]>("/settings/floors").then(setFloors).catch(() => setFloors([]));
-  }, []);
+  }, [selectedFloorId]);
 
   const historyParams = useCallback(() => {
     const qs = new URLSearchParams();
@@ -359,6 +363,7 @@ export default function PaymentsScreen() {
   }, [historyQ, historyUnit, historyMode, historyDateFrom, historyDateTo, historySort]);
 
   const loadHistory = useCallback(async (page: number) => {
+    if (!selectedFloorId) return;
     setHistoryLoading(true);
     setHistoryError(null);
     try {
@@ -379,7 +384,7 @@ export default function PaymentsScreen() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [historyParams]);
+  }, [historyParams, selectedFloorId]);
 
   // Reset to page 0 whenever a filter changes, then load exactly once.
   // Previously switching to the ledger triggered both of these effects at

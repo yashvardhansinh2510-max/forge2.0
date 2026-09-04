@@ -7,6 +7,7 @@ import { AdminPage } from "@/src/components/AdminPage";
 import { EmptyState, ErrorState, Skeleton } from "@/src/components/ui";
 import { api } from "@/src/api/client";
 import { useBp } from "@/src/design/responsive";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type N = {
@@ -27,10 +28,12 @@ const iconMap = {
 
 export default function Notifications() {
   const { isPhone } = useBp();
+  const { selectedFloorId } = useFloorAccess();
   const [items, setItems] = useState<N[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const requestIdRef = useRef(0);
   const load = useCallback(() => {
+    if (!selectedFloorId) return;
     const requestId = ++requestIdRef.current;
     setLoadError(false);
     setItems(null);
@@ -38,7 +41,7 @@ export default function Notifications() {
       (response) => { if (requestId === requestIdRef.current) setItems(response); },
       () => { if (requestId === requestIdRef.current) setLoadError(true); },
     );
-  }, []);
+  }, [selectedFloorId]);
 
   useEffect(() => { load(); }, [load]);
 
