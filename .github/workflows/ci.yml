@@ -67,7 +67,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Dependency vulnerability scan (npm audit)
-        run: npm audit --audit-level=high
+        run: node scripts/check-npm-audit.mjs
       - name: TypeScript check
         run: npx tsc --noEmit
       - name: Expo dependency and configuration check
