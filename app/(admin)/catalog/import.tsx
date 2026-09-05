@@ -9,7 +9,7 @@ import {
 } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
-import { Badge, Button, Card, EmptyState } from "@/src/components/ui";
+import { Badge, Button, Card, EmptyState, ErrorState } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { api, csrfHeaders, getToken } from "@/src/api/client";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
@@ -79,6 +79,7 @@ export default function CatalogImport() {
   const router = useRouter();
   const { isPhone } = useBp();
   const [jobs, setJobs] = useState<Job[] | null>(null);
+  const [jobsError, setJobsError] = useState(false);
   const [brand, setBrand] = useState<Brand>("Hansgrohe");
   const [current, setCurrent] = useState<Job | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -96,8 +97,9 @@ export default function CatalogImport() {
   }, [current?.id]);
 
   const loadJobs = useCallback(async () => {
-    const list = await api.get<Job[]>("/catalog/imports");
-    setJobs(list);
+    setJobsError(false);
+    try { setJobs(await api.get<Job[]>("/catalog/imports")); }
+    catch { setJobsError(true); }
   }, []);
   useEffect(() => { loadJobs(); }, [loadJobs]);
 
@@ -512,7 +514,7 @@ export default function CatalogImport() {
       <View>
         <Text style={type.overline}>Recent imports</Text>
         <View style={{ height: 8 }} />
-        {!jobs ? null : jobs.length === 0 ? (
+        {jobsError ? <ErrorState title="Couldn't load import history" subtitle="Check your connection and try again." onRetry={loadJobs} /> : !jobs ? null : jobs.length === 0 ? (
           <EmptyState icon="database" title="No imports yet" subtitle="Upload your first supplier catalog to see the pipeline in action." />
         ) : (
           <Card style={{ padding: 0 }}>

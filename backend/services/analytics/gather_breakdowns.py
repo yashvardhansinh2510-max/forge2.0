@@ -14,6 +14,7 @@ these unit-testable against the codebase's existing fake-db pattern.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 from services.analytics.filters import AnalyticsFilter, build_match
@@ -39,20 +40,27 @@ _ORDER_FIELDS = {
 def _ordered(f: AnalyticsFilter) -> AnalyticsFilter:
     """The filter every revenue read uses: the caller's floor and date window,
     forced to confirmed orders. Revenue is never counted from a draft."""
-    return AnalyticsFilter(
-        floor_id=f.floor_id,
-        status="ordered",
-        referrer_type=f.referrer_type,
-        referrer_id=f.referrer_id,
-        customer_id=f.customer_id,
-    )
+    return replace(f, status="ordered")
+
+
+async def _ordered_match(db, f, accessible_floors, window) -> dict:
+    ordered = _ordered(f)
+    # Validate access before any lookup, including an empty brand result.
+    match = build_match(ordered, accessible_floors, window)
+    if ordered.brand_id:
+        scope = build_match(AnalyticsFilter(floor_id=f.floor_id, status="any"), accessible_floors, (None, None))
+        products = await db.products.find(
+            {**scope, "brand_id": ordered.brand_id}, {"_id": 0, "id": 1},
+        ).to_list(None)
+        match["items.product_id"] = {"$in": [p["id"] for p in products]}
+    return match
 
 
 async def gather_confirmed_orders(db, f: AnalyticsFilter, accessible_floors, window) -> list[dict]:
     """Confirmed orders in the window, projected to the fields the Customer
     and Recent Orders surfaces need. Both fold over this same list, so they
     can never disagree about which orders are in the period."""
-    match = build_match(_ordered(f), accessible_floors, window)
+    match = await _ordered_match(db, f, accessible_floors, window)
     return await db.quotations.find(match, _ORDER_FIELDS).to_list(_MAX_ROWS)
 
 
@@ -71,7 +79,7 @@ async def gather_product_line_revenue(
     cascade and is why `/executive-analytics/dashboard`'s brand figures
     cannot be reused on a page that also shows Total Revenue.
     """
-    match = build_match(_ordered(f), accessible_floors, window)
+    match = await _ordered_match(db, f, accessible_floors, window)
     return await db.quotations.aggregate(
         line_revenue_pipeline(match, group_by="items.product_id", limit=limit),
     ).to_list(limit)
@@ -87,7 +95,7 @@ async def gather_line_labels(
     product ids no longer resolve to a catalog doc, and the line records what
     was actually sold. A plain projected find, not an aggregation.
     """
-    match = build_match(_ordered(f), accessible_floors, window)
+    match = await _ordered_match(db, f, accessible_floors, window)
     docs = await db.quotations.find(
         match, {"_id": 0, "items.product_id": 1, "items.name": 1, "items.sku": 1},
     ).to_list(_MAX_ROWS)
@@ -138,7 +146,7 @@ async def latest_confirmed_order_at(db, f: AnalyticsFilter, accessible_floors) -
     single indexed read (migration 0013 added the analytics indexes) and adds
     no pipeline.
     """
-    match = build_match(_ordered(f), accessible_floors, (None, None))
+    match = await _ordered_match(db, f, accessible_floors, (None, None))
     newest = await db.quotations.find(
         {**match, "ordered_at": {"$ne": None}}, {"_id": 0, "ordered_at": 1},
     ).sort("ordered_at", -1).limit(1).to_list(1)

@@ -115,7 +115,7 @@ def test_reads_are_dated_by_ordered_at_never_by_updated_at():
     assert dated, "no read carried a date clause"
     for query in dated:
         assert "updated_at" not in query and "created_at" not in query
-        assert query["ordered_at"] == {"$gte": WINDOW[0], "$lte": WINDOW[1]}
+        assert query["ordered_at"] == {"$gte": WINDOW[0], "$lt": WINDOW[1]}
 
 
 def test_an_explicit_floor_the_caller_cannot_see_raises_rather_than_widening():

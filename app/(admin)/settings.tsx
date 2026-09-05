@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
-import { Avatar, Card } from "@/src/components/ui";
+import { Avatar, Card, ErrorState } from "@/src/components/ui";
+import { toast } from "@/src/components/Toast";
 import { api } from "@/src/api/client";
 import { useAuth } from "@/src/state/auth";
 import { brand, colors, radius, roleLabels, spacing, type } from "@/src/theme/tokens";
@@ -23,13 +24,17 @@ export default function Settings() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [revoking, setRevoking] = useState(false);
+  const [sessionsError, setSessionsError] = useState(false);
+  const [revokingSession, setRevokingSession] = useState<string | null>(null);
 
   const loadSessions = useCallback(async () => {
+    setSessionsLoading(true);
+    setSessionsError(false);
     try {
       const list = await api.get<SessionInfo[]>("/auth/sessions");
       setSessions(list);
     } catch {
-      setSessions([]);
+      setSessionsError(true);
     } finally {
       setSessionsLoading(false);
     }
@@ -45,6 +50,7 @@ export default function Settings() {
       router.replace("/(auth)/login");
     } catch {
       setRevoking(false);
+      toast.error("Could not sign out of all devices. Try again.");
     }
   };
 
@@ -60,10 +66,13 @@ export default function Settings() {
   };
 
   const revokeOne = async (id: string) => {
+    if (revokingSession) return;
+    setRevokingSession(id);
     try {
       await api.delete(`/auth/sessions/${id}`);
       setSessions((cur) => cur.filter((s) => s.id !== id));
-    } catch { /* best-effort */ }
+    } catch { toast.error("Could not revoke this session. Try again."); }
+    finally { setRevokingSession(null); }
   };
 
   const timeAgo = (iso: string) => {
@@ -84,7 +93,6 @@ export default function Settings() {
     ] },
     { title: "Organization", items: [
       { label: "Company", value: brand.name, icon: "home" as const },
-      { label: "Plan", value: "Founding — Unlimited", icon: "star" as const },
       { label: "Time zone", value: "Asia/Kolkata (GMT+5:30)", icon: "clock" as const },
     ] },
   ];
@@ -151,6 +159,8 @@ export default function Settings() {
           <Pressable
             key={r.href}
             testID={r.testId}
+            accessibilityRole="link"
+            accessibilityLabel={r.label}
             onPress={() => router.push(r.href as any)}
             style={({ pressed }) => [
               styles.row,
@@ -187,7 +197,7 @@ export default function Settings() {
           <Text style={[type.bodyMuted, { flex: 1 }]}>Change password</Text>
           <Feather name="chevron-right" size={16} color={colors.onSurfaceMuted} />
         </Pressable>
-        {!sessionsLoading && sessions.length === 0 ? (
+        {sessionsError ? <ErrorState title="Couldn't load active sessions" subtitle="Your session list is unavailable. Retry to review signed-in devices." onRetry={loadSessions} /> : !sessionsLoading && sessions.length === 0 ? (
           <Text style={[type.bodyMuted, { padding: spacing.md, paddingTop: 0 }]}>No active sessions found.</Text>
         ) : sessions.map((s) => (
           <View
@@ -206,7 +216,7 @@ export default function Settings() {
               </Text>
             </View>
             {!s.current ? (
-              <Pressable testID={`revoke-session-${s.id}`} hitSlop={8} onPress={() => revokeOne(s.id)}>
+              <Pressable testID={`revoke-session-${s.id}`} accessibilityRole="button" accessibilityLabel={`Sign out ${s.device_label || "device"}`} accessibilityState={{ disabled: !!revokingSession, busy: revokingSession === s.id }} disabled={!!revokingSession} style={{ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }} onPress={() => revokeOne(s.id)}>
                 <Feather name="x-circle" size={16} color={colors.onSurfaceMuted} />
               </Pressable>
             ) : null}

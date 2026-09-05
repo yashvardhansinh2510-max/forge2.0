@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
 
 import { Button, PillTabs, TextField } from "@/src/components/ui";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
+import { customDateRange, inclusiveEndDay } from "./periodDates";
 import { PERIOD_PRESETS, type SelectedPeriod } from "./useSalesPeriod";
 
 export type FloorOption = { id: string; name: string };
@@ -15,19 +16,6 @@ export const FLOOR_LABEL: Record<string, string> = {
   "first-floor": "Sanitary",
   "ground-floor": "Tiles",
 };
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Turn a typed YYYY-MM-DD into the ISO instant the analytics filters expect.
- *  `end` is pushed to the end of that day so a single-day custom range is
- *  inclusive of the day the owner typed, rather than an empty zero-width
- *  window from midnight to midnight. */
-function toIso(value: string, edge: "start" | "end"): string | null {
-  if (!ISO_DATE.test(value)) return null;
-  const suffix = edge === "start" ? "T00:00:00+00:00" : "T23:59:59+00:00";
-  const parsed = new Date(`${value}${suffix}`);
-  return Number.isNaN(parsed.getTime()) ? null : `${value}${suffix}`;
-}
 
 /**
  * Floor filter, date filter, and the custom range — requirements 10 and 11.
@@ -54,22 +42,23 @@ export function SalesFilters({
   // selected, with the resolved range named underneath it.
   const [showCustom, setShowCustom] = useState(false);
   const [from, setFrom] = useState((period.dateFrom || "").slice(0, 10));
-  const [to, setTo] = useState((period.dateTo || "").slice(0, 10));
+  const [to, setTo] = useState(inclusiveEndDay(period.dateTo));
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    setFrom((period.dateFrom || "").slice(0, 10));
+    setTo(inclusiveEndDay(period.dateTo));
+  }, [period.dateFrom, period.dateTo]);
+
   const applyCustom = () => {
-    const start = toIso(from, "start");
-    const end = toIso(to, "end");
-    if (!start || !end) {
-      setError("Enter both dates as YYYY-MM-DD, e.g. 2026-07-01");
-      return;
-    }
-    if (start > end) {
-      setError("The start date must come before the end date");
+    const range = customDateRange(from.trim(), to.trim());
+    if (!range) {
+      setError("Enter valid dates as YYYY-MM-DD, with the end on or after the start.");
       return;
     }
     setError(null);
-    onPeriodChange({ preset: "custom", dateFrom: start, dateTo: end });
+    setShowCustom(false);
+    onPeriodChange({ preset: "custom", ...range });
   };
 
   return (
@@ -88,7 +77,7 @@ export function SalesFilters({
       </View>
 
       <View style={{ gap: spacing.sm }}>
-        <Text style={type.overline}>Period</Text>
+        <Text style={type.overline}>Period · UTC</Text>
         <PillTabs
           testID="sales-data-preset"
           value={showCustom || isCustom ? "custom" : period.preset}
@@ -133,7 +122,7 @@ export function SalesFilters({
               containerStyle={{ flex: 1, minWidth: 150 }}
             />
           </View>
-          {error ? <Text style={[type.caption, { color: colors.error }]}>{error}</Text> : null}
+          {error ? <Text accessibilityRole="alert" style={[type.caption, { color: colors.error }]}>{error}</Text> : null}
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             <Button label="Apply range" icon="calendar" onPress={applyCustom} />
             <Button

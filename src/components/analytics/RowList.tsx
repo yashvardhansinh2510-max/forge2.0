@@ -25,11 +25,13 @@ export function RowList({
   rows,
   total,
   testID,
+  floorId,
 }: {
   kind: "attention" | "opportunity";
   rows: ExecutiveRow[];
   total: number;
   testID?: string;
+  floorId?: string;
 }) {
   const router = useRouter();
   const isAttention = kind === "attention";
@@ -69,7 +71,7 @@ export function RowList({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`See all ${total} in Today's Priorities`}
-            onPress={() => router.push("/(admin)/sales-data/today" as never)}
+            onPress={() => router.push({ pathname: "/(admin)/sales-data/today", params: { floor_id: floorId || "all" } } as never)}
             style={{ minHeight: 44, justifyContent: "center" }}
             testID={`${testID}-see-all`}
           >

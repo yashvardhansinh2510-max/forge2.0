@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {calendarDay, customDateRange, inclusiveEndDay, rangeLabel} from '../src/components/salesData/periodDates.ts';
+assert.equal(calendarDay('2026-02-30'),null);
+assert.equal(calendarDay('2026-13-01'),null);
+assert.equal(customDateRange('2026-03-02','2026-03-01'),null);
+assert.equal(customDateRange('bad','2026-03-01'),null);
+assert.deepEqual(customDateRange('2026-08-31','2026-08-31'),{dateFrom:'2026-08-31T00:00:00+00:00',dateTo:'2026-09-01T00:00:00+00:00'});
+assert.equal(inclusiveEndDay('2026-09-01T00:00:00+00:00'),'2026-08-31');
+assert.equal(inclusiveEndDay('2026-08-31T23:59:59.999Z'),'2026-08-31');
+assert.equal(inclusiveEndDay('garbage'),'');
+assert.ok(rangeLabel('2026-08-01T00:00:00+00:00','2026-09-01T00:00:00+00:00').includes('31 Aug'));
+assert.ok(calendarDay('2028-02-29'));
+console.log('Sales period boundaries, invalid dates, leap years, legacy saved periods passed');

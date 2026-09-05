@@ -1,5 +1,5 @@
 import { useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
@@ -30,7 +30,7 @@ export default function ReferrerDetail() {
   const [error, setError] = useState<string | null>(null);
   const { isPhone } = useBp();
 
-  const { date_from, date_to } = presetToRange(preset);
+  const { date_from, date_to } = useMemo(() => presetToRange(preset), [preset]);
 
   const load = useCallback(() => {
     setError(null);

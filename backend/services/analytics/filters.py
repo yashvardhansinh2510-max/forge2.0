@@ -63,7 +63,9 @@ def build_match(
 
     start, end = window
     if start or end:
-        bounds = {k: v for k, v in (("$gte", start), ("$lte", end)) if v}
+        # Periods and chart buckets share [start, end) boundaries. Including
+        # the end counts midnight orders in both adjacent days/months.
+        bounds = {k: v for k, v in (("$gte", start), ("$lt", end)) if v}
         match[date_field_for(f.status)] = bounds
 
     if f.salesperson_id:

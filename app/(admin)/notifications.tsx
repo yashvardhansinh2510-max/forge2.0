@@ -50,7 +50,7 @@ export default function Notifications() {
   return (
     <AdminPage
       title="Notifications"
-      subtitle={unread ? `${unread} unread · alerts & approvals` : "You’re all caught up"}
+      subtitle={loadError ? "Notifications unavailable" : !items ? "Loading notifications…" : unread ? `${unread} unread · alerts & approvals` : "You’re all caught up"}
     >
       {loadError ? (
         <ErrorState

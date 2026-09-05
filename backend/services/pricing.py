@@ -14,6 +14,7 @@ Order is generated at.
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Any
 from models import QuotationLineItem, RoomDiscountCfg
 
 

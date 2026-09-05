@@ -6,7 +6,7 @@ new workspaces consume this small, paginated read model instead.
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -16,7 +16,7 @@ from auth import UserPublic, accessible_floor_ids, require_roles
 from db import db
 from routes.executive_overview_routes import _floor_error_to_http
 from services.analytics.filters import AnalyticsFilter, FloorAccessError, build_match
-from services.analytics.gather_breakdowns import gather_confirmed_orders, gather_order_collections, gather_product_brands, gather_product_line_revenue
+from services.analytics.gather_breakdowns import gather_order_collections, gather_product_brands, gather_product_line_revenue
 from services.analytics.breakdowns import brand_rows, customer_rows, order_rows, product_rows
 from services.analytics.gather_breakdowns import gather_line_labels
 from services.analytics.periods import resolve
@@ -55,6 +55,36 @@ async def _orders(f: AnalyticsFilter, floors: list[str] | None) -> tuple[list[di
 
 def _money(value: float | int | None) -> float:
     return round(float(value or 0), 2)
+
+
+async def _forecast(f: AnalyticsFilter, floors, now: datetime | None = None) -> dict:
+    """A baseline requires observed orders in three complete calendar months.
+
+    Empty months alone cannot establish history: a new installation with no
+    orders must not claim a measured zero forecast. The baseline always uses
+    the three prior complete months and preserves the report's entity scope.
+    """
+    now = now or datetime.now(timezone.utc)
+    end_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    monthly: list[float] = []
+    months_with_orders = 0
+    product_ids = await _brand_product_ids(f.brand_id)
+    for i in range(3, 0, -1):
+        month_index = end_month.month - 1 - i
+        start = end_month.replace(year=end_month.year + month_index // 12, month=month_index % 12 + 1)
+        end = start.replace(month=start.month % 12 + 1, year=start.year + (start.month == 12))
+        match = build_match(replace(f, status="ordered"), floors, (start.isoformat(), end.isoformat()), product_ids)
+        rows = await db.quotations.find(match, {"_id": 0, "grand_total": 1}).to_list(None)
+        months_with_orders += bool(rows)
+        monthly.append(sum(float(row.get("grand_total") or 0) for row in rows))
+    available = months_with_orders == 3
+    return {
+        "months_used": months_with_orders,
+        "history_state": "ok" if available else "insufficient_history",
+        "monthly_history": [_money(value) for value in monthly],
+        "forecast": _money(sum(monthly) / 3) if available else None,
+        "method": "Mean revenue over the previous three complete calendar months; requires orders in each month",
+    }
 
 
 @router.get("/sales-records")
@@ -133,14 +163,5 @@ async def workspace(
             row["last_order_at"] = max(row["last_order_at"] or "", d.get("ordered_at") or "") or None
         payload["relationships"] = sorted(({**r, "revenue": _money(r["revenue"]), "customers": len(r["customers"])} for r in grouped.values()), key=lambda r: -r["revenue"])
     if workspace == "forecasting":
-        now = datetime.now(timezone.utc); monthly: list[float] = []
-        for i in range(1, 4):
-            end_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            month_index = end_month.month - 1 - i
-            start = end_month.replace(year=end_month.year + month_index // 12, month=month_index % 12 + 1)
-            prev_end = start.replace(month=start.month % 12 + 1, year=start.year + (1 if start.month == 12 else 0))
-            match = build_match(AnalyticsFilter(floor_id=f.floor_id, status="ordered"), floors, (start.isoformat(), prev_end.isoformat()))
-            rows = await db.quotations.find(match, {"_id": 0, "grand_total": 1}).to_list(10000)
-            monthly.append(sum(float(x.get("grand_total") or 0) for x in rows))
-        payload["forecast"] = {"months_used": 3, "history_state": "ok" if len(monthly) == 3 else "insufficient_history", "monthly_history": [_money(v) for v in monthly], "forecast": _money(sum(monthly) / len(monthly)) if len(monthly) == 3 else None}
+        payload["forecast"] = await _forecast(f, floors)
     return payload

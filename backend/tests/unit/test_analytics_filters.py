@@ -21,7 +21,7 @@ def test_other_statuses_date_by_created_at():
 def test_status_and_window_are_always_applied():
     m = build_match(AnalyticsFilter(), accessible_floors=None, window=WINDOW)
     assert m["status"] == "ordered"
-    assert m["ordered_at"] == {"$gte": WINDOW[0], "$lte": WINDOW[1]}
+    assert m["ordered_at"] == {"$gte": WINDOW[0], "$lt": WINDOW[1]}
 
 
 def test_all_floors_for_an_unrestricted_user_adds_no_floor_clause():

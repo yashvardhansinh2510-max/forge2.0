@@ -137,3 +137,16 @@ def test_a_different_filter_signature_is_a_different_entry():
         await cache.cached("revenue", ["quotations"], "august", None, loader)
         assert len(calls) == 2
     asyncio.run(go())
+
+
+def test_memory_cache_evicts_old_filters_at_a_bounded_size(monkeypatch):
+    monkeypatch.setattr(cache, "_MAX_MEMORY_ENTRIES", 3)
+
+    async def loader():
+        return {"value": 1}
+
+    async def go():
+        for i in range(10):
+            await cache.cached("revenue", ["quotations"], str(i), None, loader)
+        assert len(cache._memory_entries) == 3
+    asyncio.run(go())

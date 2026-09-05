@@ -125,7 +125,9 @@ export default function ProductDetail() {
     } catch { setPipeline([]); }
   };
 
+  const [loadError, setLoadError] = useState(false);
   const loadProduct = async (productId: string) => {
+    setLoadError(false);
     try {
       const prod = await api.get<Product>(`/products/${productId}`);
       setP(prod);
@@ -145,6 +147,7 @@ export default function ProductDetail() {
       } catch { /* ignore */ }
     } catch {
       setP(null);
+      setLoadError(true);
     }
   };
 
@@ -196,6 +199,10 @@ export default function ProductDetail() {
           <IconButton icon="chevron-left" onPress={() => router.back()} size={36} tone="surface" accessibilityLabel="Back" />
           <View style={{ flex: 1 }} />
         </SafeAreaView>
+        <View style={{ padding: 24, gap: 16 }}>
+          <Text accessibilityLiveRegion="polite">{loadError ? "Couldn't load product. Check your connection and try again." : "Loading product…"}</Text>
+          {loadError ? <Button label="Retry" onPress={() => { if (id) void loadProduct(id); }} /> : null}
+        </View>
       </View>
     );
   }

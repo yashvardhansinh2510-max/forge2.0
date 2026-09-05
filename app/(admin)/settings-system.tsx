@@ -9,7 +9,7 @@ import { RefreshControl, ScrollView, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
-import { Card, Skeleton } from "@/src/components/ui";
+import { Card, ErrorState, Skeleton } from "@/src/components/ui";
 import { useBp } from "@/src/design/responsive";
 import { colors, spacing, type } from "@/src/theme/tokens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,8 +35,12 @@ export default function SettingsSystem() {
   const insets = useSafeAreaInsets();
   const [health, setHealth] = useState<Health | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
-  const load = useCallback(() => api.get<Health>("/health/system").then(setHealth).catch(() => setHealth(null)), []);
+  const load = useCallback(() => {
+    setLoadError(false);
+    return api.get<Health>("/health/system").then(setHealth).catch(() => setLoadError(true));
+  }, []);
   useEffect(() => { load(); }, [load]);
 
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
@@ -54,7 +58,7 @@ export default function SettingsSystem() {
           paddingBottom: isPhone ? 132 + insets.bottom : spacing.xxxl,
         }}
       >
-        {!health ? (
+        {loadError ? <ErrorState title="Couldn't load system health" onRetry={load} /> : !health ? (
           <Card style={{ gap: 12 }}>
             <Skeleton w="60%" />
             <Skeleton w="100%" h={80} />

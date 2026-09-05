@@ -6,11 +6,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Linking, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { toast } from "@/src/components/Toast";
+import { ErrorState } from "@/src/components/ui";
 import {
   Button, FadeIn, Hairline, IconButton, Money, Section, Skeleton, StatusWord, Txt,
 } from "@/src/design/components";
@@ -124,9 +125,13 @@ export default function Today() {
   const [recent, setRecent] = useState<RecentQ[] | null>(null);
   const [shortages, setShortages] = useState<Shortage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const requestVersion = useRef(0);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!selectedFloorId) return;
+    const version = ++requestVersion.current;
+    setLoadError(false);
     if (!isRefresh) {
       setMission(null); setQueue(null); setStats(null); setPay(null); setRecent(null); setShortages([]);
     }
@@ -143,6 +148,8 @@ export default function Today() {
       api.get<RecentQ[]>("/quotations/recent?limit=5", { cacheMs: 15_000 }),
       api.get<{ items: Shortage[] }>("/purchases/shortages?status=awaiting_reorder", { cacheMs: 15_000 }),
     ]);
+    if (version !== requestVersion.current) return;
+    setLoadError([m, fus, st, ps, rq, sh].some(result => result.status === "rejected"));
     if (m.status === "fulfilled") setMission(m.value);
     if (fus.status === "fulfilled") setQueue((Array.isArray(fus.value) ? fus.value : []).filter((f) => f.status === "open").slice(0, 6));
     else setQueue([]);
@@ -154,7 +161,7 @@ export default function Today() {
     setRefreshing(false);
   }, [selectedFloorId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { requestVersion.current += 1; }; }, [load]);
 
   const name = mission?.greeting_name || staff?.full_name?.split(" ")[0] || "there";
   const due = mission?.due_count ?? 0;
@@ -372,6 +379,7 @@ export default function Today() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={color.inkSoft} />}
     >
       <View style={{ width: "100%", maxWidth: 1080, alignSelf: "center", paddingHorizontal: gutter }}>
+        {loadError ? <ErrorState title="Today's workspace is incomplete" subtitle="Some operational data could not be loaded. Retry before relying on this summary." onRetry={() => void load()} /> : null}
         {/* ── Hero ── */}
         <FadeIn>
           <View style={{ paddingTop: isPhone ? space.x6 : space.x12, paddingBottom: isPhone ? space.x6 : space.x10, gap: 10 }}>
@@ -399,6 +407,7 @@ export default function Today() {
 
         {/* ── Body ── */}
         <FadeIn delay={60}>
+          {!loadError ? <>
           {isDesktop ? (
             <View style={{ flexDirection: "row", gap: space.x12 }}>
               <View style={{ flex: 1.9, minWidth: 0 }}>{upNext}</View>
@@ -412,6 +421,7 @@ export default function Today() {
               {business}
             </View>
           )}
+          </> : null}
         </FadeIn>
       </View>
     </ScrollView>

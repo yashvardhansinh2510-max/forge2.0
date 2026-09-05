@@ -116,6 +116,11 @@ function query(filter: SalesFilter, extra: Record<string, string | number | unde
 }
 
 export const salesDataApi = {
+  revenueTrend(filter: SalesFilter) {
+    const days = filter.dateFrom && filter.dateTo ? (Date.parse(filter.dateTo) - Date.parse(filter.dateFrom)) / 86400000 : null;
+    const granularity = ["quarter", "year"].includes(filter.preset) || (days !== null && days > 62) ? "month" : "day";
+    return api.get<{ points: { bucket: string; revenue: number }[] }>(`/analytics/revenue-trend?${query(filter, { granularity })}`);
+  },
   defaultPeriod(floorId: string) {
     const params = new URLSearchParams();
     if (floorId && floorId !== "all") params.set("floor_id", floorId);

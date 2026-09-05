@@ -18,12 +18,23 @@ from fastapi.responses import StreamingResponse
 Column = tuple[str, str]
 
 
+def spreadsheet_cell(value):
+    """Keep untrusted text from becoming an Excel/Sheets formula.
+
+    Real numbers remain numeric (including negative amounts). Only text is
+    escaped, including formula prefixes hidden behind leading whitespace.
+    """
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 def rows_to_csv(rows: list[dict], columns: list[Column]) -> bytes:
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([label for _, label in columns])
     for row in rows:
-        writer.writerow([row.get(key, "") for key, _ in columns])
+        writer.writerow([spreadsheet_cell(row.get(key, "")) for key, _ in columns])
     # UTF-8 with BOM (byte-order-mark): required for Excel to correctly detect UTF-8
     # and render non-ASCII characters (₹ rupee symbol) when user opens CSV directly.
     # Without BOM, Excel guesses a system ANSI codepage and produces mojibake.
@@ -38,7 +49,7 @@ def rows_to_xlsx(rows: list[dict], columns: list[Column], sheet_title: str = "Ex
     ws.title = sheet_title[:31]  # Excel's own sheet-name length limit
     ws.append([label for _, label in columns])
     for row in rows:
-        ws.append([row.get(key, "") for key, _ in columns])
+        ws.append([spreadsheet_cell(row.get(key, "")) for key, _ in columns])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

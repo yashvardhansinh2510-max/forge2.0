@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { salesDataApi, type DefaultPeriod } from "@/src/api/salesData";
+import { customDateRange, inclusiveEndDay, rangeLabel } from "./periodDates";
 import { storage } from "@/src/utils/storage";
 
 /** Presets the backend's `periods.resolve` genuinely understands. Offering
@@ -39,7 +40,13 @@ async function readSaved(): Promise<SelectedPeriod | null> {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed.preset === "string") return parsed as SelectedPeriod;
+    if (parsed?.preset === "custom" && typeof parsed.dateFrom === "string" && typeof parsed.dateTo === "string") {
+      const range = customDateRange(parsed.dateFrom.slice(0, 10), inclusiveEndDay(parsed.dateTo));
+      if (range) return { preset: "custom", ...range, label: rangeLabel(range.dateFrom, range.dateTo) };
+    }
+    if (PERIOD_PRESETS.some((p) => p.value === parsed?.preset)) {
+      return { preset: parsed.preset, dateFrom: null, dateTo: null, label: labelFor(parsed.preset) };
+    }
   } catch {
     // A corrupted entry must not brick the page — fall through to the
     // server-resolved default and let the next selection overwrite it.
@@ -83,9 +90,13 @@ export function useSalesPeriod(floorId: string) {
   const [origin, setOrigin] = useState<PeriodOrigin>("loading");
   const [serverDefault, setServerDefault] = useState<DefaultPeriod | null>(null);
 
+  const selectionVersion = useRef(0);
+
   useEffect(() => {
     if (!floorId) return; // floor not resolved yet — never query unscoped
     let alive = true;
+    const version = selectionVersion.current;
+    setServerDefault(null);
 
     (async () => {
       const [saved, server] = await Promise.all([
@@ -95,6 +106,7 @@ export function useSalesPeriod(floorId: string) {
       if (!alive) return;
 
       setServerDefault(server);
+      if (version !== selectionVersion.current) return;
 
       if (saved) {
         setPeriod(saved);
@@ -116,11 +128,12 @@ export function useSalesPeriod(floorId: string) {
   }, [floorId]);
 
   const choose = useCallback((next: { preset: string; dateFrom?: string | null; dateTo?: string | null }) => {
+    selectionVersion.current += 1;
     const chosen: SelectedPeriod = {
       preset: next.preset,
       dateFrom: next.dateFrom ?? null,
       dateTo: next.dateTo ?? null,
-      label: next.preset === "custom" ? "Custom range" : labelFor(next.preset),
+      label: next.preset === "custom" ? rangeLabel(next.dateFrom ?? null, next.dateTo ?? null) : labelFor(next.preset),
     };
     setPeriod(chosen);
     setOrigin("chosen");

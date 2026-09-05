@@ -18,6 +18,7 @@ import time
 from typing import Awaitable, Callable, Optional, Sequence
 
 _DEFAULT_TTL = 60
+_MAX_MEMORY_ENTRIES = 256
 
 _memory_versions: dict[str, int] = {}
 _memory_entries: dict[str, tuple[float, object]] = {}
@@ -101,5 +102,13 @@ async def cached(
     if entry and entry[0] > time.monotonic():
         return entry[1]
     value = await loader()
+    # Version invalidation changes keys without removing old entries. Bound
+    # the fallback even when filters change frequently or writes are busy.
+    now = time.monotonic()
+    for stale_key, (expires_at, _) in list(_memory_entries.items()):
+        if expires_at <= now:
+            del _memory_entries[stale_key]
+    while len(_memory_entries) >= _MAX_MEMORY_ENTRIES:
+        del _memory_entries[next(iter(_memory_entries))]
     _memory_entries[key] = (time.monotonic() + ttl, value)
     return value

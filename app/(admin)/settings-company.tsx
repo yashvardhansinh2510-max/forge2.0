@@ -4,13 +4,13 @@
 import { Feather } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Image, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
 import { toast } from "@/src/components/Toast";
-import { Button, Card, TextField } from "@/src/components/ui";
+import { Button, Card, TextField, ErrorState, LoadingState } from "@/src/components/ui";
 import { useAuth } from "@/src/state/auth";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
@@ -26,9 +26,12 @@ export default function SettingsCompany() {
   const [form, setForm] = useState<Company | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    api.get<Company>("/settings/company").then(setForm).catch(() => setForm(null));
+  const [loadError, setLoadError] = useState(false);
+  const load = useCallback(() => {
+    setLoadError(false);
+    api.get<Company>("/settings/company").then(setForm).catch(() => setLoadError(true));
   }, []);
+  useEffect(() => { load(); }, [load]);
 
   const set = (k: keyof Company) => (v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
@@ -59,7 +62,7 @@ export default function SettingsCompany() {
   };
 
   if (!form) {
-    return <AdminPage title="Company" back={() => router.back()}><View /></AdminPage>;
+    return <AdminPage title="Company" back={() => router.back()}>{loadError ? <ErrorState title="Couldn't load company settings" onRetry={load} /> : <LoadingState label="Loading settings…" />}</AdminPage>;
   }
 
   return (

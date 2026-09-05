@@ -5,13 +5,13 @@
 // Every default below matches what was previously hardcoded, so leaving
 // this screen untouched changes nothing about existing PDFs.
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Switch, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { AdminPage } from "@/src/components/AdminPage";
 import { toast } from "@/src/components/Toast";
-import { Button, Card, TextField } from "@/src/components/ui";
+import { Button, Card, TextField, ErrorState, LoadingState } from "@/src/components/ui";
 import { useAuth } from "@/src/state/auth";
 import { colors, spacing, type } from "@/src/theme/tokens";
 
@@ -28,9 +28,12 @@ export default function SettingsPDF() {
   const [form, setForm] = useState<PDFSettings | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    api.get<PDFSettings>("/settings/pdf").then(setForm).catch(() => setForm(null));
+  const [loadError, setLoadError] = useState(false);
+  const load = useCallback(() => {
+    setLoadError(false);
+    api.get<PDFSettings>("/settings/pdf").then(setForm).catch(() => setLoadError(true));
   }, []);
+  useEffect(() => { load(); }, [load]);
 
   const set = (k: keyof PDFSettings) => (v: string) => setForm((f) => (f ? { ...f, [k]: v } : f));
 
@@ -49,7 +52,7 @@ export default function SettingsPDF() {
   };
 
   if (!form) {
-    return <AdminPage title="PDF" back={() => router.back()}><View /></AdminPage>;
+    return <AdminPage title="PDF" back={() => router.back()}>{loadError ? <ErrorState title="Couldn't load pdf settings" onRetry={load} /> : <LoadingState label="Loading settings…" />}</AdminPage>;
   }
 
   return (

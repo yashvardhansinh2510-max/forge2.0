@@ -20,6 +20,7 @@ import { cancelPurchaseItem, getPurchaseCustomerWorkspace, getPurchaseCustomers,
 import { useBp } from "@/src/design/responsive";
 import { Sheet } from "@/src/design/components";
 import { ProductImage } from "@/src/components/ProductImage";
+import { ErrorState } from "@/src/components/ui";
 import { toast } from "@/src/components/Toast";
 import { useFloorAccess } from "@/src/hooks/use-floor-access";
 import { colors, PRODUCT_IMAGE_ASPECT_RATIO, radius, shadow, spacing, type } from "@/src/theme/tokens";
@@ -128,6 +129,8 @@ export default function PurchasesScreen() {
   const [stages, setStages] = useState<StageMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [itemsError, setItemsError] = useState<string | null>(null);
+  const [customersError, setCustomersError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [nextSkip, setNextSkip] = useState<number | null>(null);
   const nextSkipRef = useRef<number | null>(null);
@@ -190,8 +193,9 @@ export default function PurchasesScreen() {
   const loadCustomers = useCallback(async () => {
     if (!selectedFloorId) return;
     setLoadingCustomers(true);
+    setCustomersError(null);
     try { setCustomers(await getPurchaseCustomers()); }
-    catch (e: any) { toast.error(e?.detail || "Could not load customers"); }
+    catch (e: any) { setCustomersError(e?.detail || "Could not load customers"); }
     finally { setLoadingCustomers(false); }
   }, [selectedFloorId]);
 
@@ -203,6 +207,7 @@ export default function PurchasesScreen() {
     requestController.current?.abort();
     const controller = new AbortController();
     requestController.current = controller;
+    setItemsError(null);
     if (append) setLoadingMore(true);
     else setLoading(true);
     try {
@@ -223,8 +228,8 @@ export default function PurchasesScreen() {
       });
     } catch (e: any) {
       if (controller.signal.aborted) return;
+      setItemsError(e?.detail || "Could not load purchases");
       if (throwOnError) throw e;
-      toast.error(e?.detail || "Could not load items");
     } finally {
       if (seq === requestSeq.current) { setLoading(false); setLoadingMore(false); }
     }
@@ -382,7 +387,7 @@ export default function PurchasesScreen() {
       <SafeAreaView style={styles.mobileSafe} edges={isPhone ? [] : ["top"]}>
         <FlatList
           testID="purchases-mobile-list"
-          data={view === "customers" ? [] : items}
+          data={view === "customers" || loading || itemsError ? [] : items}
           key={`purchases-${isTablet ? "tablet" : "phone"}`}
           numColumns={isTablet ? 2 : 1}
           keyExtractor={(item) => item.item_id}
@@ -412,7 +417,7 @@ export default function PurchasesScreen() {
           ]}
           columnWrapperStyle={isTablet ? styles.tabletCardRow : undefined}
           ItemSeparatorComponent={() => <View style={{ height: isTablet ? 16 : 12 }} />}
-          onEndReached={() => { if (view !== "customers" && !loading && !loadingMore && nextSkip != null) loadItems({ append: true }); }}
+          onEndReached={() => { if (view !== "customers" && !loading && !loadingMore && !itemsError && nextSkip != null) loadItems({ append: true }); }}
           onEndReachedThreshold={0.35}
           ListHeaderComponent={(
             <View style={styles.mobileHeaderContent}>
@@ -438,7 +443,7 @@ export default function PurchasesScreen() {
               <View style={styles.mobileControlRow}>
                 <View style={styles.mobileSearch}>
                   <Feather name="search" size={18} color={colors.onSurfaceMuted} />
-                  <TextInput testID="purchases-search" value={q} onChangeText={setQ} placeholder="Product, SKU or customer" placeholderTextColor={colors.onSurfaceMuted} style={styles.mobileSearchInput} autoCorrect={false} autoCapitalize="none" returnKeyType="search" onSubmitEditing={() => setCommittedQ(q.trim())} />
+                  <TextInput accessibilityLabel="Search purchases by product, SKU or customer" testID="purchases-search" value={q} onChangeText={setQ} placeholder="Product, SKU or customer" placeholderTextColor={colors.onSurfaceMuted} style={styles.mobileSearchInput} autoCorrect={false} autoCapitalize="none" returnKeyType="search" onSubmitEditing={() => setCommittedQ(q.trim())} />
                   {q ? <Pressable accessibilityLabel="Clear search" onPress={() => setQ("")} style={styles.mobileClear}><Feather name="x" size={18} color={colors.onSurfaceMuted} /></Pressable> : null}
                 </View>
                 <Pressable accessibilityRole="button" accessibilityLabel="Filter purchases" testID="purchases-filter-button" onPress={() => setShowMobileFilters(true)} style={[styles.mobileFilterButton, activeFilterCount > 0 && styles.mobileFilterButtonActive]}>
@@ -462,8 +467,10 @@ export default function PurchasesScreen() {
                 </Pressable>
               ) : null}
               {loading ? <View style={styles.loadingCard}><ActivityIndicator /><Text style={type.caption}>Loading purchases…</Text></View> : null}
-              {view === "customers" ? <CustomerNavigator loading={loadingCustomers} customers={visibleCustomers} onOpen={setCustomerWorkspaceId} /> : null}
-              {!loading && view !== "customers" && items.length === 0 ? <View style={styles.mobileEmpty}><Feather name="package" size={28} color={colors.onSurfaceMuted} /><Text style={styles.actionTitle}>No purchases found</Text><Text style={type.bodyMuted}>Clear filters or try a different search.</Text></View> : null}
+              {view !== "customers" && itemsError ? <ErrorState title="Purchases unavailable" subtitle={itemsError} onRetry={() => void loadItems()} /> : null}
+              {view === "customers" && customersError ? <ErrorState title="Customers unavailable" subtitle={customersError} onRetry={() => void loadCustomers()} /> : null}
+              {view === "customers" && !customersError ? <CustomerNavigator loading={loadingCustomers} customers={visibleCustomers} onOpen={setCustomerWorkspaceId} /> : null}
+              {!loading && !itemsError && view !== "customers" && items.length === 0 ? <View style={styles.mobileEmpty}><Feather name="package" size={28} color={colors.onSurfaceMuted} /><Text style={styles.actionTitle}>No purchases found</Text><Text style={type.bodyMuted}>Clear filters or try a different search.</Text></View> : null}
             </View>
           )}
           ListFooterComponent={view !== "customers" && loadingMore ? <View style={styles.mobileFooter}><ActivityIndicator /><Text style={type.caption}>Loading more…</Text></View> : <View style={{ height: selected.size ? 116 : 32 }} />}
@@ -719,7 +726,11 @@ export default function PurchasesScreen() {
 
           {/* MAIN — each tab is an operational workspace, not one table with a renamed filter. */}
           <View style={{ flex: 1, minWidth: 0, gap: spacing.lg }}>
-            {view === "today" ? (
+            {view !== "customers" && itemsError ? (
+              <ErrorState title="Purchases unavailable" subtitle={itemsError} onRetry={() => void loadItems()} />
+            ) : view === "customers" && customersError ? (
+              <ErrorState title="Customers unavailable" subtitle={customersError} onRetry={() => void loadCustomers()} />
+            ) : view === "today" ? (
               <TodayWorkspace
                 loading={loading}
                 rows={items}
@@ -758,7 +769,7 @@ export default function PurchasesScreen() {
                 onOpenPo={(poId) => router.push(`/(admin)/purchase-orders/${poId}` as any)}
               />
             )}
-            {view !== "customers" && nextSkip != null ? (
+            {view !== "customers" && !itemsError && nextSkip != null ? (
               <Pressable onPress={() => loadItems({ append: true })} disabled={loadingMore} style={styles.desktopLoadMore}>
                 {loadingMore ? <ActivityIndicator size="small" /> : <Text style={styles.desktopLoadMoreText}>Load more · {items.length} of {total}</Text>}
               </Pressable>
@@ -843,7 +854,7 @@ function MobilePurchaseCard({ item, selected, compact, onSelect, onMove, onTrans
         <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selected }} accessibilityLabel={`Select ${item.name}`} onPress={onSelect} style={styles.mobileSelectTarget}>
           <View style={[styles.chk, selected && styles.chkOn]}>{selected ? <Feather name="check" size={12} color={colors.onBrand} /> : null}</View>
         </Pressable>
-        <ProductImage source={item.image} style={styles.mobileCardImage} contentFit="cover" frameInset={0} frameBackground="transparent" fallbackLabel={item.sku} disableSkeleton borderRadius={8} />
+        <ProductImage source={item.image} style={styles.mobileCardImage} contentFit="contain" fallbackLabel={item.sku} disableSkeleton borderRadius={8} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.mobileCardName} numberOfLines={2}>{item.name}</Text>
           <Text style={styles.mobileCardMeta} numberOfLines={2}>{item.sku || "No SKU"} · {item.brand_name || "Unbranded"}</Text>
