@@ -85,6 +85,8 @@ jobs:
       - name: Lint
         run: npx expo lint -- --max-warnings 0
       - name: Production web export
-        run: npx expo export --platform web
+        env:
+          BACKEND_URL: https://buildcon-backend-production.up.railway.app
+        run: npm run build
       - name: Mobile initial-JavaScript budget
         run: npm run test:mobile-budget
