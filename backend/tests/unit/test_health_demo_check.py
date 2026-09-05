@@ -17,10 +17,10 @@ class _FakeDb:
 
 @pytest.fixture(autouse=True)
 def reset_demo_check_cache():
-    server._demo_check_cache["checked_at"] = 0.0
+    server._demo_check_cache["checked_at"] = None
     server._demo_check_cache["emails"] = []
     yield
-    server._demo_check_cache["checked_at"] = 0.0
+    server._demo_check_cache["checked_at"] = None
     server._demo_check_cache["emails"] = []
 
 
@@ -53,6 +53,11 @@ def test_health_degraded_when_demo_account_still_on_default_password(monkeypatch
 def test_readiness_stays_ok_when_health_only_has_a_security_warning(monkeypatch):
     """The deployment probe must not restart a working API over this warning."""
     monkeypatch.setattr(server, "db", _FakeDb())
+
+    async def _storage_ready():
+        return None
+
+    monkeypatch.setattr("media_storage.supabase_driver.supabase_ready", _storage_ready)
 
     result = asyncio.run(server.readiness())
     assert result == {"status": "ok", "pdf_renderer_revision": server.PDF_RENDERER_REVISION}

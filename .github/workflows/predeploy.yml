@@ -14,7 +14,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Backend tests and dependency audit
         working-directory: backend
         # Unit tests stay hermetic; production secrets are used only by the
@@ -38,14 +38,16 @@ jobs:
           pip-audit -r requirements-prod.txt
           python -m pytest tests/unit -q
       - name: Frontend checks, tests, build and bundle budget
-        working-directory: frontend
+        working-directory: .
+        env:
+          BACKEND_URL: https://buildcon-backend-production.up.railway.app
         run: |
           npm ci
-          npm audit --audit-level=high
+          node scripts/check-npm-audit.mjs
           npx tsc --noEmit
           npx expo lint -- --max-warnings 0
           npm run test:quotation-media && npm run test:quotation-contract && npm run test:notebook && npm run test:mobile-ux && npm run test:api-client && npm run test:api-proxy
-          npx expo export --platform web
+          npm run build
           npm run test:mobile-budget
       - name: Live MongoDB, Supabase and required-index check (read-only)
         working-directory: backend

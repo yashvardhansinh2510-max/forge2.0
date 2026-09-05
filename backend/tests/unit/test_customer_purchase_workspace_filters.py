@@ -228,6 +228,7 @@ def _assert_workspace_matches_rows(workspace: dict, rows: list[dict]) -> None:
 def _set_common_patches(monkeypatch, rows: list[dict], calls: dict[str, int]) -> None:
     monkeypatch.setattr(tracker, "db", _Db(calls))
     monkeypatch.setattr(tracker, "_iter_items", _fake_iter_items_factory(rows, calls))
+    monkeypatch.setattr(tracker, "_hydrate_workspace_images", lambda _rows: asyncio.sleep(0))
     monkeypatch.setattr(tracker, "_load_settings", lambda: asyncio.sleep(0, result=tracker.TrackerSettings(sla_days=7)))
     monkeypatch.setattr(tracker, "timeline_for", lambda **kwargs: _fake_timeline_for_factory(calls, **kwargs))
     monkeypatch.setattr(payment_routes, "_paid_by_quotation", lambda ids: asyncio.sleep(0, result={quote_id: 2000.0 for quote_id in ids}))
@@ -391,6 +392,7 @@ def test_workspace_large_history_avoids_per_item_queries(monkeypatch):
 
     purchase_orders = _AggregatePurchaseOrders(aggregate_rows, po_rows, calls)
     monkeypatch.setattr(tracker, "db", _Db(calls, pos=po_rows, purchase_orders=purchase_orders))
+    monkeypatch.setattr(tracker, "_hydrate_workspace_images", lambda _rows: asyncio.sleep(0))
     monkeypatch.setattr(tracker, "_load_settings", lambda: asyncio.sleep(0, result=tracker.TrackerSettings(sla_days=7)))
     monkeypatch.setattr(tracker, "timeline_for", lambda **kwargs: _fake_timeline_for_factory(calls, **kwargs))
     monkeypatch.setattr(payment_routes, "_paid_by_quotation", lambda ids: asyncio.sleep(0, result={quote_id: 0.0 for quote_id in ids}))

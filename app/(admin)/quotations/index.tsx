@@ -1,0 +1,240 @@
+// BuildCon House · Quotations list
+// Premium card list: number pill · customer + meta · total · status.
+// Optimised for phone (no cramped inline rows), tablet gets a tabular feel.
+
+import { Feather } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert as RNAlert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+
+import { AdminPage } from "@/src/components/AdminPage";
+import { useBp } from "@/src/design/responsive";
+import {
+  Avatar, Chip, EmptyState, ErrorState, IconButton, SearchField, Skeleton, StatusBadge,
+} from "@/src/components/ui";
+import { ConfirmDialog } from "@/src/components/ds";
+import { api } from "@/src/api/client";
+import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
+import { color as ds } from "@/src/design/tokens";
+import { useAuth } from "@/src/state/auth";
+import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
+
+type Quotation = {
+  id: string; number: string; customer_name: string;
+  status: string; grand_total: number; created_at: string; items: any[];
+};
+
+type Filter = "all" | "draft" | "pending_approval" | "sent" | "won" | "lost";
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: "all",              label: "All" },
+  { key: "draft",            label: "Draft" },
+  { key: "pending_approval", label: "Pending" },
+  { key: "sent",             label: "Sent" },
+  { key: "won",              label: "Won" },
+  { key: "lost",             label: "Lost" },
+];
+
+export default function QuotationsList() {
+  useRequireFloorAccess("first-floor");
+  // Scoped to whichever business unit is currently active (the X-Floor-Id
+  // header set by src/api/client.ts) — NOT pinned to one floor. Pinning
+  // this screen to "first-floor" is what made Ground Floor show The
+  // Sanitary Bathroom's records.
+  const router = useRouter();
+  const { staff } = useAuth();
+  const { isPhone } = useBp();
+  const isTablet = !isPhone;
+
+  const [items, setItems] = useState<Quotation[] | null>(null);
+  const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<Filter>("all");
+  const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const deleteQuotation = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/quotations/${deleteTarget.id}`);
+      setItems((current) => current?.filter((item) => item.id !== deleteTarget.id) || []);
+      setDeleteTarget(null);
+    } catch (e: any) {
+      RNAlert.alert("Delete failed", e?.detail || "Quotation could not be deleted");
+    } finally { setDeleting(false); }
+  };
+
+  const load = useCallback(async () => {
+    setLoadError(null);
+    try {
+      setItems(await api.get<Quotation[]>("/quotations?doc_type=standard"));
+    } catch (e: any) {
+      setLoadError(e?.detail || "Could not load quotations");
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const counts = useMemo(() => {
+    const map: Record<string, number> = { all: items?.length || 0 };
+    (items || []).forEach((it) => { map[it.status] = (map[it.status] || 0) + 1; });
+    return map;
+  }, [items]);
+
+  const filtered = useMemo(() => (items || []).filter((it) => {
+    if (statusFilter !== "all" && it.status !== statusFilter) return false;
+    if (q && !`${it.number} ${it.customer_name}`.toLowerCase().includes(q.toLowerCase())) return false;
+    return true;
+  }), [items, q, statusFilter]);
+
+  const totalValue = filtered.reduce((s, it) => s + (it.grand_total || 0), 0);
+
+  return (
+    <AdminPage
+      title="Quotations"
+      subtitle={items ? `${items.length} total · ${money(totalValue)} filtered pipeline` : "Loading pipeline…"}
+      scroll={false}
+      contentStyle={{ paddingHorizontal: 0, paddingTop: 0 }}
+      right={
+        <Pressable
+          testID="new-quotation-btn"
+          onPress={() => router.push("/(admin)/quotations/new" as any)}
+          style={({ pressed }) => [styles.cta, { opacity: pressed ? 0.88 : 1 }]}
+        >
+          <Feather name="plus" size={16} color={colors.onBrand} />
+          <Text style={styles.ctaText}>New{isTablet ? " Quotation" : ""}</Text>
+        </Pressable>
+      }
+    >
+      <FlatList
+        data={items ? filtered : []}
+        keyExtractor={(quotation) => quotation.id}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={7}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.listContent}
+        ItemSeparatorComponent={() => <View style={{ height: spacing.sm }} />}
+        ListHeaderComponent={
+          <View style={styles.listHeader}>
+            <SearchField
+              testID="quotations-search"
+              value={q}
+              onChangeText={setQ}
+              placeholder="Search by number or customer…"
+              onClear={() => setQ("")}
+            />
+            <ScrollView horizontal showsHorizontalScrollIndicator={isPhone} contentContainerStyle={{ gap: 8, paddingRight: spacing.lg }}>
+              {FILTERS.map((f) => (
+                <Chip key={f.key} testID={`filter-${f.key}`} label={f.label} active={statusFilter === f.key} onPress={() => setStatusFilter(f.key)} count={counts[f.key]} />
+              ))}
+            </ScrollView>
+          </View>
+        }
+        ListEmptyComponent={
+          !items ? (
+            <View style={{ gap: spacing.sm }}>
+              {Array.from({ length: 6 }).map((_, i) => <View key={i} style={[styles.card, { gap: 10 }]}><Skeleton w={110} h={12} /><Skeleton w={220} h={16} /><Skeleton w={160} h={12} /></View>)}
+            </View>
+          ) : loadError ? (
+            <ErrorState title="Quotations unavailable" subtitle={loadError} onRetry={load} />
+          ) : (
+            <EmptyState icon="file-text" title={q || statusFilter !== "all" ? "No quotations match" : "No quotations yet"} subtitle={q || statusFilter !== "all" ? "Try clearing filters or searching a different term." : "Press New Quotation to start building."} />
+          )
+        }
+        renderItem={({ item }) => (
+          <QuotationRow q={item} onPress={() => router.push(`/(admin)/quotations/${item.id}` as any)} canDelete={!!staff && ["owner", "admin", "manager"].includes(staff.role)} onDelete={() => setDeleteTarget(item)} />
+        )}
+      />
+      <ConfirmDialog
+        visible={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={deleteQuotation}
+        title="Delete this quotation?"
+        description="Linked follow-ups and unpaid payment records will also be removed. Completed payments and purchase orders are protected."
+        confirmLabel="Delete quotation"
+        tone="danger"
+        loading={deleting}
+        testID="confirm-delete-quotation-list"
+      />
+    </AdminPage>
+  );
+}
+
+// ── Single row card ──
+function QuotationRow({ q, onPress, canDelete, onDelete }: { q: Quotation; onPress: () => void; canDelete: boolean; onDelete: () => void }) {
+  const created = new Date(q.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  return (
+    <Pressable
+      testID={`quotation-${q.id}`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.card, { transform: [{ scale: pressed ? 0.997 : 1 }], opacity: pressed ? 0.94 : 1 }]}
+    >
+      {/* Row 1: number + status */}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
+        <Text style={styles.numberText}>{q.number}</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+          <StatusBadge status={q.status} />
+          {canDelete ? <IconButton icon="trash-2" onPress={onDelete} size={32} tone="danger" accessibilityLabel="Delete quotation" testID={`delete-quotation-${q.id}`} /> : null}
+        </View>
+      </View>
+
+      {/* Row 2: customer + total */}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", gap: spacing.md, marginTop: 12 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+          <Avatar name={q.customer_name} size={32} tone="surface" />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={styles.customer}>{q.customer_name || "Unknown customer"}</Text>
+            <Text numberOfLines={1} style={type.caption}>{q.items.length} items · {created}</Text>
+          </View>
+        </View>
+        <Text style={styles.total} numberOfLines={1}>{money(q.grand_total)}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  cta: {
+    flexDirection: "row", gap: 6, alignItems: "center",
+    backgroundColor: ds.brass,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: radius.md,
+  },
+  ctaText: {
+    color: "#FFFFFF", fontSize: 13,
+    fontFamily: type.titleMd.fontFamily,
+    fontWeight: "600", letterSpacing: -0.1,
+  },
+  card: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    padding: spacing.md,
+  },
+  listContent: { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.huge, flexGrow: 1 },
+  listHeader: { gap: spacing.md, marginBottom: spacing.md },
+  numberText: {
+    fontSize: 12,
+    fontFamily: font.medium,
+    fontWeight: "500",
+    color: colors.onSurfaceSecondary,
+    letterSpacing: 0.2,
+    fontVariant: ["tabular-nums"],
+  },
+  customer: {
+    fontSize: 15,
+    fontFamily: type.titleMd.fontFamily,
+    fontWeight: "600",
+    color: colors.onSurface,
+    letterSpacing: -0.1,
+  },
+  total: {
+    fontSize: 16,
+    fontFamily: font.medium,
+    fontWeight: "500",
+    color: colors.onSurface,
+    fontVariant: ["tabular-nums"],
+    letterSpacing: -0.2,
+  },
+});

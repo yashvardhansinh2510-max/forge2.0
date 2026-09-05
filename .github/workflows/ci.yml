@@ -56,18 +56,18 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: frontend
+        working-directory: .
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: package-lock.json
       - name: Install dependencies
         run: npm ci
       - name: Dependency vulnerability scan (npm audit)
-        run: npm audit --audit-level=high
+        run: node scripts/check-npm-audit.mjs
       - name: TypeScript check
         run: npx tsc --noEmit
       - name: Expo dependency and configuration check
@@ -85,6 +85,8 @@ jobs:
       - name: Lint
         run: npx expo lint -- --max-warnings 0
       - name: Production web export
-        run: npx expo export --platform web
+        env:
+          BACKEND_URL: https://buildcon-backend-production.up.railway.app
+        run: npm run build
       - name: Mobile initial-JavaScript budget
         run: npm run test:mobile-budget
