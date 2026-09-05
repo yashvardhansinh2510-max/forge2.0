@@ -68,6 +68,24 @@ def test_tiles_pdf_renders_piece_as_the_quantity_unit():
     assert "N/A 900.00" in text
 
 
+def test_tiles_pdf_renders_box_as_the_quantity_unit_and_preserves_box_metadata():
+    text = _pdf_text({
+        "customer_name": "PDF Box Contract",
+        "items": [{
+            "qty": 2,
+            "unit_price": 1200,
+            "quantity_unit": "Box",
+            "pcs_per_box": "4",
+            "name": "Wall Tile",
+            "room": "Bath",
+        }],
+        "subtotal": 2400,
+        "grand_total": 2400,
+    })
+
+    assert "2 BOXES 4 2,400.00" in text
+
+
 def test_tiles_pdf_normalizes_legacy_lowercase_piece_unit():
     text = _pdf_text({
         "customer_name": "Legacy Piece Contract",

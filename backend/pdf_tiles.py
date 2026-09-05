@@ -186,6 +186,19 @@ def _quantity_label(quantity: float, unit: str) -> str:
     return f"{quantity:g} {singular if quantity == 1 else plural}"
 
 
+def _pcs_per_box_label(value: object, quantity_unit: str) -> str:
+    """Return a meaningful value for the PCS/BOX PDF cell.
+
+    A piece-priced product has no box conversion.  Leaving that cell empty
+    made the selected Piece option look as if it had been dropped when the
+    quotation was printed.  ``N/A`` distinguishes that deliberate absence
+    from an accidentally missing boxed-product value.
+    """
+    if quantity_unit == "Pieces":
+        return "N/A"
+    return _escape(value or "")
+
+
 def _tiles_styles() -> dict:
     """Style set shared by both Selection and Quotation — one dict of
     consistently-named keys so the shared page-1 building blocks below
@@ -537,7 +550,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
             Paragraph(_money(offer_rate) if offer_rate else "", styles["cellOffer"]),
             Paragraph(_money(rate_box) if rate_box else "", styles["cell"]),
             Paragraph(_quantity_label(qty, quantity_unit) if qty else "", styles["cellBold"]),
-            Paragraph(_escape(item.get("pcs_per_box") or ""), styles["cellBold"]),
+            Paragraph(_pcs_per_box_label(item.get("pcs_per_box"), quantity_unit), styles["cellBold"]),
             Paragraph(_money(line_total) if line_total else "", styles["cell"]),
         ])
     # Keep the grand total out of the flowing product table.  When a table
