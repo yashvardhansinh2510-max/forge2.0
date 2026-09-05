@@ -653,6 +653,8 @@ export function TextField({
         {leftIcon ? <Feather name={leftIcon} size={16} color={colors.onSurfaceMuted} style={{ marginRight: 8 }} /> : null}
         <TextInput
           {...rest}
+          accessibilityLabel={rest.accessibilityLabel || label || rest.placeholder}
+          accessibilityHint={rest.accessibilityHint || (showError ? error || undefined : helper)}
           placeholderTextColor={colors.onSurfaceSubtle}
           style={[{
             flex: 1,
@@ -677,7 +679,7 @@ export function TextField({
 // ──────────────────────────────────────────────────────────────────────────
 // SearchField — compact search input
 // ──────────────────────────────────────────────────────────────────────────
-export function SearchField(props: TextInputProps & { onClear?: () => void }) {
+export function SearchField({ onClear, ...props }: TextInputProps & { onClear?: () => void }) {
   const hasValue = typeof props.value === "string" && props.value.length > 0;
   return (
     <View style={{
@@ -690,14 +692,15 @@ export function SearchField(props: TextInputProps & { onClear?: () => void }) {
       <Feather name="search" size={15} color={colors.onSurfaceMuted} style={{ marginRight: 8 }} />
       <TextInput
         {...props}
+        accessibilityLabel={props.accessibilityLabel || props.placeholder || "Search"}
         placeholderTextColor={colors.onSurfaceMuted}
         style={[{
           flex: 1, fontSize: 14, fontFamily: type.body.fontFamily,
           color: colors.onSurface, paddingVertical: 0,
         }, props.style]}
       />
-      {hasValue && props.onClear ? (
-        <Pressable onPress={props.onClear} hitSlop={layout.hitSlop}>
+      {hasValue && onClear ? (
+        <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={onClear} hitSlop={layout.hitSlop} style={{ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }}>
           <Feather name="x" size={14} color={colors.onSurfaceMuted} />
         </Pressable>
       ) : null}

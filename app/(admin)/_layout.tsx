@@ -250,6 +250,7 @@ function useTilesNav() {
  * action switched the user's business unit out from under them. */
 function useVisibleNav() {
   const hasAccess = useModuleAccess();
+  const { staff } = useAuth();
   const { access, selectedFloorId } = useFloorAccess();
   return (items: NavItem[]) => items.filter((item) => {
     // Kitchen and Furniture are intentionally notebook-only floors. Keeping
@@ -258,6 +259,7 @@ function useVisibleNav() {
     if (selectedFloorId === KITCHEN_FLOOR_ID || selectedFloorId === FURNITURE_FLOOR_ID) {
       return item.floors?.includes(selectedFloorId) ?? false;
     }
+    if (item.roles && (!staff?.role || !item.roles.includes(staff.role))) return false;
     if (!hasAccess(item.match)) return false;
     if (!item.floors) return true;
     // While the floor is still resolving, keep the item — hiding it first and
@@ -463,7 +465,7 @@ function PhoneBar() {
   const palette = usePalette();
   const tilesNav = useTilesNav();
   const { access, selectedFloorId, loading: floorLoading } = useFloorAccess();
-  const { data: permissionMatrix, loading: permissionsLoading } = usePermissionMatrix();
+  const { loading: permissionsLoading } = usePermissionMatrix();
   const [moreOpen, setMoreOpen] = useState(false);
   const isActive = (item: NavItem) => isNavActive(item, segments);
   // The footer is part of the application shell, so it must obey the same
@@ -472,7 +474,7 @@ function PhoneBar() {
   // icons visibly change (and briefly exposed a wrong-floor destination) on
   // cold starts. A fixed, inert placeholder preserves the layout until the
   // authoritative shell state is available.
-  const shellReady = Boolean(staff && access && selectedFloorId && !floorLoading && !permissionsLoading && permissionMatrix);
+  const shellReady = Boolean(staff && access && selectedFloorId && !floorLoading && !permissionsLoading);
   if (!shellReady) return <PhoneBarSkeleton />;
 
   const visibleMore = visible(MORE_ITEMS);
@@ -532,7 +534,7 @@ function PhoneBar() {
       <Pressable
         testID={`bottom-nav-${item.match}`}
         onPress={() => router.push(item.href as any)}
-        accessibilityRole="tab"
+        accessibilityRole="link"
         accessibilityLabel={item.label}
         accessibilityState={{ selected: on }}
         style={styles.tab}
@@ -595,7 +597,7 @@ function PhoneBar() {
         <Pressable
           testID="bottom-nav-more"
           onPress={() => setMoreOpen(true)}
-          accessibilityRole="tab"
+          accessibilityRole="button"
           accessibilityLabel="More"
           accessibilityState={{ selected: moreActive }}
           style={styles.tab}

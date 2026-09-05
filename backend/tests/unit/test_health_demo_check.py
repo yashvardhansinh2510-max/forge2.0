@@ -54,6 +54,11 @@ def test_readiness_stays_ok_when_health_only_has_a_security_warning(monkeypatch)
     """The deployment probe must not restart a working API over this warning."""
     monkeypatch.setattr(server, "db", _FakeDb())
 
+    async def _storage_ready():
+        return None
+
+    monkeypatch.setattr("media_storage.supabase_driver.supabase_ready", _storage_ready)
+
     result = asyncio.run(server.readiness())
     assert result == {"status": "ok", "pdf_renderer_revision": server.PDF_RENDERER_REVISION}
 

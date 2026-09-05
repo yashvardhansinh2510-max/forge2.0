@@ -537,7 +537,7 @@ def build_tiles_quotation_pdf(quotation: dict, customer: dict, branding: dict | 
             Paragraph(_money(offer_rate) if offer_rate else "", styles["cellOffer"]),
             Paragraph(_money(rate_box) if rate_box else "", styles["cell"]),
             Paragraph(_quantity_label(qty, quantity_unit) if qty else "", styles["cellBold"]),
-            Paragraph(_escape(item.get("pcs_per_box") or ""), styles["cellBold"]),
+            Paragraph("N/A" if quantity_unit == "Pieces" else _escape(item.get("pcs_per_box") or ""), styles["cellBold"]),
             Paragraph(_money(line_total) if line_total else "", styles["cell"]),
         ])
     # Keep the grand total out of the flowing product table.  When a table

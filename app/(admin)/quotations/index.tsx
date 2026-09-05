@@ -4,19 +4,20 @@
 
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert as RNAlert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { useBp } from "@/src/design/responsive";
 import {
-  Avatar, Chip, EmptyState, IconButton, SearchField, Skeleton, StatusBadge,
+  Avatar, Chip, EmptyState, ErrorState, IconButton, SearchField, Skeleton, StatusBadge,
 } from "@/src/components/ui";
 import { ConfirmDialog } from "@/src/components/ds";
 import { api } from "@/src/api/client";
 import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { useAuth } from "@/src/state/auth";
+import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 
 type Quotation = {
   id: string; number: string; customer_name: string;
@@ -34,6 +35,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 ];
 
 export default function QuotationsList() {
+  useRequireFloorAccess("first-floor");
   // Scoped to whichever business unit is currently active (the X-Floor-Id
   // header set by src/api/client.ts) — NOT pinned to one floor. Pinning
   // this screen to "first-floor" is what made Ground Floor show The
@@ -48,6 +50,7 @@ export default function QuotationsList() {
   const [statusFilter, setStatusFilter] = useState<Filter>("all");
   const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const deleteQuotation = async () => {
     if (!deleteTarget) return;
@@ -61,9 +64,15 @@ export default function QuotationsList() {
     } finally { setDeleting(false); }
   };
 
-  useEffect(() => {
-    api.get<Quotation[]>("/quotations?doc_type=standard").then(setItems).catch(() => setItems([]));
+  const load = useCallback(async () => {
+    setLoadError(null);
+    try {
+      setItems(await api.get<Quotation[]>("/quotations?doc_type=standard"));
+    } catch (e: any) {
+      setLoadError(e?.detail || "Could not load quotations");
+    }
   }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const counts = useMemo(() => {
     const map: Record<string, number> = { all: items?.length || 0 };
@@ -126,6 +135,8 @@ export default function QuotationsList() {
             <View style={{ gap: spacing.sm }}>
               {Array.from({ length: 6 }).map((_, i) => <View key={i} style={[styles.card, { gap: 10 }]}><Skeleton w={110} h={12} /><Skeleton w={220} h={16} /><Skeleton w={160} h={12} /></View>)}
             </View>
+          ) : loadError ? (
+            <ErrorState title="Quotations unavailable" subtitle={loadError} onRetry={load} />
           ) : (
             <EmptyState icon="file-text" title={q || statusFilter !== "all" ? "No quotations match" : "No quotations yet"} subtitle={q || statusFilter !== "all" ? "Try clearing filters or searching a different term." : "Press New Quotation to start building."} />
           )

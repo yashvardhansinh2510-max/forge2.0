@@ -1098,9 +1098,9 @@ function ItemRow(props: {
           <ProductImage
             source={row.image}
             style={styles.mobileThumb}
-            contentFit="cover"
-            frameInset={0}
-            frameBackground="transparent"
+            // Stock thumbnails must show the complete product. Many supplier
+            // photos are portrait, so cover-cropping makes them unidentifiable.
+            contentFit="contain"
             disableSkeleton
             fallbackLabel={row.sku}
             borderRadius={8}
@@ -1116,10 +1116,10 @@ function ItemRow(props: {
             Qty {row.qty} · {row.brand_name} · {row.age_days}d{row.supplier_name ? ` · via ${row.supplier_name}` : ""}
           </Text>
           <View style={{ flexDirection: "row", gap: 6 }}>
-            <Pressable onPress={onHistory} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="clock" size={14} color={colors.onSurface} /></Pressable>
-            <Pressable onPress={onOpenMove} style={styles.mobileMoveBtn} hitSlop={6}><Text style={styles.moveBtnText}>Move</Text></Pressable>
-            <Pressable onPress={onTransfer} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="repeat" size={14} color={colors.onSurface} /></Pressable>
-            {row.stage !== "delivered" ? <Pressable accessibilityLabel={`Remove ${row.name}`} onPress={onCancel} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="trash-2" size={14} color={colors.error} /></Pressable> : null}
+            <Pressable accessibilityRole="button" accessibilityLabel={`View movement history for ${row.name}`} onPress={onHistory} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="clock" size={14} color={colors.onSurface} /></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Move ${row.name} to another stage`} onPress={onOpenMove} style={styles.mobileMoveBtn} hitSlop={6}><Text style={styles.moveBtnText}>Move</Text></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Transfer ${row.name} to another customer`} onPress={onTransfer} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="repeat" size={14} color={colors.onSurface} /></Pressable>
+            {row.stage !== "delivered" ? <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${row.name}`} onPress={onCancel} style={styles.mobileTransferBtn} hitSlop={6}><Feather name="trash-2" size={14} color={colors.error} /></Pressable> : null}
           </View>
         </View>
       </View>
@@ -1136,9 +1136,9 @@ function ItemRow(props: {
         <ProductImage
           source={row.image}
           style={styles.thumb}
-          contentFit="cover"
-          frameInset={0}
-          frameBackground="transparent"
+          // Keep portrait and landscape catalog media fully visible in the
+          // fixed stock-table frame.
+          contentFit="contain"
           disableSkeleton
           fallbackLabel={row.sku}
           borderRadius={8}
@@ -1176,17 +1176,17 @@ function ItemRow(props: {
       ) : null}
       {/* Action */}
       <View style={{ width: 118, alignItems: "flex-end", flexDirection: "row", justifyContent: "flex-end", gap: 6 }}>
-        <Pressable onPress={onHistory} testID={`row-history-${row.item_id}`} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`View movement history for ${row.name}`} onPress={onHistory} testID={`row-history-${row.item_id}`} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}>
           <Feather name="clock" size={12} color={colors.onSurface} />
         </Pressable>
-        <Pressable onPress={onOpenMove} testID={`row-move-${row.item_id}`} style={({ pressed }) => [styles.moveBtn, pressed && { opacity: 0.85 }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Move ${row.name} to another stage`} onPress={onOpenMove} testID={`row-move-${row.item_id}`} style={({ pressed }) => [styles.moveBtn, pressed && { opacity: 0.85 }]}>
           <Text style={styles.moveBtnText}>Move</Text>
           <Feather name="chevron-down" size={11} color={colors.onSurfaceMuted} />
         </Pressable>
-        <Pressable onPress={onTransfer} testID={`row-transfer-${row.item_id}`} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Transfer ${row.name} to another customer`} onPress={onTransfer} testID={`row-transfer-${row.item_id}`} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}>
           <Feather name="repeat" size={12} color={colors.onSurface} />
         </Pressable>
-        {row.stage !== "delivered" ? <Pressable accessibilityLabel={`Remove ${row.name}`} testID={`row-cancel-${row.item_id}`} onPress={onCancel} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}><Feather name="trash-2" size={12} color={colors.error} /></Pressable> : null}
+        {row.stage !== "delivered" ? <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${row.name}`} testID={`row-cancel-${row.item_id}`} onPress={onCancel} hitSlop={6} style={({ pressed }) => [styles.transferBtn, pressed && { opacity: 0.85 }]}><Feather name="trash-2" size={12} color={colors.error} /></Pressable> : null}
       </View>
     </View>
   );

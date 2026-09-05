@@ -120,6 +120,8 @@ export function DispatchRecordSheet({
   const [receivedBy, setReceivedBy] = useState("");
 
   const load = useCallback(async () => {
+    setError(null);
+    setDetail(null);
     try {
       const next = await tileOrdersApi.dispatchDetail(dispatchId);
       setDetail(next);
@@ -134,24 +136,29 @@ export function DispatchRecordSheet({
 
   useEffect(() => { load(); }, [load]);
 
-  const run = async (fn: () => Promise<unknown>, success: string) => {
+  const run = async (fn: () => Promise<unknown>, success: string): Promise<boolean> => {
     setBusy(true);
     try {
       await fn();
       toast.success(success);
       await load();
       onChanged?.();
+      return true;
     } catch (e: any) {
       toast.error(e?.detail?.message || e?.detail || "Action failed");
+      return false;
     } finally {
       setBusy(false);
     }
   };
 
-  const saveTransport = () => run(
+  const saveTransport = async () => {
+    const saved = await run(
     () => tileOrdersApi.updateDispatchTransport(dispatchId, form),
     "Dispatch updated",
-  ).then(() => setEditing(false));
+    );
+    if (saved) setEditing(false);
+  };
 
   const dispatch = detail?.dispatch;
 
