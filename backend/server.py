@@ -256,11 +256,12 @@ async def enforce_access_profile(request: Request, call_next):
 # 10 minutes still lets the "degraded" status self-clear soon after a real
 # credential rotation, without needing a restart.
 _DEMO_CHECK_TTL_SECONDS = 600.0
-_demo_check_cache: dict[str, Any] = {"checked_at": 0.0, "emails": []}
+_demo_check_cache: dict[str, Any] = {"checked_at": None, "emails": []}
 
 
 async def _demo_accounts_detected() -> list[str]:
-    if monotonic() - _demo_check_cache["checked_at"] > _DEMO_CHECK_TTL_SECONDS:
+    checked_at = _demo_check_cache["checked_at"]
+    if checked_at is None or monotonic() - checked_at > _DEMO_CHECK_TTL_SECONDS:
         try:
             _demo_check_cache["emails"] = await _check_demo_accounts(db)
         except Exception as e:  # noqa: BLE001 — health checks must never crash on this

@@ -17,10 +17,10 @@ class _FakeDb:
 
 @pytest.fixture(autouse=True)
 def reset_demo_check_cache():
-    server._demo_check_cache["checked_at"] = 0.0
+    server._demo_check_cache["checked_at"] = None
     server._demo_check_cache["emails"] = []
     yield
-    server._demo_check_cache["checked_at"] = 0.0
+    server._demo_check_cache["checked_at"] = None
     server._demo_check_cache["emails"] = []
 
 
