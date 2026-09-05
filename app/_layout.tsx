@@ -29,7 +29,7 @@ SplashScreen.preventAutoHideAsync();
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { loading, kind, staff, customer } = useAuth();
-  const segments = useSegments();
+  const segments = useSegments() as string[];
   const router = useRouter();
   const navigationState = useRootNavigationState();
   const isNavigationReady = navigationState?.key !== undefined;
