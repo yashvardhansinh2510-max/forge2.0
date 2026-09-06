@@ -6,11 +6,15 @@ replaced by the full Sales Command Center module at routes/followup_routes.py.""
 from fastapi import APIRouter, Depends, HTTPException
 
 import os
+from re import fullmatch
+from urllib.parse import urlsplit
 
+from access_profiles import profile_allows_request
 from auth import accessible_floor_ids, floor_for_write, floor_query, floor_scope_ids, get_current_user, hash_password, invalidate_principal_cache, normalize_staff_access, require_min_role, revoke_all_sessions
 from db import db
 from models import FloorCreatePayload, FloorPublic, TeamCreatePayload, TeamUpdatePayload, UserPublic, now_iso
 from services.activity_log import log_event
+from services.access_grants import grants_allow, grants_for_user, resource_for_api_path
 from services.download_tokens import create_download_token
 from services.invite_service import generate_temp_password, get_invite_service, temp_password_expiry_iso
 from settings import settings
@@ -25,6 +29,32 @@ _system_health_cache: tuple[float, dict] | None = None
 
 class DownloadTokenRequest(BaseModel):
     target: str = Field(min_length=6, max_length=2048)
+
+
+# Browser navigations cannot carry an Authorization header, so an opaque `dl`
+# token is deliberately accepted by the destination route. Keep its issuance
+# narrow: each pattern is a GET-only, file-producing endpoint used by the app.
+# Do not broaden this to arbitrary API paths — that would bypass the normal
+# profile/custom-grant middleware which reads the Authorization header.
+_DOWNLOAD_TARGET_PATTERNS = (
+    r"/api/purchases/export\.xlsx",
+    r"/api/payments/history/export",
+    r"/api/followups/export",
+    r"/api/tile-orders/history/export",
+    r"/api/tile-orders/chalans/[^/]+/pdf",
+)
+
+
+def _download_target_path(target: str) -> str:
+    """Validate a relative, GET-only browser-download target and return its path."""
+    parsed = urlsplit(target)
+    if (
+        parsed.scheme or parsed.netloc or parsed.fragment
+        or any(pair.split("=", 1)[0].lower() == "dl" for pair in parsed.query.split("&") if pair)
+        or not any(fullmatch(pattern, parsed.path) for pattern in _DOWNLOAD_TARGET_PATTERNS)
+    ):
+        raise HTTPException(status_code=400, detail="Download target is not permitted")
+    return parsed.path
 
 # Settings > System > Version. Bump manually alongside meaningful releases —
 # there's no build pipeline yet to derive this automatically.
@@ -62,9 +92,18 @@ async def mint_download_token(body: DownloadTokenRequest, user: UserPublic = Dep
     `floor_query()` unrestricted for that download — the exact leak
     described in services/download_tokens.py. `floor_for_write` always
     resolves to a concrete floor."""
-    if not body.target.startswith("/api/") or "dl=" in body.target:
-        raise HTTPException(status_code=400, detail="Download target must be an API path without a token")
-    token = await create_download_token(user.id, user.session_id, floor_for_write(user), body.target)
+    target_path = _download_target_path(body.target)
+    if not profile_allows_request(user.access_profile, "GET", target_path):
+        raise HTTPException(status_code=403, detail="This account is not permitted to download this file")
+    floor_id = floor_for_write(user)
+    if user.custom_access:
+        resource = resource_for_api_path(target_path)
+        grants = await grants_for_user(db, user.id)
+        if not resource or not grants_allow(
+            grants, user_id=user.id, resource=resource, action="export", floor_id=floor_id,
+        ):
+            raise HTTPException(status_code=403, detail="This account is not permitted to download this file")
+    token = await create_download_token(user.id, user.session_id, floor_id, body.target)
     return {"token": token, "expires_in": 60}
 
 

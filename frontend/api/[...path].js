@@ -75,6 +75,7 @@ export const config = { api: { bodyParser: false } };
 export function createHandler({ backendUrl = process.env.BACKEND_URL, fetchImpl = fetch, timeoutMs = UPSTREAM_TIMEOUT_MS } = {}) {
   return async function handler(req, res) {
     writeSecurityHeaders(res);
+    res.setHeader('Cache-Control', 'no-store');
     let backend;
     try { backend = validateBackendUrl(backendUrl); }
     catch (error) {
@@ -91,7 +92,7 @@ export function createHandler({ backendUrl = process.env.BACKEND_URL, fetchImpl 
     const origin = req.headers.origin;
     const host = req.headers['x-forwarded-host'] || req.headers.host;
     const expectedOrigin = host ? `https://${host}` : undefined;
-    if (unsafe && session && (origin !== expectedOrigin || req.headers['x-csrf-token'] !== cookie(req, 'forge_csrf'))) {
+    if (unsafe && session && (!cookie(req, 'forge_csrf') || origin !== expectedOrigin || req.headers['x-csrf-token'] !== cookie(req, 'forge_csrf'))) {
       return res.status(403).json({ detail: 'CSRF validation failed' });
     }
 
@@ -111,7 +112,10 @@ export function createHandler({ backendUrl = process.env.BACKEND_URL, fetchImpl 
     Object.entries(req.headers).forEach(([key, value]) => {
       if (!['cookie', 'host', 'connection', 'content-length'].includes(key) && value) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
     });
-    if (session && !headers.has('authorization')) headers.set('authorization', `Bearer ${decodeURIComponent(session)}`);
+    if (session && !headers.has('authorization')) {
+      try { headers.set('authorization', `Bearer ${decodeURIComponent(session)}`); }
+      catch { return res.status(401).json({ detail: 'Invalid session. Sign in again.' }); }
+    }
     headers.set('x-forwarded-proto', 'https');
     if (host) headers.set('x-forwarded-host', host);
 

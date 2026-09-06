@@ -23,6 +23,7 @@ function NotesAndDiscount({ b }: { b: ReturnType<typeof useBuilder> }) {
       <View style={styles.notes}>
         <Feather name="edit-3" size={13} color={colors.onSurfaceMuted} />
         <TextInput
+          accessibilityLabel="Customer note printed on quotation PDF"
           testID="quote-notes-input"
           value={b.s.notes}
           onChangeText={b.setNotes}
@@ -35,6 +36,8 @@ function NotesAndDiscount({ b }: { b: ReturnType<typeof useBuilder> }) {
 
       <Pressable
         onPress={() => b.setDiscountSheet({ kind: "project" })}
+        accessibilityRole="button"
+        accessibilityLabel="Edit quotation discounts"
         testID="open-discount-sheet"
         style={styles.discBar}
       >
@@ -73,7 +76,7 @@ export function BuilderFooter({ compact = false }: { compact?: boolean }) {
         ) : null}
 
         <View style={[styles.phoneBar, { paddingBottom: Math.max(spacing.md, insets.bottom + spacing.sm) }]}>
-          <Pressable testID="mobile-footer-toggle" onPress={() => setExpanded((v) => !v)} style={styles.phoneSummary}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Quotation totals, notes and discounts" accessibilityState={{ expanded }} testID="mobile-footer-toggle" onPress={() => setExpanded((v) => !v)} style={styles.phoneSummary}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
               <Text style={type.caption} numberOfLines={1}>{b.s.lines.length} items · {b.saveLabel}</Text>
               <Feather name={expanded ? "chevron-down" : "chevron-up"} size={13} color={colors.onSurfaceMuted} />
@@ -81,11 +84,14 @@ export function BuilderFooter({ compact = false }: { compact?: boolean }) {
             <Text style={styles.phoneTotal} numberOfLines={1}>{money(b.totals.grand)}</Text>
           </Pressable>
           <View style={styles.phoneActions}>
-            <Pressable testID="mobile-add-first" onPress={() => b.setPickerSheetOpen(true)} style={styles.secondary}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Add products to quotation" testID="mobile-add-first" onPress={() => b.setPickerSheetOpen(true)} style={styles.secondary}>
               <Feather name="plus" size={16} color={colors.onSurface} />
               <Text style={styles.secondaryText}>Add</Text>
             </Pressable>
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Finish and review quotation"
+              accessibilityState={{ disabled: !canFinish }}
               testID="mobile-finalize"
               onPress={() => { if (canFinish) b.finalize(); }}
               disabled={!canFinish}
@@ -109,6 +115,9 @@ export function BuilderFooter({ compact = false }: { compact?: boolean }) {
       </View>
 
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Finish and review quotation"
+        accessibilityState={{ disabled: !canFinish }}
         testID="finish-quotation-btn"
         onPress={b.finalize}
         disabled={!canFinish}

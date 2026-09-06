@@ -25,6 +25,57 @@ def test_gather_referrer_raw_filters_by_type_when_given():
     assert typed
 
 
+def test_gather_referrer_raw_includes_a_new_directory_person_with_zero_metrics():
+    db = _FakeDb(
+        quotations=[], payments=[],
+        referrers=[{
+            "id": "r-new", "name": "Studio Verve", "type": "interior_designer",
+            "floor_id": "ground-floor",
+        }],
+    )
+
+    rows = asyncio.run(gather_referrals.gather_referrer_raw(
+        db, AnalyticsFilter(floor_id="all"), ["ground-floor"], WINDOW, "interior_designer",
+    ))
+
+    assert rows == [{
+        "referrer_id": "r-new", "name": "Studio Verve", "type": "interior_designer",
+        "customers_referred": 0, "quotations_total": 0, "quotations_approved": 0,
+        "quotations_confirmed": 0, "revenue": 0.0, "pending_count": 0,
+        "pending_value": 0.0, "pending_payments": 0.0, "first_referral_at": None,
+        "last_referral_at": None, "repeat_customers": 0,
+    }]
+
+
+def test_gather_referrer_profile_directory_lookup_is_floor_scoped():
+    class _FilteringCursor:
+        def __init__(self, docs): self.docs = docs
+        async def to_list(self, _limit): return self.docs
+
+    class _FilteringReferrerCollection:
+        def __init__(self, docs): self.docs, self.queries = docs, []
+        def find(self, query=None, _projection=None):
+            self.queries.append(query or {})
+            def matches(doc):
+                for key, value in (query or {}).items():
+                    if isinstance(value, dict) and "$in" in value:
+                        if doc.get(key) not in value["$in"]: return False
+                    elif doc.get(key) != value: return False
+                return True
+            return _FilteringCursor([d for d in self.docs if matches(d)])
+
+    db = _FakeDb(referrers=[], quotations=[])
+    db.referrers = _FilteringReferrerCollection([{
+        "id": "r-hidden", "name": "Other Floor Studio", "type": "architect", "floor_id": "first-floor",
+    }])
+    referrer, *_ = asyncio.run(gather_referrals.gather_referrer_profile_data(
+        db, AnalyticsFilter(floor_id="all"), ["ground-floor"], "r-hidden", "month",
+    ))
+
+    assert referrer is None
+    assert db.referrers.queries == [{"floor_id": {"$in": ["ground-floor"]}, "id": "r-hidden"}]
+
+
 def test_gather_referrer_profile_data_returns_none_referrer_when_not_found():
     db = _FakeDb(referrers=[], quotations=[])
     referrer, trend, brands, products, floors = asyncio.run(

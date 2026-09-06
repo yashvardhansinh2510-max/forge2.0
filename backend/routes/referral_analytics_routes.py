@@ -134,19 +134,8 @@ async def referrers(
 # ---------------------------------------------------------------------------
 
 async def _referrer_profile_dict(f: AnalyticsFilter, floors, referrer_id: str, granularity: str, period: Period) -> dict:
-    """Assembles one referrer's profile, or raises the 404 that both the
-    "no such Referrer doc" and the "Referrer exists but has zero quotations"
-    cases resolve to.
-
-    A referrer with zero quotations ever attributed to them resolves fine
-    against db.referrers (gather_referrer_profile_data would happily return
-    a doc with empty trend/preference/floor rows), but `gather_referrer_raw`
-    filtered to that one id then returns an empty list — there is no summary
-    row to shape, and indexing [0] into that empty list would be a 500, not
-    a 404. Rather than fabricate a zero-valued summary around a referrer
-    that has never actually generated a rupee of tracked business, this
-    treats "no aggregation data" the same as "no doc": a clean 404.
-    """
+    """Assemble an authorized referrer's profile, including a zero profile
+    for a newly added directory member with no quotations yet."""
     referrer_doc, monthly_trend, brand_rows, product_rows, floor_rows = await gather_referrer_profile_data(
         db, f, floors, referrer_id, granularity,
     )
@@ -155,8 +144,6 @@ async def _referrer_profile_dict(f: AnalyticsFilter, floors, referrer_id: str, g
 
     window = (period.start, period.end)
     raw = await gather_referrer_raw(db, replace(f, referrer_id=referrer_id), floors, window, None)
-    if not raw:
-        raise HTTPException(status_code=404, detail="Referrer not found")
 
     now = datetime.now(timezone.utc)
     summary = referrer_summary_rows(raw, now, THRESHOLDS)[0]

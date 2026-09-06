@@ -3,20 +3,21 @@
 // Optimised for phone (no cramped inline rows), tablet gets a tabular feel.
 
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Alert as RNAlert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
 import { useBp } from "@/src/design/responsive";
 import {
-  Avatar, Chip, EmptyState, IconButton, SearchField, Skeleton, StatusBadge,
+  Avatar, Chip, EmptyState, ErrorState, IconButton, SearchField, Skeleton, StatusBadge,
 } from "@/src/components/ui";
 import { ConfirmDialog } from "@/src/components/ds";
 import { api } from "@/src/api/client";
 import { colors, font, money, radius, spacing, type } from "@/src/theme/tokens";
 import { color as ds } from "@/src/design/tokens";
 import { useAuth } from "@/src/state/auth";
+import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 
 type Quotation = {
   id: string; number: string; customer_name: string;
@@ -34,10 +35,7 @@ const FILTERS: { key: Filter; label: string }[] = [
 ];
 
 export default function QuotationsList() {
-  // Scoped to whichever business unit is currently active (the X-Floor-Id
-  // header set by src/api/client.ts) — NOT pinned to one floor. Pinning
-  // this screen to "first-floor" is what made Ground Floor show The
-  // Sanitary Bathroom's records.
+  useRequireFloorAccess("first-floor");
   const router = useRouter();
   const { staff } = useAuth();
   const { isPhone } = useBp();
@@ -48,6 +46,8 @@ export default function QuotationsList() {
   const [statusFilter, setStatusFilter] = useState<Filter>("all");
   const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const requestId = useRef(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const deleteQuotation = async () => {
     if (!deleteTarget) return;
@@ -61,9 +61,20 @@ export default function QuotationsList() {
     } finally { setDeleting(false); }
   };
 
-  useEffect(() => {
-    api.get<Quotation[]>("/quotations?doc_type=standard").then(setItems).catch(() => setItems([]));
+  const load = useCallback(async () => {
+    const currentRequest = ++requestId.current;
+    setLoadError(null);
+    try {
+      const nextItems = await api.get<Quotation[]>("/quotations?doc_type=standard");
+      if (currentRequest === requestId.current) setItems(nextItems);
+    } catch (e: any) {
+      if (currentRequest === requestId.current) setLoadError(e?.detail || "Could not load quotations");
+    }
   }, []);
+  useFocusEffect(useCallback(() => {
+    void load();
+    return () => { requestId.current += 1; };
+  }, [load]));
 
   const counts = useMemo(() => {
     const map: Record<string, number> = { all: items?.length || 0 };
@@ -82,11 +93,13 @@ export default function QuotationsList() {
   return (
     <AdminPage
       title="Quotations"
-      subtitle={items ? `${items.length} total · ${money(totalValue)} filtered pipeline` : "Loading pipeline…"}
+      subtitle={loadError ? "Pipeline unavailable" : items ? `${items.length} total · ${money(totalValue)} filtered pipeline` : "Loading pipeline…"}
       scroll={false}
       contentStyle={{ paddingHorizontal: 0, paddingTop: 0 }}
       right={
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Create new quotation"
           testID="new-quotation-btn"
           onPress={() => router.push("/(admin)/quotations/new" as any)}
           style={({ pressed }) => [styles.cta, { opacity: pressed ? 0.88 : 1 }]}
@@ -97,7 +110,7 @@ export default function QuotationsList() {
       }
     >
       <FlatList
-        data={items ? filtered : []}
+        data={loadError ? [] : items ? filtered : []}
         keyExtractor={(quotation) => quotation.id}
         initialNumToRender={10}
         maxToRenderPerBatch={10}
@@ -122,7 +135,9 @@ export default function QuotationsList() {
           </View>
         }
         ListEmptyComponent={
-          !items ? (
+          loadError ? (
+            <ErrorState title="Quotations unavailable" subtitle={loadError} onRetry={load} />
+          ) : !items ? (
             <View style={{ gap: spacing.sm }}>
               {Array.from({ length: 6 }).map((_, i) => <View key={i} style={[styles.card, { gap: 10 }]}><Skeleton w={110} h={12} /><Skeleton w={220} h={16} /><Skeleton w={160} h={12} /></View>)}
             </View>
@@ -154,13 +169,15 @@ function QuotationRow({ q, onPress, canDelete, onDelete }: { q: Quotation; onPre
   const created = new Date(q.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open quotation ${q.number} for ${q.customer_name || "unnamed customer"}`}
       testID={`quotation-${q.id}`}
       onPress={onPress}
       style={({ pressed }) => [styles.card, { transform: [{ scale: pressed ? 0.997 : 1 }], opacity: pressed ? 0.94 : 1 }]}
     >
       {/* Row 1: number + status */}
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.sm }}>
-        <Text style={styles.numberText}>{q.number}</Text>
+        <Text style={[styles.numberText, { flex: 1 }]} numberOfLines={1}>{q.number}</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
           <StatusBadge status={q.status} />
           {canDelete ? <IconButton icon="trash-2" onPress={onDelete} size={32} tone="danger" accessibilityLabel="Delete quotation" testID={`delete-quotation-${q.id}`} /> : null}

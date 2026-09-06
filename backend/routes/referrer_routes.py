@@ -51,10 +51,10 @@ async def create_referrer(
         if doc.get("normalized_name") == normalized_name or doc.get("name", "").strip().casefold() == normalized_name:
             return Referrer(**doc)
 
-    values = body.dict()
+    values = body.model_dump()
     values["name"] = body.name.strip()
     referrer = Referrer(**values, normalized_name=normalized_name, floor_id=floor_id, created_by=user.id)
-    await db.referrers.insert_one(referrer.dict())
+    await db.referrers.insert_one(referrer.model_dump())
     return referrer
 
 
@@ -65,7 +65,10 @@ async def archive_referrer(
     user: UserPublic = Depends(require_min_role("sales")),
 ):
     """Archive instead of deleting a directory entry with historical quotes."""
-    await get_floor_scoped_or_404(db.referrers, referrer_id, user, not_found="Referrer not found", projection={"_id": 0})
-    await db.referrers.update_one({"id": referrer_id}, {"$set": {"active": active}})
-    doc = await db.referrers.find_one({"id": referrer_id}, {"_id": 0})
+    referrer = await get_floor_scoped_or_404(
+        db.referrers, referrer_id, user, not_found="Referrer not found", projection={"_id": 0},
+    )
+    selector = {"id": referrer_id, "floor_id": referrer["floor_id"]}
+    await db.referrers.update_one(selector, {"$set": {"active": active}})
+    doc = await db.referrers.find_one(selector, {"_id": 0})
     return Referrer(**doc)

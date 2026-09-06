@@ -35,6 +35,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
+    if (busy) return;
     if (!email.trim() || !password) { setError("Enter your email and password."); return; }
     Keyboard.dismiss();
     setBusy(true); setError(null);
@@ -103,6 +104,8 @@ export default function Login() {
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", marginTop: space.x1 }}>
         <Pressable
           testID="toggle-portal"
+          accessibilityRole="button"
+          disabled={busy}
           onPress={() => { setMode((m) => (m === "staff" ? "customer" : "staff")); setError(null); setEmail(""); setPassword(""); }}
           hitSlop={8}
         >

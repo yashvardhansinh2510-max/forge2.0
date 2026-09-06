@@ -10,7 +10,7 @@
 // Confirm calls the exact same backend actions the Customer workspace
 // uses (dispatch-from-released / dispatch-from-godown), so a dispatch
 // raised here is identical in every way — Chalan, Register row, timeline.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import {
@@ -18,7 +18,7 @@ import {
   type CustomerOrderBrandGroup, type CustomerOrderCard, type CustomerOrderDetail,
 } from "@/src/api/tileOrders";
 import { toast } from "@/src/components/Toast";
-import { Sheet } from "@/src/components/ui";
+import { Button, ErrorState, SearchField, Sheet } from "@/src/components/ui";
 import { colors, radius, spacing, type } from "@/src/theme/tokens";
 
 type Source = "released" | "godown";
@@ -67,20 +67,53 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
   const [transport, setTransport] = useState({ vehicle_number: "", driver_name: "", receiver_name: "", reference_number: "", labor_cost: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [committedSearch, setCommittedSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const ordersRequest = useRef(0);
+  const orderSelectionBusy = useRef(false);
+  const submitBusy = useRef(false);
 
   useEffect(() => {
-    tileOrdersApi.listCustomerOrders({ page_size: 100 })
-      .then((r) => setOrders(r.orders))
-      .catch((e: any) => setError(e?.detail || "Could not load orders"));
-  }, []);
+    const timer = setTimeout(() => setCommittedSearch(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const loadOrders = useCallback(async (nextPage = 1) => {
+    const request = ++ordersRequest.current;
+    setOrdersLoading(true);
+    setError(null);
+    if (nextPage === 1) setOrders(null);
+    try {
+      const result = await tileOrdersApi.listCustomerOrders({ page: nextPage, page_size: 30, search: committedSearch || undefined });
+      if (request !== ordersRequest.current) return;
+      setOrders((current) => nextPage === 1 ? result.orders : [...(current || []), ...result.orders]);
+      setPage(nextPage);
+      setHasMore(result.has_more);
+    } catch (e: any) {
+      if (request === ordersRequest.current) setError(e?.detail || "Could not load orders");
+    } finally {
+      if (request === ordersRequest.current) setOrdersLoading(false);
+    }
+  }, [committedSearch]);
+
+  useEffect(() => {
+    void loadOrders();
+    return () => { ordersRequest.current += 1; };
+  }, [loadOrders]);
 
   const openOrder = useCallback(async (orderId: string) => {
+    if (orderSelectionBusy.current) return;
+    orderSelectionBusy.current = true;
     setBusy(true);
     try {
       setDetail(await tileOrdersApi.customerOrderDetail(orderId));
     } catch (e: any) {
       toast.error(e?.detail || "Could not load order");
     } finally {
+      orderSelectionBusy.current = false;
       setBusy(false);
     }
   }, []);
@@ -119,7 +152,7 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
   };
 
   const confirm = async () => {
-    if (!group) return;
+    if (!group || submitBusy.current) return;
     if (Object.keys(quantityValidation.errors).length || quantityValidation.formError) {
       toast.error("Fix the highlighted quantities before creating the dispatch");
       return;
@@ -133,6 +166,7 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
       ...Object.fromEntries(Object.entries(transport).filter(([key, value]) => key !== "labor_cost" && value.trim() !== "")),
       ...(laborCost > 0 ? { labor_cost: laborCost } : {}),
     };
+    submitBusy.current = true;
     setBusy(true);
     let chalanId: string | null = null;
     try {
@@ -141,12 +175,14 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
       chalanId = result.chalan?.id ?? null;
     } catch (e: any) {
       toast.error(e?.detail || "Could not create dispatch");
+      submitBusy.current = false;
       setBusy(false);
       return;
     }
     // Dispatch + Chalan are committed at this point; opening the PDF is a
     // convenience that must never report the dispatch itself as failed.
     toast.success("Dispatch created — Chalan generated");
+    submitBusy.current = false;
     setBusy(false);
     onCreated();
     onClose();
@@ -171,16 +207,18 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
 
   return (
     <Sheet visible onClose={onClose} title="Create dispatch" subtitle={subtitle} testID="tile-create-dispatch-sheet">
-      <ScrollView contentContainerStyle={styles.body}>
-        {error ? <Text style={type.bodyStrong}>{error}</Text> : null}
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+        {!detail ? <SearchField value={search} onChangeText={setSearch} onClear={() => setSearch("")} placeholder="Search by customer or order number" testID="tile-create-dispatch-search" /> : null}
 
         {!detail ? (
-          orders === null ? <ActivityIndicator color={colors.brand} /> : orders.length === 0 ? (
-            <Text style={type.bodyMuted}>No tile orders yet.</Text>
+          error ? <ErrorState title="Orders unavailable" subtitle={error} onRetry={() => void loadOrders()} /> : orders === null ? <ActivityIndicator color={colors.brand} /> : orders.length === 0 ? (
+            <Text style={type.bodyMuted}>{committedSearch ? "No orders match this search." : "No tile orders yet."}</Text>
           ) : orders.map((order) => (
             <Pressable
               testID={`tile-create-dispatch-order-${order.id}`} key={order.id}
-              onPress={() => openOrder(order.id)} style={styles.pickRow}
+              accessibilityRole="button" accessibilityLabel={`Select order ${order.number} for ${order.customer_name}`}
+              disabled={busy} accessibilityState={{ disabled: busy, busy }}
+              onPress={() => openOrder(order.id)} style={[styles.pickRow, busy && styles.disabled]}
             >
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text numberOfLines={1} style={type.bodyStrong}>{order.customer_name}</Text>
@@ -228,6 +266,7 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
                 return (
                   <Pressable
                     testID={`tile-create-dispatch-source-${option}`} key={option} disabled={total <= 0}
+                    accessibilityRole="radio" accessibilityState={{ checked: source === option, disabled: total <= 0 }}
                     onPress={() => switchSource(option)}
                     style={[styles.chip, source === option ? styles.chipActive : null, total <= 0 ? styles.chipDisabled : null]}
                   >
@@ -247,7 +286,8 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
                 <TextInput
                   testID={`tile-create-dispatch-qty-${item.po_item_id}`} keyboardType="number-pad"
                   value={qty[item.po_item_id] || ""}
-                  onChangeText={(v) => setQty((s) => ({ ...s, [item.po_item_id]: v.replace(/[^0-9.]/g, "") }))}
+                  onChangeText={(v) => setQty((s) => ({ ...s, [item.po_item_id]: v }))}
+                  accessibilityLabel={`Dispatch quantity for ${item.tile_name} in ${qtyUnit(item)}`}
                   placeholder={qtyUnit(item)} placeholderTextColor={colors.onSurfaceSubtle} style={styles.input}
                 />
                 {quantityValidation.errors[item.po_item_id] ? (
@@ -264,27 +304,32 @@ export function CreateDispatchSheet({ onClose, onCreated }: { onClose: () => voi
               <TextInput
                 testID={`tile-create-dispatch-${key.replace(/_/g, "-")}`} key={key}
                 value={transport[key]} onChangeText={(v) => setTransport((t) => ({ ...t, [key]: v }))}
+                accessibilityLabel={label}
                 placeholder={label} placeholderTextColor={colors.onSurfaceSubtle} style={styles.input}
               />
             ))}
             <TextInput
               testID="tile-create-dispatch-labor-cost" keyboardType="decimal-pad"
-              value={transport.labor_cost} onChangeText={(v) => setTransport((t) => ({ ...t, labor_cost: v.replace(/[^0-9.]/g, "") }))}
+              value={transport.labor_cost} onChangeText={(v) => setTransport((t) => ({ ...t, labor_cost: v }))}
+              accessibilityLabel="Labour cost added to payment"
               placeholder="Labour cost (added to payment)" placeholderTextColor={colors.onSurfaceSubtle} style={styles.input}
             />
             <View style={styles.actionRow}>
               <Pressable
+                accessibilityRole="button" accessibilityLabel="Create dispatch and Chalan"
                 testID="tile-create-dispatch-confirm" disabled={busy || lines.length === 0 || Boolean(Object.keys(quantityValidation.errors).length || quantityValidation.formError)}
                 onPress={confirm} style={[styles.primaryAction, busy || lines.length === 0 || Boolean(Object.keys(quantityValidation.errors).length || quantityValidation.formError) ? styles.disabled : null]}
               >
                 <Text style={styles.primaryActionText}>{busy ? "Creating…" : "Create Dispatch + Chalan"}</Text>
               </Pressable>
-              <Pressable testID="tile-create-dispatch-cancel" onPress={onClose} style={styles.outlineAction}>
+              <Pressable accessibilityRole="button" disabled={busy} testID="tile-create-dispatch-cancel" onPress={onClose} style={styles.outlineAction}>
                 <Text style={styles.outlineActionText}>Cancel</Text>
               </Pressable>
             </View>
           </>
         )}
+        {!detail && !error && orders && hasMore ? <Button label={ordersLoading ? "Loading orders…" : "Load more orders"} variant="secondary" disabled={ordersLoading || busy} onPress={() => void loadOrders(page + 1)} testID="tile-create-dispatch-load-more" /> : null}
+        {!detail && busy ? <View accessibilityLiveRegion="polite" style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center" }}><ActivityIndicator color={colors.brand} /><Text style={type.bodyMuted}>Loading order details…</Text></View> : null}
       </ScrollView>
     </Sheet>
   );
@@ -297,7 +342,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border,
     borderRadius: radius.sm, backgroundColor: colors.surfaceSecondary, marginBottom: spacing.xs,
   },
-  linkRow: { minHeight: 36, justifyContent: "center" },
+  linkRow: { minHeight: 44, justifyContent: "center" },
   pickAction: { ...type.captionStrong, color: colors.brand },
   sourceRow: { flexDirection: "row", gap: spacing.xs, marginVertical: spacing.sm, flexWrap: "wrap" },
   chip: {

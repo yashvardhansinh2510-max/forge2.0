@@ -95,8 +95,9 @@ export default function BrandOrderDetailScreen() {
   }, []);
 
   const releaseOne = useCallback(async (itemId: string, remaining: number) => {
-    const qty = Number(releaseQty[itemId] || 0) || remaining;
-    if (qty <= 0 || qty > remaining) {
+    const rawQty = releaseQty[itemId]?.trim() ?? "";
+    const qty = Number(rawQty);
+    if (!rawQty || !Number.isSafeInteger(qty) || qty <= 0 || qty > remaining) {
       toast.error(`Enter between 1 and ${remaining} ${qtyUnit(order?.items.find((item) => item.id === itemId) || ({ quantity_unit: "Box" } as ReleaseItem))}`);
       return;
     }
@@ -127,6 +128,9 @@ export default function BrandOrderDetailScreen() {
             disabled={!selectable}
             onPress={() => toggleItem(item.id, item.boxes_pending)}
             hitSlop={11}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked, disabled: !selectable }}
+            accessibilityLabel={`Select ${item.name} for material release`}
             style={({ hovered }: any) => [
               styles.checkbox,
               checked ? styles.checkboxChecked : null,
@@ -171,6 +175,7 @@ export default function BrandOrderDetailScreen() {
             value={releaseQty[item.id] || ""}
             onChangeText={(value) => setQuantity(item.id, value)}
             keyboardType="number-pad"
+            accessibilityLabel={`Release quantity for ${item.name}`}
             placeholder={selectable ? `Max ${item.boxes_pending} ${qtyUnit(item)}` : "Complete"}
             placeholderTextColor={colors.onSurfaceSubtle}
             style={[styles.qtyInput, !selectable ? styles.qtyInputDisabled : null]}

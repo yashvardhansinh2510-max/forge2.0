@@ -346,16 +346,6 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
         setCategories(cats);
         setBrands(brs);
         setCategoriesForRail(cats);
-        if (cs[0] && !history.state.customerId) {
-          history.replace({ ...history.state, customerId: cs[0].id, header: {
-            ...history.state.header,
-            phone: history.state.header.phone || cs[0].phone || "",
-            address: history.state.header.address || cs[0].address || "",
-            referrerId: cs[0].referrer_id || null,
-            referrerName: cs[0].referrer_name || "",
-            referrerType: cs[0].referrer_type || null,
-          } });
-        }
       } catch (e: any) {
         if (!current) return;
         // In React StrictMode the first mount is intentionally torn down.
@@ -722,18 +712,7 @@ export function BuilderProvider({ onFinalize, initialProductId, children }: {
     setSelectedBrandIdState(null);
     setSelectedCategoryIdState(null);
     setQ("");
-    if (customers[0]) {
-      history.replace({
-        ...INITIAL_BUILDER_STATE,
-        customerId: customers[0].id,
-        header: {
-          ...INITIAL_BUILDER_STATE.header,
-          phone: customers[0].phone || "",
-          address: customers[0].address || "",
-        },
-      });
-    }
-  }, [history, customers]);
+  }, [history]);
 
   // Product modal helpers
   const openProductModal = useCallback((p: Product) => setProductModal(p), []);

@@ -278,6 +278,7 @@ async def order_detail(order_id: str, user: UserPublic = Depends(get_current_use
     paid = paid_map.get(order_id, 0.0)
     quotation_total = float(doc.get("grand_total") or 0)
     manual_extra_amount = float(doc.get("payment_extra_amount") or 0)
+    manual_extra_name = doc.get("payment_extra_name") or ("Additional cost" if manual_extra_amount else None)
     grand = _collection_total(doc)
     mrp = await _mrp_for_quotation(doc)
     outstanding = max(0.0, grand - paid)
@@ -314,6 +315,7 @@ async def order_detail(order_id: str, user: UserPublic = Depends(get_current_use
         "discounted_rate": round(quotation_total, 2),
         "quotation_total": round(quotation_total, 2),
         "manual_extra_amount": round(manual_extra_amount, 2),
+        "manual_extra_name": manual_extra_name,
         "grand_total": round(grand, 2),
         "paid": round(paid, 2),
         "outstanding": round(outstanding, 2),
@@ -353,9 +355,16 @@ async def update_ground_floor_manual_extra(
         raise HTTPException(status_code=400, detail="Quotation is not a confirmed order yet")
 
     extra = round(float(body.amount), 2)
+    name = (body.name or "").strip()
+    if extra > 0 and not name:
+        raise HTTPException(status_code=422, detail="Name the additional cost")
     await db.quotations.update_one(
         {"id": order_id, "floor_id": TILES_FLOOR_ID},
-        {"$set": {"payment_extra_amount": extra, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {
+            "payment_extra_amount": extra,
+            "payment_extra_name": name or None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
     )
     try:
         await cache.bump("payments")
@@ -364,6 +373,7 @@ async def update_ground_floor_manual_extra(
     return {
         "quotation_total": round(float(quotation.get("grand_total") or 0), 2),
         "manual_extra_amount": extra,
+        "manual_extra_name": name or None,
         "grand_total": round(float(quotation.get("grand_total") or 0) + extra, 2),
     }
 

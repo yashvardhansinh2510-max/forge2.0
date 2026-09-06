@@ -5,9 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import { AdminPage } from "@/src/components/AdminPage";
-import { Avatar, Badge, EmptyState, Skeleton } from "@/src/components/ui";
+import { Avatar, Badge, EmptyState, ErrorState, Skeleton } from "@/src/components/ui";
 import { api } from "@/src/api/client";
-import { toast } from "@/src/components/Toast";
 import { useAuth } from "@/src/state/auth";
 import { useBp } from "@/src/design/responsive";
 import { colors, spacing, type } from "@/src/theme/tokens";
@@ -30,10 +29,12 @@ export default function FollowupAssignments() {
   const { isPhone } = useBp();
   const [rows, setRows] = useState<AssignmentRow[] | null>(null);
 
+  const [loadError, setLoadError] = useState(false);
   const load = useCallback(() => {
+    setLoadError(false);
     api.get<AssignmentRow[]>("/followups/assignments")
       .then(setRows)
-      .catch((e: any) => { toast.error(e?.detail || "Could not load assignments"); setRows([]); });
+      .catch(() => setLoadError(true));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -49,7 +50,7 @@ export default function FollowupAssignments() {
 
   return (
     <AdminPage title="Follow-up Assignments" overline="TEAM" subtitle="Who has what, how long it's been pending, and whether it's done.">
-      {rows === null ? (
+      {loadError ? <ErrorState title="Couldn't load assignments" onRetry={load} /> : rows === null ? (
         <View style={{ gap: spacing.md }}>
           {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} h={56} />)}
         </View>

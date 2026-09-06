@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Alert as RNAlert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert as RNAlert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { ActivityTimeline, TimelineEvent } from "@/src/components/ActivityTimeline";
@@ -11,6 +11,7 @@ import { ConfirmDialog } from "@/src/components/ds";
 import { api } from "@/src/api/client";
 import { downloadApiFile } from "@/src/utils/downloadFile";
 import { colors, money, radius, spacing, type } from "@/src/theme/tokens";
+import { useRequireFloorAccess } from "@/src/hooks/use-floor-access";
 
 type Line = { id: string; sku: string; name: string; qty: number; unit_price: number; discount_pct: number | null; room?: string; description?: string | null; category_id?: string | null };
 type Quotation = {
@@ -37,6 +38,7 @@ const NEXT_STATUS: Record<string, string> = {
 type PoStub = { id: string; number: string; brand_name?: string | null; status: string; grand_total: number };
 
 export default function QuotationDetail() {
+  useRequireFloorAccess("first-floor");
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { isPhone } = useBp();
@@ -48,15 +50,26 @@ export default function QuotationDetail() {
   const [linkedPos, setLinkedPos] = useState<PoStub[]>([]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [doc, br, tl, pos] = await Promise.all([
-      api.get<Quotation>(`/quotations/${id}`),
-      api.get<Breakdown>(`/quotations/${id}/breakdown`).catch(() => null),
-      api.get<TimelineEvent[]>(`/activity/quotation/${id}`).catch(() => []),
-      api.get<PoStub[]>(`/purchase-orders?quotation_id=${id}`).catch(() => []),
-    ]);
-    setQ(doc); setBreakdown(br); setTimeline(tl); setLinkedPos(pos);
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [doc, br, tl, pos] = await Promise.all([
+        api.get<Quotation>(`/quotations/${id}`),
+        api.get<Breakdown>(`/quotations/${id}/breakdown`).catch(() => null),
+        api.get<TimelineEvent[]>(`/activity/quotation/${id}`).catch(() => []),
+        api.get<PoStub[]>(`/purchase-orders?quotation_id=${id}`).catch(() => []),
+      ]);
+      setQ(doc); setBreakdown(br); setTimeline(tl); setLinkedPos(pos);
+    } catch (e: any) {
+      setQ(null);
+      setLoadError(e?.detail || "Could not load this quotation");
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
   useEffect(() => { load(); }, [load]);
 
@@ -86,7 +99,14 @@ export default function QuotationDetail() {
     } finally { setDeleting(false); }
   };
 
-  if (!q) return <View style={{ flex: 1, backgroundColor: colors.surface }} />;
+  if (loading) return <View style={styles.centered}><ActivityIndicator color={colors.brand} /></View>;
+  if (loadError || !q) return (
+    <View style={styles.centered}>
+      <Text style={type.titleMd}>{loadError || "Quotation not found"}</Text>
+      <Button label="Retry" onPress={load} />
+      <Button label="Back" variant="secondary" onPress={() => router.back()} />
+    </View>
+  );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
@@ -304,6 +324,10 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
+  centered: {
+    flex: 1, alignItems: "center", justifyContent: "center",
+    gap: spacing.md, padding: spacing.xl, backgroundColor: colors.surface,
+  },
   topbar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: spacing.lg, paddingVertical: 10,

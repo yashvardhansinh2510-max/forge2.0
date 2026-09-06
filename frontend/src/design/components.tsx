@@ -202,14 +202,15 @@ export function IconButton({
 }
 
 // ═════════════════════════════════════════════ Inputs ═══════════════════════
+const FieldLabelContext = createContext<string | undefined>(undefined);
 export function Field({
   label, error, helper, children,
 }: { label?: string; error?: string | null; helper?: string; children: React.ReactNode }) {
   return (
     <View style={{ gap: 7 }}>
       {label ? <Txt v="caption" tone="mid">{label}</Txt> : null}
-      {children}
-      {error ? <Txt v="caption" tone="risk">{error}</Txt>
+      <FieldLabelContext.Provider value={label}>{children}</FieldLabelContext.Provider>
+      {error ? <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={{ color: color.risk, fontFamily: font.regular, fontSize: 12 }}>{error}</Text>
         : helper ? <Txt v="caption" tone="soft">{helper}</Txt> : null}
     </View>
   );
@@ -219,6 +220,7 @@ export const Input = React.forwardRef<TextInput, React.ComponentProps<typeof Tex
   invalid?: boolean; right?: React.ReactNode; left?: React.ReactNode;
 }>(function Input({ invalid, right, left, style, onFocus, onBlur, ...rest }, ref) {
   const [focused, setFocused] = useState(false);
+  const fieldLabel = useContext(FieldLabelContext);
   return (
     <View
       style={[
@@ -247,6 +249,8 @@ export const Input = React.forwardRef<TextInput, React.ComponentProps<typeof Tex
           style,
         ]}
         {...rest}
+        accessibilityLabel={rest.accessibilityLabel || fieldLabel || rest.placeholder}
+        aria-invalid={invalid || undefined}
       />
       {right}
     </View>

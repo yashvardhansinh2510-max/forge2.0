@@ -52,12 +52,12 @@ export function ComparisonLine({
   const arrow = direction === "up" ? "↑" : direction === "down" ? "↓" : "→";
   const sign = comparison.delta_pct > 0 ? "+" : "";
   return (
-    <View testID={testID} style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
+    <View testID={testID} style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: spacing.xs }}>
       <Text style={[type.captionStrong, { color: DIRECTION_COLOR[direction] }]}>
         {arrow} {sign}{comparison.delta_pct}%
       </Text>
       {previousLabel ? (
-        <Text style={[type.caption, { color: colors.onSurfaceMuted }]} numberOfLines={1}>
+        <Text style={[type.caption, { color: colors.onSurfaceMuted }]} >
           vs {previousLabel.toLowerCase()}
         </Text>
       ) : null}

@@ -91,10 +91,10 @@ assert.match(systemSettings, /scroll=\{false\}/);
 assert.match(systemSettings, /<ScrollView/);
 
 const notebook = read("../src/components/notebook/NotebookScreen.tsx");
-assert.match(notebook, /const \{ isPhone, isTabletPortrait \} = useBp\(\)/);
-assert.match(notebook, /const useCardList = isPhone \|\| isTabletPortrait/);
-assert.match(notebook, /styles\.phoneCard/);
-assert.match(notebook, /useCardList \? phoneRows/);
+assert.match(notebook, /const \{ isPhone \} = useBp\(\)/);
+assert.match(notebook, /<View style=\{styles\.list\}>/);
+assert.match(notebook, /<LeadCard key=\{row\.id\}/);
+assert.doesNotMatch(notebook, /<DataTable/);
 
 const quotationDetail = read("../app/(admin)/quotations/[id]/index.tsx");
 assert.match(quotationDetail, /isPhone \? \(\s*<IconButton icon="download"/);

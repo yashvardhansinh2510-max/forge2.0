@@ -18,7 +18,10 @@
     "test:mobile-budget": "node scripts/check-web-budget.mjs",
     "test:api-proxy": "node --no-warnings scripts/test-api-proxy.mjs",
     "test:api-client": "node scripts/test-api-client-contract.mjs",
-    "test:e2e:profiles": "playwright test --config playwright.config.ts"
+    "test:e2e:profiles": "playwright test --config playwright.config.ts",
+    "test:web-worker": "node scripts/test-web-worker.mjs",
+    "test:sales-periods": "node --experimental-strip-types --no-warnings scripts/test-sales-periods.mjs",
+    "test:e2e:audit": "playwright test --config playwright.audit.config.ts"
   },
   "dependencies": {
     "@expo-google-fonts/fraunces": "0.4.1",
@@ -64,7 +67,7 @@
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
-    "@playwright/test": "1.55.0",
+    "@playwright/test": "1.63.0",
     "@types/react": "19.1.10",
     "eslint": "9.25.0",
     "eslint-config-expo": "10.0.0",

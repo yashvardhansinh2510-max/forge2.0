@@ -1,5 +1,5 @@
 import { Redirect, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import { executiveApi, type Overview } from "@/src/api/executive";
@@ -12,8 +12,11 @@ import {
   type ReferrerSummaryRow,
   type SalesFilter,
 } from "@/src/api/salesData";
+import { ComparisonLine } from "@/src/components/analytics/HistoryNote";
+import { RowList } from "@/src/components/analytics/RowList";
 import { AdminPage } from "@/src/components/AdminPage";
 import { FLOOR_LABEL, SalesFilters } from "@/src/components/salesData/SalesFilters";
+import { TrendChart } from "@/src/components/salesData/TrendChart";
 import { SalesSection } from "@/src/components/salesData/SalesSection";
 import { useSalesPeriod } from "@/src/components/salesData/useSalesPeriod";
 import {
@@ -43,8 +46,12 @@ const TOP_N = 10;
  * formatter through each one.
  */
 function useCellMoney() {
-  const { isPhone } = useBp();
-  return (value: number) => (isPhone ? fmtMoneyCompact(value) : `₹${fmtMoney(value)}`);
+  const { isPhone, isTabletPortrait } = useBp();
+  // A portrait tablet has the same constrained content column as a phone
+  // once the admin rail and page gutters are accounted for. Compact amounts
+  // keep the record cards readable without making the page horizontally
+  // scrollable; landscape tablets retain exact values in the table.
+  return (value: number) => (isPhone || isTabletPortrait ? fmtMoneyCompact(value) : `₹${fmtMoney(value)}`);
 }
 
 function shortDate(iso: string | null): string {
@@ -55,6 +62,7 @@ function shortDate(iso: string | null): string {
 }
 
 type Sections = {
+  trend: { bucket: string; revenue: number }[] | null;
   brands: BrandRevenueRow[] | null;
   customers: CustomerRevenueRow[] | null;
   products: BestSellingProductRow[] | null;
@@ -64,34 +72,17 @@ type Sections = {
 };
 
 const EMPTY_SECTIONS: Sections = {
-  brands: null, customers: null, products: null, orders: null, architects: null, designers: null,
+  trend: null, brands: null, customers: null, products: null, orders: null, architects: null, designers: null,
 };
 
-/**
- * Sales Data — the launch dashboard (Milestone 4), and the permanent entry
- * point for the module.
- *
- * This is Phase 1 of the Sales Data architecture, not a replacement for it.
- * Every figure comes from the Phase 0 analytics layer: the KPI row and
- * Revenue by Floor from `/analytics/overview`, the Referred By workspaces
- * from `/analytics/referrers` unchanged, and the four breakdowns from
- * `/analytics/*` endpoints shaped as standalone filterable resources so the
- * Products, Brands and Customers workspaces on the roadmap extend them
- * rather than replacing them.
- *
- * The one rule the page holds: **nothing on this screen is computed here.**
- * Every total, average and rank is derived by the backend from one canonical
- * definition, so no two blocks can disagree about the same book. The
- * breakdowns all reconcile to the Total Revenue card by construction —
- * verified live at ₹39,77,337 across brand, customer, product and order
- * sums.
- */
+/** Owner summary using canonical server totals and independently loaded breakdowns. */
 export default function SalesDataIndex() {
   const { staff } = useAuth();
   const { floors } = useFloorAccess();
   const cellMoney = useCellMoney();
-  const { isPhone } = useBp();
+  const { isPhone, isTabletPortrait } = useBp();
   const router = useRouter();
+  const useCompactRows = isPhone || isTabletPortrait;
 
   // The KPI row used to give each card its own minWidth (160 / 140 / 180),
   // which wrapped into a ragged 2-then-1 block at narrow widths — two
@@ -102,6 +93,8 @@ export default function SalesDataIndex() {
   const kpiGap = spacing.md;
   const kpiCardStyle = isPhone
     ? { width: "100%" as const }
+    : isTabletPortrait
+      ? { flexBasis: "48%" as const, flexGrow: 1, minWidth: 0 }
     : { flex: 1, minWidth: 200, flexBasis: 0 };
 
   // Matches SalesSection, so the one hand-rolled Card on this page breathes
@@ -119,10 +112,13 @@ export default function SalesDataIndex() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [sections, setSections] = useState<Sections>(EMPTY_SECTIONS);
-  const [sectionError, setSectionError] = useState<string | null>(null);
+  const [sectionErrors, setSectionErrors] = useState<Partial<Record<keyof Sections, string>>>({});
+  const requestVersion = useRef(0);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const load = useCallback(() => {
     if (!floorId || !period) return; // never query before the scope is known
+    const version = ++requestVersion.current;
     const filter: SalesFilter = {
       floorId,
       preset: period.preset,
@@ -139,34 +135,45 @@ export default function SalesDataIndex() {
     setOverviewError(null);
     setOverview(null);
     setSections(EMPTY_SECTIONS);
-    setSectionError(null);
+    setSectionErrors({});
+    setUpdatedAt(null);
 
     executiveApi.overview(executiveQuery)
-      .then(setOverview)
-      .catch((e: any) => setOverviewError(e?.detail || "Could not load the sales summary"));
-
-    Promise.all([
-      salesDataApi.revenueByBrand(filter),
-      salesDataApi.revenueByCustomer(filter),
-      salesDataApi.bestSellingProducts(filter, TOP_N),
-      salesDataApi.recentOrders(filter, TOP_N),
-      salesDataApi.referrers(filter, "architect"),
-      salesDataApi.referrers(filter, "interior_designer"),
-    ])
-      .then(([brands, customers, products, orders, architects, designers]) => {
-        setSections({
-          brands: brands.rows,
-          customers: customers.rows,
-          products: products.rows,
-          orders: orders.rows,
-          architects: architects.rows,
-          designers: designers.rows,
-        });
+      .then((result) => {
+        if (version !== requestVersion.current) return;
+        setOverview(result);
+        setUpdatedAt(new Date());
       })
-      .catch((e: any) => setSectionError(e?.detail || "Could not load the sales breakdowns"));
+      .catch((e: unknown) => {
+        if (version !== requestVersion.current) return;
+        const detail = (e as { detail?: unknown })?.detail;
+        setOverviewError(typeof detail === "string" ? detail : "Could not load the sales summary");
+      });
+
+    // Each breakdown settles independently so one unavailable service cannot
+    // hide the rest of the business. Responses from old filters are ignored.
+    const settle = <K extends keyof Sections>(key: K, request: Promise<{ rows: NonNullable<Sections[K]> }>) => {
+      void request.then((result) => {
+        if (version === requestVersion.current) setSections((current) => ({ ...current, [key]: result.rows }));
+      }).catch((e: unknown) => {
+        if (version !== requestVersion.current) return;
+        const detail = (e as { detail?: unknown })?.detail;
+        setSectionErrors((current) => ({ ...current, [key]: typeof detail === "string" ? detail : "Could not load this breakdown" }));
+      });
+    };
+    settle("trend", salesDataApi.revenueTrend(filter).then(result => ({ rows: result.points })));
+    settle("brands", salesDataApi.revenueByBrand(filter));
+    settle("customers", salesDataApi.revenueByCustomer(filter));
+    settle("products", salesDataApi.bestSellingProducts(filter, TOP_N));
+    settle("orders", salesDataApi.recentOrders(filter, TOP_N));
+    settle("architects", salesDataApi.referrers(filter, "architect"));
+    settle("designers", salesDataApi.referrers(filter, "interior_designer"));
   }, [floorId, period]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { requestVersion.current += 1; };
+  }, [load]);
 
   const exportSalesData = useCallback(() => {
     if (!floorId || !period) return;
@@ -212,7 +219,7 @@ export default function SalesDataIndex() {
   return (
     <AdminPage
       title="Sales Data"
-      subtitle={`Confirmed orders only${period ? ` · ${period.label}` : ""}`}
+      subtitle={`Confirmed sales, dated by order confirmation${period ? ` · ${period.label}` : ""}`}
     >
       {period ? (
         <View style={{ gap: spacing.md }}>
@@ -223,7 +230,9 @@ export default function SalesDataIndex() {
             period={period}
             onPeriodChange={choose}
           />
-          <View style={{ flexDirection: "row", justifyContent: isPhone ? "flex-start" : "flex-end" }}>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center", justifyContent: "flex-end" }}>
+            {updatedAt ? <Text style={[type.caption, { color: colors.onSurfaceMuted, flexGrow: 1 }, isPhone && { width: "100%" }]}>Updated {updatedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</Text> : null}
+            <Button label="Refresh" icon="refresh-cw" variant="secondary" onPress={load} style={isPhone ? { flex: 1 } : undefined} />
             <Button
               testID="sales-data-export-xlsx"
               label="Export Excel"
@@ -264,27 +273,40 @@ export default function SalesDataIndex() {
             testID="sales-kpi-revenue"
             label="Total Revenue"
             value={fmtMoneyCompact(kpis.revenue)}
-            question="What did we sell this period?"
+            question="Value of confirmed orders in this period"
+            footer={<ComparisonLine comparison={kpis.comparison} previousLabel={kpis.previous_label} />}
             style={kpiCardStyle}
           />
           <KpiCard
             testID="sales-kpi-orders"
             label="Total Orders"
             value={String(kpis.orders)}
-            question="How many deals did we close?"
+            question={`${kpis.customers} customers · ${fmtMoneyCompact(kpis.aov)} average order`}
             style={kpiCardStyle}
           />
           <KpiCard
             testID="sales-kpi-outstanding"
             label="Outstanding Payments"
             value={fmtMoneyCompact(kpis.outstanding.outstanding)}
-            question="How much money is still owed to us?"
+            question="Still due on orders confirmed in this period"
+            footer={<Text style={[type.caption, { color: colors.onSurfaceMuted }]}>{fmtMoneyCompact(kpis.outstanding.collected)} collected on these orders</Text>}
             tone={kpis.outstanding.outstanding > 0 ? "warning" : "neutral"}
             onPress={() => router.push("/(admin)/payments" as never)}
             style={kpiCardStyle}
           />
         </View>
       ) : null}
+
+      {overview ? (
+        <View style={{ gap: spacing.md }}>
+          <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>Current priorities for the selected business unit. Open work may predate the sales period.</Text>
+          <RowList kind="attention" rows={overview.attention.slice(0, 3)} total={overview.attention_total} floorId={floorId} testID="sales-attention" />
+        </View>
+      ) : null}
+
+      <SalesSection title="Revenue over time" question="Confirmed order revenue by order date · UTC" rows={sections.trend} error={sectionErrors.trend} onRetry={load} emptyTitle={period?.preset === "all" ? "Choose a date range to see the trend" : "No trend data in this period"} testID="sales-revenue-trend">
+        {(points) => <TrendChart points={points} />}
+      </SalesSection>
 
       {/* ---------------------------------------------------------------
           4. Revenue by Floor
@@ -295,7 +317,7 @@ export default function SalesDataIndex() {
             <View style={{ gap: spacing.s4 }}>
               <Text style={type.titleMd}>Revenue by Business Unit</Text>
               <Text style={[type.caption, { color: colors.onSurfaceMuted }]}>
-                {floorId === "all" ? "Which unit is winning?" : "This unit's share of the book"}
+                {floorId === "all" ? "Confirmed revenue and orders · select a unit to focus the dashboard" : "Confirmed revenue for the selected business unit"}
               </Text>
             </View>
             {/* `/analytics/overview` always reports every accessible floor
@@ -306,12 +328,20 @@ export default function SalesDataIndex() {
                 to the whole company. Scoping the rows to the active filter
                 is what keeps the two halves of the card telling one story. */}
             {visibleFloorRevenue.map((row) => (
-              <View
+              <Pressable
                 key={row.floor_id}
                 testID={`sales-floor-row-${row.floor_id}`}
-                style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.md }}
+                accessibilityRole="button"
+                accessibilityLabel={`Show ${floorName(row.floor_id)}: ${fmtMoneyCompact(row.revenue)}, ${row.orders} orders`}
+                onPress={() => setFloorId(row.floor_id)}
+                style={{ minHeight: 52, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: spacing.md }}
               >
-                <Text style={type.body}>{floorName(row.floor_id)}</Text>
+                <View style={{ flex: 1, minWidth: 0, gap: spacing.sm }}>
+                  <Text style={type.body}>{floorName(row.floor_id)}</Text>
+                  <View style={{ height: 5, backgroundColor: colors.surfaceSecondary, borderRadius: 2 }}>
+                    <View style={{ height: 5, borderRadius: 2, backgroundColor: colors.brand, width: `${Math.max(0, Math.min(100, (row.revenue / Math.max(overview.kpis.revenue, 1)) * 100))}%` }} />
+                  </View>
+                </View>
                 <View style={{ alignItems: "flex-end" }}>
                   <Text style={[type.bodyStrong, { fontVariant: ["tabular-nums"] }]}>
                     {fmtMoneyCompact(row.revenue)}
@@ -320,8 +350,9 @@ export default function SalesDataIndex() {
                     {row.orders} {row.orders === 1 ? "order" : "orders"}
                   </Text>
                 </View>
-              </View>
+              </Pressable>
             ))}
+            {visibleFloorRevenue.length === 0 ? <Text style={type.bodyMuted}>No business-unit revenue in this period.</Text> : null}
           </View>
         </Card>
       ) : null}
@@ -334,11 +365,11 @@ export default function SalesDataIndex() {
         title="Revenue by Brand"
         question="Which brands are actually selling?"
         rows={sections.brands}
-        error={sectionError}
+        error={sectionErrors.brands}
         onRetry={load}
         emptyTitle="No brand revenue in this period"
       >
-        {(rows) => isPhone ? (
+        {(rows) => useCompactRows ? (
           <MobileRows>{rows.map((row) => (
             <MobileRow key={row.brand_id} testID={`sales-brand-row-${row.brand_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.quantity} sold`} badge={row.is_unlinked ? "Unmatched" : undefined} />
           ))}</MobileRows>
@@ -372,7 +403,7 @@ export default function SalesDataIndex() {
         title="Revenue by Customer"
         question="Who is buying the most?"
         rows={sections.customers}
-        error={sectionError}
+        error={sectionErrors.customers}
         onRetry={load}
         emptyTitle="No customer revenue in this period"
         footer={
@@ -383,7 +414,7 @@ export default function SalesDataIndex() {
           ) : null
         }
       >
-        {(rows) => isPhone ? (
+        {(rows) => useCompactRows ? (
           <MobileRows>{rows.slice(0, TOP_N).map((row) => (
             <MobileRow key={row.customer_id || row.name} testID={`sales-customer-row-${row.customer_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.orders} ${row.orders === 1 ? "order" : "orders"}`} onPress={row.customer_id ? () => router.push(`/(admin)/customers/${row.customer_id}` as never) : undefined} />
           ))}</MobileRows>
@@ -415,17 +446,17 @@ export default function SalesDataIndex() {
         testID="sales-referrals-architects"
         title="Referred By — Architects"
         rows={sections.architects}
-        error={sectionError}
+        error={sectionErrors.architects}
         onRetry={load}
-        onOpen={(id) => router.push(`/(admin)/sales-data/referrer/${id}` as never)}
+        onOpen={(id) => router.push({ pathname: "/(admin)/sales-data/referrer/[id]", params: { id, floorId, preset: period?.preset, dateFrom: period?.dateFrom || "", dateTo: period?.dateTo || "" } } as never)}
       />
       <ReferrerWorkspace
         testID="sales-referrals-designers"
         title="Referred By — Interior Designers"
         rows={sections.designers}
-        error={sectionError}
+        error={sectionErrors.designers}
         onRetry={load}
-        onOpen={(id) => router.push(`/(admin)/sales-data/referrer/${id}` as never)}
+        onOpen={(id) => router.push({ pathname: "/(admin)/sales-data/referrer/[id]", params: { id, floorId, preset: period?.preset, dateFrom: period?.dateFrom || "", dateTo: period?.dateTo || "" } } as never)}
       />
 
       {/* ---------------------------------------------------------------
@@ -436,11 +467,11 @@ export default function SalesDataIndex() {
         title="Best Selling Products"
         question="What is moving off the shelves?"
         rows={sections.products}
-        error={sectionError}
+        error={sectionErrors.products}
         onRetry={load}
         emptyTitle="No products sold in this period"
       >
-        {(rows) => isPhone ? (
+        {(rows) => useCompactRows ? (
           <MobileRows>{rows.map((row) => (
             <MobileRow key={row.product_id} testID={`sales-product-row-${row.product_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.quantity} sold${row.brand_name ? ` · ${row.brand_name}` : ""}`} />
           ))}</MobileRows>
@@ -475,7 +506,7 @@ export default function SalesDataIndex() {
         title="Recent Orders"
         question="What has just been confirmed?"
         rows={sections.orders}
-        error={sectionError}
+        error={sectionErrors.orders}
         onRetry={load}
         emptyTitle="No confirmed orders in this period"
         emptySubtitle="Orders appear here the moment a quotation is confirmed."
@@ -487,7 +518,7 @@ export default function SalesDataIndex() {
           ) : null
         }
       >
-        {(rows) => isPhone ? (
+        {(rows) => useCompactRows ? (
           <MobileRows>{rows.map((row) => (
             <MobileRow key={row.id} testID={`sales-order-row-${row.id}`} title={row.customer_name} value={cellMoney(row.grand_total)} detail={`${row.number || "—"} · ${shortDate(row.ordered_at)} · ${row.outstanding > 0 ? `${cellMoney(row.outstanding)} due` : "Paid"}`} onPress={() => router.push(`/(admin)/quotations/${row.id}` as never)} />
           ))}</MobileRows>
@@ -555,7 +586,8 @@ function ReferrerWorkspace({
   testID: string;
 }) {
   const cellMoney = useCellMoney();
-  const { isPhone } = useBp();
+  const { isPhone, isTabletPortrait } = useBp();
+  const useCompactRows = isPhone || isTabletPortrait;
   return (
     <SalesSection
       testID={testID}
@@ -567,15 +599,16 @@ function ReferrerWorkspace({
       emptyTitle="No referrals recorded in this period"
       emptySubtitle="Set 'Referred By' on a quotation and that person's business appears here."
     >
-      {(list) => isPhone ? (
+      {(list) => useCompactRows ? (
         <MobileRows>{list.map((row) => (
-          <MobileRow key={row.referrer_id} testID={`${testID}-row-${row.referrer_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.quotations_confirmed} confirmed ${row.quotations_confirmed === 1 ? "order" : "orders"}`} onPress={() => onOpen(row.referrer_id)} />
+          <MobileRow key={row.referrer_id} testID={`${testID}-row-${row.referrer_id}`} title={row.name} value={cellMoney(row.revenue)} detail={`${row.customers_referred} ${row.customers_referred === 1 ? "client" : "clients"} · ${row.quotations_confirmed} confirmed ${row.quotations_confirmed === 1 ? "order" : "orders"}`} onPress={() => onOpen(row.referrer_id)} />
         ))}</MobileRows>
       ) : (
         <Table>
           <TableHeader
             columns={[
               { label: "Name", flex: 2 },
+              { label: "Clients", align: "right" },
               { label: "Orders", align: "right" },
               { label: "Revenue", align: "right" },
             ]}
@@ -588,6 +621,7 @@ function ReferrerWorkspace({
               onPress={() => onOpen(row.referrer_id)}
             >
               <TableCell flex={2}>{row.name}</TableCell>
+              <TableCell align="right">{String(row.customers_referred)}</TableCell>
               <TableCell align="right">{String(row.quotations_confirmed)}</TableCell>
               <TableCell align="right">{cellMoney(row.revenue)}</TableCell>
             </TableRow>

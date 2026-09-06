@@ -69,12 +69,7 @@ const ZEBRA = "#F0F0F0";
 const GRID = "#8A8A8A";
 const SERIF = Platform.select({ ios: "Times New Roman", android: "serif", default: "Georgia, 'Times New Roman', serif" }) as string;
 
-function tileNeedsLandscapeRotation(size: string | null | undefined): boolean {
-  const match = String(size || "").match(/(\d+(?:\.\d+)?)\s*[x×X]\s*(\d+(?:\.\d+)?)/);
-  return Boolean(match && Number(match[1]) < Number(match[2]));
-}
-
-function TileImageCell({ uri, size }: { uri: string; size?: string | null }) {
+function TileImageCell({ uri }: { uri: string }) {
   const [cellWidth, setCellWidth] = useState(0);
   // A numeric size is intentional: percentage sizing in an RN-web table cell
   // can shrink to the source bitmap's intrinsic square. This guarantees every
@@ -84,13 +79,10 @@ function TileImageCell({ uri, size }: { uri: string; size?: string | null }) {
     <View style={{ width: "100%", alignItems: "center", justifyContent: "center" }} onLayout={(event) => setCellWidth(event.nativeEvent.layout.width)}>
       <ProductImage
         source={uri}
-        contentFit="cover"
+        contentFit="contain"
         frameInset={0}
         borderRadius={0}
         disableSkeleton
-        mirror
-        forceLandscape
-        rotation={tileNeedsLandscapeRotation(size) ? "90deg" : "0deg"}
         frameBackground="#FFFFFF"
         style={{ width: imageWidth, height: imageWidth / TILE_IMAGE_ASPECT_RATIO }}
         accessibilityLabel="Quotation product image"
@@ -235,7 +227,7 @@ function quantityUnitLabel(unit: TileRow["quantityUnit"]): "Box" | "Piece" {
 function useTilesDoc(docType: TilesDocType) {
   const router = useRouter();
   const { id: routeId } = useLocalSearchParams<{ id?: string }>();
-  const [docId, setDocId] = useState<string | null>((routeId as string) || null);
+  const [docId, setDocId] = useState<string | null>(null);
   const [docNumberServer, setDocNumberServer] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("draft");
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -252,10 +244,13 @@ function useTilesDoc(docType: TilesDocType) {
   const [busy, setBusy] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(Boolean(routeId));
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
   const dirtyRef = useRef(false);
+  const editRevisionRef = useRef(0);
   const persistRef = useRef<() => Promise<string | null>>(async () => null);
   const persistQueue = useRef<Promise<string | null>>(Promise.resolve(null));
-  const persistedIdRef = useRef<string | null>((routeId as string) || null);
+  const persistedIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     api.get<Customer[]>("/customers", { floorId: TILES_FLOOR_ID }).then(setCustomers).catch(() => {});
@@ -265,6 +260,8 @@ function useTilesDoc(docType: TilesDocType) {
   useEffect(() => {
     if (!routeId) return;
     let alive = true;
+    setLoading(true);
+    setRestoreError(null);
     (async () => {
       try {
         const doc = await api.get<any>(`/quotations/${routeId}`, { floorId: TILES_FLOOR_ID });
@@ -321,15 +318,20 @@ function useTilesDoc(docType: TilesDocType) {
         }));
         setRows(restored.length ? restored : [emptyRow()]);
       } catch (e: any) {
-        toast.error(e?.detail || "Couldn't open that document");
+        const message = e?.detail || "Couldn't open that document";
+        if (alive) setRestoreError(message);
+        toast.error(message);
       } finally {
         if (alive) setLoading(false);
       }
     })();
     return () => { alive = false; };
-  }, [routeId, docType, router]);
+  }, [routeId, docType, router, restoreAttempt]);
 
-  const markDirty = useCallback(() => { dirtyRef.current = true; }, []);
+  const markDirty = useCallback(() => {
+    dirtyRef.current = true;
+    editRevisionRef.current += 1;
+  }, []);
 
   const setHeaderField = useCallback((field: keyof TilesHeader, value: string) => {
     setHeader((cur) => ({ ...cur, [field]: value }));
@@ -521,6 +523,7 @@ function useTilesDoc(docType: TilesDocType) {
 
   const persist = useCallback(async ({ silent = true }: { silent?: boolean } = {}): Promise<string | null> => {
     const run = async (): Promise<string | null> => {
+      const savingRevision = editRevisionRef.current;
       const name = header.customerName.trim();
       if (!name) {
         toast.show("Enter the customer name first");
@@ -585,33 +588,8 @@ function useTilesDoc(docType: TilesDocType) {
           grandTotal: Number(fresh.grand_total || 0),
           transportation: Number(fresh.transportation_fee || 0),
         });
-        if (Array.isArray(fresh.items)) {
-          setRows((current) => fresh.items.map((item: any, index: number) => ({
-            ...(current[index] || emptyRow()),
-            key: current[index]?.key || item.id || `${Date.now()}-${index}`,
-            lineId: item.id || current[index]?.lineId || null,
-            productId: item.product_id || null,
-            sku: item.sku || "",
-            categoryId: item.category_id || null,
-            name: item.name || "",
-            image: item.image || null,
-            mrp: item.mrp ?? null,
-            area: item.room || "",
-            size: item.size || "",
-            rateSqft: item.rate_sqft != null ? String(item.rate_sqft) : "",
-            boxSqft: item.box_sqft != null ? String(item.box_sqft) : "",
-            offerRate: item.offer_rate != null ? String(item.offer_rate) : (item.rate_sqft != null ? String(item.rate_sqft) : ""),
-            offerRateIsFallback: item.offer_rate == null || item.offer_rate === item.rate_sqft,
-            rateBox: item.rate_box != null ? String(item.rate_box) : (item.unit_price != null ? String(item.unit_price) : ""),
-            totalBox: item.qty != null ? String(item.qty) : "",
-            pcsBox: item.pcs_per_box || "",
-            quantityUnit: item.quantity_unit === "Pieces" ? "Pieces" : "Box",
-            total: item.net_amount != null ? String(item.net_amount) : "",
-            totalEdited: false,
-          })));
-        }
       }
-      dirtyRef.current = false;
+      if (editRevisionRef.current === savingRevision) dirtyRef.current = false;
       setSaveState("saved");
       return id;
       } catch (e: any) {
@@ -641,7 +619,7 @@ function useTilesDoc(docType: TilesDocType) {
     }
     setBusy("pdf");
     try {
-      const id = await persist({ silent: true });
+      const id = await persist({ silent: false });
       if (!id) return;
       await downloadApiFile(`/quotations/${id}/pdf`, pdfFilename(header.customerName, header.docDate), "PDF", TILES_FLOOR_ID);
     } finally {
@@ -656,7 +634,7 @@ function useTilesDoc(docType: TilesDocType) {
     }
     setBusy("print");
     try {
-      const id = await persist({ silent: true });
+      const id = await persist({ silent: false });
       if (!id) return;
       await printApiFile(`/quotations/${id}/pdf`, "PDF", TILES_FLOOR_ID);
     } finally {
@@ -667,7 +645,7 @@ function useTilesDoc(docType: TilesDocType) {
   const placeOrder = useCallback(async () => {
     if (busy) return;
     setBusy("order");
-    const id = await persist({ silent: true });
+    const id = await persist({ silent: false });
     setBusy(null);
     if (!id) return;
     if (!buildItems().length) {
@@ -691,7 +669,7 @@ function useTilesDoc(docType: TilesDocType) {
     setBusy("workflow");
     try {
       if (action.kind === "move_to_quotation") {
-        const id = await persist({ silent: true });
+        const id = await persist({ silent: false });
         if (!id) return;
       const updated = await api.post<{ id: string; doc_type: string; status: string }>(`/quotations/${id}/move-to-quotation`, undefined, { floorId: TILES_FLOOR_ID });
         toast.success("Moved to Quotation");
@@ -701,7 +679,7 @@ function useTilesDoc(docType: TilesDocType) {
         router.replace(`/(admin)/tiles/quotation?id=${updated.id}` as any);
         return;
       }
-      const id = await persist({ silent: true });
+      const id = await persist({ silent: false });
       if (!id) return;
       const updated = await api.patch<{ status: string }>(`/quotations/${id}`, { status: action.nextStatus }, { floorId: TILES_FLOOR_ID });
       const nextStatus = normalizeTilesStatus(updated.status);
@@ -738,7 +716,7 @@ function useTilesDoc(docType: TilesDocType) {
   }, [markDirty]);
 
   return {
-    docId, docNumberServer, loading, header, setHeaderField, rows,
+    docId, docNumberServer, loading, restoreError, retryRestore: () => setRestoreAttempt((value) => value + 1), header, setHeaderField, rows,
     updateRow, addRow, removeRow, applyProduct, selectRowSize, loadRowSizes,
     customers, customerId, pickCustomer, setCustomerId,
     saveState, busy, generatePdf, print, placeOrder, serverTotals, previewTotals,
@@ -942,7 +920,7 @@ function ProductCell({
 }) {
   if (!row.productId) {
     return (
-      <Pressable onPress={onOpenPicker} style={productStyles.pickTarget} testID={testID}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Select a product" onPress={onOpenPicker} style={productStyles.pickTarget} testID={testID}>
         <Feather name="search" size={13} color="#555" />
         <Text style={productStyles.pickLabel}>Select product…</Text>
       </Pressable>
@@ -951,7 +929,7 @@ function ProductCell({
   return (
     <View style={{ flex: 1, alignSelf: "stretch", justifyContent: "center" }}>
       <CellInput value={row.name} onChangeText={onChangeName} bold={bold} multiline testID={testID ? `${testID}-name` : undefined} />
-      <Pressable onPress={onOpenPicker} hitSlop={4} style={productStyles.swapBtn} testID={testID ? `${testID}-swap` : undefined}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Change product from ${row.name}`} onPress={onOpenPicker} hitSlop={8} style={productStyles.swapBtn} testID={testID ? `${testID}-swap` : undefined}>
         <Feather name="refresh-cw" size={11} color="#666" />
       </Pressable>
     </View>
@@ -965,8 +943,8 @@ const productStyles = StyleSheet.create({
   },
   pickLabel: { fontSize: 12, color: "#555", fontStyle: "italic" },
   swapBtn: {
-    position: "absolute", right: 2, bottom: 2, width: 18, height: 18,
-    alignItems: "center", justifyContent: "center", borderRadius: 9,
+    position: "absolute", right: 2, bottom: 2, width: 28, height: 28,
+    alignItems: "center", justifyContent: "center", borderRadius: 14,
     backgroundColor: "rgba(255,255,255,0.65)",
   },
 });
@@ -992,6 +970,7 @@ function RowSideControls({
           style={sideStyles.addBtn}
           hitSlop={{ top: 12, left: 0, right: 8, bottom: 3 }}
           testID="tiles-add-row"
+          accessibilityRole="button"
           accessibilityLabel="Add product row"
         >
           <Feather name="plus" size={16} color="#fff" />
@@ -1003,6 +982,7 @@ function RowSideControls({
           style={sideStyles.removeBtn}
           hitSlop={{ top: 3, left: 0, right: 10, bottom: 14 }}
           testID="tiles-remove-row"
+          accessibilityRole="button"
           accessibilityLabel="Remove row"
         >
           <Feather name="x" size={12} color="#8A3333" />
@@ -1023,7 +1003,7 @@ const sideStyles = StyleSheet.create({
     ...(Platform.OS === "web" ? { boxShadow: "0 3px 10px rgba(0,0,0,0.25)" } as any : {}),
   },
   removeBtn: {
-    width: 20, height: 20, borderRadius: 10, backgroundColor: "#F6E3E3",
+    width: 24, height: 24, borderRadius: 12, backgroundColor: "#F6E3E3",
     alignItems: "center", justifyContent: "center",
   },
 });
@@ -1294,7 +1274,7 @@ function SelectionPaper(doc: ReturnType<typeof useTilesDoc>) {
           ]}>
             <View style={[selStyles.td, flex(0)]}><Text style={selStyles.cellText}>{index + 1}</Text></View>
             <View style={[selStyles.td, flex(1), { padding: 2 }]}>
-              {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
+              {row.image ? <TileImageCell uri={row.image} /> : null}
             </View>
             <View style={[selStyles.td, flex(2)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
@@ -1421,7 +1401,7 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
           ]}>
             <View style={[quoStyles.td, flex(0)]}><Text style={quoStyles.cellText}>{index + 1}</Text></View>
             <View style={[quoStyles.td, flex(1), { padding: 2 }]}>
-              {row.image ? <TileImageCell uri={row.image} size={row.size} /> : null}
+              {row.image ? <TileImageCell uri={row.image} /> : null}
             </View>
             <View style={[quoStyles.td, flex(2)]}>
               <CellInput value={row.area} onChangeText={(t) => doc.updateRow(row.key, { area: t })} placeholder="Area" multiline testID={`tiles-area-${index}`} />
@@ -1455,6 +1435,8 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
             </View>
             <View style={[quoStyles.td, flex(8)]}>
               <CellInput value={row.totalBox} onChangeText={(t) => doc.updateRow(row.key, { totalBox: t })} bold testID={`tiles-total-box-${index}`} />
+            </View>
+            <View style={[quoStyles.td, flex(9)]}>
               <Dropdown
                 label={quantityUnitLabel(row.quantityUnit)}
                 variant="ghost"
@@ -1464,11 +1446,9 @@ function QuotationPaper(doc: ReturnType<typeof useTilesDoc>) {
                   { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
                 ]}
               />
-            </View>
-            <View style={[quoStyles.td, flex(9)]}>
               {row.quantityUnit === "Box" ? (
                 <CellInput value={row.pcsBox} onChangeText={(t) => doc.updateRow(row.key, { pcsBox: t })} placeholder="PCS" testID={`tiles-pcs-box-${index}`} />
-              ) : <Text style={{ fontSize: 11, fontWeight: "700" }}>—</Text>}
+              ) : null}
             </View>
             <View style={[quoStyles.td, flex(10), { borderRightWidth: 0 }]}>
               <CellInput value={lineTotalInputValue(row)} onChangeText={(t) => doc.updateRow(row.key, { total: t })} testID={`tiles-total-${index}`} />
@@ -1596,7 +1576,7 @@ function MobileRowCard({
     <View style={mobileStyles.rowCard} testID={`mobile-row-${index}`}>
       <Pressable onPress={onOpenPicker} style={mobileStyles.productImage} testID={`mobile-thumb-${index}`} accessibilityLabel={row.productId ? "Change product image" : "Select product image"}>
           {row.image ? (
-            <ProductImage source={row.image} contentFit="cover" frameInset={0} borderRadius={radius.md} disableSkeleton forceLandscape frameBackground={colors.surface} style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
+            <ProductImage source={row.image} contentFit="contain" frameInset={0} borderRadius={radius.md} disableSkeleton frameBackground={colors.surface} style={{ width: "100%", height: "100%" }} accessibilityLabel="Quotation product image" />
           ) : (
             <Feather name="image" size={18} color={colors.onSurfaceMuted} />
           )}
@@ -1613,27 +1593,27 @@ function MobileRowCard({
                 style={mobileStyles.rowTitleInput}
                 testID={`mobile-name-${index}`}
               />
-              <Pressable onPress={onOpenPicker} style={mobileStyles.swapRow} testID={`mobile-swap-${index}`}>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Change product from ${row.name}`} onPress={onOpenPicker} style={mobileStyles.swapRow} testID={`mobile-swap-${index}`}>
                 <Feather name="refresh-cw" size={11} color={colors.brand} />
                 <Text style={mobileStyles.swapLabel}>Change product</Text>
               </Pressable>
             </>
           ) : (
-            <Pressable onPress={onOpenPicker} style={mobileStyles.selectBtn} testID={`mobile-select-product-${index}`}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Select a product" onPress={onOpenPicker} style={mobileStyles.selectBtn} testID={`mobile-select-product-${index}`}>
               <Feather name="search" size={14} color={colors.brand} />
               <Text style={mobileStyles.selectLabel}>Select product…</Text>
             </Pressable>
           )}
         </View>
         {index > 0 || doc.rows.length > 1 ? (
-          <Pressable onPress={() => doc.removeRow(row.key)} hitSlop={10} style={mobileStyles.deleteBtn} testID={`mobile-remove-row-${index}`}>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${row.name || `product row ${index + 1}`}`} onPress={() => doc.removeRow(row.key)} hitSlop={10} style={mobileStyles.deleteBtn} testID={`mobile-remove-row-${index}`}>
             <Feather name="trash-2" size={15} color={colors.error} />
           </Pressable>
         ) : null}
       </View>
 
       <View style={mobileStyles.fieldStack}>
-        {fields.filter((f) => f.key !== "pcsBox" || row.quantityUnit === "Box").map((f) => (
+        {fields.map((f) => (
           <View key={f.key} style={mobileStyles.fieldFull}>
             {f.key === "size" ? (
               <TileSizeField
@@ -1644,9 +1624,30 @@ function MobileRowCard({
                 testID={`mobile-${f.key}-${index}`}
                 mobile
               />
+            ) : f.key === "pcsBox" ? (
+              <>
+                <Text style={type.label}>Pieces / box</Text>
+                <Dropdown
+                  label={quantityUnitLabel(row.quantityUnit)}
+                  variant="secondary"
+                  testID={`mobile-quantity-unit-${index}`}
+                  items={[
+                    { label: "Box", onPress: () => doc.updateRow(row.key, { quantityUnit: "Box" }) },
+                    { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
+                  ]}
+                />
+                {row.quantityUnit === "Box" ? (
+                  <TextField
+                    label="Pieces per box"
+                    value={row.pcsBox}
+                    onChangeText={(t: string) => doc.updateRow(row.key, { pcsBox: t })}
+                    testID={`mobile-pcsBox-${index}`}
+                  />
+                ) : null}
+              </>
             ) : (
               <TextField
-                label={f.key === "rateBox" ? `Rate / ${quantityUnitLabel(row.quantityUnit)}` : f.key === "totalBox" ? `Qty (${row.quantityUnit === "Pieces" ? "Pieces" : "Boxes"})` : f.label}
+                label={f.key === "rateBox" ? `Rate / ${quantityUnitLabel(row.quantityUnit)}` : f.key === "totalBox" ? "Quantity" : f.label}
                 value={f.key === "total" ? lineTotalInputValue(row) : (row as any)[f.key]}
                 onChangeText={(t: string) => doc.updateRow(row.key, { [f.key]: t } as Partial<TileRow>)}
                 keyboardType={f.numeric ? "decimal-pad" : "default"}
@@ -1656,18 +1657,6 @@ function MobileRowCard({
             )}
           </View>
         ))}
-        <View style={mobileStyles.fieldFull}>
-          <Text style={type.label}>Quantity unit</Text>
-          <Dropdown
-            label={quantityUnitLabel(row.quantityUnit)}
-            variant="secondary"
-            testID={`mobile-quantity-unit-${index}`}
-            items={[
-              { label: "Box", onPress: () => doc.updateRow(row.key, { quantityUnit: "Box" }) },
-              { label: "Piece", onPress: () => doc.updateRow(row.key, { quantityUnit: "Pieces" }) },
-            ]}
-          />
-        </View>
       </View>
     </View>
   );
@@ -1710,7 +1699,7 @@ function MobileTilesEditor({
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={isPhone ? [] : ["top"]}>
       <View style={mobileStyles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10} style={shellStyles.backBtn} testID="tiles-back">
+        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} hitSlop={10} style={shellStyles.backBtn} testID="tiles-back">
           <Feather name="chevron-left" size={20} color={colors.onSurface} />
         </Pressable>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -1725,9 +1714,6 @@ function MobileTilesEditor({
           icon="more-vertical"
           variant="ghost"
           items={[
-            isSelection
-              ? { label: "Generate selection PDF", icon: "file-text", onPress: doc.generatePdf }
-              : { label: "Generate quotation PDF", icon: "file-text", onPress: doc.generatePdf },
             ...(primaryAction
               ? [{ label: primaryAction.label, icon: primaryAction.icon, onPress: primaryAction.onPress }]
               : []),
@@ -1746,7 +1732,7 @@ function MobileTilesEditor({
       ) : (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}>
           <ScrollView
-            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: primaryAction ? 104 + insets.bottom : spacing.xxxl }}
+            contentContainerStyle={{ padding: spacing.lg, gap: spacing.lg, paddingBottom: 116 + insets.bottom }}
             keyboardShouldPersistTaps="handled"
           >
             <SaveStatusPill state={doc.saveState} />
@@ -1802,15 +1788,22 @@ function MobileTilesEditor({
         </KeyboardAvoidingView>
       )}
 
-      {primaryAction ? (
-        <View style={[mobileStyles.bottomBar, { paddingBottom: Math.max(spacing.lg, insets.bottom + spacing.sm) }]}>
+      <View style={[mobileStyles.bottomBar, { paddingBottom: Math.max(spacing.lg, insets.bottom + spacing.sm) }]}>
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
           <Button
-            label={primaryAction.label} icon={primaryAction.icon} onPress={primaryAction.onPress}
-            loading={primaryAction.loading} variant="primary" size="lg" fullWidth
-            testID="tiles-mobile-primary-action"
+            label="Download PDF" icon="download" onPress={doc.generatePdf}
+            loading={doc.busy === "pdf"} variant={primaryAction ? "secondary" : "primary"} size="lg"
+            style={{ flex: 1 }} testID="tiles-mobile-download-pdf"
           />
+          {primaryAction ? (
+            <Button
+              label={primaryAction.label} icon={primaryAction.icon} onPress={primaryAction.onPress}
+              loading={primaryAction.loading} variant="primary" size="lg"
+              style={{ flex: 1 }} testID="tiles-mobile-primary-action"
+            />
+          ) : null}
         </View>
-      ) : null}
+      </View>
 
       <TilesProductPicker
         open={pickerRow !== null}
@@ -1958,13 +1951,27 @@ export function TilesDocBuilder({ docType }: { docType: TilesDocType }) {
     || isTablet
     || (workspaceWidth > 0 && workspaceWidth < PAPER_W + spacing.lg + 64);
 
+  if (doc.restoreError) {
+    return (
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md }}>
+        <Feather name="alert-circle" size={28} color={colors.error} />
+        <Text style={[type.titleMd, { textAlign: "center" }]}>Couldn&apos;t open this tile document</Text>
+        <Text style={{ color: colors.onSurfaceSecondary, textAlign: "center" }}>{doc.restoreError}</Text>
+        <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <ActionBtn label="Back" icon="chevron-left" onPress={() => router.back()} testID="tiles-restore-back" />
+          <ActionBtn label="Retry" icon="refresh-cw" primary onPress={doc.retryRestore} testID="tiles-restore-retry" />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1 }} onLayout={(event) => setWorkspaceWidth(event.nativeEvent.layout.width)}>
       {useResponsiveEditor ? <MobileTilesEditor docType={docType} doc={doc} router={router} onDelete={confirmDelete} /> : (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surfaceSecondary }} edges={["top"]}>
       <View style={shellStyles.topbar}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-          <Pressable onPress={() => router.back()} hitSlop={10} style={shellStyles.backBtn} testID="tiles-back">
+          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} hitSlop={10} style={shellStyles.backBtn} testID="tiles-back">
             <Feather name="chevron-left" size={20} color={colors.onSurface} />
           </Pressable>
           <View style={{ minWidth: 0, flex: 1 }}>

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 Role = Literal[
@@ -500,6 +500,23 @@ class QuotationLineItem(BaseModel):
     box_sqft: Optional[float] = Field(default=None, ge=0)  # sqft covered by one box — effective per-sqft price x box_sqft derives unit_price (rate/box)
     offer_rate: Optional[float] = Field(default=None, ge=0)  # final selling price per SQ.FT; defaults to rate_sqft and drives totals
     quantity_unit: Literal["Box", "Pieces"] = "Box"
+
+    @field_validator("quantity_unit", mode="before")
+    @classmethod
+    def normalize_quantity_unit(cls, value: object) -> object:
+        """Store the two supported display units in their canonical form.
+
+        The Tiles UI writes ``Box`` and ``Pieces``.  Normalizing historic and
+        API-client spellings here means an existing ``piece`` quotation can be
+        loaded, enriched, and printed instead of failing before PDF creation.
+        Unknown values remain invalid under the Literal contract.
+        """
+        normalized = str(value or "Box").strip().lower()
+        if normalized in {"piece", "pieces", "pc", "pcs"}:
+            return "Pieces"
+        if normalized in {"box", "boxes"}:
+            return "Box"
+        return value
 
     @property
     def net(self) -> float:
@@ -1050,6 +1067,7 @@ class PaymentOrderExtraUpdate(BaseModel):
     delivery, etc.), not money that has been received.
     """
     amount: float = Field(ge=0)
+    name: Optional[str] = Field(default=None, max_length=120)
 
 
 # ---------- Follow-ups (Sales Command Center) ----------

@@ -241,26 +241,26 @@ def test_sanitary_pdf_raster_regressions_cover_counts_discount_and_image_orienta
             assert image.getbbox() is not None
 
 
-def test_pdf_image_bytes_rotate_portrait_sources_to_horizontal_product_media():
+def test_pdf_image_bytes_preserve_portrait_sources_for_contain_fit():
     source = _png_bytes(60, 120)
 
     assert callable(getattr(pdf_generator, "_prepare_image_bytes", None))
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (96, 60)
+        assert image.size == (60, 120)
 
 
-def test_pdf_image_bytes_force_rotates_an_old_landscape_padded_asset():
+def test_pdf_image_bytes_force_landscape_flag_does_not_rotate_source_pixels():
     source = _png_bytes(192, 120)
 
     prepared = pdf_generator._prepare_image_bytes(source, force_landscape=True)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size[0] > image.size[1]
+        assert image.size == (192, 120)
 
 
-def test_pdf_img_normalizes_a_portrait_source_before_placing_it_in_a_landscape_frame(monkeypatch):
+def test_pdf_img_contains_a_portrait_source_inside_a_landscape_frame(monkeypatch):
     monkeypatch.setattr(pdf_generator, "_remote_image_bytes", lambda _url: _png_bytes(60, 120))
 
     image = pdf_generator._img("https://example.test/product.png")
@@ -269,7 +269,7 @@ def test_pdf_img_normalizes_a_portrait_source_before_placing_it_in_a_landscape_f
     assert image.drawHeight == pdf_generator.STANDARD_PRODUCT_IMAGE_HEIGHT_MM * pdf_generator.mm
     prepared = pdf_generator._prepare_image_bytes(_png_bytes(60, 120))
     with PILImage.open(BytesIO(prepared)) as normalized:
-        assert normalized.width > normalized.height
+        assert normalized.size == (60, 120)
 
 
 def test_exif_orientation_six_is_honored_once():
@@ -278,7 +278,7 @@ def test_exif_orientation_six_is_honored_once():
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (96, 60)
+        assert image.size == (120, 60)
 
 
 def test_exif_orientation_eight_is_honored_once():
@@ -287,7 +287,7 @@ def test_exif_orientation_eight_is_honored_once():
     prepared = pdf_generator._prepare_image_bytes(source)
 
     with PILImage.open(BytesIO(prepared)) as image:
-        assert image.size == (96, 60)
+        assert image.size == (120, 60)
 
 
 def test_all_quotation_pdfs_use_forced_landscape_image_frames(monkeypatch):

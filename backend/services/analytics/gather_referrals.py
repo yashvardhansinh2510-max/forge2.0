@@ -11,6 +11,7 @@ gather_collections_orders, Task 10, already does).
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from services.analytics.attention import OPEN_QUOTATION_STATUSES
@@ -28,6 +29,45 @@ _MAX_ROWS = 5000
 # zero — never a silently-dropped key (referrals.py's referrer_profile test,
 # Task 7, pins this).
 KNOWN_FLOOR_IDS = ("first-floor", "ground-floor")
+
+
+def _directory_match(
+    f: AnalyticsFilter, accessible_floors, referrer_type: str | None,
+) -> dict:
+    """Build the directory's authorized floor/type/id scope.
+
+    Directory members intentionally are not limited by the report period: a
+    new architect or interior designer should appear with zeroes until their
+    first attributed quotation is created.
+    """
+    return build_match(
+        AnalyticsFilter(
+            floor_id=f.floor_id,
+            status="any",
+            referrer_type=referrer_type,
+        ),
+        accessible_floors,
+        (None, None),
+    ) | ({"id": f.referrer_id} if f.referrer_id else {})
+
+
+def _zero_referrer_row(referrer: dict) -> dict:
+    return {
+        "referrer_id": referrer["id"],
+        "name": referrer.get("name"),
+        "type": referrer.get("type"),
+        "customers_referred": 0,
+        "quotations_total": 0,
+        "quotations_approved": 0,
+        "quotations_confirmed": 0,
+        "revenue": 0.0,
+        "pending_count": 0,
+        "pending_value": 0.0,
+        "pending_payments": 0.0,
+        "first_referral_at": None,
+        "last_referral_at": None,
+        "repeat_customers": 0,
+    }
 
 
 async def _repeat_customers_by_referrer(db, match: dict) -> dict[str, int]:
@@ -146,6 +186,17 @@ async def gather_referrer_raw(
     for rid, row in by_referrer.items():
         row["repeat_customers"] = repeat_counts.get(rid, 0)
         row["pending_payments"] = pending_payments.get(rid, 0.0)
+
+    # Quotes define the financial metrics, but the directory defines who can
+    # be attributed. Seed active, authorized directory entries with zero rows
+    # so people appear in Sales Data immediately after being added.
+    directory = await db.referrers.find(
+        _directory_match(f, accessible_floors, referrer_type),
+        {"_id": 0, "id": 1, "name": 1, "type": 1, "active": 1},
+    ).to_list(_MAX_ROWS)
+    for referrer in directory:
+        if referrer.get("id") and referrer.get("active") is not False:
+            by_referrer.setdefault(referrer["id"], _zero_referrer_row(referrer))
 
     return list(by_referrer.values())
 
@@ -275,14 +326,12 @@ async def gather_referrer_profile_data(
     """(referrer_doc, monthly_trend, brand_rows, product_rows, floor_rows)
     for one referrer's profile page.
 
-    db.referrers.find keyed on `id` (never find_one — every gather-layer read
-    in this package uses the find().to_list() cursor shape, which is what
-    keeps it testable against the same fake-db double the rest of this file
-    uses). A referrer that does not exist returns the exact empty-tuple shape
-    below — the route layer (Task 14) turns that into a 404, never a
-    partially-built profile assembled around a missing name/phone/company.
+    db.referrers.find keyed on `id` and the caller's authorized floor. A
+    missing or other-floor referrer returns the empty shape below, so contact
+    information is never exposed across business units.
     """
-    docs = await db.referrers.find({"id": referrer_id}, {"_id": 0}).to_list(1)
+    scoped = _directory_match(replace(f, referrer_id=referrer_id), accessible_floors, None)
+    docs = await db.referrers.find(scoped, {"_id": 0}).to_list(1)
     referrer_doc = docs[0] if docs else None
     if referrer_doc is None:
         return None, [], [], [], {}

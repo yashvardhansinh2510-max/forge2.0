@@ -42,11 +42,28 @@ def test_ground_floor_extra_is_persisted_and_added_only_to_collection_total(monk
     monkeypatch.setattr(payment_routes, "cache", _Cache())
 
     result = asyncio.run(payment_routes.update_ground_floor_manual_extra(
-        "q-1", PaymentOrderExtraUpdate(amount=250.125), user=_user(),
+        "q-1", PaymentOrderExtraUpdate(amount=250.125, name="  Labour cost "), user=_user(),
     ))
 
-    assert result == {"quotation_total": 1000.0, "manual_extra_amount": 250.12, "grand_total": 1250.12}
+    assert result == {
+        "quotation_total": 1000.0,
+        "manual_extra_amount": 250.12,
+        "manual_extra_name": "Labour cost",
+        "grand_total": 1250.12,
+    }
     assert fake_db.quotations.update[1]["$set"]["payment_extra_amount"] == 250.12
+    assert fake_db.quotations.update[1]["$set"]["payment_extra_name"] == "Labour cost"
+
+
+def test_manual_extra_requires_a_name_when_an_amount_is_set(monkeypatch):
+    monkeypatch.setattr(payment_routes, "db", _Db({"id": "q-1", "floor_id": "ground-floor", "grand_total": 1000, "status": "ordered"}))
+
+    with pytest.raises(HTTPException, match="Name the additional cost") as exc:
+        asyncio.run(payment_routes.update_ground_floor_manual_extra(
+            "q-1", PaymentOrderExtraUpdate(amount=100), user=_user(),
+        ))
+
+    assert exc.value.status_code == 422
 
 
 def test_manual_extra_rejects_non_ground_floor_orders(monkeypatch):

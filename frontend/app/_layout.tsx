@@ -29,7 +29,7 @@ SplashScreen.preventAutoHideAsync();
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { loading, kind, staff, customer } = useAuth();
-  const segments = useSegments();
+  const segments = useSegments() as string[];
   const router = useRouter();
   const navigationState = useRootNavigationState();
   const isNavigationReady = navigationState?.key !== undefined;
@@ -78,10 +78,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
     if (!kind && !inAuth) {
       router.replace("/(auth)/login");
-  } else if (kind === "staff" && !inAdmin) {
-    if (inAuth) router.replace(staffLandingPath(staff?.access_profile, staff?.access_grants) as any);
-  } else if (kind === "customer" && !inCustomer) {
-    if (inAuth) router.replace("/(customer)/home");
+    } else if (kind === "staff" && !inAdmin) {
+      router.replace(staffLandingPath(staff?.access_profile, staff?.access_grants) as any);
+    } else if (kind === "customer" && !inCustomer) {
+      router.replace("/(customer)/home");
     }
   }, [kind, loading, isNavigationReady, segments, router, staff, customer]);
 

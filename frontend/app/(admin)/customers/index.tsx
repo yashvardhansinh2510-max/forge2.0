@@ -3,7 +3,7 @@
 // unified customer-card language shared with quotations/purchases/payments.
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Pressable, ScrollView, StyleSheet, Text, View,
 } from "react-native";
@@ -19,6 +19,8 @@ import { colors, icon as iconSize, radius, spacing, type } from "@/src/theme/tok
 import { useAuth } from "@/src/state/auth";
 import { canManageDestructiveData } from "@/src/constants/roles";
 import { toast } from "@/src/components/Toast";
+import { ErrorState } from "@/src/components/ui";
+import { useFloorAccess } from "@/src/hooks/use-floor-access";
 
 type Customer = {
   id: string;
@@ -43,6 +45,7 @@ export default function Customers() {
   const router = useRouter();
   const { isDesktop, isPhone } = useBp();
   const { staff } = useAuth();
+  const { selectedFloorId } = useFloorAccess();
   const isTileDeliveryLookup = staff?.access_profile === "ground_tile_quotations_followups";
 
   const [items, setItems] = useState<Customer[] | null>(null);
@@ -51,10 +54,20 @@ export default function Customers() {
   const [visibleCount, setVisibleCount] = useState(CUSTOMER_RENDER_BATCH);
   const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    api.get<Customer[]>("/customers").then(setItems).catch(() => setItems([]));
-  }, []);
+  const load = useCallback(() => {
+    if (!selectedFloorId) return;
+    const id = ++requestId.current;
+    setItems(null);
+    setLoadError(false);
+    api.get<Customer[]>("/customers").then(
+      (result) => { if (id === requestId.current) setItems(result); },
+      () => { if (id === requestId.current) setLoadError(true); },
+    );
+  }, [selectedFloorId]);
+  useEffect(() => { load(); return () => { requestId.current += 1; }; }, [load]);
 
   const deleteCustomer = async () => {
     if (!deleteTarget) return;
@@ -95,7 +108,7 @@ export default function Customers() {
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={isPhone ? [] : ["top"]}>
       <PageHeader
         title={isTileDeliveryLookup ? "Customer delivery lookup" : "Customers"}
-        subtitle={items ? (isTileDeliveryLookup ? "Choose a customer to view their Ground Floor tile order and dispatch status." : `${items.length} accounts · Trade, VIP & retail buyers`) : "Loading customers…"}
+        subtitle={loadError ? "Customer data is unavailable" : items ? (isTileDeliveryLookup ? "Choose a customer to view their Ground Floor tile order and dispatch status." : `${items.length} accounts · Trade, VIP & retail buyers`) : "Loading customers…"}
         overline={isTileDeliveryLookup ? "GROUND FLOOR · READ ONLY" : "CRM"}
         actions={!isTileDeliveryLookup ? (
           <Button
@@ -182,7 +195,7 @@ export default function Customers() {
         </View>
 
         {/* List */}
-        {!items ? (
+        {loadError ? <ErrorState title="Couldn't load customers" subtitle="Check your connection and try again." onRetry={load} /> : !items ? (
           <View style={{ gap: spacing.sm }}>
             {Array.from({ length: 5 }).map((_, i) => (
               <View key={i} style={[styles.card, { flexDirection: "row", gap: spacing.md, alignItems: "center" }]}>
@@ -198,8 +211,8 @@ export default function Customers() {
         ) : filtered.length === 0 ? (
           <EmptyState
             icon="users"
-            title="No customers match"
-            subtitle="Try clearing the search or filter to see more."
+            title={items.length ? "No customers match" : "No customers yet"}
+            subtitle={items.length ? "Try clearing the search or filter to see more." : "Customer accounts for this floor will appear here."}
             action={
               <Button
                 label="Clear filters"

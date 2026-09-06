@@ -93,6 +93,8 @@ export function IconAction({
   return (
     <Pressable
       testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label || icon.replace(/-/g, " ")}
       onPress={onPress}
       style={({ pressed }) => [{
         flexDirection: "row",

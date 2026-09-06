@@ -63,6 +63,7 @@ export default function PlaceOrderReview() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [supplierByBrand, setSupplierByBrand] = useState<Record<string, string>>({});
+  const [expandedBrands, setExpandedBrands] = useState<Record<string, boolean>>({});
   const [notesByBrand, setNotesByBrand] = useState<Record<string, string>>({});
   const [expected, setExpected] = useState<string>("");
   const [projectName, setProjectName] = useState<string>("");
@@ -219,7 +220,7 @@ export default function PlaceOrderReview() {
               </View>
 
               <View style={styles.itemsBox}>
-                {b.items.slice(0, 6).map((it) => (
+                {b.items.slice(0, expandedBrands[brandKey] ? undefined : 6).map((it) => (
                   <View key={it.line_id} style={[styles.itemRow, isPhone && styles.itemRowPhone]}>
                     <View style={styles.itemIdentity}>
                       <Text style={[type.mono, styles.itemSku]} numberOfLines={1}>{it.sku}</Text>
@@ -234,9 +235,17 @@ export default function PlaceOrderReview() {
                   </View>
                 ))}
                 {b.items.length > 6 ? (
-                  <Text style={[type.caption, { textAlign: "center", padding: 6, opacity: 0.7 }]}>
-                    +{b.items.length - 6} more items…
-                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: Boolean(expandedBrands[brandKey]) }}
+                    accessibilityLabel={`Show ${b.items.length - 6} more ${b.brand_name} items`}
+                    onPress={() => setExpandedBrands((current) => ({ ...current, [brandKey]: !current[brandKey] }))}
+                    style={{ padding: 10 }}
+                  >
+                    <Text style={[type.caption, { textAlign: "center", color: colors.brand }]}>
+                      {expandedBrands[brandKey] ? "Show fewer items" : `+${b.items.length - 6} more items…`}
+                    </Text>
+                  </Pressable>
                 ) : null}
               </View>
 

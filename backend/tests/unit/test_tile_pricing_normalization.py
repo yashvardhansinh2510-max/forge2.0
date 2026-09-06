@@ -77,3 +77,8 @@ def test_line_quantity_unit_is_an_explicit_user_choice():
 
     assert box.quantity_unit == "Box"
     assert piece.quantity_unit == "Pieces"
+
+
+def test_line_quantity_unit_canonicalizes_legacy_piece_and_box_spellings():
+    assert _line(quantity_unit="piece").quantity_unit == "Pieces"
+    assert _line(quantity_unit="boxes").quantity_unit == "Box"

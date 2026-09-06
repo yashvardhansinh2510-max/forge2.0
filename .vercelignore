@@ -1,0 +1,26 @@
+# The canonical web app lives at the repository root.  Keep operational
+# backend material and the preserved legacy frontend checkout out of Vercel
+# uploads; the deployed web API is the small root-level /api proxy.
+backend/
+frontend/
+
+# Local/build artifacts and audit material are not deployment inputs.
+.venv/
+.expo/
+.metro-cache/
+.pytest_cache/
+__pycache__/
+dist/
+output/
+outputs/
+tmp/
+template-inspect/
+test_reports/
+.screenshots/
+.superpowers/
+memory/
+
+# Large business assets belong in MongoDB/Supabase, never in a frontend upload.
+*.pdf
+*.pptx
+*.xlsx

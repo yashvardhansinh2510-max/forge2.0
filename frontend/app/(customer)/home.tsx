@@ -3,7 +3,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
-import { Linking, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 
 import { api } from "@/src/api/client";
 import { Button, Card, StatusBadge } from "@/src/components/ui";
@@ -148,18 +148,8 @@ export default function CustomerDashboard() {
       <Card style={{ ...styles.supportCard, ...(isPhone ? styles.stackOnPhone : {}) }}>
         <View style={styles.supportCopy}>
           <Text style={styles.supportTitle}>Need help?</Text>
-          <Text style={styles.supportSubtitle}>Talk to your BuildCon House representative.</Text>
+          <Text style={styles.supportSubtitle}>Contact your BuildCon House sales representative using the details on your quotation.</Text>
         </View>
-        <Button
-          testID="portal-support-btn"
-          label="Contact"
-          icon="message-circle"
-          size="sm"
-          variant="secondary"
-          onPress={() => Linking.openURL("mailto:support@forge.app")}
-          style={styles.supportButton}
-          fullWidth={isPhone}
-        />
       </Card>
 
       <CustomerFooterLinks />
@@ -185,6 +175,5 @@ const styles = StyleSheet.create({
   supportCopy: { flex: 1, minWidth: 160, gap: 2 },
   supportTitle: { ...type.titleMd, color: colors.onSurfaceInverse },
   supportSubtitle: { ...type.caption, color: colors.onSurfaceSubtle },
-  supportButton: { minWidth: 96 },
   stackOnPhone: { flexDirection: "column", alignItems: "stretch" },
 });

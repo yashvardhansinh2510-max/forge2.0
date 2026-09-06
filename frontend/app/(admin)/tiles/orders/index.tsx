@@ -111,6 +111,8 @@ export default function TileOrdersScreen() {
 
   const [tab, setTab] = useState<TabKey>(initialTab);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [customerOrders, setCustomerOrders] = useState<CustomerOrderCard[]>([]);
   const [brands, setBrands] = useState<BrandLandingCard[]>([]);
@@ -173,6 +175,9 @@ export default function TileOrdersScreen() {
   }, [movementSearchDraft]);
 
   const load = useCallback(async (nextPage = 1) => {
+    if (nextPage > 1 && loadingMoreRef.current) return;
+    loadingMoreRef.current = nextPage > 1;
+    setLoadingMore(nextPage > 1);
     const currentRequest = ++requestId.current;
     if (nextPage === 1) setLoading(true);
     setLoadError(null);
@@ -228,7 +233,11 @@ export default function TileOrdersScreen() {
       setLoadError(message);
       toast.error(message);
     } finally {
-      if (currentRequest === requestId.current) setLoading(false);
+      if (currentRequest === requestId.current) {
+        setLoading(false);
+        setLoadingMore(false);
+        loadingMoreRef.current = false;
+      }
     }
   }, [tab, movementSearch, dispatchSearch, dispatchStatus, historySearch, historyCustomer, historyBrand, historyDateRange, inventorySearch, customerSearch, customerStatus, brandSearch, params.customer_id]);
 
@@ -694,7 +703,7 @@ export default function TileOrdersScreen() {
           {renderBody()}
           {hasMore && !loading ? (
             <View style={styles.loadMore}>
-              <Button label="Load more" size="lg" onPress={() => void load(page + 1)} testID="tile-orders-load-more" />
+              <Button label={loadingMore ? "Loading more…" : "Load more"} disabled={loadingMore} size="lg" onPress={() => void load(page + 1)} testID="tile-orders-load-more" />
             </View>
           ) : null}
         </Section>
